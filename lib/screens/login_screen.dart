@@ -1,0 +1,568 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+
+import '../services/auth_service.dart';
+import 'register/register_screen.dart';
+
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+
+  final AuthService _authService = AuthService();
+
+  bool _obscurePassword = true;
+  bool _isLoading = false;
+  bool _isResettingPassword = false;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _login() async {
+    FocusScope.of(context).unfocus();
+
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+
+    if (email.isEmpty || password.isEmpty) {
+      _showMessage('Wpisz adres e-mail i hasło.');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      await _authService.signIn(email: email, password: password);
+    } catch (error) {
+      if (!mounted) return;
+
+      _showMessage(_authService.getErrorMessage(error));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _resetPassword() async {
+    FocusScope.of(context).unfocus();
+
+    final email = _emailController.text.trim();
+
+    if (email.isEmpty) {
+      _showMessage('Najpierw wpisz swój adres e-mail.');
+      return;
+    }
+
+    setState(() {
+      _isResettingPassword = true;
+    });
+
+    try {
+      await _authService.sendPasswordResetEmail(email);
+
+      if (!mounted) return;
+
+      _showMessage('Wiadomość do zresetowania hasła została wysłana.');
+    } catch (error) {
+      if (!mounted) return;
+
+      _showMessage(_authService.getErrorMessage(error));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isResettingPassword = false;
+        });
+      }
+    }
+  }
+
+  void _openRegisterScreen() {
+    Navigator.of(context)
+        .push(MaterialPageRoute<void>(builder: (_) => const RegisterScreen()));
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: RadialGradient(
+            center: Alignment.topCenter,
+            radius: 1.3,
+            colors: [Color(0xFF1B063D), Color(0xFF0D0618), Color(0xFF07030E)],
+            stops: [0.0, 0.52, 1.0],
+          ),
+        ),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 430),
+                child: AutofillGroup(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: IconButton(
+                          onPressed: () {
+                            if (Navigator.of(context).canPop()) {
+                              Navigator.of(context).pop();
+                            }
+                          },
+                          icon: SvgPicture.asset(
+                            'assets/icons/icon_back.svg',
+                            width: 34,
+                            height: 34,
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 12),
+
+                      Center(
+                        child: Image.asset(
+                          'assets/images/yo_voice_logo_reference.png',
+                          width: 220,
+                          height: 220,
+                          fit: BoxFit.contain,
+                          filterQuality: FilterQuality.high,
+                        ),
+                      ),
+
+                      const SizedBox(height: 4),
+
+                      const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'YO',
+                            style: TextStyle(
+                              color: Color(0xFF8A2BE2),
+                              fontSize: 43,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                          SizedBox(width: 12),
+                          Text(
+                            'VOICE',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 43,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: 3,
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 10),
+
+                      const Text(
+                        'SPEAK. CONNECT. BE YOU.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFFB8B1C8),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: 4,
+                        ),
+                      ),
+
+                      const SizedBox(height: 42),
+
+                      _AuthField(
+                        controller: _emailController,
+                        hintText: 'Email',
+                        keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.next,
+                        autofillHints: const [
+                          AutofillHints.email,
+                          AutofillHints.username,
+                        ],
+                        prefixIconPath: 'assets/icons/icon_email.svg',
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      _AuthField(
+                        controller: _passwordController,
+                        hintText: 'Password',
+                        obscureText: _obscurePassword,
+                        textInputAction: TextInputAction.done,
+                        autofillHints: const [AutofillHints.password],
+                        prefixIconPath: 'assets/icons/icon_lock.svg',
+                        suffixIconPath: _obscurePassword
+                            ? 'assets/icons/icon_eye.svg'
+                            : 'assets/icons/icon_eye_off.svg',
+                        onSuffixPressed: () {
+                          setState(() {
+                            _obscurePassword = !_obscurePassword;
+                          });
+                        },
+                        onSubmitted: (_) {
+                          if (!_isLoading) {
+                            _login();
+                          }
+                        },
+                      ),
+
+                      const SizedBox(height: 24),
+
+                      _PrimaryButton(
+                        label: 'LOG IN',
+                        isLoading: _isLoading,
+                        onPressed: _isLoading ? null : _login,
+                      ),
+
+                      const SizedBox(height: 28),
+
+                      const Row(
+                        children: [
+                          Expanded(
+                            child: Divider(
+                              color: Color(0xFF4C376F),
+                              thickness: 1,
+                            ),
+                          ),
+                          Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 20),
+                            child: Text(
+                              'OR',
+                              style: TextStyle(
+                                color: Color(0xFF9189A6),
+                                fontSize: 18,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: Divider(
+                              color: Color(0xFF4C376F),
+                              thickness: 1,
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 24),
+
+                      _SocialButton(
+                        label: 'Continue with Google',
+                        svgIconPath: 'assets/icons/icon_google_g.svg',
+                        onPressed: () {
+                          _showMessage(
+                            'Logowanie przez Google dodamy w kolejnym etapie.',
+                          );
+                        },
+                      ),
+
+                      const SizedBox(height: 14),
+
+                      _SocialButton(
+                        label: 'Continue with Apple',
+                        materialIcon: Icons.apple,
+                        iconSize: 34,
+                        onPressed: () {
+                          _showMessage(
+                            'Logowanie przez Apple dodamy w kolejnym etapie.',
+                          );
+                        },
+                      ),
+
+                      const SizedBox(height: 28),
+
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Flexible(
+                            child: Text(
+                              "Don't have an account? ",
+                              style: TextStyle(
+                                color: Color(0xFFB8B1C8),
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
+                          GestureDetector(
+                            onTap: _openRegisterScreen,
+                            child: const Text(
+                              'Sign up',
+                              style: TextStyle(
+                                color: Color(0xFFA02BFF),
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      Center(
+                        child: TextButton(
+                          onPressed: _isResettingPassword
+                              ? null
+                              : _resetPassword,
+                          child: _isResettingPassword
+                              ? const SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text(
+                                  'Forgot password?',
+                                  style: TextStyle(
+                                    color: Color(0xFFA02BFF),
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 28),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PrimaryButton extends StatelessWidget {
+  const _PrimaryButton({
+    required this.label,
+    required this.onPressed,
+    this.isLoading = false,
+  });
+
+  final String label;
+  final VoidCallback? onPressed;
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      height: 58,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF6A00FF), Color(0xFFA12BFF), Color(0xFFC026FF)],
+        ),
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x667B24D1),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          disabledBackgroundColor: Colors.transparent,
+          backgroundColor: Colors.transparent,
+          shadowColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+        ),
+        child: isLoading
+            ? const SizedBox(
+                width: 25,
+                height: 25,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  color: Colors.white,
+                ),
+              )
+            : Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1,
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+class _AuthField extends StatelessWidget {
+  const _AuthField({
+    required this.controller,
+    required this.hintText,
+    required this.prefixIconPath,
+    this.keyboardType,
+    this.textInputAction,
+    this.autofillHints,
+    this.obscureText = false,
+    this.suffixIconPath,
+    this.onSuffixPressed,
+    this.onSubmitted,
+  });
+
+  final TextEditingController controller;
+  final String hintText;
+  final String prefixIconPath;
+  final TextInputType? keyboardType;
+  final TextInputAction? textInputAction;
+  final Iterable<String>? autofillHints;
+  final bool obscureText;
+  final String? suffixIconPath;
+  final VoidCallback? onSuffixPressed;
+  final ValueChanged<String>? onSubmitted;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      textInputAction: textInputAction,
+      autofillHints: autofillHints,
+      autocorrect: false,
+      enableSuggestions: !obscureText,
+      obscureText: obscureText,
+      onSubmitted: onSubmitted,
+      style: const TextStyle(color: Colors.white, fontSize: 17),
+      decoration: InputDecoration(
+        hintText: hintText,
+        hintStyle: const TextStyle(color: Color(0xFF9189A6), fontSize: 17),
+        prefixIcon: Padding(
+          padding: const EdgeInsets.all(17),
+          child: SvgPicture.asset(prefixIconPath, width: 25, height: 25),
+        ),
+        suffixIcon: suffixIconPath == null
+            ? null
+            : IconButton(
+                onPressed: onSuffixPressed,
+                icon: SvgPicture.asset(suffixIconPath!, width: 26, height: 26),
+              ),
+        filled: true,
+        fillColor: const Color(0xFF171126),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 18,
+          vertical: 21,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: const BorderSide(color: Color(0xFF3A3151)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: const BorderSide(color: Color(0xFF3A3151)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: const BorderSide(color: Color(0xFFA02BFF), width: 1.8),
+        ),
+      ),
+    );
+  }
+}
+
+class _SocialButton extends StatelessWidget {
+  const _SocialButton({
+    required this.label,
+    required this.onPressed,
+    this.svgIconPath,
+    this.materialIcon,
+    this.iconSize = 30,
+  }) : assert(
+         svgIconPath != null || materialIcon != null,
+         'An SVG icon path or Material icon must be provided.',
+       );
+
+  final String label;
+  final VoidCallback onPressed;
+  final String? svgIconPath;
+  final IconData? materialIcon;
+  final double iconSize;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 58,
+      child: OutlinedButton(
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          backgroundColor: const Color(0x330D0618),
+          foregroundColor: Colors.white,
+          side: const BorderSide(color: Color(0xFF6E1FBD), width: 1.3),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 44,
+              height: 44,
+              child: Center(
+                child: svgIconPath != null
+                    ? SvgPicture.asset(
+                        svgIconPath!,
+                        width: iconSize,
+                        height: iconSize,
+                        fit: BoxFit.contain,
+                      )
+                    : Icon(materialIcon, size: iconSize, color: Colors.white),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            const SizedBox(width: 44),
+          ],
+        ),
+      ),
+    );
+  }
+}
