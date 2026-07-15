@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../services/auth_service.dart';
+import '../widgets/animated_waves_background.dart';
 import 'register/register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -92,8 +93,9 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _openRegisterScreen() {
-    Navigator.of(context)
-        .push(MaterialPageRoute<void>(builder: (_) => const RegisterScreen()));
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const RegisterScreen()));
   }
 
   void _showMessage(String message) {
@@ -107,258 +109,362 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment.topCenter,
-            radius: 1.3,
-            colors: [Color(0xFF1B063D), Color(0xFF0D0618), Color(0xFF07030E)],
-            stops: [0.0, 0.52, 1.0],
+      body: Stack(
+        children: [
+          const Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: RadialGradient(
+                  center: Alignment.topCenter,
+                  radius: 1.3,
+                  colors: [
+                    Color(0xFF1B063D),
+                    Color(0xFF0D0618),
+                    Color(0xFF07030E),
+                  ],
+                  stops: [0.0, 0.52, 1.0],
+                ),
+              ),
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 430),
-                child: AutofillGroup(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: IconButton(
-                          onPressed: () {
-                            if (Navigator.of(context).canPop()) {
-                              Navigator.of(context).pop();
+
+          const AnimatedWavesBackground(),
+
+          Positioned.fill(
+            child: Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0x11000000),
+                    Color(0x22000000),
+                    Color(0x5507030E),
+                  ],
+                  stops: [0.0, 0.55, 1.0],
+                ),
+              ),
+            ),
+          ),
+
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 430),
+                  child: AutofillGroup(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: IconButton(
+                            onPressed: () {
+                              if (Navigator.of(context).canPop()) {
+                                Navigator.of(context).pop();
+                              }
+                            },
+                            icon: SvgPicture.asset(
+                              'assets/icons/icon_back.svg',
+                              width: 34,
+                              height: 34,
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(height: 12),
+
+                        Center(
+                          child: Image.asset(
+                            'assets/images/yo_voice_logo_reference.png',
+                            width: 220,
+                            height: 220,
+                            fit: BoxFit.contain,
+                            filterQuality: FilterQuality.high,
+                          ),
+                        ),
+
+                        const SizedBox(height: 4),
+
+                        const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              'YO',
+                              style: TextStyle(
+                                color: Color(0xFF8A2BE2),
+                                fontSize: 43,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                            SizedBox(width: 12),
+                            Text(
+                              'VOICE',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 43,
+                                fontWeight: FontWeight.w500,
+                                letterSpacing: 3,
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 10),
+
+                        const Text(
+                          'SPEAK. CONNECT. BE YOU.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Color(0xFFB8B1C8),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            letterSpacing: 4,
+                          ),
+                        ),
+
+                        const SizedBox(height: 42),
+
+                        _AuthField(
+                          controller: _emailController,
+                          hintText: 'Email',
+                          keyboardType: TextInputType.emailAddress,
+                          textInputAction: TextInputAction.next,
+                          autofillHints: const [
+                            AutofillHints.email,
+                            AutofillHints.username,
+                          ],
+                          prefixIconPath: 'assets/icons/icon_email.svg',
+                        ),
+
+                        const SizedBox(height: 16),
+
+                        _AuthField(
+                          controller: _passwordController,
+                          hintText: 'Password',
+                          obscureText: _obscurePassword,
+                          textInputAction: TextInputAction.done,
+                          autofillHints: const [AutofillHints.password],
+                          prefixIconPath: 'assets/icons/icon_lock.svg',
+                          suffixIconPath: _obscurePassword
+                              ? 'assets/icons/icon_eye.svg'
+                              : 'assets/icons/icon_eye_off.svg',
+                          onSuffixPressed: () {
+                            setState(() {
+                              _obscurePassword = !_obscurePassword;
+                            });
+                          },
+                          onSubmitted: (_) {
+                            if (!_isLoading) {
+                              _login();
                             }
                           },
-                          icon: SvgPicture.asset(
-                            'assets/icons/icon_back.svg',
-                            width: 34,
-                            height: 34,
-                          ),
                         ),
-                      ),
 
-                      const SizedBox(height: 12),
+                        const SizedBox(height: 24),
 
-                      Center(
-                        child: Image.asset(
-                          'assets/images/yo_voice_logo_reference.png',
-                          width: 220,
-                          height: 220,
-                          fit: BoxFit.contain,
-                          filterQuality: FilterQuality.high,
+                        _PrimaryButton(
+                          label: 'LOG IN',
+                          isLoading: _isLoading,
+                          onPressed: _isLoading ? null : _login,
                         ),
-                      ),
 
-                      const SizedBox(height: 4),
+                        const SizedBox(height: 28),
 
-                      const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            'YO',
-                            style: TextStyle(
-                              color: Color(0xFF8A2BE2),
-                              fontSize: 43,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1,
-                            ),
-                          ),
-                          SizedBox(width: 12),
-                          Text(
-                            'VOICE',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 43,
-                              fontWeight: FontWeight.w500,
-                              letterSpacing: 3,
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 10),
-
-                      const Text(
-                        'SPEAK. CONNECT. BE YOU.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Color(0xFFB8B1C8),
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          letterSpacing: 4,
-                        ),
-                      ),
-
-                      const SizedBox(height: 42),
-
-                      _AuthField(
-                        controller: _emailController,
-                        hintText: 'Email',
-                        keyboardType: TextInputType.emailAddress,
-                        textInputAction: TextInputAction.next,
-                        autofillHints: const [
-                          AutofillHints.email,
-                          AutofillHints.username,
-                        ],
-                        prefixIconPath: 'assets/icons/icon_email.svg',
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      _AuthField(
-                        controller: _passwordController,
-                        hintText: 'Password',
-                        obscureText: _obscurePassword,
-                        textInputAction: TextInputAction.done,
-                        autofillHints: const [AutofillHints.password],
-                        prefixIconPath: 'assets/icons/icon_lock.svg',
-                        suffixIconPath: _obscurePassword
-                            ? 'assets/icons/icon_eye.svg'
-                            : 'assets/icons/icon_eye_off.svg',
-                        onSuffixPressed: () {
-                          setState(() {
-                            _obscurePassword = !_obscurePassword;
-                          });
-                        },
-                        onSubmitted: (_) {
-                          if (!_isLoading) {
-                            _login();
-                          }
-                        },
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      _PrimaryButton(
-                        label: 'LOG IN',
-                        isLoading: _isLoading,
-                        onPressed: _isLoading ? null : _login,
-                      ),
-
-                      const SizedBox(height: 28),
-
-                      const Row(
-                        children: [
-                          Expanded(
-                            child: Divider(
-                              color: Color(0xFF4C376F),
-                              thickness: 1,
-                            ),
-                          ),
-                          Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 20),
-                            child: Text(
-                              'OR',
-                              style: TextStyle(
-                                color: Color(0xFF9189A6),
-                                fontSize: 18,
-                                fontWeight: FontWeight.w500,
+                        const Row(
+                          children: [
+                            Expanded(
+                              child: Divider(
+                                color: Color(0xFF4C376F),
+                                thickness: 1,
                               ),
                             ),
-                          ),
-                          Expanded(
-                            child: Divider(
-                              color: Color(0xFF4C376F),
-                              thickness: 1,
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      _SocialButton(
-                        label: 'Continue with Google',
-                        svgIconPath: 'assets/icons/icon_google_g.svg',
-                        onPressed: () {
-                          _showMessage(
-                            'Logowanie przez Google dodamy w kolejnym etapie.',
-                          );
-                        },
-                      ),
-
-                      const SizedBox(height: 14),
-
-                      _SocialButton(
-                        label: 'Continue with Apple',
-                        materialIcon: Icons.apple,
-                        iconSize: 34,
-                        onPressed: () {
-                          _showMessage(
-                            'Logowanie przez Apple dodamy w kolejnym etapie.',
-                          );
-                        },
-                      ),
-
-                      const SizedBox(height: 28),
-
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Flexible(
-                            child: Text(
-                              "Don't have an account? ",
-                              style: TextStyle(
-                                color: Color(0xFFB8B1C8),
-                                fontSize: 16,
+                            Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 20),
+                              child: Text(
+                                'OR',
+                                style: TextStyle(
+                                  color: Color(0xFF9189A6),
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w500,
+                                ),
                               ),
                             ),
-                          ),
-                          GestureDetector(
-                            onTap: _openRegisterScreen,
-                            child: const Text(
-                              'Sign up',
-                              style: TextStyle(
-                                color: Color(0xFFA02BFF),
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
+                            Expanded(
+                              child: Divider(
+                                color: Color(0xFF4C376F),
+                                thickness: 1,
                               ),
                             ),
-                          ),
-                        ],
-                      ),
+                          ],
+                        ),
 
-                      const SizedBox(height: 16),
+                        const SizedBox(height: 24),
 
-                      Center(
-                        child: TextButton(
-                          onPressed: _isResettingPassword
-                              ? null
-                              : _resetPassword,
-                          child: _isResettingPassword
-                              ? const SizedBox(
-                                  width: 22,
-                                  height: 22,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Text(
-                                  'Forgot password?',
-                                  style: TextStyle(
-                                    color: Color(0xFFA02BFF),
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w600,
+                        _SocialButton(
+                          label: 'Continue with Google',
+                          svgIconPath: 'assets/icons/icon_google_g.svg',
+                          onPressed: () {
+                            _showMessage(
+                              'Logowanie przez Google dodamy w kolejnym etapie.',
+                            );
+                          },
+                        ),
+
+                        const SizedBox(height: 14),
+
+                        _SocialButton(
+                          label: 'Continue with Apple',
+                          materialIcon: Icons.apple,
+                          iconSize: 34,
+                          onPressed: () {
+                            _showMessage(
+                              'Logowanie przez Apple dodamy w kolejnym etapie.',
+                            );
+                          },
+                        ),
+
+                        const SizedBox(height: 28),
+
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Flexible(
+                              child: Text(
+                                "Don't have an account? ",
+                                style: TextStyle(
+                                  color: Color(0xFFB8B1C8),
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: _openRegisterScreen,
+                              style: ButtonStyle(
+                                padding: WidgetStateProperty.all(
+                                  EdgeInsets.zero,
+                                ),
+                                minimumSize: WidgetStateProperty.all(Size.zero),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                mouseCursor: WidgetStateProperty.all(
+                                  SystemMouseCursors.click,
+                                ),
+                                overlayColor:
+                                    WidgetStateProperty.resolveWith<Color?>((
+                                      states,
+                                    ) {
+                                      if (states.contains(
+                                        WidgetState.hovered,
+                                      )) {
+                                        return const Color(0x22A02BFF);
+                                      }
+
+                                      if (states.contains(
+                                        WidgetState.pressed,
+                                      )) {
+                                        return const Color(0x33A02BFF);
+                                      }
+
+                                      return Colors.transparent;
+                                    }),
+                                foregroundColor:
+                                    WidgetStateProperty.resolveWith<Color>((
+                                      states,
+                                    ) {
+                                      if (states.contains(
+                                        WidgetState.hovered,
+                                      )) {
+                                        return const Color(0xFFC05CFF);
+                                      }
+
+                                      return const Color(0xFFA02BFF);
+                                    }),
+                                shape: WidgetStateProperty.all(
+                                  RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(6),
                                   ),
                                 ),
+                              ),
+                              child: const Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 3,
+                                  vertical: 2,
+                                ),
+                                child: Text(
+                                  'Sign up',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
 
-                      const SizedBox(height: 28),
-                    ],
+                        const SizedBox(height: 16),
+
+                        Center(
+                          child: TextButton(
+                            onPressed: _isResettingPassword
+                                ? null
+                                : _resetPassword,
+                            style: ButtonStyle(
+                              mouseCursor:
+                                  WidgetStateProperty.resolveWith<MouseCursor>((
+                                    states,
+                                  ) {
+                                    if (states.contains(WidgetState.disabled)) {
+                                      return SystemMouseCursors.basic;
+                                    }
+
+                                    return SystemMouseCursors.click;
+                                  }),
+                              overlayColor:
+                                  WidgetStateProperty.resolveWith<Color?>((
+                                    states,
+                                  ) {
+                                    if (states.contains(WidgetState.hovered)) {
+                                      return const Color(0x22A02BFF);
+                                    }
+
+                                    if (states.contains(WidgetState.pressed)) {
+                                      return const Color(0x33A02BFF);
+                                    }
+
+                                    return Colors.transparent;
+                                  }),
+                            ),
+                            child: _isResettingPassword
+                                ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Text(
+                                    'Forgot password?',
+                                    style: TextStyle(
+                                      color: Color(0xFFA02BFF),
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                          ),
+                        ),
+
+                        const SizedBox(height: 28),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -477,7 +583,7 @@ class _AuthField extends StatelessWidget {
                 icon: SvgPicture.asset(suffixIconPath!, width: 26, height: 26),
               ),
         filled: true,
-        fillColor: const Color(0xFF171126),
+        fillColor: const Color(0xDD171126),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 18,
           vertical: 21,
@@ -524,7 +630,7 @@ class _SocialButton extends StatelessWidget {
       child: OutlinedButton(
         onPressed: onPressed,
         style: OutlinedButton.styleFrom(
-          backgroundColor: const Color(0x330D0618),
+          backgroundColor: const Color(0x660D0618),
           foregroundColor: Colors.white,
           side: const BorderSide(color: Color(0xFF6E1FBD), width: 1.3),
           shape: RoundedRectangleBorder(

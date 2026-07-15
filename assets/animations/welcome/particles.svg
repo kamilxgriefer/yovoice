@@ -1,0 +1,58 @@
+<svg
+  width="1440"
+  height="900"
+  viewBox="0 0 1440 900"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <radialGradient id="particleGlow">
+      <stop offset="0" stop-color="#F2A6FF" stop-opacity="1"/>
+      <stop offset="0.45" stop-color="#C026FF" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#8A2BE2" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter
+      id="softGlow"
+      x="-200%"
+      y="-200%"
+      width="500%"
+      height="500%"
+    >
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+  </defs>
+
+  <g opacity="0.9">
+    <circle cx="115" cy="180" r="3" fill="#C45BFF"/>
+    <circle cx="210" cy="340" r="2" fill="#8F35FF"/>
+    <circle cx="330" cy="145" r="4" fill="#D06BFF"/>
+    <circle cx="470" cy="280" r="2.5" fill="#A640FF"/>
+    <circle cx="610" cy="120" r="3" fill="#E280FF"/>
+    <circle cx="760" cy="210" r="2" fill="#9E3CFF"/>
+    <circle cx="895" cy="160" r="4" fill="#C861FF"/>
+    <circle cx="1020" cy="305" r="2.5" fill="#B84FFF"/>
+    <circle cx="1170" cy="140" r="3" fill="#D876FF"/>
+    <circle cx="1325" cy="250" r="2" fill="#8F2FFF"/>
+
+    <circle cx="150" cy="585" r="2.5" fill="#B84FFF"/>
+    <circle cx="275" cy="690" r="3.5" fill="#D978FF"/>
+    <circle cx="420" cy="560" r="2" fill="#9A36FF"/>
+    <circle cx="565" cy="720" r="4" fill="#C960FF"/>
+    <circle cx="720" cy="620" r="2.5" fill="#B14AFF"/>
+    <circle cx="860" cy="735" r="3" fill="#DB7FFF"/>
+    <circle cx="1015" cy="590" r="2" fill="#8C2CFF"/>
+    <circle cx="1160" cy="690" r="3.5" fill="#C75EFF"/>
+    <circle cx="1300" cy="560" r="2.5" fill="#AE45FF"/>
+  </g>
+
+  <g opacity="0.55" filter="url(#softGlow)">
+    <circle cx="180" cy="230" r="18" fill="url(#particleGlow)"/>
+    <circle cx="520" cy="190" r="22" fill="url(#particleGlow)"/>
+    <circle cx="820" cy="340" r="16" fill="url(#particleGlow)"/>
+    <circle cx="1110" cy="220" r="20" fill="url(#particleGlow)"/>
+    <circle cx="1270" cy="650" r="18" fill="url(#particleGlow)"/>
+    <circle cx="930" cy="720" r="20" fill="url(#particleGlow)"/>
+    <circle cx="365" cy="650" r="17" fill="url(#particleGlow)"/>
+  </g>
+</svg>

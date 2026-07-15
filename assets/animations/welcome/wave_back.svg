@@ -1,0 +1,90 @@
+<svg
+  width="1440"
+  height="420"
+  viewBox="0 0 1440 420"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <linearGradient
+      id="waveGradient"
+      x1="0"
+      y1="120"
+      x2="1440"
+      y2="300"
+      gradientUnits="userSpaceOnUse"
+    >
+      <stop offset="0" stop-color="#5A00D6" stop-opacity="0.20"/>
+      <stop offset="0.28" stop-color="#8A2BE2" stop-opacity="0.72"/>
+      <stop offset="0.52" stop-color="#C026FF" stop-opacity="0.90"/>
+      <stop offset="0.76" stop-color="#7B24D1" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#4A009E" stop-opacity="0.20"/>
+    </linearGradient>
+
+    <filter
+      id="waveGlow"
+      x="-20%"
+      y="-80%"
+      width="140%"
+      height="260%"
+      color-interpolation-filters="sRGB"
+    >
+      <feGaussianBlur stdDeviation="14" result="blur"/>
+      <feColorMatrix
+        in="blur"
+        type="matrix"
+        values="
+          1 0 0 0 0.50
+          0 1 0 0 0.05
+          0 0 1 0 1
+          0 0 0 0.75 0
+        "
+      />
+    </filter>
+  </defs>
+
+  <path
+    d="
+      M-40 250
+      C80 170 170 155 280 205
+      C390 255 475 310 590 250
+      C705 190 790 120 905 180
+      C1020 240 1105 305 1220 245
+      C1335 185 1410 160 1490 205
+    "
+    stroke="#9B35FF"
+    stroke-opacity="0.32"
+    stroke-width="28"
+    stroke-linecap="round"
+    filter="url(#waveGlow)"
+  />
+
+  <path
+    d="
+      M-40 250
+      C80 170 170 155 280 205
+      C390 255 475 310 590 250
+      C705 190 790 120 905 180
+      C1020 240 1105 305 1220 245
+      C1335 185 1410 160 1490 205
+    "
+    stroke="url(#waveGradient)"
+    stroke-width="5"
+    stroke-linecap="round"
+  />
+
+  <path
+    d="
+      M-40 285
+      C90 225 185 210 300 250
+      C415 290 505 340 620 290
+      C735 240 820 185 935 225
+      C1050 265 1140 325 1255 280
+      C1370 235 1430 215 1490 245
+    "
+    stroke="#B54BFF"
+    stroke-opacity="0.28"
+    stroke-width="3"
+    stroke-linecap="round"
+  />
+</svg>

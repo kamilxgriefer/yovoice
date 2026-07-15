@@ -1,0 +1,90 @@
+<svg
+  width="1440"
+  height="420"
+  viewBox="0 0 1440 420"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <defs>
+    <linearGradient
+      id="middleGradient"
+      x1="0"
+      y1="120"
+      x2="1440"
+      y2="320"
+      gradientUnits="userSpaceOnUse"
+    >
+      <stop offset="0" stop-color="#7A19E8" stop-opacity="0.18"/>
+      <stop offset="0.25" stop-color="#9C32FF" stop-opacity="0.70"/>
+      <stop offset="0.50" stop-color="#E055FF" stop-opacity="0.96"/>
+      <stop offset="0.75" stop-color="#A63BFF" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#6615C9" stop-opacity="0.18"/>
+    </linearGradient>
+
+    <filter
+      id="middleGlow"
+      x="-20%"
+      y="-80%"
+      width="140%"
+      height="260%"
+      color-interpolation-filters="sRGB"
+    >
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feColorMatrix
+        in="blur"
+        type="matrix"
+        values="
+          1 0 0 0 0.65
+          0 1 0 0 0.12
+          0 0 1 0 1
+          0 0 0 0.70 0
+        "
+      />
+    </filter>
+  </defs>
+
+  <path
+    d="
+      M-50 220
+      C70 310 165 320 275 245
+      C385 170 480 140 590 205
+      C700 270 795 325 910 250
+      C1025 175 1120 135 1235 205
+      C1350 275 1430 310 1490 255
+    "
+    stroke="#D04CFF"
+    stroke-opacity="0.30"
+    stroke-width="24"
+    stroke-linecap="round"
+    filter="url(#middleGlow)"
+  />
+
+  <path
+    d="
+      M-50 220
+      C70 310 165 320 275 245
+      C385 170 480 140 590 205
+      C700 270 795 325 910 250
+      C1025 175 1120 135 1235 205
+      C1350 275 1430 310 1490 255
+    "
+    stroke="url(#middleGradient)"
+    stroke-width="4.5"
+    stroke-linecap="round"
+  />
+
+  <path
+    d="
+      M-50 255
+      C80 330 175 335 290 270
+      C405 205 500 180 615 235
+      C730 290 825 340 940 280
+      C1055 220 1150 180 1265 235
+      C1380 290 1440 315 1490 280
+    "
+    stroke="#F06BFF"
+    stroke-opacity="0.22"
+    stroke-width="2.5"
+    stroke-linecap="round"
+  />
+</svg>
