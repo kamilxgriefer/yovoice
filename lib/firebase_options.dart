@@ -45,7 +45,7 @@ class DefaultFirebaseOptions {
     appId: '1:80235878542:web:d0710da80b23e6051351df',
     messagingSenderId: '80235878542',
     projectId: 'yovoice-ec54a',
-    authDomain: 'yovoice-ec54a.firebaseapp.com',
+    authDomain: 'auth.yovoice.app',
     storageBucket: 'yovoice-ec54a.firebasestorage.app',
     measurementId: 'G-N66FNT890Y',
   );
@@ -57,6 +57,7 @@ class DefaultFirebaseOptions {
     projectId: 'yovoice-ec54a',
     storageBucket: 'yovoice-ec54a.firebasestorage.app',
   );
+
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyDZFVCb39HuAAbQ49vDkPVC77r1r2zvRKc',
     appId: '1:80235878542:ios:6e9b8f6cff5ec88f1351df',
@@ -65,6 +66,7 @@ class DefaultFirebaseOptions {
     storageBucket: 'yovoice-ec54a.firebasestorage.app',
     iosBundleId: 'com.example.yoVoice',
   );
+
   static const FirebaseOptions macos = FirebaseOptions(
     apiKey: 'AIzaSyDZFVCb39HuAAbQ49vDkPVC77r1r2zvRKc',
     appId: '1:80235878542:ios:6e9b8f6cff5ec88f1351df',
@@ -79,7 +81,7 @@ class DefaultFirebaseOptions {
     appId: '1:80235878542:web:81add24ce1e173381351df',
     messagingSenderId: '80235878542',
     projectId: 'yovoice-ec54a',
-    authDomain: 'yovoice-ec54a.firebaseapp.com',
+    authDomain: 'auth.yovoice.app',
     storageBucket: 'yovoice-ec54a.firebasestorage.app',
     measurementId: 'G-BM7DLKGNHV',
   );
