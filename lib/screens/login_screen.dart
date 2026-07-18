@@ -20,7 +20,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool _obscurePassword = true;
   bool _isLoading = false;
+  bool _isGoogleLoading = false;
   bool _isResettingPassword = false;
+
+  bool get _isAuthenticationLoading => _isLoading || _isGoogleLoading;
 
   @override
   void dispose() {
@@ -30,6 +33,10 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _login() async {
+    if (_isAuthenticationLoading) {
+      return;
+    }
+
     FocusScope.of(context).unfocus();
 
     final email = _emailController.text.trim();
@@ -47,7 +54,9 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       await _authService.signIn(email: email, password: password);
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       _showMessage(_authService.getErrorMessage(error));
     } finally {
@@ -59,7 +68,39 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  Future<void> _signInWithGoogle() async {
+    if (_isAuthenticationLoading) {
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _isGoogleLoading = true;
+    });
+
+    try {
+      await _authService.signInWithGoogle();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      _showMessage(_authService.getErrorMessage(error));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isGoogleLoading = false;
+        });
+      }
+    }
+  }
+
   Future<void> _resetPassword() async {
+    if (_isResettingPassword || _isAuthenticationLoading) {
+      return;
+    }
+
     FocusScope.of(context).unfocus();
 
     final email = _emailController.text.trim();
@@ -76,11 +117,15 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       await _authService.sendPasswordResetEmail(email);
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       _showMessage('Password reset email has been sent.');
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       _showMessage(_authService.getErrorMessage(error));
     } finally {
@@ -93,6 +138,10 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _openRegisterScreen() {
+    if (_isAuthenticationLoading) {
+      return;
+    }
+
     Navigator.of(
       context,
     ).push(MaterialPageRoute<void>(builder: (_) => const RegisterScreen()));
@@ -154,32 +203,16 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: IconButton(
-                            onPressed: () {
-                              if (Navigator.of(context).canPop()) {
-                                Navigator.of(context).pop();
-                              }
-                            },
-                            icon: SvgPicture.asset(
-                              'assets/icons/icon_back.svg',
-                              width: 34,
-                              height: 34,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
                         Center(
                           child: Image.asset(
                             'assets/images/yo_voice_logo_reference.png',
-                            width: 270,
-                            height: 270,
+                            width: 305,
+                            height: 305,
                             fit: BoxFit.contain,
                             filterQuality: FilterQuality.high,
                           ),
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 0),
                         const Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.center,
@@ -248,7 +281,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             });
                           },
                           onSubmitted: (_) {
-                            if (!_isLoading) {
+                            if (!_isAuthenticationLoading) {
                               _login();
                             }
                           },
@@ -257,7 +290,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         _PrimaryButton(
                           label: 'LOG IN',
                           isLoading: _isLoading,
-                          onPressed: _isLoading ? null : _login,
+                          onPressed: _isAuthenticationLoading ? null : _login,
                         ),
                         const SizedBox(height: 28),
                         const Row(
@@ -291,22 +324,23 @@ class _LoginScreenState extends State<LoginScreen> {
                         _SocialButton(
                           label: 'Continue with Google',
                           svgIconPath: 'assets/icons/icon_google_g.svg',
-                          onPressed: () {
-                            _showMessage(
-                              'Google Sign-In will be added in the next stage.',
-                            );
-                          },
+                          isLoading: _isGoogleLoading,
+                          onPressed: _isAuthenticationLoading
+                              ? null
+                              : _signInWithGoogle,
                         ),
                         const SizedBox(height: 14),
                         _SocialButton(
                           label: 'Continue with Apple',
                           materialIcon: Icons.apple,
                           iconSize: 34,
-                          onPressed: () {
-                            _showMessage(
-                              'Apple Sign-In will be added in the next stage.',
-                            );
-                          },
+                          onPressed: _isAuthenticationLoading
+                              ? null
+                              : () {
+                                  _showMessage(
+                                    'Apple Sign-In will be added in the next stage.',
+                                  );
+                                },
                         ),
                         const SizedBox(height: 28),
                         Row(
@@ -322,16 +356,27 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             ),
                             TextButton(
-                              onPressed: _openRegisterScreen,
+                              onPressed: _isAuthenticationLoading
+                                  ? null
+                                  : _openRegisterScreen,
                               style: ButtonStyle(
                                 padding: WidgetStateProperty.all(
                                   EdgeInsets.zero,
                                 ),
                                 minimumSize: WidgetStateProperty.all(Size.zero),
                                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                mouseCursor: WidgetStateProperty.all(
-                                  SystemMouseCursors.click,
-                                ),
+                                mouseCursor:
+                                    WidgetStateProperty.resolveWith<
+                                      MouseCursor
+                                    >((states) {
+                                      if (states.contains(
+                                        WidgetState.disabled,
+                                      )) {
+                                        return SystemMouseCursors.basic;
+                                      }
+
+                                      return SystemMouseCursors.click;
+                                    }),
                                 overlayColor:
                                     WidgetStateProperty.resolveWith<Color?>((
                                       states,
@@ -354,6 +399,12 @@ class _LoginScreenState extends State<LoginScreen> {
                                     WidgetStateProperty.resolveWith<Color>((
                                       states,
                                     ) {
+                                      if (states.contains(
+                                        WidgetState.disabled,
+                                      )) {
+                                        return const Color(0xFF6E617A);
+                                      }
+
                                       if (states.contains(
                                         WidgetState.hovered,
                                       )) {
@@ -387,7 +438,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 16),
                         Center(
                           child: TextButton(
-                            onPressed: _isResettingPassword
+                            onPressed:
+                                _isResettingPassword || _isAuthenticationLoading
                                 ? null
                                 : _resetPassword,
                             style: ButtonStyle(
@@ -422,6 +474,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                     height: 22,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 2,
+                                      color: Color(0xFFA02BFF),
                                     ),
                                   )
                                 : const Text(
@@ -598,16 +651,18 @@ class _SocialButton extends StatelessWidget {
     this.svgIconPath,
     this.materialIcon,
     this.iconSize = 30,
+    this.isLoading = false,
   }) : assert(
          svgIconPath != null || materialIcon != null,
          'An SVG icon path or Material icon must be provided.',
        );
 
   final String label;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final String? svgIconPath;
   final IconData? materialIcon;
   final double iconSize;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -617,43 +672,67 @@ class _SocialButton extends StatelessWidget {
         onPressed: onPressed,
         style: OutlinedButton.styleFrom(
           backgroundColor: const Color(0x660D0618),
+          disabledBackgroundColor: const Color(0x440D0618),
           foregroundColor: Colors.white,
-          side: const BorderSide(color: Color(0xFF6E1FBD), width: 1.3),
+          disabledForegroundColor: const Color(0xFF9189A6),
+          side: BorderSide(
+            color: onPressed == null
+                ? const Color(0xFF46305F)
+                : const Color(0xFF6E1FBD),
+            width: 1.3,
+          ),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
           ),
           padding: const EdgeInsets.symmetric(horizontal: 24),
         ),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 44,
-              height: 44,
-              child: Center(
-                child: svgIconPath != null
-                    ? SvgPicture.asset(
-                        svgIconPath!,
-                        width: iconSize,
-                        height: iconSize,
-                        fit: BoxFit.contain,
-                      )
-                    : Icon(materialIcon, size: iconSize, color: Colors.white),
-              ),
-            ),
-            Expanded(
-              child: Text(
-                label,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
+        child: isLoading
+            ? const SizedBox(
+                width: 25,
+                height: 25,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
                   color: Colors.white,
-                  fontSize: 16.5,
-                  fontWeight: FontWeight.w500,
                 ),
+              )
+            : Row(
+                children: [
+                  SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: Center(
+                      child: svgIconPath != null
+                          ? SvgPicture.asset(
+                              svgIconPath!,
+                              width: iconSize,
+                              height: iconSize,
+                              fit: BoxFit.contain,
+                            )
+                          : Icon(
+                              materialIcon,
+                              size: iconSize,
+                              color: onPressed == null
+                                  ? const Color(0xFF9189A6)
+                                  : Colors.white,
+                            ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      label,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: onPressed == null
+                            ? const Color(0xFF9189A6)
+                            : Colors.white,
+                        fontSize: 16.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 44),
+                ],
               ),
-            ),
-            const SizedBox(width: 44),
-          ],
-        ),
       ),
     );
   }

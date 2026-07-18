@@ -12,7 +12,20 @@
           "package_name": "app.yovoice"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "80235878542-vcrcafdpgm1p3nbqe1b58emar3toqd9n.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "app.yovoice",
+            "certificate_hash": "d51851e27913ea09b4d903290149c8c8b4e81dd3"
+          }
+        },
+        {
+          "client_id": "80235878542-l7pkubgk82bu5p7007hmu26rrael9hqn.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyC_gsL0-6hmaTjG_Gd2dcxRxWKjBTO1QhQ"
@@ -20,7 +33,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "80235878542-l7pkubgk82bu5p7007hmu26rrael9hqn.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "80235878542-lklkkqh8v0s4c6fe5eifc2d2unilevn4.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.yoVoice"
+              }
+            }
+          ]
         }
       }
     }

@@ -1,4 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import '../models/app_user.dart';
 import 'firestore_service.dart';
@@ -10,6 +12,10 @@ class AuthService {
 
   final FirebaseAuth _firebaseAuth;
   final FirestoreService _firestoreService;
+
+  final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
+
+  Future<void>? _googleSignInInitialization;
 
   User? get currentUser => _firebaseAuth.currentUser;
 
@@ -29,6 +35,87 @@ class AuthService {
     } catch (_) {
       throw const AuthServiceException(
         'An unexpected error occurred while signing in.',
+      );
+    }
+  }
+
+  Future<UserCredential> signInWithGoogle() async {
+    try {
+      UserCredential credential;
+
+      if (kIsWeb) {
+        final googleProvider = GoogleAuthProvider();
+
+        googleProvider.setCustomParameters({'prompt': 'select_account'});
+
+        credential = await _firebaseAuth.signInWithPopup(googleProvider);
+      } else {
+        await _initializeGoogleSignIn();
+
+        if (!_googleSignIn.supportsAuthenticate()) {
+          throw const AuthServiceException(
+            'Google Sign-In is not supported on this platform.',
+          );
+        }
+
+        final googleUser = await _googleSignIn.authenticate();
+        final googleAuthentication = googleUser.authentication;
+        final idToken = googleAuthentication.idToken;
+
+        if (idToken == null || idToken.isEmpty) {
+          throw const AuthServiceException(
+            'Google did not return a valid authentication token.',
+          );
+        }
+
+        final googleCredential = GoogleAuthProvider.credential(
+          idToken: idToken,
+        );
+
+        credential = await _firebaseAuth.signInWithCredential(googleCredential);
+      }
+
+      await _createSocialUserProfileIfNeeded(credential);
+
+      return credential;
+    } on GoogleSignInException catch (error) {
+      switch (error.code) {
+        case GoogleSignInExceptionCode.canceled:
+          throw const AuthServiceException('Google Sign-In was cancelled.');
+
+        case GoogleSignInExceptionCode.interrupted:
+          throw const AuthServiceException(
+            'Google Sign-In was interrupted. Please try again.',
+          );
+
+        case GoogleSignInExceptionCode.clientConfigurationError:
+          throw AuthServiceException(
+            error.description ?? 'Google Sign-In is not configured correctly.',
+          );
+
+        case GoogleSignInExceptionCode.providerConfigurationError:
+          throw AuthServiceException(
+            error.description ??
+                'Google authentication provider is unavailable.',
+          );
+
+        case GoogleSignInExceptionCode.uiUnavailable:
+          throw const AuthServiceException(
+            'Google Sign-In window could not be opened.',
+          );
+
+        default:
+          throw AuthServiceException(
+            error.description ?? 'An unexpected Google Sign-In error occurred.',
+          );
+      }
+    } on FirebaseAuthException {
+      rethrow;
+    } on AuthServiceException {
+      rethrow;
+    } catch (_) {
+      throw const AuthServiceException(
+        'An unexpected error occurred during Google Sign-In.',
       );
     }
   }
@@ -70,7 +157,11 @@ class AuthService {
       rethrow;
     } catch (error) {
       if (credential?.user != null) {
-        await credential!.user!.delete();
+        try {
+          await credential!.user!.delete();
+        } catch (_) {
+          // The account may already have been removed or the session expired.
+        }
       }
 
       if (error is AuthServiceException) {
@@ -94,7 +185,106 @@ class AuthService {
   }
 
   Future<void> signOut() async {
-    await _firebaseAuth.signOut();
+    try {
+      if (!kIsWeb) {
+        try {
+          await _initializeGoogleSignIn();
+          await _googleSignIn.signOut();
+        } catch (_) {
+          // Firebase must still be signed out even when Google sign-out fails.
+        }
+      }
+    } finally {
+      await _firebaseAuth.signOut();
+    }
+  }
+
+  Future<void> _initializeGoogleSignIn() async {
+    final existingInitialization = _googleSignInInitialization;
+
+    if (existingInitialization != null) {
+      await existingInitialization;
+      return;
+    }
+
+    final initialization = _googleSignIn.initialize();
+    _googleSignInInitialization = initialization;
+
+    try {
+      await initialization;
+    } catch (_) {
+      _googleSignInInitialization = null;
+      rethrow;
+    }
+  }
+
+  Future<void> _createSocialUserProfileIfNeeded(
+    UserCredential credential,
+  ) async {
+    final isNewUser = credential.additionalUserInfo?.isNewUser ?? false;
+
+    if (!isNewUser) {
+      return;
+    }
+
+    final user = credential.user;
+
+    if (user == null) {
+      throw const AuthServiceException(
+        'Unable to retrieve the signed-in Google user.',
+      );
+    }
+
+    final email = user.email?.trim();
+
+    if (email == null || email.isEmpty) {
+      throw const AuthServiceException(
+        'Google did not provide an email address.',
+      );
+    }
+
+    final username = _resolveUsername(user);
+
+    final appUser = AppUser(
+      uid: user.uid,
+      email: email,
+      username: username,
+      createdAt: DateTime.now(),
+    );
+
+    try {
+      await _firestoreService.createUserProfile(appUser);
+    } catch (_) {
+      try {
+        await user.delete();
+      } catch (_) {
+        await _firebaseAuth.signOut();
+      }
+
+      throw const AuthServiceException(
+        'Google account was authenticated, but the user profile could not be created.',
+      );
+    }
+  }
+
+  String _resolveUsername(User user) {
+    final displayName = user.displayName?.trim();
+
+    if (displayName != null && displayName.isNotEmpty) {
+      return displayName;
+    }
+
+    final email = user.email?.trim();
+
+    if (email != null && email.contains('@')) {
+      final emailUsername = email.split('@').first.trim();
+
+      if (emailUsername.isNotEmpty) {
+        return emailUsername;
+      }
+    }
+
+    return 'YO Voice User';
   }
 
   String getErrorMessage(Object error) {
@@ -132,6 +322,19 @@ class AuthService {
 
       case 'operation-not-allowed':
         return 'This sign-in method is not enabled.';
+
+      case 'account-exists-with-different-credential':
+        return 'An account already exists with this email using another sign-in method.';
+
+      case 'popup-blocked':
+        return 'The browser blocked the Google Sign-In window. Allow pop-ups and try again.';
+
+      case 'popup-closed-by-user':
+      case 'cancelled-popup-request':
+        return 'Google Sign-In was cancelled.';
+
+      case 'unauthorized-domain':
+        return 'This website domain is not authorized in Firebase Authentication.';
 
       default:
         return error.message ?? 'Firebase authentication error.';
