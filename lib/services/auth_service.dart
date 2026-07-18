@@ -28,7 +28,7 @@ class AuthService {
       rethrow;
     } catch (_) {
       throw const AuthServiceException(
-        'Wystąpił nieoczekiwany błąd podczas logowania.',
+        'An unexpected error occurred while signing in.',
       );
     }
   }
@@ -50,7 +50,7 @@ class AuthService {
 
       if (user == null) {
         throw const AuthServiceException(
-          'Nie udało się utworzyć konta użytkownika.',
+          'Unable to create a new user account.',
         );
       }
 
@@ -77,9 +77,7 @@ class AuthService {
         rethrow;
       }
 
-      throw const AuthServiceException(
-        'Nie udało się utworzyć profilu użytkownika.',
-      );
+      throw const AuthServiceException('Unable to create the user profile.');
     }
   }
 
@@ -90,7 +88,7 @@ class AuthService {
       rethrow;
     } catch (_) {
       throw const AuthServiceException(
-        'Nie udało się wysłać wiadomości resetującej hasło.',
+        'Unable to send the password reset email.',
       );
     }
   }
@@ -105,30 +103,38 @@ class AuthService {
     }
 
     if (error is! FirebaseAuthException) {
-      return 'Wystąpił nieoczekiwany błąd.';
+      return 'An unexpected error occurred.';
     }
 
     switch (error.code) {
       case 'invalid-email':
-        return 'Adres e-mail jest nieprawidłowy.';
+        return 'The email address is invalid.';
+
       case 'user-disabled':
-        return 'To konto zostało zablokowane.';
+        return 'This account has been disabled.';
+
       case 'user-not-found':
       case 'wrong-password':
       case 'invalid-credential':
-        return 'Nieprawidłowy e-mail lub hasło.';
+        return 'Incorrect email or password.';
+
       case 'email-already-in-use':
-        return 'Konto z tym adresem e-mail już istnieje.';
+        return 'An account with this email already exists.';
+
       case 'weak-password':
-        return 'Hasło jest zbyt słabe.';
+        return 'The password is too weak.';
+
       case 'too-many-requests':
-        return 'Zbyt wiele prób. Spróbuj ponownie później.';
+        return 'Too many attempts. Please try again later.';
+
       case 'network-request-failed':
-        return 'Brak połączenia z internetem.';
+        return 'No internet connection.';
+
       case 'operation-not-allowed':
-        return 'Ta metoda logowania nie została włączona w Firebase.';
+        return 'This sign-in method is not enabled.';
+
       default:
-        return error.message ?? 'Wystąpił błąd Firebase.';
+        return error.message ?? 'Firebase authentication error.';
     }
   }
 }

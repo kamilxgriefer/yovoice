@@ -65,7 +65,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final email = _emailController.text.trim();
 
     if (email.isEmpty) {
-      _showMessage('Najpierw wpisz swój adres e-mail.');
+      _showMessage('Enter your email address and password.');
       return;
     }
 
@@ -78,7 +78,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (!mounted) return;
 
-      _showMessage('Wiadomość do zresetowania hasła została wysłana.');
+      _showMessage('Password reset email has been sent.');
     } catch (error) {
       if (!mounted) return;
 
@@ -308,7 +308,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           svgIconPath: 'assets/icons/icon_google_g.svg',
                           onPressed: () {
                             _showMessage(
-                              'Logowanie przez Google dodamy w kolejnym etapie.',
+                              'Google Sign-In will be added in the next stage.',
                             );
                           },
                         ),
@@ -321,7 +321,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           iconSize: 34,
                           onPressed: () {
                             _showMessage(
-                              'Logowanie przez Apple dodamy w kolejnym etapie.',
+                              'Apple Sign-In will be added in the next stage.',
                             );
                           },
                         ),
