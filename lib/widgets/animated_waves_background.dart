@@ -1,7 +1,7 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 
 class AnimatedWavesBackground extends StatefulWidget {
   const AnimatedWavesBackground({super.key});
@@ -13,41 +13,27 @@ class AnimatedWavesBackground extends StatefulWidget {
 
 class _AnimatedWavesBackgroundState extends State<AnimatedWavesBackground>
     with TickerProviderStateMixin {
-  late final AnimationController _backWaveController;
-  late final AnimationController _middleWaveController;
-  late final AnimationController _frontWaveController;
+  late final AnimationController _auroraController;
   late final AnimationController _particlesController;
 
   @override
   void initState() {
     super.initState();
 
-    _backWaveController = AnimationController(
+    _auroraController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 32),
-    )..repeat();
-
-    _middleWaveController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 25),
-    )..repeat();
-
-    _frontWaveController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 20),
+      duration: const Duration(seconds: 24),
     )..repeat();
 
     _particlesController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 8),
-    )..repeat(reverse: true);
+      duration: const Duration(seconds: 12),
+    )..repeat();
   }
 
   @override
   void dispose() {
-    _backWaveController.dispose();
-    _middleWaveController.dispose();
-    _frontWaveController.dispose();
+    _auroraController.dispose();
     _particlesController.dispose();
     super.dispose();
   }
@@ -56,196 +42,343 @@ class _AnimatedWavesBackgroundState extends State<AnimatedWavesBackground>
   Widget build(BuildContext context) {
     return Positioned.fill(
       child: IgnorePointer(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final screenHeight = constraints.maxHeight;
-            final screenWidth = constraints.maxWidth;
-
-            /*
-             * Fale zajmują tylko środkowy fragment ekranu.
-             * Kończą się przed napisem OR i przyciskami społecznościowymi.
-             */
-            final wavesTop = screenHeight * 0.38;
-            final wavesHeight = math.min(screenHeight * 0.27, 280.0);
-
-            return ClipRect(
-              child: Stack(
-                children: [
-                  _AnimatedParticles(controller: _particlesController),
-
-                  Positioned(
-                    left: -220,
-                    right: -220,
-                    top: wavesTop,
-                    height: wavesHeight,
-                    child: ShaderMask(
-                      blendMode: BlendMode.dstIn,
-                      shaderCallback: (bounds) {
-                        return const LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.transparent,
-                            Colors.white,
-                            Colors.white,
-                            Colors.transparent,
-                          ],
-                          stops: [0.0, 0.18, 0.68, 1.0],
-                        ).createShader(bounds);
-                      },
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          _AnimatedWave(
-                            controller: _backWaveController,
-                            assetPath:
-                                'assets/animations/welcome/wave_back.svg',
-                            width: math.max(screenWidth * 1.8, 1500),
-                            horizontalDistance: 26,
-                            verticalDistance: 5,
-                            opacity: 0.42,
-                          ),
-
-                          _AnimatedWave(
-                            controller: _middleWaveController,
-                            assetPath:
-                                'assets/animations/welcome/wave_middle.svg',
-                            width: math.max(screenWidth * 1.75, 1480),
-                            horizontalDistance: -20,
-                            verticalDistance: 7,
-                            opacity: 0.50,
-                            phaseOffset: math.pi / 2,
-                          ),
-
-                          _AnimatedWave(
-                            controller: _frontWaveController,
-                            assetPath:
-                                'assets/animations/welcome/wave_front.svg',
-                            width: math.max(screenWidth * 1.7, 1450),
-                            horizontalDistance: 15,
-                            verticalDistance: 4,
-                            opacity: 0.60,
-                            phaseOffset: math.pi,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  /*
-                   * Subtelna poświata łącząca logo z falami.
-                   */
-                  Positioned(
-                    top: screenHeight * 0.08,
-                    left: 0,
-                    right: 0,
-                    child: Center(
-                      child: AnimatedBuilder(
-                        animation: _particlesController,
-                        builder: (context, child) {
-                          final pulse =
-                              0.92 + (_particlesController.value * 0.08);
-
-                          return Transform.scale(
-                            scale: pulse,
-                            child: Opacity(
-                              opacity:
-                                  0.16 + (_particlesController.value * 0.06),
-                              child: child,
-                            ),
-                          );
-                        },
-                        child: Container(
-                          width: 260,
-                          height: 260,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: RadialGradient(
-                              colors: [
-                                Color(0x668A2BE2),
-                                Color(0x22C026FF),
-                                Colors.transparent,
-                              ],
-                              stops: [0.0, 0.48, 1.0],
-                            ),
-                          ),
+        child: RepaintBoundary(
+          child: ClipRect(
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: AnimatedBuilder(
+                    animation: _auroraController,
+                    builder: (context, child) {
+                      return CustomPaint(
+                        painter: _MinimalAuroraPainter(
+                          progress: _auroraController.value,
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   ),
-                ],
-              ),
-            );
-          },
+                ),
+                Positioned.fill(
+                  child: AnimatedBuilder(
+                    animation: _particlesController,
+                    builder: (context, child) {
+                      return CustomPaint(
+                        painter: _SoftParticlesPainter(
+                          progress: _particlesController.value,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
 }
 
-class _AnimatedParticles extends StatelessWidget {
-  const _AnimatedParticles({required this.controller});
+class _MinimalAuroraPainter extends CustomPainter {
+  const _MinimalAuroraPainter({required this.progress});
 
-  final AnimationController controller;
+  final double progress;
 
   @override
-  Widget build(BuildContext context) {
-    return Positioned.fill(
-      child: AnimatedBuilder(
-        animation: controller,
-        child: SvgPicture.asset(
-          'assets/animations/welcome/particles.svg',
-          fit: BoxFit.cover,
-        ),
-        builder: (context, child) {
-          final progress = controller.value;
-          final verticalOffset = math.sin(progress * math.pi * 2) * 6;
+  void paint(Canvas canvas, Size size) {
+    final angle = progress * math.pi * 2;
 
-          return Transform.translate(
-            offset: Offset(0, verticalOffset),
-            child: Opacity(opacity: 0.38 + (progress * 0.20), child: child),
-          );
-        },
+    _drawAuroraBlob(
+      canvas: canvas,
+      center: Offset(
+        size.width * 0.18 + math.sin(angle) * size.width * 0.045,
+        size.height * 0.22 + math.cos(angle * 0.8) * size.height * 0.035,
       ),
+      width: size.width * 0.72,
+      height: size.height * 0.44,
+      rotation: -0.35 + math.sin(angle * 0.6) * 0.08,
+      colors: const [
+        Color(0x003E00A8),
+        Color(0x335E12CC),
+        Color(0x226A00FF),
+        Color(0x00A52CFF),
+      ],
+      blurSigma: 76,
     );
+
+    _drawAuroraBlob(
+      canvas: canvas,
+      center: Offset(
+        size.width * 0.88 + math.cos(angle * 0.85) * size.width * 0.05,
+        size.height * 0.36 + math.sin(angle * 0.65) * size.height * 0.045,
+      ),
+      width: size.width * 0.62,
+      height: size.height * 0.46,
+      rotation: 0.42 + math.cos(angle * 0.55) * 0.07,
+      colors: const [
+        Color(0x00C026FF),
+        Color(0x2BC026FF),
+        Color(0x287B24D1),
+        Color(0x003D007A),
+      ],
+      blurSigma: 82,
+    );
+
+    _drawAuroraBlob(
+      canvas: canvas,
+      center: Offset(
+        size.width * 0.48 + math.sin(angle * 0.7) * size.width * 0.055,
+        size.height * 0.88 + math.cos(angle * 0.5) * size.height * 0.035,
+      ),
+      width: size.width * 0.92,
+      height: size.height * 0.42,
+      rotation: -0.08 + math.sin(angle * 0.45) * 0.05,
+      colors: const [
+        Color(0x000D0618),
+        Color(0x1F6A00FF),
+        Color(0x245A17A8),
+        Color(0x000D0618),
+      ],
+      blurSigma: 90,
+    );
+
+    _drawCenterGlow(canvas: canvas, size: size, angle: angle);
+  }
+
+  void _drawAuroraBlob({
+    required Canvas canvas,
+    required Offset center,
+    required double width,
+    required double height,
+    required double rotation,
+    required List<Color> colors,
+    required double blurSigma,
+  }) {
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(rotation);
+
+    final rect = Rect.fromCenter(
+      center: Offset.zero,
+      width: width,
+      height: height,
+    );
+
+    final paint = Paint()
+      ..shader = ui.Gradient.radial(
+        Offset.zero,
+        math.max(width, height) * 0.52,
+        colors,
+        const [0.0, 0.34, 0.7, 1.0],
+      )
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, blurSigma)
+      ..blendMode = BlendMode.screen;
+
+    canvas.drawOval(rect, paint);
+    canvas.restore();
+  }
+
+  void _drawCenterGlow({
+    required Canvas canvas,
+    required Size size,
+    required double angle,
+  }) {
+    final center = Offset(
+      size.width * 0.5 + math.sin(angle * 0.45) * size.width * 0.018,
+      size.height * 0.23 + math.cos(angle * 0.4) * size.height * 0.012,
+    );
+
+    final radius = math.min(size.width, size.height) * 0.24;
+
+    final paint = Paint()
+      ..shader = ui.Gradient.radial(
+        center,
+        radius,
+        const [
+          Color(0x226E20C9),
+          Color(0x147B24D1),
+          Color(0x086A00FF),
+          Colors.transparent,
+        ],
+        const [0.0, 0.35, 0.7, 1.0],
+      )
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 46)
+      ..blendMode = BlendMode.screen;
+
+    canvas.drawCircle(center, radius, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _MinimalAuroraPainter oldDelegate) {
+    return oldDelegate.progress != progress;
   }
 }
 
-class _AnimatedWave extends StatelessWidget {
-  const _AnimatedWave({
-    required this.controller,
-    required this.assetPath,
-    required this.width,
-    required this.horizontalDistance,
-    required this.verticalDistance,
+class _SoftParticlesPainter extends CustomPainter {
+  const _SoftParticlesPainter({required this.progress});
+
+  final double progress;
+
+  static const List<_ParticleData> _particles = [
+    _ParticleData(
+      x: 0.08,
+      y: 0.18,
+      radius: 2.2,
+      opacity: 0.32,
+      speed: 0.8,
+      phase: 0.2,
+    ),
+    _ParticleData(
+      x: 0.19,
+      y: 0.42,
+      radius: 1.6,
+      opacity: 0.26,
+      speed: 1.1,
+      phase: 1.4,
+    ),
+    _ParticleData(
+      x: 0.31,
+      y: 0.12,
+      radius: 2.0,
+      opacity: 0.28,
+      speed: 0.7,
+      phase: 2.1,
+    ),
+    _ParticleData(
+      x: 0.43,
+      y: 0.34,
+      radius: 1.4,
+      opacity: 0.22,
+      speed: 1.0,
+      phase: 0.9,
+    ),
+    _ParticleData(
+      x: 0.58,
+      y: 0.16,
+      radius: 1.8,
+      opacity: 0.27,
+      speed: 0.85,
+      phase: 2.8,
+    ),
+    _ParticleData(
+      x: 0.71,
+      y: 0.29,
+      radius: 2.3,
+      opacity: 0.30,
+      speed: 0.65,
+      phase: 1.7,
+    ),
+    _ParticleData(
+      x: 0.84,
+      y: 0.13,
+      radius: 1.5,
+      opacity: 0.24,
+      speed: 1.15,
+      phase: 0.5,
+    ),
+    _ParticleData(
+      x: 0.92,
+      y: 0.44,
+      radius: 1.8,
+      opacity: 0.25,
+      speed: 0.9,
+      phase: 2.4,
+    ),
+    _ParticleData(
+      x: 0.13,
+      y: 0.68,
+      radius: 1.4,
+      opacity: 0.20,
+      speed: 0.75,
+      phase: 1.0,
+    ),
+    _ParticleData(
+      x: 0.28,
+      y: 0.82,
+      radius: 2.0,
+      opacity: 0.24,
+      speed: 0.95,
+      phase: 2.0,
+    ),
+    _ParticleData(
+      x: 0.52,
+      y: 0.73,
+      radius: 1.5,
+      opacity: 0.19,
+      speed: 1.2,
+      phase: 0.4,
+    ),
+    _ParticleData(
+      x: 0.69,
+      y: 0.88,
+      radius: 1.8,
+      opacity: 0.22,
+      speed: 0.8,
+      phase: 1.8,
+    ),
+    _ParticleData(
+      x: 0.87,
+      y: 0.74,
+      radius: 1.4,
+      opacity: 0.21,
+      speed: 1.05,
+      phase: 2.6,
+    ),
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final baseAngle = progress * math.pi * 2;
+
+    for (final particle in _particles) {
+      final angle = baseAngle * particle.speed + particle.phase;
+
+      final horizontalMovement = math.sin(angle) * 7;
+      final verticalMovement = math.cos(angle * 0.85) * 9;
+
+      final center = Offset(
+        size.width * particle.x + horizontalMovement,
+        size.height * particle.y + verticalMovement,
+      );
+
+      final pulse = 0.72 + ((math.sin(angle) + 1) * 0.14);
+      final currentOpacity = particle.opacity * pulse;
+
+      final glowPaint = Paint()
+        ..color = const Color(
+          0xFFA02BFF,
+        ).withValues(alpha: currentOpacity * 0.24)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10);
+
+      final particlePaint = Paint()
+        ..color = const Color(0xFFC05CFF).withValues(alpha: currentOpacity);
+
+      canvas.drawCircle(center, particle.radius * 4.2, glowPaint);
+
+      canvas.drawCircle(center, particle.radius, particlePaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SoftParticlesPainter oldDelegate) {
+    return oldDelegate.progress != progress;
+  }
+}
+
+class _ParticleData {
+  const _ParticleData({
+    required this.x,
+    required this.y,
+    required this.radius,
     required this.opacity,
-    this.phaseOffset = 0,
+    required this.speed,
+    required this.phase,
   });
 
-  final AnimationController controller;
-  final String assetPath;
-  final double width;
-  final double horizontalDistance;
-  final double verticalDistance;
+  final double x;
+  final double y;
+  final double radius;
   final double opacity;
-  final double phaseOffset;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: controller,
-      child: SvgPicture.asset(assetPath, width: width, fit: BoxFit.fitWidth),
-      builder: (context, child) {
-        final angle = controller.value * math.pi * 2 + phaseOffset;
-
-        final horizontalOffset = math.sin(angle) * horizontalDistance;
-        final verticalOffset = math.cos(angle) * verticalDistance;
-
-        return Transform.translate(
-          offset: Offset(horizontalOffset, verticalOffset),
-          child: Opacity(opacity: opacity, child: child),
-        );
-      },
-    );
-  }
+  final double speed;
+  final double phase;
 }
