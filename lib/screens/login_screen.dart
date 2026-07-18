@@ -36,7 +36,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final password = _passwordController.text;
 
     if (email.isEmpty || password.isEmpty) {
-      _showMessage('Wpisz adres e-mail i hasło.');
+      _showMessage('Enter your email address and password.');
       return;
     }
 
@@ -65,7 +65,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final email = _emailController.text.trim();
 
     if (email.isEmpty) {
-      _showMessage('Enter your email address and password.');
+      _showMessage('Enter your email address.');
       return;
     }
 
@@ -127,9 +127,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
           ),
-
           const AnimatedWavesBackground(),
-
           Positioned.fill(
             child: Container(
               decoration: const BoxDecoration(
@@ -146,7 +144,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
           ),
-
           SafeArea(
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
@@ -172,61 +169,57 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                         ),
-
                         const SizedBox(height: 12),
-
                         Center(
                           child: Image.asset(
                             'assets/images/yo_voice_logo_reference.png',
-                            width: 220,
-                            height: 220,
+                            width: 270,
+                            height: 270,
                             fit: BoxFit.contain,
                             filterQuality: FilterQuality.high,
                           ),
                         ),
-
                         const SizedBox(height: 4),
-
                         const Row(
                           mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             Text(
                               'YO',
                               style: TextStyle(
-                                color: Color(0xFF8A2BE2),
-                                fontSize: 43,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 1,
+                                color: Color(0xFFA52CFF),
+                                fontSize: 44,
+                                fontWeight: FontWeight.w700,
+                                height: 1,
+                                letterSpacing: 0.4,
                               ),
                             ),
-                            SizedBox(width: 12),
+                            SizedBox(width: 11),
                             Text(
                               'VOICE',
                               style: TextStyle(
                                 color: Colors.white,
-                                fontSize: 43,
-                                fontWeight: FontWeight.w500,
-                                letterSpacing: 3,
+                                fontSize: 44,
+                                fontWeight: FontWeight.w400,
+                                height: 1,
+                                letterSpacing: 2.4,
                               ),
                             ),
                           ],
                         ),
-
-                        const SizedBox(height: 10),
-
+                        const SizedBox(height: 12),
                         const Text(
                           'SPEAK. CONNECT. BE YOU.',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             color: Color(0xFFB8B1C8),
-                            fontSize: 14,
+                            fontSize: 13.5,
                             fontWeight: FontWeight.w500,
-                            letterSpacing: 4,
+                            height: 1.35,
+                            letterSpacing: 3.7,
                           ),
                         ),
-
                         const SizedBox(height: 42),
-
                         _AuthField(
                           controller: _emailController,
                           hintText: 'Email',
@@ -238,9 +231,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ],
                           prefixIconPath: 'assets/icons/icon_email.svg',
                         ),
-
                         const SizedBox(height: 16),
-
                         _AuthField(
                           controller: _passwordController,
                           hintText: 'Password',
@@ -262,17 +253,13 @@ class _LoginScreenState extends State<LoginScreen> {
                             }
                           },
                         ),
-
                         const SizedBox(height: 24),
-
                         _PrimaryButton(
                           label: 'LOG IN',
                           isLoading: _isLoading,
                           onPressed: _isLoading ? null : _login,
                         ),
-
                         const SizedBox(height: 28),
-
                         const Row(
                           children: [
                             Expanded(
@@ -300,9 +287,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ],
                         ),
-
                         const SizedBox(height: 24),
-
                         _SocialButton(
                           label: 'Continue with Google',
                           svgIconPath: 'assets/icons/icon_google_g.svg',
@@ -312,9 +297,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             );
                           },
                         ),
-
                         const SizedBox(height: 14),
-
                         _SocialButton(
                           label: 'Continue with Apple',
                           materialIcon: Icons.apple,
@@ -325,9 +308,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             );
                           },
                         ),
-
                         const SizedBox(height: 28),
-
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
@@ -403,9 +384,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ],
                         ),
-
                         const SizedBox(height: 16),
-
                         Center(
                           child: TextButton(
                             onPressed: _isResettingPassword
@@ -449,13 +428,12 @@ class _LoginScreenState extends State<LoginScreen> {
                                     'Forgot password?',
                                     style: TextStyle(
                                       color: Color(0xFFA02BFF),
-                                      fontSize: 17,
+                                      fontSize: 16.5,
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
                           ),
                         ),
-
                         const SizedBox(height: 28),
                       ],
                     ),
@@ -523,8 +501,8 @@ class _PrimaryButton extends StatelessWidget {
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.1,
                 ),
               ),
       ),
@@ -568,10 +546,18 @@ class _AuthField extends StatelessWidget {
       enableSuggestions: !obscureText,
       obscureText: obscureText,
       onSubmitted: onSubmitted,
-      style: const TextStyle(color: Colors.white, fontSize: 17),
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 17,
+        fontWeight: FontWeight.w400,
+      ),
       decoration: InputDecoration(
         hintText: hintText,
-        hintStyle: const TextStyle(color: Color(0xFF9189A6), fontSize: 17),
+        hintStyle: const TextStyle(
+          color: Color(0xFF9189A6),
+          fontSize: 17,
+          fontWeight: FontWeight.w400,
+        ),
         prefixIcon: Padding(
           padding: const EdgeInsets.all(17),
           child: SvgPicture.asset(prefixIconPath, width: 25, height: 25),
@@ -660,7 +646,7 @@ class _SocialButton extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 17,
+                  fontSize: 16.5,
                   fontWeight: FontWeight.w500,
                 ),
               ),
