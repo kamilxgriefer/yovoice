@@ -13,27 +13,27 @@ class AnimatedWavesBackground extends StatefulWidget {
 
 class _AnimatedWavesBackgroundState extends State<AnimatedWavesBackground>
     with TickerProviderStateMixin {
-  late final AnimationController _auroraController;
+  late final AnimationController _backgroundController;
   late final AnimationController _particlesController;
 
   @override
   void initState() {
     super.initState();
 
-    _auroraController = AnimationController(
+    _backgroundController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 24),
+      duration: const Duration(seconds: 36),
     )..repeat();
 
     _particlesController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 12),
+      duration: const Duration(seconds: 24),
     )..repeat();
   }
 
   @override
   void dispose() {
-    _auroraController.dispose();
+    _backgroundController.dispose();
     _particlesController.dispose();
     super.dispose();
   }
@@ -48,11 +48,11 @@ class _AnimatedWavesBackgroundState extends State<AnimatedWavesBackground>
               children: [
                 Positioned.fill(
                   child: AnimatedBuilder(
-                    animation: _auroraController,
+                    animation: _backgroundController,
                     builder: (context, child) {
                       return CustomPaint(
                         painter: _MinimalAuroraPainter(
-                          progress: _auroraController.value,
+                          progress: _backgroundController.value,
                         ),
                       );
                     },
@@ -91,58 +91,58 @@ class _MinimalAuroraPainter extends CustomPainter {
     _drawAuroraBlob(
       canvas: canvas,
       center: Offset(
-        size.width * 0.18 + math.sin(angle) * size.width * 0.045,
-        size.height * 0.22 + math.cos(angle * 0.8) * size.height * 0.035,
+        size.width * 0.08 + math.sin(angle) * size.width * 0.045,
+        size.height * 0.20 + math.cos(angle) * size.height * 0.025,
       ),
       width: size.width * 0.72,
       height: size.height * 0.44,
-      rotation: -0.35 + math.sin(angle * 0.6) * 0.08,
+      rotation: -0.32 + math.sin(angle) * 0.05,
       colors: const [
         Color(0x003E00A8),
-        Color(0x335E12CC),
-        Color(0x226A00FF),
+        Color(0x285E12CC),
+        Color(0x1C6A00FF),
         Color(0x00A52CFF),
       ],
-      blurSigma: 76,
+      blurSigma: 78,
     );
 
     _drawAuroraBlob(
       canvas: canvas,
       center: Offset(
-        size.width * 0.88 + math.cos(angle * 0.85) * size.width * 0.05,
-        size.height * 0.36 + math.sin(angle * 0.65) * size.height * 0.045,
+        size.width * 0.94 + math.cos(angle) * size.width * 0.05,
+        size.height * 0.33 + math.sin(angle) * size.height * 0.035,
       ),
-      width: size.width * 0.62,
-      height: size.height * 0.46,
-      rotation: 0.42 + math.cos(angle * 0.55) * 0.07,
+      width: size.width * 0.66,
+      height: size.height * 0.48,
+      rotation: 0.38 + math.cos(angle) * 0.05,
       colors: const [
         Color(0x00C026FF),
-        Color(0x2BC026FF),
-        Color(0x287B24D1),
+        Color(0x24C026FF),
+        Color(0x207B24D1),
         Color(0x003D007A),
       ],
-      blurSigma: 82,
+      blurSigma: 84,
     );
 
     _drawAuroraBlob(
       canvas: canvas,
       center: Offset(
-        size.width * 0.48 + math.sin(angle * 0.7) * size.width * 0.055,
-        size.height * 0.88 + math.cos(angle * 0.5) * size.height * 0.035,
+        size.width * 0.48 + math.sin(angle * 2) * size.width * 0.035,
+        size.height * 0.93 + math.cos(angle * 2) * size.height * 0.02,
       ),
-      width: size.width * 0.92,
-      height: size.height * 0.42,
-      rotation: -0.08 + math.sin(angle * 0.45) * 0.05,
+      width: size.width * 0.98,
+      height: size.height * 0.46,
+      rotation: -0.06 + math.sin(angle * 2) * 0.035,
       colors: const [
         Color(0x000D0618),
-        Color(0x1F6A00FF),
-        Color(0x245A17A8),
+        Color(0x186A00FF),
+        Color(0x1C5A17A8),
         Color(0x000D0618),
       ],
-      blurSigma: 90,
+      blurSigma: 92,
     );
 
-    _drawCenterGlow(canvas: canvas, size: size, angle: angle);
+    _drawLogoGlow(canvas: canvas, size: size, angle: angle);
   }
 
   void _drawAuroraBlob({
@@ -169,7 +169,7 @@ class _MinimalAuroraPainter extends CustomPainter {
         Offset.zero,
         math.max(width, height) * 0.52,
         colors,
-        const [0.0, 0.34, 0.7, 1.0],
+        const [0.0, 0.34, 0.70, 1.0],
       )
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, blurSigma)
       ..blendMode = BlendMode.screen;
@@ -178,31 +178,31 @@ class _MinimalAuroraPainter extends CustomPainter {
     canvas.restore();
   }
 
-  void _drawCenterGlow({
+  void _drawLogoGlow({
     required Canvas canvas,
     required Size size,
     required double angle,
   }) {
     final center = Offset(
-      size.width * 0.5 + math.sin(angle * 0.45) * size.width * 0.018,
-      size.height * 0.23 + math.cos(angle * 0.4) * size.height * 0.012,
+      size.width * 0.5 + math.sin(angle) * size.width * 0.012,
+      size.height * 0.22 + math.cos(angle) * size.height * 0.008,
     );
 
-    final radius = math.min(size.width, size.height) * 0.24;
+    final radius = math.min(size.width, size.height) * 0.25;
 
     final paint = Paint()
       ..shader = ui.Gradient.radial(
         center,
         radius,
         const [
-          Color(0x226E20C9),
-          Color(0x147B24D1),
-          Color(0x086A00FF),
+          Color(0x206E20C9),
+          Color(0x127B24D1),
+          Color(0x076A00FF),
           Colors.transparent,
         ],
-        const [0.0, 0.35, 0.7, 1.0],
+        const [0.0, 0.35, 0.70, 1.0],
       )
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 46)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 48)
       ..blendMode = BlendMode.screen;
 
     canvas.drawCircle(center, radius, paint);
@@ -221,108 +221,134 @@ class _SoftParticlesPainter extends CustomPainter {
 
   static const List<_ParticleData> _particles = [
     _ParticleData(
-      x: 0.08,
+      x: 0.07,
       y: 0.18,
-      radius: 2.2,
-      opacity: 0.32,
-      speed: 0.8,
-      phase: 0.2,
-    ),
-    _ParticleData(
-      x: 0.19,
-      y: 0.42,
-      radius: 1.6,
-      opacity: 0.26,
-      speed: 1.1,
-      phase: 1.4,
-    ),
-    _ParticleData(
-      x: 0.31,
-      y: 0.12,
-      radius: 2.0,
-      opacity: 0.28,
-      speed: 0.7,
-      phase: 2.1,
-    ),
-    _ParticleData(
-      x: 0.43,
-      y: 0.34,
-      radius: 1.4,
-      opacity: 0.22,
-      speed: 1.0,
-      phase: 0.9,
-    ),
-    _ParticleData(
-      x: 0.58,
-      y: 0.16,
       radius: 1.8,
-      opacity: 0.27,
-      speed: 0.85,
-      phase: 2.8,
+      opacity: 0.24,
+      orbitX: 6,
+      orbitY: 8,
+      frequency: 1,
+      phase: 0.20,
     ),
     _ParticleData(
-      x: 0.71,
-      y: 0.29,
-      radius: 2.3,
-      opacity: 0.30,
-      speed: 0.65,
-      phase: 1.7,
+      x: 0.18,
+      y: 0.39,
+      radius: 1.3,
+      opacity: 0.19,
+      orbitX: 8,
+      orbitY: 5,
+      frequency: 2,
+      phase: 1.20,
+    ),
+    _ParticleData(
+      x: 0.29,
+      y: 0.13,
+      radius: 1.7,
+      opacity: 0.22,
+      orbitX: 5,
+      orbitY: 9,
+      frequency: 1,
+      phase: 2.10,
+    ),
+    _ParticleData(
+      x: 0.41,
+      y: 0.31,
+      radius: 1.2,
+      opacity: 0.18,
+      orbitX: 7,
+      orbitY: 6,
+      frequency: 3,
+      phase: 0.80,
+    ),
+    _ParticleData(
+      x: 0.57,
+      y: 0.15,
+      radius: 1.5,
+      opacity: 0.21,
+      orbitX: 6,
+      orbitY: 7,
+      frequency: 2,
+      phase: 2.70,
+    ),
+    _ParticleData(
+      x: 0.72,
+      y: 0.28,
+      radius: 1.9,
+      opacity: 0.24,
+      orbitX: 8,
+      orbitY: 6,
+      frequency: 1,
+      phase: 1.60,
     ),
     _ParticleData(
       x: 0.84,
-      y: 0.13,
+      y: 0.12,
+      radius: 1.3,
+      opacity: 0.18,
+      orbitX: 5,
+      orbitY: 8,
+      frequency: 3,
+      phase: 0.40,
+    ),
+    _ParticleData(
+      x: 0.93,
+      y: 0.43,
       radius: 1.5,
-      opacity: 0.24,
-      speed: 1.15,
-      phase: 0.5,
-    ),
-    _ParticleData(
-      x: 0.92,
-      y: 0.44,
-      radius: 1.8,
-      opacity: 0.25,
-      speed: 0.9,
-      phase: 2.4,
-    ),
-    _ParticleData(
-      x: 0.13,
-      y: 0.68,
-      radius: 1.4,
       opacity: 0.20,
-      speed: 0.75,
-      phase: 1.0,
+      orbitX: 7,
+      orbitY: 5,
+      frequency: 2,
+      phase: 2.30,
     ),
     _ParticleData(
-      x: 0.28,
+      x: 0.12,
+      y: 0.68,
+      radius: 1.2,
+      opacity: 0.16,
+      orbitX: 5,
+      orbitY: 7,
+      frequency: 2,
+      phase: 1.00,
+    ),
+    _ParticleData(
+      x: 0.27,
       y: 0.82,
-      radius: 2.0,
-      opacity: 0.24,
-      speed: 0.95,
-      phase: 2.0,
+      radius: 1.6,
+      opacity: 0.19,
+      orbitX: 8,
+      orbitY: 6,
+      frequency: 1,
+      phase: 2.00,
     ),
     _ParticleData(
-      x: 0.52,
-      y: 0.73,
-      radius: 1.5,
-      opacity: 0.19,
-      speed: 1.2,
-      phase: 0.4,
+      x: 0.51,
+      y: 0.74,
+      radius: 1.2,
+      opacity: 0.15,
+      orbitX: 6,
+      orbitY: 8,
+      frequency: 3,
+      phase: 0.30,
     ),
     _ParticleData(
       x: 0.69,
       y: 0.88,
-      radius: 1.8,
-      opacity: 0.22,
-      speed: 0.8,
-      phase: 1.8,
+      radius: 1.5,
+      opacity: 0.18,
+      orbitX: 7,
+      orbitY: 5,
+      frequency: 2,
+      phase: 1.80,
     ),
     _ParticleData(
       x: 0.87,
-      y: 0.74,
-      radius: 1.4,
-      opacity: 0.21,
-      speed: 1.05,
-      phase: 2.6,
+      y: 0.73,
+      radius: 1.2,
+      opacity: 0.17,
+      orbitX: 5,
+      orbitY: 7,
+      frequency: 1,
+      phase: 2.60,
     ),
   ];
 
@@ -331,29 +357,24 @@ class _SoftParticlesPainter extends CustomPainter {
     final baseAngle = progress * math.pi * 2;
 
     for (final particle in _particles) {
-      final angle = baseAngle * particle.speed + particle.phase;
-
-      final horizontalMovement = math.sin(angle) * 7;
-      final verticalMovement = math.cos(angle * 0.85) * 9;
+      final angle = (baseAngle * particle.frequency) + particle.phase;
 
       final center = Offset(
-        size.width * particle.x + horizontalMovement,
-        size.height * particle.y + verticalMovement,
+        size.width * particle.x + math.sin(angle) * particle.orbitX,
+        size.height * particle.y + math.cos(angle) * particle.orbitY,
       );
 
-      final pulse = 0.72 + ((math.sin(angle) + 1) * 0.14);
-      final currentOpacity = particle.opacity * pulse;
+      final pulse = 0.78 + ((math.sin(angle) + 1) * 0.11);
+      final opacity = particle.opacity * pulse;
 
       final glowPaint = Paint()
-        ..color = const Color(
-          0xFFA02BFF,
-        ).withValues(alpha: currentOpacity * 0.24)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10);
+        ..color = const Color(0xFFA02BFF).withValues(alpha: opacity * 0.20)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 9);
 
       final particlePaint = Paint()
-        ..color = const Color(0xFFC05CFF).withValues(alpha: currentOpacity);
+        ..color = const Color(0xFFC05CFF).withValues(alpha: opacity);
 
-      canvas.drawCircle(center, particle.radius * 4.2, glowPaint);
+      canvas.drawCircle(center, particle.radius * 4, glowPaint);
 
       canvas.drawCircle(center, particle.radius, particlePaint);
     }
@@ -371,7 +392,9 @@ class _ParticleData {
     required this.y,
     required this.radius,
     required this.opacity,
-    required this.speed,
+    required this.orbitX,
+    required this.orbitY,
+    required this.frequency,
     required this.phase,
   });
 
@@ -379,6 +402,8 @@ class _ParticleData {
   final double y;
   final double radius;
   final double opacity;
-  final double speed;
+  final double orbitX;
+  final double orbitY;
+  final int frequency;
   final double phase;
 }
