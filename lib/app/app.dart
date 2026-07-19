@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../core/theme/app_theme.dart';
-import 'auth_gate.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/auth/presentation/screens/auth_gate.dart';
 
 class YoVoiceApp extends StatelessWidget {
   const YoVoiceApp({super.key});

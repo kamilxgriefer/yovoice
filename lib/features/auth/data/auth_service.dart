@@ -2,8 +2,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
-import '../models/app_user.dart';
-import 'firestore_service.dart';
+import 'package:yovoice/shared/models/app_user.dart';
+import 'package:yovoice/services/firestore_service.dart';
 
 class AuthService {
   AuthService({FirebaseAuth? firebaseAuth, FirestoreService? firestoreService})

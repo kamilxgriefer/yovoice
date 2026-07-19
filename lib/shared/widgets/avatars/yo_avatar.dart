@@ -1,0 +1,83 @@
+import 'package:flutter/material.dart';
+
+import 'package:yovoice/core/theme/app_colors.dart';
+
+class YoAvatar extends StatelessWidget {
+  const YoAvatar({
+    super.key,
+    this.imageUrl,
+    this.name,
+    this.size = 48,
+    this.isOnline = false,
+    this.onTap,
+  });
+
+  final String? imageUrl;
+  final String? name;
+  final double size;
+  final bool isOnline;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final String initial = name == null || name!.trim().isEmpty
+        ? '?'
+        : name!.trim().characters.first.toUpperCase();
+
+    final Widget avatar = Stack(
+      clipBehavior: Clip.none,
+      children: <Widget>[
+        Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: AppColors.surfaceLight,
+            border: Border.all(color: AppColors.border, width: 1),
+            image: imageUrl != null && imageUrl!.trim().isNotEmpty
+                ? DecorationImage(
+                    image: NetworkImage(imageUrl!),
+                    fit: BoxFit.cover,
+                  )
+                : null,
+          ),
+          alignment: Alignment.center,
+          child: imageUrl == null || imageUrl!.trim().isEmpty
+              ? Text(
+                  initial,
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: size * 0.38,
+                    fontWeight: FontWeight.w700,
+                  ),
+                )
+              : null,
+        ),
+        if (isOnline)
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: Container(
+              width: size * 0.27,
+              height: size * 0.27,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.success,
+                border: Border.all(color: AppColors.background, width: 2),
+              ),
+            ),
+          ),
+      ],
+    );
+
+    if (onTap == null) {
+      return avatar;
+    }
+
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: avatar,
+    );
+  }
+}

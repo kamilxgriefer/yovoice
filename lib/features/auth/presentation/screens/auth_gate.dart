@@ -1,8 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import '../screens/login_screen.dart';
-import '../screens/main_shell.dart';
+import 'package:yovoice/features/auth/presentation/screens/login_screen.dart';
+import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});

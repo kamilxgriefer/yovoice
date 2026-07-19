@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import '../models/app_user.dart';
+import 'package:yovoice/shared/models/app_user.dart';
 
 class FirestoreService {
   FirestoreService({FirebaseFirestore? firestore})

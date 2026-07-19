@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-import '../services/auth_service.dart';
-import '../widgets/animated_waves_background.dart';
-import 'register/register_screen.dart';
+import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
+import 'package:yovoice/features/auth/presentation/screens/register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -253,7 +253,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                         const SizedBox(height: 42),
-                        _AuthField(
+                        _LoginAuthField(
                           controller: _emailController,
                           hintText: 'Email',
                           keyboardType: TextInputType.emailAddress,
@@ -265,7 +265,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           prefixIconPath: 'assets/icons/icon_email.svg',
                         ),
                         const SizedBox(height: 16),
-                        _AuthField(
+                        _LoginAuthField(
                           controller: _passwordController,
                           hintText: 'Password',
                           obscureText: _obscurePassword,
@@ -287,7 +287,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           },
                         ),
                         const SizedBox(height: 24),
-                        _PrimaryButton(
+                        _LoginPrimaryButton(
                           label: 'LOG IN',
                           isLoading: _isLoading,
                           onPressed: _isAuthenticationLoading ? null : _login,
@@ -321,7 +321,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ],
                         ),
                         const SizedBox(height: 24),
-                        _SocialButton(
+                        _LoginSocialButton(
                           label: 'Continue with Google',
                           svgIconPath: 'assets/icons/icon_google_g.svg',
                           isLoading: _isGoogleLoading,
@@ -330,7 +330,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               : _signInWithGoogle,
                         ),
                         const SizedBox(height: 14),
-                        _SocialButton(
+                        _LoginSocialButton(
                           label: 'Continue with Apple',
                           materialIcon: Icons.apple,
                           iconSize: 34,
@@ -501,8 +501,8 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-class _PrimaryButton extends StatelessWidget {
-  const _PrimaryButton({
+class _LoginPrimaryButton extends StatelessWidget {
+  const _LoginPrimaryButton({
     required this.label,
     required this.onPressed,
     this.isLoading = false,
@@ -563,8 +563,8 @@ class _PrimaryButton extends StatelessWidget {
   }
 }
 
-class _AuthField extends StatelessWidget {
-  const _AuthField({
+class _LoginAuthField extends StatelessWidget {
+  const _LoginAuthField({
     required this.controller,
     required this.hintText,
     required this.prefixIconPath,
@@ -644,8 +644,8 @@ class _AuthField extends StatelessWidget {
   }
 }
 
-class _SocialButton extends StatelessWidget {
-  const _SocialButton({
+class _LoginSocialButton extends StatelessWidget {
+  const _LoginSocialButton({
     required this.label,
     required this.onPressed,
     this.svgIconPath,

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-import 'chats/chats_screen.dart';
-import 'discover/discover_screen.dart';
-import 'home/home_screen.dart';
-import 'profile/profile_screen.dart';
+import 'package:yovoice/features/chats/presentation/screens/chats_screen.dart';
+import 'package:yovoice/features/moments/presentation/screens/discover_screen.dart';
+import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
+import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});

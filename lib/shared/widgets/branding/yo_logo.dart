@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-class AppLogo extends StatelessWidget {
-  const AppLogo({super.key, this.width = 260});
+class YoLogo extends StatelessWidget {
+  const YoLogo({super.key, this.width = 260});
 
   final double width;
 

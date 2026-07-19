@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-import '../../services/auth_service.dart';
-import '../../widgets/animated_waves_background.dart';
+import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -343,7 +343,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ),
                           ),
                           const SizedBox(height: 26),
-                          _PrimaryButton(
+                          _RegisterPrimaryButton(
                             label: 'CREATE ACCOUNT',
                             isLoading: _isLoading,
                             onPressed: _isLoading ? null : _register,
@@ -536,8 +536,8 @@ class _RegisterField extends StatelessWidget {
   }
 }
 
-class _PrimaryButton extends StatelessWidget {
-  const _PrimaryButton({
+class _RegisterPrimaryButton extends StatelessWidget {
+  const _RegisterPrimaryButton({
     required this.label,
     required this.onPressed,
     this.isLoading = false,
