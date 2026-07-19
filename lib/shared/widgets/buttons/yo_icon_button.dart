@@ -9,10 +9,12 @@ class YoIconButton extends StatelessWidget {
     required this.icon,
     required this.onPressed,
     this.tooltip,
-    this.size = 46,
+    this.size = 48,
     this.iconSize = 22,
     this.backgroundColor,
     this.foregroundColor,
+    this.borderColor,
+    this.isLoading = false,
   });
 
   final IconData icon;
@@ -22,27 +24,45 @@ class YoIconButton extends StatelessWidget {
   final double iconSize;
   final Color? backgroundColor;
   final Color? foregroundColor;
+  final Color? borderColor;
+  final bool isLoading;
+
+  bool get _enabled => onPressed != null && !isLoading;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: size,
       height: size,
-      child: IconButton(
-        onPressed: onPressed,
-        tooltip: tooltip,
-        style: IconButton.styleFrom(
-          backgroundColor: backgroundColor ?? AppColors.surface,
-          foregroundColor: foregroundColor ?? AppColors.textPrimary,
-          disabledBackgroundColor: (backgroundColor ?? AppColors.surface)
-              .withValues(alpha: 0.55),
-          disabledForegroundColor: AppColors.textHint,
-          shape: const RoundedRectangleBorder(
+      child: Tooltip(
+        message: tooltip ?? '',
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: backgroundColor ?? AppColors.surface,
             borderRadius: AppRadius.md,
-            side: BorderSide(color: AppColors.border),
+            border: Border.all(color: borderColor ?? AppColors.border),
+          ),
+          child: IconButton(
+            onPressed: _enabled ? onPressed : null,
+            splashRadius: size / 2,
+            icon: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              child: isLoading
+                  ? SizedBox(
+                      key: const ValueKey('loading'),
+                      width: iconSize,
+                      height: iconSize,
+                      child: const CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      icon,
+                      key: const ValueKey('icon'),
+                      size: iconSize,
+                      color: foregroundColor ?? AppColors.textPrimary,
+                    ),
+            ),
           ),
         ),
-        icon: Icon(icon, size: iconSize),
       ),
     );
   }

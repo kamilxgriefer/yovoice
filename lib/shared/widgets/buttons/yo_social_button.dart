@@ -12,9 +12,8 @@ class YoSocialButton extends StatelessWidget {
     required this.onPressed,
     this.svgIconPath,
     this.icon,
-    this.iconSize = 24,
+    this.iconSize = 28,
     this.isLoading = false,
-    this.enabled = true,
   }) : assert(
          svgIconPath != null || icon != null,
          'Provide svgIconPath or icon.',
@@ -26,44 +25,43 @@ class YoSocialButton extends StatelessWidget {
   final IconData? icon;
   final double iconSize;
   final bool isLoading;
-  final bool enabled;
+
+  bool get _enabled => onPressed != null && !isLoading;
 
   @override
   Widget build(BuildContext context) {
-    final bool canPress = enabled && !isLoading && onPressed != null;
-
-    return AnimatedOpacity(
-      duration: const Duration(milliseconds: 180),
-      opacity: canPress ? 1 : 0.6,
-      child: SizedBox(
-        width: double.infinity,
-        height: 58,
-        child: OutlinedButton(
-          onPressed: canPress ? onPressed : null,
-          style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.textPrimary,
-            backgroundColor: AppColors.surface,
-            disabledForegroundColor: AppColors.textHint,
-            disabledBackgroundColor: AppColors.surface,
-            side: const BorderSide(color: AppColors.border, width: 1),
-            shape: const RoundedRectangleBorder(borderRadius: AppRadius.lg),
-            padding: const EdgeInsets.symmetric(horizontal: 18),
-          ),
+    return SizedBox(
+      width: double.infinity,
+      height: 58,
+      child: OutlinedButton(
+        onPressed: _enabled ? onPressed : null,
+        style: OutlinedButton.styleFrom(
+          elevation: 0,
+          backgroundColor: AppColors.surface,
+          disabledBackgroundColor: AppColors.surface,
+          foregroundColor: AppColors.textPrimary,
+          disabledForegroundColor: AppColors.textHint,
+          side: const BorderSide(color: AppColors.border, width: 1),
+          shape: const RoundedRectangleBorder(borderRadius: AppRadius.lg),
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+        ),
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 180),
           child: isLoading
               ? const SizedBox(
-                  width: 23,
-                  height: 23,
+                  key: ValueKey('loading'),
+                  width: 24,
+                  height: 24,
                   child: CircularProgressIndicator(
                     strokeWidth: 2.4,
-                    color: AppColors.textPrimary,
+                    color: AppColors.white,
                   ),
                 )
               : Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: <Widget>[
+                  key: const ValueKey('content'),
+                  children: [
                     SizedBox(
-                      width: 30,
-                      height: 30,
+                      width: 42,
                       child: Center(
                         child: svgIconPath != null
                             ? SvgPicture.asset(
@@ -78,16 +76,16 @@ class YoSocialButton extends StatelessWidget {
                               ),
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Flexible(
+                    Expanded(
                       child: Text(
                         label,
-                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
                         style: AppTypography.titleMedium.copyWith(
                           color: AppColors.textPrimary,
                         ),
                       ),
                     ),
+                    const SizedBox(width: 42),
                   ],
                 ),
         ),
