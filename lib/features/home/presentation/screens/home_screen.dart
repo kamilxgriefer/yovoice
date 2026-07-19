@@ -1,7 +1,10 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/rooms/data/models/voice_room.dart';
+import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
+import 'package:yovoice/features/rooms/presentation/screens/room_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -27,6 +30,22 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  static void showError(BuildContext context, String message) {
+    final messenger = ScaffoldMessenger.of(context);
+
+    messenger.hideCurrentSnackBar();
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF481C30),
+        margin: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+    );
+  }
+
   static Future<void> openCreateRoom(BuildContext context) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
@@ -45,7 +64,7 @@ class HomeScreen extends StatelessWidget {
 
     final displayName = rawDisplayName != null && rawDisplayName.isNotEmpty
         ? rawDisplayName.split(' ').first
-        : 'Kamil';
+        : user?.email?.split('@').first ?? 'YoVoice user';
 
     return Scaffold(
       backgroundColor: _background,
@@ -103,11 +122,11 @@ class _MobileHome extends StatelessWidget {
           const SizedBox(height: 26),
           const _SectionTitle(
             title: 'Active rooms',
-            actionLabel: 'See all',
-            actionMessage: 'Room discovery is coming soon.',
+            actionLabel: 'Refresh',
+            actionMessage: 'Rooms update automatically in real time.',
           ),
           const SizedBox(height: 14),
-          const _MobileRoomsList(),
+          const _LiveRoomsSection(desktop: false),
         ],
       ),
     );
@@ -160,11 +179,11 @@ class _DesktopHome extends StatelessWidget {
               const SizedBox(height: 30),
               const _SectionTitle(
                 title: 'Active rooms',
-                actionLabel: 'See all',
-                actionMessage: 'Room discovery is coming soon.',
+                actionLabel: 'Refresh',
+                actionMessage: 'Rooms update automatically in real time.',
               ),
               const SizedBox(height: 14),
-              const _DesktopRoomsGrid(),
+              const _LiveRoomsSection(desktop: true),
             ],
           ),
         ),
@@ -726,118 +745,196 @@ class _FriendsRow extends StatelessWidget {
   }
 }
 
-class _MobileRoomsList extends StatelessWidget {
-  const _MobileRoomsList();
+class _LiveRoomsSection extends StatefulWidget {
+  const _LiveRoomsSection({required this.desktop});
+
+  final bool desktop;
+
+  @override
+  State<_LiveRoomsSection> createState() => _LiveRoomsSectionState();
+}
+
+class _LiveRoomsSectionState extends State<_LiveRoomsSection> {
+  final RoomService _roomService = RoomService();
+
+  late final Stream<List<VoiceRoom>> _roomsStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _roomsStream = _roomService.watchLivePublicRooms();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
-      children: [
-        _RoomCard(
-          title: 'Chill & Vibes',
-          category: 'Music',
-          listeners: 23,
-          speakers: 18,
-          icon: Icons.radio_rounded,
-          accent: Color(0xFFFF4C68),
-        ),
-        SizedBox(height: 13),
-        _RoomCard(
-          title: 'Deep Talk',
-          category: 'Talk',
-          listeners: 18,
-          speakers: 15,
-          icon: Icons.record_voice_over_rounded,
-          accent: Color(0xFF9C42FF),
-        ),
-        SizedBox(height: 13),
-        _RoomCard(
-          title: 'Gaming Lounge',
-          category: 'Gaming',
-          listeners: 15,
-          speakers: 12,
-          icon: Icons.sports_esports_rounded,
-          accent: Color(0xFF5977FF),
-        ),
-      ],
+    return StreamBuilder<List<VoiceRoom>>(
+      stream: _roomsStream,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
+          return const _RoomsLoadingState();
+        }
+
+        if (snapshot.hasError) {
+          return _RoomsErrorState(
+            message: _getReadableStreamError(snapshot.error),
+          );
+        }
+
+        final rooms = snapshot.data ?? const <VoiceRoom>[];
+
+        if (rooms.isEmpty) {
+          return const _EmptyRoomsState();
+        }
+
+        if (!widget.desktop) {
+          return Column(
+            children: [
+              for (var index = 0; index < rooms.length; index++) ...[
+                _LiveRoomCard(room: rooms[index]),
+                if (index != rooms.length - 1) const SizedBox(height: 13),
+              ],
+            ],
+          );
+        }
+
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            const spacing = 15.0;
+            const columns = 3;
+
+            final cardWidth =
+                (constraints.maxWidth - spacing * (columns - 1)) / columns;
+
+            return Wrap(
+              spacing: spacing,
+              runSpacing: spacing,
+              children: rooms.map((room) {
+                return SizedBox(
+                  width: cardWidth,
+                  child: _LiveRoomCard(room: room),
+                );
+              }).toList(),
+            );
+          },
+        );
+      },
     );
+  }
+
+  String _getReadableStreamError(Object? error) {
+    final message = error.toString();
+
+    if (message.contains('failed-precondition') || message.contains('index')) {
+      return 'Firestore needs an index for active rooms. Open the Firebase link shown in the debug console and create the index.';
+    }
+
+    if (message.contains('permission-denied')) {
+      return 'Firestore permission denied. Check your security rules.';
+    }
+
+    if (message.contains('unavailable')) {
+      return 'Rooms are temporarily unavailable. Check your internet connection.';
+    }
+
+    return 'Could not load active rooms.';
   }
 }
 
-class _DesktopRoomsGrid extends StatelessWidget {
-  const _DesktopRoomsGrid();
+class _LiveRoomCard extends StatefulWidget {
+  const _LiveRoomCard({required this.room});
+
+  final VoiceRoom room;
 
   @override
-  Widget build(BuildContext context) {
-    return const Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: _RoomCard(
-            title: 'Chill & Vibes',
-            category: 'Music',
-            listeners: 23,
-            speakers: 18,
-            icon: Icons.radio_rounded,
-            accent: Color(0xFFFF4C68),
-          ),
-        ),
-        SizedBox(width: 15),
-        Expanded(
-          child: _RoomCard(
-            title: 'Deep Talk',
-            category: 'Talk',
-            listeners: 18,
-            speakers: 15,
-            icon: Icons.record_voice_over_rounded,
-            accent: Color(0xFF9C42FF),
-          ),
-        ),
-        SizedBox(width: 15),
-        Expanded(
-          child: _RoomCard(
-            title: 'Gaming Lounge',
-            category: 'Gaming',
-            listeners: 15,
-            speakers: 12,
-            icon: Icons.sports_esports_rounded,
-            accent: Color(0xFF5977FF),
-          ),
-        ),
-      ],
-    );
-  }
+  State<_LiveRoomCard> createState() => _LiveRoomCardState();
 }
 
-class _RoomCard extends StatelessWidget {
-  const _RoomCard({
-    required this.title,
-    required this.category,
-    required this.listeners,
-    required this.speakers,
-    required this.icon,
-    required this.accent,
-  });
+class _LiveRoomCardState extends State<_LiveRoomCard> {
+  final RoomService _roomService = RoomService();
 
-  final String title;
-  final String category;
-  final int listeners;
-  final int speakers;
-  final IconData icon;
-  final Color accent;
+  bool _isJoining = false;
+
+  Future<void> _joinRoom() async {
+    if (_isJoining) {
+      return;
+    }
+
+    setState(() {
+      _isJoining = true;
+    });
+
+    try {
+      final joinedRoom = await _roomService.joinRoom(widget.room.id);
+
+      if (!mounted) {
+        return;
+      }
+
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) {
+            return RoomScreen(room: joinedRoom);
+          },
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      HomeScreen.showError(context, _getReadableJoinError(error));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isJoining = false;
+        });
+      }
+    }
+  }
+
+  String _getReadableJoinError(Object error) {
+    final message = error.toString();
+
+    if (message.contains('no longer live')) {
+      return 'This room is no longer live.';
+    }
+
+    if (message.contains('room is full')) {
+      return 'This room is full.';
+    }
+
+    if (message.contains('private')) {
+      return 'This room is private.';
+    }
+
+    if (message.contains('does not exist')) {
+      return 'This room no longer exists.';
+    }
+
+    if (message.contains('signed in')) {
+      return 'You must be signed in before joining a room.';
+    }
+
+    if (message.contains('permission-denied')) {
+      return 'Firestore permission denied. Check your Firebase security rules.';
+    }
+
+    return 'Could not join the room. Please try again.';
+  }
 
   @override
   Widget build(BuildContext context) {
+    final room = widget.room;
+    final accent = _categoryColor(room.category);
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    final isHost = currentUserId == room.hostId;
+
     return Material(
       color: HomeScreen._surface,
       borderRadius: BorderRadius.circular(21),
       child: InkWell(
-        onTap: () {
-          HomeScreen.showComingSoon(
-            context,
-            'Joining "$title" will be available soon.',
-          );
-        },
+        onTap: _isJoining ? null : _joinRoom,
         borderRadius: BorderRadius.circular(21),
         child: Container(
           padding: const EdgeInsets.all(16),
@@ -864,7 +961,11 @@ class _RoomCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: accent.withValues(alpha: 0.32)),
                 ),
-                child: Icon(icon, color: accent, size: 27),
+                child: Icon(
+                  _categoryIcon(room.category),
+                  color: accent,
+                  size: 27,
+                ),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -875,7 +976,7 @@ class _RoomCard extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            title,
+                            room.name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -911,16 +1012,20 @@ class _RoomCard extends StatelessWidget {
                     Row(
                       children: [
                         Icon(
-                          _categoryIcon(category),
+                          _categoryIcon(room.category),
                           color: HomeScreen._secondaryText,
                           size: 15,
                         ),
                         const SizedBox(width: 5),
-                        Text(
-                          category,
-                          style: const TextStyle(
-                            color: HomeScreen._secondaryText,
-                            fontSize: 12,
+                        Flexible(
+                          child: Text(
+                            _categoryLabel(room.category),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: HomeScreen._secondaryText,
+                              fontSize: 12,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 7),
@@ -932,29 +1037,58 @@ class _RoomCard extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 7),
-                        Text(
-                          '$listeners',
-                          style: const TextStyle(
-                            color: HomeScreen._secondaryText,
-                            fontSize: 12,
+                        Flexible(
+                          child: Text(
+                            room.language,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: HomeScreen._secondaryText,
+                              fontSize: 12,
+                            ),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 9),
                     Row(
                       children: [
                         const Icon(
-                          Icons.headphones_rounded,
+                          Icons.people_alt_outlined,
                           color: Color(0xFFB8B0C4),
                           size: 15,
                         ),
                         const SizedBox(width: 5),
                         Text(
-                          '$speakers listening',
+                          _participantText(room),
                           style: const TextStyle(
                             color: Color(0xFFB8B0C4),
                             fontSize: 11,
+                          ),
+                        ),
+                        const SizedBox(width: 9),
+                        const Text(
+                          '•',
+                          style: TextStyle(
+                            color: Color(0xFF625A6F),
+                            fontSize: 11,
+                          ),
+                        ),
+                        const SizedBox(width: 9),
+                        Expanded(
+                          child: Text(
+                            isHost ? 'Your room' : 'Hosted by ${room.hostName}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: isHost
+                                  ? const Color(0xFFC05AFF)
+                                  : const Color(0xFFB8B0C4),
+                              fontSize: 11,
+                              fontWeight: isHost
+                                  ? FontWeight.w700
+                                  : FontWeight.w400,
+                            ),
                           ),
                         ),
                       ],
@@ -963,7 +1097,20 @@ class _RoomCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              const Icon(Icons.chevron_right_rounded, color: Color(0xFF766D82)),
+              if (_isJoining)
+                const SizedBox(
+                  width: 21,
+                  height: 21,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    color: Color(0xFFB348FF),
+                  ),
+                )
+              else
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFF766D82),
+                ),
             ],
           ),
         ),
@@ -971,17 +1118,227 @@ class _RoomCard extends StatelessWidget {
     );
   }
 
-  static IconData _categoryIcon(String category) {
-    switch (category) {
-      case 'Music':
-        return Icons.music_note_rounded;
-      case 'Gaming':
-        return Icons.sports_esports_rounded;
-      case 'Talk':
-        return Icons.mic_none_rounded;
-      default:
-        return Icons.graphic_eq_rounded;
+  String _participantText(VoiceRoom room) {
+    final maximum = room.maxParticipants;
+
+    if (maximum == null) {
+      return '${room.participantCount} joined';
     }
+
+    return '${room.participantCount}/$maximum joined';
+  }
+
+  static String _categoryLabel(String category) {
+    switch (category.toLowerCase()) {
+      case 'music':
+        return 'Music';
+      case 'gaming':
+        return 'Gaming';
+      case 'chill':
+        return 'Chill';
+      case 'study':
+        return 'Study';
+      case 'business':
+        return 'Business';
+      case 'talk':
+      default:
+        return 'Talk';
+    }
+  }
+
+  static IconData _categoryIcon(String category) {
+    switch (category.toLowerCase()) {
+      case 'music':
+        return Icons.music_note_rounded;
+      case 'gaming':
+        return Icons.sports_esports_rounded;
+      case 'chill':
+        return Icons.nightlife_rounded;
+      case 'study':
+        return Icons.school_outlined;
+      case 'business':
+        return Icons.work_outline_rounded;
+      case 'talk':
+      default:
+        return Icons.record_voice_over_rounded;
+    }
+  }
+
+  static Color _categoryColor(String category) {
+    switch (category.toLowerCase()) {
+      case 'music':
+        return const Color(0xFFFF4C68);
+      case 'gaming':
+        return const Color(0xFF5977FF);
+      case 'chill':
+        return const Color(0xFF3EC7A5);
+      case 'study':
+        return const Color(0xFFFFA63D);
+      case 'business':
+        return const Color(0xFF4BA9FF);
+      case 'talk':
+      default:
+        return const Color(0xFF9C42FF);
+    }
+  }
+}
+
+class _RoomsLoadingState extends StatelessWidget {
+  const _RoomsLoadingState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
+      decoration: BoxDecoration(
+        color: HomeScreen._surface,
+        borderRadius: BorderRadius.circular(21),
+        border: Border.all(color: HomeScreen._border),
+      ),
+      child: const Column(
+        children: [
+          SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.5,
+              color: Color(0xFFB348FF),
+            ),
+          ),
+          SizedBox(height: 14),
+          Text(
+            'Loading active rooms...',
+            style: TextStyle(
+              color: HomeScreen._secondaryText,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyRoomsState extends StatelessWidget {
+  const _EmptyRoomsState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 28, 20, 26),
+      decoration: BoxDecoration(
+        color: HomeScreen._surface,
+        borderRadius: BorderRadius.circular(21),
+        border: Border.all(color: HomeScreen._border),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 58,
+            height: 58,
+            decoration: BoxDecoration(
+              color: const Color(0xFF9C42FF).withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: const Icon(
+              Icons.graphic_eq_rounded,
+              color: Color(0xFFB348FF),
+              size: 29,
+            ),
+          ),
+          const SizedBox(height: 15),
+          const Text(
+            'No active rooms yet',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 7),
+          const Text(
+            'Be the first person to start a conversation.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: HomeScreen._secondaryText,
+              fontSize: 13,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 17),
+          TextButton.icon(
+            onPressed: () {
+              HomeScreen.openCreateRoom(context);
+            },
+            icon: const Icon(Icons.add_rounded, size: 19),
+            label: const Text(
+              'Create room',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFFC05AFF),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RoomsErrorState extends StatelessWidget {
+  const _RoomsErrorState({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF21121B),
+        borderRadius: BorderRadius.circular(21),
+        border: Border.all(color: const Color(0xFF5B293C)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.error_outline_rounded,
+            color: Color(0xFFFF6785),
+            size: 25,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Could not load rooms',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  message,
+                  style: const TextStyle(
+                    color: Color(0xFFCDB3BD),
+                    fontSize: 12,
+                    height: 1.45,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

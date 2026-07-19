@@ -37,11 +37,12 @@ class RoomService {
     }
 
     final roomDocument = _roomsCollection.doc();
+
     final participantDocument = roomDocument
         .collection('participants')
         .doc(user.uid);
 
-    final hostName = _resolveHostName(user);
+    final hostName = _resolveUserName(user);
 
     final batch = _firestore.batch();
 
@@ -84,7 +85,9 @@ class RoomService {
         .where('visibility', isEqualTo: 'public')
         .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs.map(VoiceRoom.fromFirestore).toList());
+        .map((snapshot) {
+          return snapshot.docs.map(VoiceRoom.fromFirestore).toList();
+        });
   }
 
   Stream<VoiceRoom> watchRoom(String roomId) {
@@ -94,6 +97,150 @@ class RoomService {
       }
 
       return VoiceRoom.fromFirestore(document);
+    });
+  }
+
+  Future<VoiceRoom> joinRoom(String roomId) async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      throw StateError('You must be signed in before joining a room.');
+    }
+
+    final normalizedRoomId = roomId.trim();
+
+    if (normalizedRoomId.isEmpty) {
+      throw ArgumentError('Room ID cannot be empty.');
+    }
+
+    final roomDocument = _roomsCollection.doc(normalizedRoomId);
+
+    final participantDocument = roomDocument
+        .collection('participants')
+        .doc(user.uid);
+
+    await _firestore.runTransaction<void>((transaction) async {
+      final roomSnapshot = await transaction.get(roomDocument);
+
+      if (!roomSnapshot.exists) {
+        throw StateError('The requested room does not exist.');
+      }
+
+      final roomData = roomSnapshot.data();
+
+      if (roomData == null) {
+        throw StateError('The requested room does not contain any data.');
+      }
+
+      final isLive = roomData['isLive'] as bool? ?? false;
+      final visibility = roomData['visibility'] as String? ?? 'private';
+      final hostId = roomData['hostId'] as String? ?? '';
+
+      if (!isLive) {
+        throw StateError('This room is no longer live.');
+      }
+
+      if (visibility != 'public' && hostId != user.uid) {
+        throw StateError('This room is private.');
+      }
+
+      final participantSnapshot = await transaction.get(participantDocument);
+
+      if (participantSnapshot.exists) {
+        return;
+      }
+
+      final participantCount =
+          (roomData['participantCount'] as num?)?.toInt() ?? 0;
+
+      final maxParticipants = (roomData['maxParticipants'] as num?)?.toInt();
+
+      if (maxParticipants != null && participantCount >= maxParticipants) {
+        throw StateError('This room is full.');
+      }
+
+      final userName = _resolveUserName(user);
+
+      transaction.set(participantDocument, {
+        'userId': user.uid,
+        'displayName': userName,
+        'photoUrl': user.photoURL,
+        'role': 'listener',
+        'isMuted': true,
+        'isSpeaker': false,
+        'joinedAt': FieldValue.serverTimestamp(),
+      });
+
+      transaction.update(roomDocument, {
+        'participantCount': participantCount + 1,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+
+    final updatedRoomDocument = await roomDocument.get();
+
+    if (!updatedRoomDocument.exists) {
+      throw StateError('The requested room does not exist.');
+    }
+
+    return VoiceRoom.fromFirestore(updatedRoomDocument);
+  }
+
+  Future<void> leaveRoom(String roomId) async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      throw StateError('You must be signed in before leaving a room.');
+    }
+
+    final normalizedRoomId = roomId.trim();
+
+    if (normalizedRoomId.isEmpty) {
+      throw ArgumentError('Room ID cannot be empty.');
+    }
+
+    final roomDocument = _roomsCollection.doc(normalizedRoomId);
+
+    final participantDocument = roomDocument
+        .collection('participants')
+        .doc(user.uid);
+
+    await _firestore.runTransaction<void>((transaction) async {
+      final roomSnapshot = await transaction.get(roomDocument);
+
+      if (!roomSnapshot.exists) {
+        return;
+      }
+
+      final roomData = roomSnapshot.data();
+
+      if (roomData == null) {
+        return;
+      }
+
+      final hostId = roomData['hostId'] as String? ?? '';
+
+      if (hostId == user.uid) {
+        throw StateError(
+          'The room host must close the room instead of leaving it.',
+        );
+      }
+
+      final participantSnapshot = await transaction.get(participantDocument);
+
+      if (!participantSnapshot.exists) {
+        return;
+      }
+
+      final participantCount =
+          (roomData['participantCount'] as num?)?.toInt() ?? 0;
+
+      transaction.delete(participantDocument);
+
+      transaction.update(roomDocument, {
+        'participantCount': participantCount > 0 ? participantCount - 1 : 0,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     });
   }
 
@@ -123,7 +270,7 @@ class RoomService {
     });
   }
 
-  String _resolveHostName(User user) {
+  String _resolveUserName(User user) {
     final displayName = user.displayName?.trim();
 
     if (displayName != null && displayName.isNotEmpty) {
