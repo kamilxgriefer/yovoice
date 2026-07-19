@@ -96,6 +96,8 @@ class _RoomScreenState extends State<RoomScreen>
 
       if (isHost) {
         await _roomService.closeRoom(room.id);
+      } else {
+        await _roomService.leaveRoom(room.id);
       }
 
       if (!mounted) {
