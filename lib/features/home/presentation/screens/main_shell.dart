@@ -4,6 +4,7 @@ import 'package:yovoice/features/chats/presentation/screens/chats_screen.dart';
 import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
+import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -37,14 +38,14 @@ class _MainShellState extends State<MainShell> {
     });
   }
 
-  void _openVoiceAction() {
-    showModalBottomSheet<void>(
+  Future<void> _openVoiceAction() async {
+    await showModalBottomSheet<void>(
       context: context,
       useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black.withValues(alpha: 0.7),
-      builder: (context) {
+      builder: (sheetContext) {
         return const _VoiceActionSheet();
       },
     );
@@ -54,13 +55,11 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _background,
-      extendBody: true,
       body: IndexedStack(index: _selectedIndex, children: _screens),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-      floatingActionButton: _VoiceActionButton(onPressed: _openVoiceAction),
       bottomNavigationBar: _BottomNavigation(
         selectedIndex: _selectedIndex,
         onDestinationSelected: _onDestinationSelected,
+        onVoicePressed: _openVoiceAction,
       ),
     );
   }
@@ -70,73 +69,99 @@ class _BottomNavigation extends StatelessWidget {
   const _BottomNavigation({
     required this.selectedIndex,
     required this.onDestinationSelected,
+    required this.onVoicePressed,
   });
 
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
+  final VoidCallback onVoicePressed;
 
   @override
   Widget build(BuildContext context) {
-    return BottomAppBar(
-      height: 86,
-      padding: EdgeInsets.zero,
-      color: _MainShellState._navigationBackground,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      notchMargin: 10,
-      shape: const CircularNotchedRectangle(),
-      child: SafeArea(
-        top: false,
-        minimum: const EdgeInsets.only(left: 8, right: 8, bottom: 4),
-        child: Row(
-          children: [
-            Expanded(
-              child: _NavigationItem(
-                icon: Icons.home_outlined,
-                selectedIcon: Icons.home_rounded,
-                label: 'Home',
-                isSelected: selectedIndex == 0,
-                onPressed: () {
-                  onDestinationSelected(0);
-                },
+    final double safeBottom = MediaQuery.paddingOf(context).bottom;
+
+    return SizedBox(
+      height: 104 + safeBottom,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.topCenter,
+        children: [
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Container(
+              height: 84 + safeBottom,
+              decoration: const BoxDecoration(
+                color: _MainShellState._navigationBackground,
+                border: Border(
+                  top: BorderSide(color: Color(0xFF2B2436), width: 1),
+                ),
+              ),
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 8,
+                  right: 8,
+                  top: 8,
+                  bottom: safeBottom + 4,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _NavigationItem(
+                        icon: Icons.home_outlined,
+                        selectedIcon: Icons.home_rounded,
+                        label: 'Home',
+                        isSelected: selectedIndex == 0,
+                        onPressed: () {
+                          onDestinationSelected(0);
+                        },
+                      ),
+                    ),
+                    Expanded(
+                      child: _NavigationItem(
+                        icon: Icons.explore_outlined,
+                        selectedIcon: Icons.explore_rounded,
+                        label: 'Discover',
+                        isSelected: selectedIndex == 1,
+                        onPressed: () {
+                          onDestinationSelected(1);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 84),
+                    Expanded(
+                      child: _NavigationItem(
+                        icon: Icons.chat_bubble_outline_rounded,
+                        selectedIcon: Icons.chat_bubble_rounded,
+                        label: 'Chats',
+                        isSelected: selectedIndex == 2,
+                        onPressed: () {
+                          onDestinationSelected(2);
+                        },
+                      ),
+                    ),
+                    Expanded(
+                      child: _NavigationItem(
+                        icon: Icons.person_outline_rounded,
+                        selectedIcon: Icons.person_rounded,
+                        label: 'Profile',
+                        isSelected: selectedIndex == 3,
+                        onPressed: () {
+                          onDestinationSelected(3);
+                        },
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-            Expanded(
-              child: _NavigationItem(
-                icon: Icons.explore_outlined,
-                selectedIcon: Icons.explore_rounded,
-                label: 'Discover',
-                isSelected: selectedIndex == 1,
-                onPressed: () {
-                  onDestinationSelected(1);
-                },
-              ),
-            ),
-            const SizedBox(width: 72),
-            Expanded(
-              child: _NavigationItem(
-                icon: Icons.chat_bubble_outline_rounded,
-                selectedIcon: Icons.chat_bubble_rounded,
-                label: 'Chats',
-                isSelected: selectedIndex == 2,
-                onPressed: () {
-                  onDestinationSelected(2);
-                },
-              ),
-            ),
-            Expanded(
-              child: _NavigationItem(
-                icon: Icons.person_outline_rounded,
-                selectedIcon: Icons.person_rounded,
-                label: 'Profile',
-                isSelected: selectedIndex == 3,
-                onPressed: () {
-                  onDestinationSelected(3);
-                },
-              ),
-            ),
-          ],
-        ),
+          ),
+          Positioned(
+            top: 0,
+            child: _VoiceActionButton(onPressed: onVoicePressed),
+          ),
+        ],
       ),
     );
   }
@@ -159,56 +184,65 @@ class _NavigationItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = isSelected ? Colors.white : _MainShellState._inactive;
+    final Color color = isSelected ? Colors.white : _MainShellState._inactive;
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(18),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 7),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                width: isSelected ? 52 : 42,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? _MainShellState._primary
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(18),
-                  boxShadow: isSelected
-                      ? const [
-                          BoxShadow(
-                            color: Color(0x559D20FF),
-                            blurRadius: 18,
-                            spreadRadius: 1,
-                          ),
-                        ]
-                      : null,
-                ),
-                child: Icon(
-                  isSelected ? selectedIcon : icon,
-                  color: color,
-                  size: 24,
-                ),
+    return Semantics(
+      button: true,
+      selected: isSelected,
+      label: label,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(18),
+          child: SizedBox.expand(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    width: isSelected ? 52 : 42,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? _MainShellState._primary
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: isSelected
+                          ? const [
+                              BoxShadow(
+                                color: Color(0x559D20FF),
+                                blurRadius: 18,
+                                spreadRadius: 1,
+                              ),
+                            ]
+                          : null,
+                    ),
+                    child: Icon(
+                      isSelected ? selectedIcon : icon,
+                      color: color,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 11,
+                      fontWeight: isSelected
+                          ? FontWeight.w700
+                          : FontWeight.w500,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 11,
-                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -216,53 +250,25 @@ class _NavigationItem extends StatelessWidget {
   }
 }
 
-class _VoiceActionButton extends StatefulWidget {
+class _VoiceActionButton extends StatelessWidget {
   const _VoiceActionButton({required this.onPressed});
 
   final VoidCallback onPressed;
 
   @override
-  State<_VoiceActionButton> createState() => _VoiceActionButtonState();
-}
-
-class _VoiceActionButtonState extends State<_VoiceActionButton>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _animationController;
-  late final Animation<double> _pulseAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-
-    _animationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1600),
-    )..repeat(reverse: true);
-
-    _pulseAnimation = Tween<double>(begin: 1, end: 1.06).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _animationController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return ScaleTransition(
-      scale: _pulseAnimation,
+    return Semantics(
+      button: true,
+      label: 'Use your voice',
       child: Material(
         color: Colors.transparent,
         shape: const CircleBorder(),
         child: InkWell(
-          onTap: widget.onPressed,
+          onTap: onPressed,
           customBorder: const CircleBorder(),
           child: Container(
-            width: 66,
-            height: 66,
+            width: 74,
+            height: 74,
             decoration: const BoxDecoration(
               shape: BoxShape.circle,
               gradient: LinearGradient(
@@ -277,13 +283,13 @@ class _VoiceActionButtonState extends State<_VoiceActionButton>
               boxShadow: [
                 BoxShadow(
                   color: Color(0x779D20FF),
-                  blurRadius: 25,
+                  blurRadius: 26,
                   spreadRadius: 2,
                   offset: Offset(0, 7),
                 ),
               ],
             ),
-            child: const _WaveformIcon(),
+            child: const Center(child: _WaveformIcon()),
           ),
         ),
       ),
@@ -297,18 +303,19 @@ class _WaveformIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Row(
+      mainAxisSize: MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        _WaveBar(height: 13),
-        SizedBox(width: 3),
-        _WaveBar(height: 23),
-        SizedBox(width: 3),
-        _WaveBar(height: 32),
-        SizedBox(width: 3),
-        _WaveBar(height: 23),
-        SizedBox(width: 3),
-        _WaveBar(height: 13),
+        _WaveBar(height: 14),
+        SizedBox(width: 4),
+        _WaveBar(height: 25),
+        SizedBox(width: 4),
+        _WaveBar(height: 35),
+        SizedBox(width: 4),
+        _WaveBar(height: 25),
+        SizedBox(width: 4),
+        _WaveBar(height: 14),
       ],
     );
   }
@@ -322,7 +329,7 @@ class _WaveBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 3,
+      width: 4,
       height: height,
       decoration: BoxDecoration(
         color: Colors.white,
@@ -334,6 +341,51 @@ class _WaveBar extends StatelessWidget {
 
 class _VoiceActionSheet extends StatelessWidget {
   const _VoiceActionSheet();
+
+  Future<void> _openCreateRoom(BuildContext context) async {
+    final NavigatorState navigator = Navigator.of(context);
+
+    navigator.pop();
+
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+
+    if (!navigator.mounted) {
+      return;
+    }
+
+    await navigator.push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) {
+          return const CreateRoomScreen();
+        },
+      ),
+    );
+  }
+
+  Future<void> _openVoiceMoment(BuildContext context) async {
+    final NavigatorState navigator = Navigator.of(context);
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+
+    navigator.pop();
+
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+
+    if (!messenger.mounted) {
+      return;
+    }
+
+    messenger.hideCurrentSnackBar();
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: const Text('Voice Moments recording is coming next.'),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF2A1939),
+        margin: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -378,12 +430,7 @@ class _VoiceActionSheet extends StatelessWidget {
             subtitle: 'Record and share a short voice update',
             colors: const [Color(0xFF9F22FF), Color(0xFF6A00FF)],
             onPressed: () {
-              Navigator.of(context).pop();
-
-              _showComingSoon(
-                context,
-                'Voice Moments recording is coming next.',
-              );
+              _openVoiceMoment(context);
             },
           ),
           const SizedBox(height: 13),
@@ -393,23 +440,10 @@ class _VoiceActionSheet extends StatelessWidget {
             subtitle: 'Open a live room and invite people',
             colors: const [Color(0xFFFF3E81), Color(0xFF9C1DFF)],
             onPressed: () {
-              Navigator.of(context).pop();
-
-              _showComingSoon(context, 'Voice Room creation is coming next.');
+              _openCreateRoom(context);
             },
           ),
         ],
-      ),
-    );
-  }
-
-  static void _showComingSoon(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF2A1939),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
     );
   }

@@ -1,6 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
+
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
@@ -8,6 +10,32 @@ class HomeScreen extends StatelessWidget {
   static const Color _surface = Color(0xFF12101D);
   static const Color _border = Color(0xFF2C253B);
   static const Color _secondaryText = Color(0xFF9D95AD);
+
+  static void showComingSoon(BuildContext context, String message) {
+    final messenger = ScaffoldMessenger.of(context);
+
+    messenger.hideCurrentSnackBar();
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF2A1939),
+        margin: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+    );
+  }
+
+  static Future<void> openCreateRoom(BuildContext context) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) {
+          return const CreateRoomScreen();
+        },
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -65,11 +93,19 @@ class _MobileHome extends StatelessWidget {
           const SizedBox(height: 22),
           const _CreateRoomCard(),
           const SizedBox(height: 26),
-          const _SectionTitle(title: 'Friends online', actionLabel: 'See all'),
+          const _SectionTitle(
+            title: 'Friends online',
+            actionLabel: 'See all',
+            actionMessage: 'Friends list is coming soon.',
+          ),
           const SizedBox(height: 14),
           const _FriendsRow(),
           const SizedBox(height: 26),
-          const _SectionTitle(title: 'Active rooms', actionLabel: 'See all'),
+          const _SectionTitle(
+            title: 'Active rooms',
+            actionLabel: 'See all',
+            actionMessage: 'Room discovery is coming soon.',
+          ),
           const SizedBox(height: 14),
           const _MobileRoomsList(),
         ],
@@ -107,6 +143,7 @@ class _DesktopHome extends StatelessWidget {
                         _SectionTitle(
                           title: 'Friends online',
                           actionLabel: 'See all',
+                          actionMessage: 'Friends list is coming soon.',
                         ),
                         SizedBox(height: 14),
                         _FriendsRow(),
@@ -124,6 +161,7 @@ class _DesktopHome extends StatelessWidget {
               const _SectionTitle(
                 title: 'Active rooms',
                 actionLabel: 'See all',
+                actionMessage: 'Room discovery is coming soon.',
               ),
               const SizedBox(height: 14),
               const _DesktopRoomsGrid(),
@@ -176,14 +214,21 @@ class _HomeHeader extends StatelessWidget {
           icon: Icons.notifications_none_rounded,
           showBadge: true,
           tooltip: 'Notifications',
-          onPressed: () {},
+          onPressed: () {
+            HomeScreen.showComingSoon(
+              context,
+              'Notifications are coming soon.',
+            );
+          },
         ),
         const SizedBox(width: 10),
         if (!compact)
           _HeaderIconButton(
             icon: Icons.settings_outlined,
             tooltip: 'Settings',
-            onPressed: () {},
+            onPressed: () {
+              HomeScreen.showComingSoon(context, 'Settings are coming soon.');
+            },
           ),
       ],
     );
@@ -276,7 +321,9 @@ class _CreateRoomCard extends StatelessWidget {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () {},
+          onTap: () {
+            HomeScreen.openCreateRoom(context);
+          },
           borderRadius: BorderRadius.circular(24),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 20, 18, 20),
@@ -500,10 +547,15 @@ class _ActivityRow extends StatelessWidget {
 }
 
 class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({required this.title, required this.actionLabel});
+  const _SectionTitle({
+    required this.title,
+    required this.actionLabel,
+    required this.actionMessage,
+  });
 
   final String title;
   final String actionLabel;
+  final String actionMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -520,7 +572,9 @@ class _SectionTitle extends StatelessWidget {
           ),
         ),
         TextButton(
-          onPressed: () {},
+          onPressed: () {
+            HomeScreen.showComingSoon(context, actionMessage);
+          },
           style: TextButton.styleFrom(
             foregroundColor: const Color(0xFFBE4BFF),
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -586,75 +640,84 @@ class _FriendsRow extends StatelessWidget {
 
           return SizedBox(
             width: 58,
-            child: Column(
-              children: [
-                Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Container(
-                      width: 56,
-                      height: 56,
-                      padding: const EdgeInsets.all(2),
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
-                        ),
-                      ),
-                      child: Container(
-                        decoration: BoxDecoration(
+            child: InkWell(
+              onTap: () {
+                HomeScreen.showComingSoon(
+                  context,
+                  '${friend.name} profile is coming soon.',
+                );
+              },
+              borderRadius: BorderRadius.circular(18),
+              child: Column(
+                children: [
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Container(
+                        width: 56,
+                        height: 56,
+                        padding: const EdgeInsets.all(2),
+                        decoration: const BoxDecoration(
                           shape: BoxShape.circle,
                           gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: friend.gradient,
-                          ),
-                          border: Border.all(
-                            color: HomeScreen._background,
-                            width: 2,
+                            colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
                           ),
                         ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          friend.initial,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 19,
-                            fontWeight: FontWeight.w800,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: friend.gradient,
+                            ),
+                            border: Border.all(
+                              color: HomeScreen._background,
+                              width: 2,
+                            ),
                           ),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      right: 0,
-                      bottom: 2,
-                      child: Container(
-                        width: 14,
-                        height: 14,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF42D47D),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: HomeScreen._background,
-                            width: 3,
+                          alignment: Alignment.center,
+                          child: Text(
+                            friend.initial,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 19,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  friend.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFFD9D2E1),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                      Positioned(
+                        right: 0,
+                        bottom: 2,
+                        child: Container(
+                          width: 14,
+                          height: 14,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF42D47D),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: HomeScreen._background,
+                              width: 3,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  Text(
+                    friend.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFFD9D2E1),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -769,7 +832,12 @@ class _RoomCard extends StatelessWidget {
       color: HomeScreen._surface,
       borderRadius: BorderRadius.circular(21),
       child: InkWell(
-        onTap: () {},
+        onTap: () {
+          HomeScreen.showComingSoon(
+            context,
+            'Joining "$title" will be available soon.',
+          );
+        },
         borderRadius: BorderRadius.circular(21),
         child: Container(
           padding: const EdgeInsets.all(16),
