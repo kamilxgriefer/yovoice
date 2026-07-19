@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../theme/app_theme.dart';
+import '../core/theme/app_theme.dart';
 import 'auth_gate.dart';
 
 class YoVoiceApp extends StatelessWidget {
