@@ -1,6 +1,10 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/friends/data/models/friend_request.dart';
+import 'package:yovoice/features/friends/data/models/friend_user.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/friends/presentation/screens/add_friend_screen.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
@@ -53,6 +57,26 @@ class HomeScreen extends StatelessWidget {
           return const CreateRoomScreen();
         },
       ),
+    );
+  }
+
+
+  static Future<void> openAddFriend(BuildContext context) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const AddFriendScreen(),
+      ),
+    );
+  }
+
+  static Future<void> openFriendRequests(BuildContext context) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.72),
+      builder: (_) => const _FriendRequestsSheet(),
     );
   }
 
@@ -112,10 +136,9 @@ class _MobileHome extends StatelessWidget {
           const SizedBox(height: 22),
           const _CreateRoomCard(),
           const SizedBox(height: 26),
-          const _SectionTitle(
-            title: 'Friends online',
-            actionLabel: 'See all',
-            actionMessage: 'Friends list is coming soon.',
+          _FriendsHeader(
+            onAddFriend: () => HomeScreen.openAddFriend(context),
+            onRequests: () => HomeScreen.openFriendRequests(context),
           ),
           const SizedBox(height: 14),
           const _FriendsRow(),
@@ -153,19 +176,18 @@ class _DesktopHome extends StatelessWidget {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Expanded(
+                  Expanded(
                     flex: 6,
                     child: Column(
                       children: [
-                        _CreateRoomCard(),
-                        SizedBox(height: 26),
-                        _SectionTitle(
-                          title: 'Friends online',
-                          actionLabel: 'See all',
-                          actionMessage: 'Friends list is coming soon.',
+                        const _CreateRoomCard(),
+                        const SizedBox(height: 26),
+                        _FriendsHeader(
+                          onAddFriend: () => HomeScreen.openAddFriend(context),
+                          onRequests: () => HomeScreen.openFriendRequests(context),
                         ),
-                        SizedBox(height: 14),
-                        _FriendsRow(),
+                        const SizedBox(height: 14),
+                        const _FriendsRow(),
                       ],
                     ),
                   ),
@@ -608,138 +630,620 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
-class _FriendsRow extends StatelessWidget {
-  const _FriendsRow();
+class _FriendsHeader extends StatelessWidget {
+  const _FriendsHeader({this.onAddFriend, this.onRequests});
 
-  static const List<_FriendData> _friends = [
-    _FriendData(
-      name: 'Ania',
-      initial: 'A',
-      gradient: [Color(0xFFE28B65), Color(0xFF76314C)],
-    ),
-    _FriendData(
-      name: 'Max',
-      initial: 'M',
-      gradient: [Color(0xFF657BDE), Color(0xFF292A66)],
-    ),
-    _FriendData(
-      name: 'Sara',
-      initial: 'S',
-      gradient: [Color(0xFFE0A36F), Color(0xFF663746)],
-    ),
-    _FriendData(
-      name: 'Mike',
-      initial: 'M',
-      gradient: [Color(0xFF9F75D9), Color(0xFF3C2868)],
-    ),
-    _FriendData(
-      name: 'Lena',
-      initial: 'L',
-      gradient: [Color(0xFF63A482), Color(0xFF24483B)],
-    ),
-    _FriendData(
-      name: 'Tom',
-      initial: 'T',
-      gradient: [Color(0xFFE06683), Color(0xFF633048)],
-    ),
-  ];
+  final VoidCallback? onAddFriend;
+  final VoidCallback? onRequests;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 92,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: _friends.length,
-        separatorBuilder: (context, index) {
-          return const SizedBox(width: 17);
-        },
-        itemBuilder: (context, index) {
-          final friend = _friends[index];
+    return Row(
+      children: [
+        const Expanded(
+          child: Text(
+            'Friends online',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        _FriendsActionButton(
+          icon: Icons.person_add_alt_1_rounded,
+          tooltip: 'Add friend',
+          onPressed: onAddFriend ?? () => HomeScreen.openAddFriend(context),
+        ),
+        const SizedBox(width: 8),
+        _FriendsActionButton(
+          icon: Icons.mark_email_unread_outlined,
+          tooltip: 'Friend requests',
+          onPressed: onRequests ?? () => HomeScreen.openFriendRequests(context),
+        ),
+      ],
+    );
+  }
+}
 
-          return SizedBox(
-            width: 58,
-            child: InkWell(
-              onTap: () {
-                HomeScreen.showComingSoon(
-                  context,
-                  '${friend.name} profile is coming soon.',
-                );
-              },
-              borderRadius: BorderRadius.circular(18),
-              child: Column(
-                children: [
-                  Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      Container(
-                        width: 56,
-                        height: 56,
-                        padding: const EdgeInsets.all(2),
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: LinearGradient(
-                            colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
-                          ),
-                        ),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: friend.gradient,
-                            ),
-                            border: Border.all(
-                              color: HomeScreen._background,
-                              width: 2,
-                            ),
-                          ),
-                          alignment: Alignment.center,
-                          child: Text(
-                            friend.initial,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 19,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                      ),
-                      Positioned(
-                        right: 0,
-                        bottom: 2,
-                        child: Container(
-                          width: 14,
-                          height: 14,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF42D47D),
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: HomeScreen._background,
-                              width: 3,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    friend.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFFD9D2E1),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
+class _FriendsActionButton extends StatelessWidget {
+  const _FriendsActionButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: HomeScreen._surface,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: HomeScreen._border),
+            ),
+            child: Icon(icon, color: const Color(0xFFC05AFF), size: 20),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FriendsRow extends StatefulWidget {
+  const _FriendsRow();
+
+  @override
+  State<_FriendsRow> createState() => _FriendsRowState();
+}
+
+class _FriendsRowState extends State<_FriendsRow> {
+  final FriendService _friendService = FriendService();
+  late final Stream<List<FriendUser>> _friendsStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _friendsStream = _friendService.watchFriends();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<FriendUser>>(
+      stream: _friendsStream,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
+          return const SizedBox(
+            height: 92,
+            child: Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.2,
+                  color: Color(0xFFB348FF),
+                ),
               ),
             ),
           );
-        },
+        }
+
+        if (snapshot.hasError) {
+          return _FriendsMessage(
+            icon: Icons.error_outline_rounded,
+            message: _friendError(snapshot.error),
+          );
+        }
+
+        final friends = snapshot.data ?? const <FriendUser>[];
+        final onlineFriends = friends.where((friend) => friend.isOnline).toList();
+
+        if (onlineFriends.isEmpty) {
+          return _FriendsMessage(
+            icon: Icons.people_outline_rounded,
+            message: friends.isEmpty
+                ? 'Add friends to see them here.'
+                : 'None of your friends are online right now.',
+            actionLabel: friends.isEmpty ? 'Add friend' : null,
+            onAction: friends.isEmpty
+                ? () => HomeScreen.openAddFriend(context)
+                : null,
+          );
+        }
+
+        return SizedBox(
+          height: 92,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: onlineFriends.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 17),
+            itemBuilder: (context, index) {
+              final friend = onlineFriends[index];
+              return _FriendAvatar(friend: friend);
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  String _friendError(Object? error) {
+    final message = error.toString();
+    if (message.contains('permission-denied')) {
+      return 'Firestore permission denied for friends.';
+    }
+    if (message.contains('unavailable')) {
+      return 'Friends are temporarily unavailable.';
+    }
+    return 'Could not load friends.';
+  }
+}
+
+class _FriendAvatar extends StatelessWidget {
+  const _FriendAvatar({required this.friend});
+
+  final FriendUser friend;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = friend.displayName.trim().isNotEmpty
+        ? friend.displayName.trim()
+        : friend.email.split('@').first;
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
+    final photoUrl = friend.photoUrl?.trim();
+
+    return SizedBox(
+      width: 58,
+      child: InkWell(
+        onTap: () => HomeScreen.showComingSoon(
+          context,
+          '$name profile is coming soon.',
+        ),
+        borderRadius: BorderRadius.circular(18),
+        child: Column(
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  padding: const EdgeInsets.all(2),
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
+                    ),
+                  ),
+                  child: ClipOval(
+                    child: Container(
+                      color: const Color(0xFF30203F),
+                      child: photoUrl != null && photoUrl.isNotEmpty
+                          ? Image.network(
+                              photoUrl,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => _InitialAvatar(
+                                initial: initial,
+                              ),
+                            )
+                          : _InitialAvatar(initial: initial),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  right: 0,
+                  bottom: 2,
+                  child: Container(
+                    width: 14,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF42D47D),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: HomeScreen._background, width: 3),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFFD9D2E1),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InitialAvatar extends StatelessWidget {
+  const _InitialAvatar({required this.initial});
+
+  final String initial;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      alignment: Alignment.center,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF9F75D9), Color(0xFF3C2868)],
+        ),
+      ),
+      child: Text(
+        initial,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 19,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _FriendsMessage extends StatelessWidget {
+  const _FriendsMessage({
+    required this.icon,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final IconData icon;
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(minHeight: 92),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: HomeScreen._surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: HomeScreen._border),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: HomeScreen._secondaryText, size: 24),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: HomeScreen._secondaryText,
+                fontSize: 13,
+                height: 1.35,
+              ),
+            ),
+          ),
+          if (actionLabel != null && onAction != null) ...[
+            const SizedBox(width: 10),
+            TextButton(
+              onPressed: onAction,
+              child: Text(actionLabel!),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _FriendRequestsSheet extends StatefulWidget {
+  const _FriendRequestsSheet();
+
+  @override
+  State<_FriendRequestsSheet> createState() => _FriendRequestsSheetState();
+}
+
+class _FriendRequestsSheetState extends State<_FriendRequestsSheet> {
+  final FriendService _friendService = FriendService();
+  late final Stream<List<FriendRequest>> _requestsStream;
+  final Set<String> _processingIds = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _requestsStream = _friendService.watchFriendRequests();
+  }
+
+  Future<void> _accept(FriendRequest request) async {
+    await _process(
+      request.senderId,
+      () => _friendService.acceptFriendRequest(request),
+      'Friend request accepted.',
+    );
+  }
+
+  Future<void> _decline(FriendRequest request) async {
+    await _process(
+      request.senderId,
+      () => _friendService.declineFriendRequest(request.senderId),
+      'Friend request declined.',
+    );
+  }
+
+  Future<void> _process(
+    String senderId,
+    Future<void> Function() action,
+    String successMessage,
+  ) async {
+    if (_processingIds.contains(senderId)) return;
+    setState(() => _processingIds.add(senderId));
+
+    try {
+      await action();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(successMessage),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFF2A1939),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      HomeScreen.showError(context, _requestError(error));
+    } finally {
+      if (mounted) setState(() => _processingIds.remove(senderId));
+    }
+  }
+
+  String _requestError(Object error) {
+    final message = error.toString();
+    if (message.contains('permission-denied')) {
+      return 'Firestore permission denied. Check your security rules.';
+    }
+    if (message.contains('not-found')) {
+      return 'This friend request no longer exists.';
+    }
+    return 'Could not update the friend request.';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+      ),
+      decoration: const BoxDecoration(
+        color: Color(0xFF12101D),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        border: Border(top: BorderSide(color: Color(0xFF3A284A))),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 10),
+          Container(
+            width: 44,
+            height: 5,
+            decoration: BoxDecoration(
+              color: const Color(0xFF51475E),
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 12, 12),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Friend requests',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 21,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded, color: Colors.white),
+                ),
+              ],
+            ),
+          ),
+          Flexible(
+            child: StreamBuilder<List<FriendRequest>>(
+              stream: _requestsStream,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting &&
+                    !snapshot.hasData) {
+                  return const Padding(
+                    padding: EdgeInsets.all(36),
+                    child: CircularProgressIndicator(
+                      color: Color(0xFFB348FF),
+                    ),
+                  );
+                }
+
+                if (snapshot.hasError) {
+                  return const Padding(
+                    padding: EdgeInsets.all(28),
+                    child: Text(
+                      'Could not load friend requests.',
+                      style: TextStyle(color: Color(0xFFFF8AA2)),
+                    ),
+                  );
+                }
+
+                final requests = snapshot.data ?? const <FriendRequest>[];
+                if (requests.isEmpty) {
+                  return const Padding(
+                    padding: EdgeInsets.fromLTRB(24, 18, 24, 40),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.mark_email_read_outlined,
+                          color: Color(0xFF8F849D),
+                          size: 46,
+                        ),
+                        SizedBox(height: 14),
+                        Text(
+                          'No pending friend requests',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        SizedBox(height: 6),
+                        Text(
+                          'New requests will appear here.',
+                          style: TextStyle(color: Color(0xFF9D95AD)),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                return ListView.separated(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.fromLTRB(18, 6, 18, 28),
+                  itemCount: requests.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  itemBuilder: (context, index) {
+                    final request = requests[index];
+                    final processing = _processingIds.contains(request.senderId);
+                    return _FriendRequestTile(
+                      request: request,
+                      processing: processing,
+                      onAccept: () => _accept(request),
+                      onDecline: () => _decline(request),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FriendRequestTile extends StatelessWidget {
+  const _FriendRequestTile({
+    required this.request,
+    required this.processing,
+    required this.onAccept,
+    required this.onDecline,
+  });
+
+  final FriendRequest request;
+  final bool processing;
+  final VoidCallback onAccept;
+  final VoidCallback onDecline;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = request.senderName.trim().isNotEmpty
+        ? request.senderName.trim()
+        : request.senderEmail.split('@').first;
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
+    final photoUrl = request.senderPhotoUrl?.trim();
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF191624),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: HomeScreen._border),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 48,
+            height: 48,
+            child: ClipOval(
+              child: photoUrl != null && photoUrl.isNotEmpty
+                  ? Image.network(
+                      photoUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _InitialAvatar(initial: initial),
+                    )
+                  : _InitialAvatar(initial: initial),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  request.senderEmail,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: HomeScreen._secondaryText,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (processing)
+            const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.2,
+                color: Color(0xFFB348FF),
+              ),
+            )
+          else ...[
+            IconButton(
+              tooltip: 'Decline',
+              onPressed: onDecline,
+              icon: const Icon(Icons.close_rounded, color: Color(0xFFFF6F8E)),
+            ),
+            IconButton(
+              tooltip: 'Accept',
+              onPressed: onAccept,
+              icon: const Icon(Icons.check_rounded, color: Color(0xFF54DB8C)),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -1340,16 +1844,4 @@ class _RoomsErrorState extends StatelessWidget {
       ),
     );
   }
-}
-
-class _FriendData {
-  const _FriendData({
-    required this.name,
-    required this.initial,
-    required this.gradient,
-  });
-
-  final String name;
-  final String initial;
-  final List<Color> gradient;
 }

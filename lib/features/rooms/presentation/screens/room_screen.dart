@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 
@@ -923,6 +924,8 @@ class _ParticipantsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final roomService = RoomService();
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(17),
@@ -949,11 +952,89 @@ class _ParticipantsSection extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 17),
-          _ParticipantTile(
-            name: room.hostName,
-            photoUrl: room.hostPhotoUrl,
-            role: 'Host',
-            isMuted: false,
+          StreamBuilder<List<RoomParticipant>>(
+            stream: roomService.watchParticipants(room.id),
+            builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return const _ParticipantsMessage(
+                  icon: Icons.error_outline_rounded,
+                  message: 'Could not load participants.',
+                );
+              }
+
+              if (snapshot.connectionState == ConnectionState.waiting &&
+                  !snapshot.hasData) {
+                return const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 10),
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        color: Color(0xFFC05CFF),
+                      ),
+                    ),
+                  ),
+                );
+              }
+
+              final participants = snapshot.data ?? const <RoomParticipant>[];
+
+              if (participants.isEmpty) {
+                return const _ParticipantsMessage(
+                  icon: Icons.person_off_outlined,
+                  message: 'Nobody is in this room yet.',
+                );
+              }
+
+              return Column(
+                children: [
+                  for (var index = 0; index < participants.length; index++) ...[
+                    _ParticipantTile.fromParticipant(
+                      participant: participants[index],
+                    ),
+                    if (index != participants.length - 1)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 10),
+                        child: Divider(
+                          height: 1,
+                          color: _RoomScreenState._border,
+                        ),
+                      ),
+                  ],
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ParticipantsMessage extends StatelessWidget {
+  const _ParticipantsMessage({required this.icon, required this.message});
+
+  final IconData icon;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Icon(icon, color: _RoomScreenState._secondaryText, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: _RoomScreenState._secondaryText,
+                fontSize: 12,
+              ),
+            ),
           ),
         ],
       ),
@@ -967,12 +1048,38 @@ class _ParticipantTile extends StatelessWidget {
     required this.photoUrl,
     required this.role,
     required this.isMuted,
+    required this.isSpeaker,
   });
+
+  factory _ParticipantTile.fromParticipant({
+    required RoomParticipant participant,
+  }) {
+    return _ParticipantTile(
+      name: participant.displayName,
+      photoUrl: participant.photoUrl,
+      role: _roleLabel(participant),
+      isMuted: participant.isMuted,
+      isSpeaker: participant.isSpeaker,
+    );
+  }
 
   final String name;
   final String? photoUrl;
   final String role;
   final bool isMuted;
+  final bool isSpeaker;
+
+  static String _roleLabel(RoomParticipant participant) {
+    if (participant.isHost) {
+      return 'Host';
+    }
+
+    if (participant.isSpeaker) {
+      return 'Speaker';
+    }
+
+    return 'Listener';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1018,8 +1125,12 @@ class _ParticipantTile extends StatelessWidget {
             border: Border.all(color: const Color(0xFF55316B)),
           ),
           child: Icon(
-            isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
-            color: isMuted ? const Color(0xFF958B9F) : const Color(0xFFD36BFF),
+            isSpeaker
+                ? (isMuted ? Icons.mic_off_rounded : Icons.mic_rounded)
+                : Icons.headphones_rounded,
+            color: isSpeaker && !isMuted
+                ? const Color(0xFFD36BFF)
+                : const Color(0xFF958B9F),
             size: 18,
           ),
         ),

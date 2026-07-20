@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/features/chats/presentation/screens/chats_screen.dart';
 import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
+import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
@@ -24,7 +24,7 @@ class _MainShellState extends State<MainShell> {
   static const List<Widget> _screens = [
     HomeScreen(),
     DiscoverScreen(),
-    ChatsScreen(),
+    MessagesScreen(),
     ProfileScreen(),
   ];
 
@@ -518,7 +518,10 @@ class _VoiceOption extends StatelessWidget {
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right_rounded, color: Color(0xFF81768E)),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFF81768E),
+              ),
             ],
           ),
         ),

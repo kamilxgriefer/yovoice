@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 
 class RoomService {
@@ -91,13 +92,70 @@ class RoomService {
   }
 
   Stream<VoiceRoom> watchRoom(String roomId) {
-    return _roomsCollection.doc(roomId).snapshots().map((document) {
+    final normalizedRoomId = roomId.trim();
+
+    if (normalizedRoomId.isEmpty) {
+      return Stream<VoiceRoom>.error(ArgumentError('Room ID cannot be empty.'));
+    }
+
+    return _roomsCollection.doc(normalizedRoomId).snapshots().map((document) {
       if (!document.exists) {
         throw StateError('The requested room does not exist.');
       }
 
       return VoiceRoom.fromFirestore(document);
     });
+  }
+
+  Stream<List<RoomParticipant>> watchParticipants(String roomId) {
+    final normalizedRoomId = roomId.trim();
+
+    if (normalizedRoomId.isEmpty) {
+      return Stream<List<RoomParticipant>>.error(
+        ArgumentError('Room ID cannot be empty.'),
+      );
+    }
+
+    return _roomsCollection
+        .doc(normalizedRoomId)
+        .collection('participants')
+        .orderBy('joinedAt')
+        .snapshots()
+        .map((snapshot) {
+          final participants = snapshot.docs
+              .map(RoomParticipant.fromFirestore)
+              .toList();
+
+          participants.sort((first, second) {
+            final firstPriority = _participantPriority(first);
+            final secondPriority = _participantPriority(second);
+
+            if (firstPriority != secondPriority) {
+              return firstPriority.compareTo(secondPriority);
+            }
+
+            final firstJoinedAt = first.joinedAt;
+            final secondJoinedAt = second.joinedAt;
+
+            if (firstJoinedAt == null && secondJoinedAt == null) {
+              return first.displayName.toLowerCase().compareTo(
+                second.displayName.toLowerCase(),
+              );
+            }
+
+            if (firstJoinedAt == null) {
+              return 1;
+            }
+
+            if (secondJoinedAt == null) {
+              return -1;
+            }
+
+            return firstJoinedAt.compareTo(secondJoinedAt);
+          });
+
+          return participants;
+        });
   }
 
   Future<VoiceRoom> joinRoom(String roomId) async {
@@ -251,7 +309,13 @@ class RoomService {
       throw StateError('You must be signed in before closing a room.');
     }
 
-    final roomDocument = _roomsCollection.doc(roomId);
+    final normalizedRoomId = roomId.trim();
+
+    if (normalizedRoomId.isEmpty) {
+      throw ArgumentError('Room ID cannot be empty.');
+    }
+
+    final roomDocument = _roomsCollection.doc(normalizedRoomId);
     final roomSnapshot = await roomDocument.get();
     final roomData = roomSnapshot.data();
 
@@ -268,6 +332,18 @@ class RoomService {
       'endedAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
+  }
+
+  int _participantPriority(RoomParticipant participant) {
+    if (participant.isHost) {
+      return 0;
+    }
+
+    if (participant.isSpeaker) {
+      return 1;
+    }
+
+    return 2;
   }
 
   String _resolveUserName(User user) {
