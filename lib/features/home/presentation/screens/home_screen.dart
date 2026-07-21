@@ -30,33 +30,25 @@ class HomeScreen extends StatelessWidget {
 
   static Future<void> openCreateRoom(BuildContext context) async {
     await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => const CreateRoomScreen(),
-      ),
+      MaterialPageRoute<void>(builder: (_) => const CreateRoomScreen()),
     );
   }
 
   static Future<void> openVoiceMoment(BuildContext context) async {
     await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => const RecordVoiceMomentScreen(),
-      ),
+      MaterialPageRoute<void>(builder: (_) => const RecordVoiceMomentScreen()),
     );
   }
 
   static Future<void> openNotifications(BuildContext context) async {
     await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => const NotificationsScreen(),
-      ),
+      MaterialPageRoute<void>(builder: (_) => const NotificationsScreen()),
     );
   }
 
   static Future<void> openAddFriend(BuildContext context) async {
     await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => const AddFriendScreen(),
-      ),
+      MaterialPageRoute<void>(builder: (_) => const AddFriendScreen()),
     );
   }
 
@@ -71,10 +63,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  static Future<void> openRoom(
-    BuildContext context,
-    VoiceRoom room,
-  ) async {
+  static Future<void> openRoom(BuildContext context, VoiceRoom room) async {
     final service = RoomService();
 
     try {
@@ -83,9 +72,7 @@ class HomeScreen extends StatelessWidget {
       if (!context.mounted) return;
 
       await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => RoomScreen(room: joined),
-        ),
+        MaterialPageRoute<void>(builder: (_) => RoomScreen(room: joined)),
       );
     } catch (error) {
       if (!context.mounted) return;
@@ -144,11 +131,7 @@ class HomeScreen extends StatelessWidget {
           gradient: RadialGradient(
             center: Alignment(-.88, -.96),
             radius: 1.3,
-            colors: [
-              Color(0xFF25103C),
-              Color(0xFF100B1B),
-              background,
-            ],
+            colors: [Color(0xFF25103C), Color(0xFF100B1B), background],
             stops: [0, .38, 1],
           ),
         ),
@@ -191,10 +174,7 @@ class _DesktopHome extends StatelessWidget {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Expanded(
-                    flex: 3,
-                    child: _MainHomeContent(),
-                  ),
+                  const Expanded(flex: 3, child: _MainHomeContent()),
                   const SizedBox(width: 22),
                   SizedBox(
                     width: 340,
@@ -269,10 +249,7 @@ class _MainHomeContent extends StatelessWidget {
 }
 
 class _HomeHeader extends StatelessWidget {
-  const _HomeHeader({
-    required this.displayName,
-    this.compact = false,
-  });
+  const _HomeHeader({required this.displayName, this.compact = false});
 
   final String displayName;
   final bool compact;
@@ -328,9 +305,7 @@ class _HomeHeader extends StatelessWidget {
             child: user?.photoURL?.trim().isNotEmpty == true
                 ? null
                 : Text(
-                    displayName.isEmpty
-                        ? '?'
-                        : displayName[0].toUpperCase(),
+                    displayName.isEmpty ? '?' : displayName[0].toUpperCase(),
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w900,
@@ -421,10 +396,7 @@ class _CreateActions extends StatelessWidget {
         eyebrow: 'Record a',
         title: 'Voice Moment',
         subtitle: 'Share your voice\nwith the world',
-        colors: const [
-          Color(0xFF7417B6),
-          Color(0xFF3B0C63),
-        ],
+        colors: const [Color(0xFF7417B6), Color(0xFF3B0C63)],
         borderColor: const Color(0xFFA82DFF),
         onTap: () => HomeScreen.openVoiceMoment(context),
       ),
@@ -433,23 +405,14 @@ class _CreateActions extends StatelessWidget {
         eyebrow: 'Start a',
         title: 'Live Room',
         subtitle: 'Talk with others\nin real time',
-        colors: const [
-          Color(0xFF29113E),
-          Color(0xFF171021),
-        ],
+        colors: const [Color(0xFF29113E), Color(0xFF171021)],
         borderColor: const Color(0xFF4C315E),
         onTap: () => HomeScreen.openCreateRoom(context),
       ),
     ];
 
     if (compact) {
-      return Column(
-        children: [
-          cards[0],
-          const SizedBox(height: 12),
-          cards[1],
-        ],
-      );
+      return Column(children: [cards[0], const SizedBox(height: 12), cards[1]]);
     }
 
     return Row(
@@ -516,10 +479,7 @@ class _CreateActionCard extends StatelessWidget {
                   gradient: const LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [
-                      Color(0xFFC33BFF),
-                      Color(0xFF7200EC),
-                    ],
+                    colors: [Color(0xFFC33BFF), Color(0xFF7200EC)],
                   ),
                   shape: BoxShape.circle,
                 ),
@@ -581,10 +541,7 @@ class _CreateActionCard extends StatelessWidget {
 }
 
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({
-    required this.title,
-    required this.actionLabel,
-  });
+  const _SectionHeader({required this.title, required this.actionLabel});
 
   final String title;
   final String actionLabel;
@@ -614,9 +571,7 @@ class _SectionHeader extends StatelessWidget {
               );
             }
           },
-          style: TextButton.styleFrom(
-            foregroundColor: const Color(0xFFC64BFF),
-          ),
+          style: TextButton.styleFrom(foregroundColor: const Color(0xFFC64BFF)),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -747,9 +702,7 @@ class _MomentEmptyCard extends StatelessWidget {
           ),
           IconButton.filled(
             onPressed: onPressed,
-            style: IconButton.styleFrom(
-              backgroundColor: HomeScreen.primary,
-            ),
+            style: IconButton.styleFrom(backgroundColor: HomeScreen.primary),
             icon: const Icon(Icons.mic_rounded),
           ),
         ],
@@ -782,8 +735,8 @@ class _VoiceMomentCard extends StatelessWidget {
                 backgroundColor: const Color(0xFF662092),
                 backgroundImage:
                     moment.authorPhotoUrl?.trim().isNotEmpty == true
-                        ? NetworkImage(moment.authorPhotoUrl!)
-                        : null,
+                    ? NetworkImage(moment.authorPhotoUrl!)
+                    : null,
                 child: moment.authorPhotoUrl?.trim().isNotEmpty == true
                     ? null
                     : Text(
@@ -821,10 +774,7 @@ class _VoiceMomentCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const Icon(
-                Icons.more_horiz_rounded,
-                color: HomeScreen.muted,
-              ),
+              const Icon(Icons.more_horiz_rounded, color: HomeScreen.muted),
             ],
           ),
           const SizedBox(height: 15),
@@ -856,19 +806,11 @@ class _VoiceMomentCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              Expanded(
-                child: _Waveform(
-                  seed: moment.id.hashCode,
-                  height: 46,
-                ),
-              ),
+              Expanded(child: _Waveform(seed: moment.id.hashCode, height: 46)),
               const SizedBox(width: 8),
               Text(
                 moment.durationLabel,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                ),
+                style: const TextStyle(color: Colors.white, fontSize: 11),
               ),
             ],
           ),
@@ -894,10 +836,7 @@ class _VoiceMomentCard extends StatelessWidget {
               const SizedBox(width: 5),
               Text(
                 '${moment.likeCount}',
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 11,
-                ),
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
               ),
               const SizedBox(width: 16),
               const Icon(
@@ -908,10 +847,7 @@ class _VoiceMomentCard extends StatelessWidget {
               const SizedBox(width: 5),
               Text(
                 '${moment.commentCount}',
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 11,
-                ),
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
               ),
               const Spacer(),
               const Icon(
@@ -939,10 +875,7 @@ class _VoiceMomentCard extends StatelessWidget {
 }
 
 class _Waveform extends StatelessWidget {
-  const _Waveform({
-    required this.seed,
-    required this.height,
-  });
+  const _Waveform({required this.seed, required this.height});
 
   final int seed;
   final double height;
@@ -964,10 +897,7 @@ class _Waveform extends StatelessWidget {
                 gradient: const LinearGradient(
                   begin: Alignment.bottomCenter,
                   end: Alignment.topCenter,
-                  colors: [
-                    Color(0xFF6A00FF),
-                    Color(0xFFBF3BFF),
-                  ],
+                  colors: [Color(0xFF6A00FF), Color(0xFFBF3BFF)],
                 ),
                 borderRadius: BorderRadius.circular(20),
               ),
@@ -1027,10 +957,7 @@ class _FriendsSpeakingSection extends StatelessWidget {
 
               return _SpeakingFriend(
                 friend: friend,
-                onTap: () => HomeScreen.openFriendProfile(
-                  context,
-                  friend,
-                ),
+                onTap: () => HomeScreen.openFriendProfile(context, friend),
               );
             },
           ),
@@ -1041,10 +968,7 @@ class _FriendsSpeakingSection extends StatelessWidget {
 }
 
 class _SpeakingFriend extends StatelessWidget {
-  const _SpeakingFriend({
-    required this.friend,
-    required this.onTap,
-  });
+  const _SpeakingFriend({required this.friend, required this.onTap});
 
   final FriendUser friend;
   final VoidCallback onTap;
@@ -1066,19 +990,15 @@ class _SpeakingFriend extends StatelessWidget {
                   decoration: const BoxDecoration(
                     shape: BoxShape.circle,
                     gradient: LinearGradient(
-                      colors: [
-                        Color(0xFFC43BFF),
-                        Color(0xFF5D00D7),
-                      ],
+                      colors: [Color(0xFFC43BFF), Color(0xFF5D00D7)],
                     ),
                   ),
                   child: CircleAvatar(
                     radius: 29,
                     backgroundColor: const Color(0xFF25152F),
-                    backgroundImage:
-                        friend.photoUrl?.trim().isNotEmpty == true
-                            ? NetworkImage(friend.photoUrl!)
-                            : null,
+                    backgroundImage: friend.photoUrl?.trim().isNotEmpty == true
+                        ? NetworkImage(friend.photoUrl!)
+                        : null,
                     child: friend.photoUrl?.trim().isNotEmpty == true
                         ? null
                         : Text(
@@ -1113,10 +1033,7 @@ class _SpeakingFriend extends StatelessWidget {
               friend.displayName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 11,
-              ),
+              style: const TextStyle(color: Colors.white70, fontSize: 11),
             ),
           ],
         ),
@@ -1184,12 +1101,15 @@ class _LiveRoomsSection extends StatelessWidget {
             return Wrap(
               spacing: 12,
               runSpacing: 12,
-              children: rooms.take(6).map((room) {
-                return SizedBox(
-                  width: (constraints.maxWidth - 24) / 3,
-                  child: _LiveRoomCard(room: room),
-                );
-              }).toList(growable: false),
+              children: rooms
+                  .take(6)
+                  .map((room) {
+                    return SizedBox(
+                      width: (constraints.maxWidth - 24) / 3,
+                      child: _LiveRoomCard(room: room),
+                    );
+                  })
+                  .toList(growable: false),
             );
           },
         );
@@ -1217,10 +1137,7 @@ class _LiveRoomCard extends StatelessWidget {
             gradient: const LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [
-                Color(0xFF29123D),
-                Color(0xFF12101D),
-              ],
+              colors: [Color(0xFF29123D), Color(0xFF12101D)],
             ),
             borderRadius: BorderRadius.circular(19),
             border: Border.all(color: HomeScreen.border),
@@ -1251,10 +1168,7 @@ class _LiveRoomCard extends StatelessWidget {
                   const Spacer(),
                   Text(
                     room.language,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 11,
-                    ),
+                    style: const TextStyle(color: Colors.white70, fontSize: 11),
                   ),
                 ],
               ),
@@ -1293,10 +1207,7 @@ class _LiveRoomCard extends StatelessWidget {
                   const SizedBox(width: 6),
                   Text(
                     '${room.participantCount}/${room.maxParticipants ?? '∞'}',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 11,
-                    ),
+                    style: const TextStyle(color: Colors.white70, fontSize: 11),
                   ),
                   const Spacer(),
                   Container(
@@ -1361,10 +1272,7 @@ class _InlineEmptyCard extends StatelessWidget {
               color: HomeScreen.surface2,
               borderRadius: BorderRadius.circular(15),
             ),
-            child: Icon(
-              icon,
-              color: const Color(0xFFC25AFF),
-            ),
+            child: Icon(icon, color: const Color(0xFFC25AFF)),
           ),
           const SizedBox(width: 13),
           Expanded(
@@ -1381,18 +1289,12 @@ class _InlineEmptyCard extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   subtitle,
-                  style: const TextStyle(
-                    color: HomeScreen.muted,
-                    fontSize: 12,
-                  ),
+                  style: const TextStyle(color: HomeScreen.muted, fontSize: 12),
                 ),
               ],
             ),
           ),
-          TextButton(
-            onPressed: onPressed,
-            child: Text(actionLabel),
-          ),
+          TextButton(onPressed: onPressed, child: Text(actionLabel)),
         ],
       ),
     );
@@ -1476,10 +1378,7 @@ class _DesktopSidePanel extends StatelessWidget {
             padding: const EdgeInsets.all(15),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [
-                  Color(0xFF35134F),
-                  Color(0xFF20142D),
-                ],
+                colors: [Color(0xFF35134F), Color(0xFF20142D)],
               ),
               borderRadius: BorderRadius.circular(17),
               border: Border.all(color: const Color(0xFF4C2A63)),
@@ -1500,10 +1399,7 @@ class _DesktopSidePanel extends StatelessWidget {
 }
 
 class _SideTitle extends StatelessWidget {
-  const _SideTitle({
-    required this.icon,
-    required this.title,
-  });
+  const _SideTitle({required this.icon, required this.title});
 
   final IconData icon;
   final String title;
@@ -1569,10 +1465,7 @@ class _SideRow extends StatelessWidget {
               const SizedBox(height: 3),
               Text(
                 subtitle,
-                style: const TextStyle(
-                  color: HomeScreen.muted,
-                  fontSize: 11,
-                ),
+                style: const TextStyle(color: HomeScreen.muted, fontSize: 11),
               ),
             ],
           ),
@@ -1588,8 +1481,7 @@ class _FriendRequestNotifier extends StatefulWidget {
   final Widget child;
 
   @override
-  State<_FriendRequestNotifier> createState() =>
-      _FriendRequestNotifierState();
+  State<_FriendRequestNotifier> createState() => _FriendRequestNotifierState();
 }
 
 class _FriendRequestNotifierState extends State<_FriendRequestNotifier> {
@@ -1602,13 +1494,13 @@ class _FriendRequestNotifierState extends State<_FriendRequestNotifier> {
   void initState() {
     super.initState();
 
-    _subscription =
-        _friendService.watchFriendRequests().listen(_handleRequests);
+    _subscription = _friendService.watchFriendRequests().listen(
+      _handleRequests,
+    );
   }
 
   void _handleRequests(List<FriendRequest> requests) {
-    final currentIds =
-        requests.map((request) => request.senderId).toSet();
+    final currentIds = requests.map((request) => request.senderId).toSet();
     final previousIds = _previousRequestIds;
 
     _previousRequestIds = currentIds;

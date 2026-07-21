@@ -47,7 +47,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _typingTimer;
   Message? _replyTo;
   bool _sending = false;
-  bool _muted = false;
+  bool _isMuted = false;
 
   String get _currentUserId =>
       FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -308,13 +308,13 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       await _service.setConversationMuted(
         conversationId: widget.conversationId,
-        muted: !_muted,
+        muted: !_isMuted,
       );
 
       if (mounted) {
-        setState(() => _muted = !_muted);
+        setState(() => _isMuted = !_isMuted);
         _showMessage(
-          _muted
+          _isMuted
               ? 'Conversation muted.'
               : 'Notifications turned on.',
         );
@@ -391,7 +391,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 displayName: widget.otherDisplayName,
                 photoUrl: widget.otherPhotoUrl,
                 presenceStream: _presence,
-                muted: _muted,
+                muted: _isMuted,
                 onBack: () => Navigator.pop(context),
                 onMute: _toggleMute,
                 onArchive: _archiveConversation,
