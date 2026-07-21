@@ -23,10 +23,9 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
   final TextEditingController _searchController = TextEditingController();
 
   Timer? _searchDebounce;
-
   List<FriendUser> _results = const [];
-  final Set<String> _sendingRequestIds = <String>{};
-  final Set<String> _sentRequestIds = <String>{};
+  final Map<String, FriendRelationshipStatus> _relationshipStatuses = {};
+  final Set<String> _processingIds = <String>{};
 
   bool _isSearching = false;
   String? _errorMessage;
@@ -40,16 +39,15 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
 
   void _onSearchChanged(String value) {
     _searchDebounce?.cancel();
-
     final query = value.trim();
 
     if (query.length < 2) {
       setState(() {
         _results = const [];
+        _relationshipStatuses.clear();
         _isSearching = false;
         _errorMessage = null;
       });
-
       return;
     }
 
@@ -66,6 +64,11 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
   Future<void> _searchUsers(String query) async {
     try {
       final users = await _friendService.searchUsers(query);
+      final statuses = await Future.wait(
+        users.map(
+          (user) => _friendService.getRelationshipStatus(user.id),
+        ),
+      );
 
       if (!mounted || _searchController.text.trim() != query) {
         return;
@@ -73,63 +76,90 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
 
       setState(() {
         _results = users;
+        _relationshipStatuses
+          ..clear()
+          ..addEntries(
+            List.generate(
+              users.length,
+              (index) => MapEntry(users[index].id, statuses[index]),
+            ),
+          );
         _isSearching = false;
         _errorMessage = null;
       });
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
 
       setState(() {
         _results = const [];
+        _relationshipStatuses.clear();
         _isSearching = false;
         _errorMessage = _readableError(error);
       });
     }
   }
 
-  Future<void> _sendFriendRequest(FriendUser user) async {
-    if (_sendingRequestIds.contains(user.id) ||
-        _sentRequestIds.contains(user.id)) {
+  Future<void> _handlePrimaryAction(FriendUser user) async {
+    if (_processingIds.contains(user.id)) return;
+
+    final status = _relationshipStatuses[user.id] ??
+        FriendRelationshipStatus.none;
+
+    if (status == FriendRelationshipStatus.friends) {
       return;
     }
 
-    setState(() {
-      _sendingRequestIds.add(user.id);
-    });
+    setState(() => _processingIds.add(user.id));
 
     try {
+      if (status == FriendRelationshipStatus.requestSent) {
+        await _friendService.cancelFriendRequest(user.id);
+
+        if (!mounted) return;
+        setState(() {
+          _relationshipStatuses[user.id] = FriendRelationshipStatus.none;
+        });
+        _showMessage('Friend request cancelled.');
+        return;
+      }
+
       await _friendService.sendFriendRequest(user);
 
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
+
+      final newStatus = status == FriendRelationshipStatus.requestReceived
+          ? FriendRelationshipStatus.friends
+          : FriendRelationshipStatus.requestSent;
 
       setState(() {
-        _sentRequestIds.add(user.id);
+        _relationshipStatuses[user.id] = newStatus;
       });
 
-      _showMessage('Friend request sent to ${user.displayName}.');
+      _showMessage(
+        newStatus == FriendRelationshipStatus.friends
+            ? 'You and ${user.displayName} are now friends.'
+            : 'Friend request sent to ${user.displayName}.',
+      );
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
 
       final message = _readableError(error);
 
-      if (message == 'Friend request already sent.') {
+      if (message == 'You are already friends.') {
         setState(() {
-          _sentRequestIds.add(user.id);
+          _relationshipStatuses[user.id] = FriendRelationshipStatus.friends;
+        });
+      } else if (message == 'Friend request already sent.') {
+        setState(() {
+          _relationshipStatuses[user.id] =
+              FriendRelationshipStatus.requestSent;
         });
       }
 
       _showError(message);
     } finally {
       if (mounted) {
-        setState(() {
-          _sendingRequestIds.remove(user.id);
-        });
+        setState(() => _processingIds.remove(user.id));
       }
     }
   }
@@ -140,19 +170,21 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     if (message.contains('cannot add yourself')) {
       return 'You cannot add yourself.';
     }
-
+    if (message.contains('already friends')) {
+      return 'You are already friends.';
+    }
     if (message.contains('already sent')) {
       return 'Friend request already sent.';
     }
-
+    if (message.contains('no longer exists')) {
+      return 'This user no longer exists.';
+    }
     if (message.contains('not signed in')) {
       return 'You must be signed in.';
     }
-
     if (message.contains('permission-denied')) {
       return 'Firestore permission denied. Check your security rules.';
     }
-
     if (message.contains('unavailable')) {
       return 'Service is temporarily unavailable. Check your connection.';
     }
@@ -162,9 +194,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
 
   void _showMessage(String message) {
     final messenger = ScaffoldMessenger.of(context);
-
     messenger.hideCurrentSnackBar();
-
     messenger.showSnackBar(
       SnackBar(
         content: Text(message),
@@ -178,9 +208,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
 
   void _showError(String message) {
     final messenger = ScaffoldMessenger.of(context);
-
     messenger.hideCurrentSnackBar();
-
     messenger.showSnackBar(
       SnackBar(
         content: Text(message),
@@ -224,9 +252,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
       child: Row(
         children: [
           IconButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-            },
+            onPressed: () => Navigator.of(context).pop(),
             tooltip: 'Back',
             icon: const Icon(
               Icons.arrow_back_ios_new_rounded,
@@ -290,9 +316,9 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
                   onPressed: () {
                     _searchDebounce?.cancel();
                     _searchController.clear();
-
                     setState(() {
                       _results = const [];
+                      _relationshipStatuses.clear();
                       _isSearching = false;
                       _errorMessage = null;
                     });
@@ -359,19 +385,15 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(18, 6, 18, 28),
       itemCount: _results.length,
-      separatorBuilder: (context, index) {
-        return const SizedBox(height: 10);
-      },
+      separatorBuilder: (_, __) => const SizedBox(height: 10),
       itemBuilder: (context, index) {
         final user = _results[index];
-
         return _UserResultCard(
           user: user,
-          isSending: _sendingRequestIds.contains(user.id),
-          isSent: _sentRequestIds.contains(user.id),
-          onAdd: () {
-            _sendFriendRequest(user);
-          },
+          relationshipStatus: _relationshipStatuses[user.id] ??
+              FriendRelationshipStatus.none,
+          isProcessing: _processingIds.contains(user.id),
+          onPressed: () => _handlePrimaryAction(user),
         );
       },
     );
@@ -381,18 +403,20 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
 class _UserResultCard extends StatelessWidget {
   const _UserResultCard({
     required this.user,
-    required this.isSending,
-    required this.isSent,
-    required this.onAdd,
+    required this.relationshipStatus,
+    required this.isProcessing,
+    required this.onPressed,
   });
 
   final FriendUser user;
-  final bool isSending;
-  final bool isSent;
-  final VoidCallback onAdd;
+  final FriendRelationshipStatus relationshipStatus;
+  final bool isProcessing;
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
+    final button = _buttonPresentation(relationshipStatus);
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -437,22 +461,21 @@ class _UserResultCard extends StatelessWidget {
           SizedBox(
             height: 40,
             child: FilledButton(
-              onPressed: isSending || isSent ? null : onAdd,
+              onPressed: isProcessing ||
+                      relationshipStatus == FriendRelationshipStatus.friends
+                  ? null
+                  : onPressed,
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF8A2BE2),
-                disabledBackgroundColor: isSent
-                    ? const Color(0xFF26392E)
-                    : const Color(0xFF2A2533),
-                foregroundColor: Colors.white,
-                disabledForegroundColor: isSent
-                    ? const Color(0xFF73D99A)
-                    : const Color(0xFF8F8799),
+                backgroundColor: button.backgroundColor,
+                disabledBackgroundColor: button.disabledBackgroundColor,
+                foregroundColor: button.foregroundColor,
+                disabledForegroundColor: button.disabledForegroundColor,
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(13),
                 ),
               ),
-              child: isSending
+              child: isProcessing
                   ? const SizedBox(
                       width: 17,
                       height: 17,
@@ -464,15 +487,10 @@ class _UserResultCard extends StatelessWidget {
                   : Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
-                          isSent
-                              ? Icons.check_rounded
-                              : Icons.person_add_alt_1_rounded,
-                          size: 18,
-                        ),
+                        Icon(button.icon, size: 18),
                         const SizedBox(width: 6),
                         Text(
-                          isSent ? 'Sent' : 'Add',
+                          button.label,
                           style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w800,
@@ -486,6 +504,67 @@ class _UserResultCard extends StatelessWidget {
       ),
     );
   }
+
+  static _FriendButtonPresentation _buttonPresentation(
+    FriendRelationshipStatus status,
+  ) {
+    switch (status) {
+      case FriendRelationshipStatus.friends:
+        return const _FriendButtonPresentation(
+          label: 'Friends',
+          icon: Icons.people_alt_rounded,
+          backgroundColor: Color(0xFF26392E),
+          disabledBackgroundColor: Color(0xFF26392E),
+          foregroundColor: Color(0xFF73D99A),
+          disabledForegroundColor: Color(0xFF73D99A),
+        );
+      case FriendRelationshipStatus.requestSent:
+        return const _FriendButtonPresentation(
+          label: 'Cancel',
+          icon: Icons.close_rounded,
+          backgroundColor: Color(0xFF3A2F1D),
+          disabledBackgroundColor: Color(0xFF2A2533),
+          foregroundColor: Color(0xFFFFC66D),
+          disabledForegroundColor: Color(0xFF8F8799),
+        );
+      case FriendRelationshipStatus.requestReceived:
+        return const _FriendButtonPresentation(
+          label: 'Accept',
+          icon: Icons.check_rounded,
+          backgroundColor: Color(0xFF27613D),
+          disabledBackgroundColor: Color(0xFF2A2533),
+          foregroundColor: Colors.white,
+          disabledForegroundColor: Color(0xFF8F8799),
+        );
+      case FriendRelationshipStatus.none:
+        return const _FriendButtonPresentation(
+          label: 'Add',
+          icon: Icons.person_add_alt_1_rounded,
+          backgroundColor: Color(0xFF8A2BE2),
+          disabledBackgroundColor: Color(0xFF2A2533),
+          foregroundColor: Colors.white,
+          disabledForegroundColor: Color(0xFF8F8799),
+        );
+    }
+  }
+}
+
+class _FriendButtonPresentation {
+  const _FriendButtonPresentation({
+    required this.label,
+    required this.icon,
+    required this.backgroundColor,
+    required this.disabledBackgroundColor,
+    required this.foregroundColor,
+    required this.disabledForegroundColor,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color backgroundColor;
+  final Color disabledBackgroundColor;
+  final Color foregroundColor;
+  final Color disabledForegroundColor;
 }
 
 class _UserAvatar extends StatelessWidget {
@@ -514,7 +593,7 @@ class _UserAvatar extends StatelessWidget {
               ? Image.network(
                   photoUrl,
                   fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
+                  errorBuilder: (_, __, ___) {
                     return _AvatarInitial(initial: user.initial);
                   },
                 )
@@ -579,7 +658,7 @@ class _SearchState extends StatelessWidget {
               textAlign: TextAlign.center,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 17,
+                fontSize: 18,
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -588,7 +667,7 @@ class _SearchState extends StatelessWidget {
               subtitle,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                color: _AddFriendScreenState._secondaryText,
+                color: Color(0xFF9D95AD),
                 fontSize: 13,
                 height: 1.45,
               ),

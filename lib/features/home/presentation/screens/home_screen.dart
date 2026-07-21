@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -103,16 +105,18 @@ class HomeScreen extends StatelessWidget {
         ),
         child: SafeArea(
           bottom: false,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final isWide = constraints.maxWidth >= 900;
+          child: _FriendRequestNotifier(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isWide = constraints.maxWidth >= 900;
 
-              if (isWide) {
-                return _DesktopHome(displayName: displayName);
-              }
+                if (isWide) {
+                  return _DesktopHome(displayName: displayName);
+                }
 
-              return _MobileHome(displayName: displayName);
-            },
+                return _MobileHome(displayName: displayName);
+              },
+            ),
           ),
         ),
       ),
@@ -251,17 +255,7 @@ class _HomeHeader extends StatelessWidget {
             ],
           ),
         ),
-        _HeaderIconButton(
-          icon: Icons.notifications_none_rounded,
-          showBadge: true,
-          tooltip: 'Notifications',
-          onPressed: () {
-            HomeScreen.showComingSoon(
-              context,
-              'Notifications are coming soon.',
-            );
-          },
-        ),
+        const _FriendRequestsHeaderButton(),
         const SizedBox(width: 10),
         if (!compact)
           _HeaderIconButton(
@@ -276,18 +270,131 @@ class _HomeHeader extends StatelessWidget {
   }
 }
 
+
+class _FriendRequestNotifier extends StatefulWidget {
+  const _FriendRequestNotifier({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_FriendRequestNotifier> createState() => _FriendRequestNotifierState();
+}
+
+class _FriendRequestNotifierState extends State<_FriendRequestNotifier> {
+  final FriendService _friendService = FriendService();
+  StreamSubscription<int>? _subscription;
+  int? _previousCount;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscription = _friendService.watchPendingFriendRequestCount().listen(
+      _handleCount,
+    );
+  }
+
+  void _handleCount(int count) {
+    final previousCount = _previousCount;
+    _previousCount = count;
+
+    if (!mounted || previousCount == null || count <= previousCount) {
+      return;
+    }
+
+    final added = count - previousCount;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      final label = added == 1
+          ? 'You have a new friend request.'
+          : 'You have $added new friend requests.';
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(label),
+          action: SnackBarAction(
+            label: 'Open',
+            textColor: const Color(0xFFD7A1FF),
+            onPressed: () => HomeScreen.openFriendRequests(context),
+          ),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFF2A1939),
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
+class _FriendRequestsHeaderButton extends StatefulWidget {
+  const _FriendRequestsHeaderButton();
+
+  @override
+  State<_FriendRequestsHeaderButton> createState() =>
+      _FriendRequestsHeaderButtonState();
+}
+
+class _FriendRequestsHeaderButtonState
+    extends State<_FriendRequestsHeaderButton> {
+  final FriendService _friendService = FriendService();
+  late final Stream<int> _countStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _countStream = _friendService.watchPendingFriendRequestCount();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<int>(
+      stream: _countStream,
+      initialData: 0,
+      builder: (context, snapshot) {
+        final count = snapshot.data ?? 0;
+        return _HeaderIconButton(
+          icon: count > 0
+              ? Icons.notifications_active_outlined
+              : Icons.notifications_none_rounded,
+          showBadge: count > 0,
+          badgeCount: count,
+          tooltip: count > 0 ? '$count friend requests' : 'Notifications',
+          onPressed: () => HomeScreen.openFriendRequests(context),
+        );
+      },
+    );
+  }
+}
+
 class _HeaderIconButton extends StatelessWidget {
   const _HeaderIconButton({
     required this.icon,
     required this.tooltip,
     required this.onPressed,
     this.showBadge = false,
+    this.badgeCount = 0,
   });
 
   final IconData icon;
   final String tooltip;
   final VoidCallback onPressed;
   final bool showBadge;
+  final int badgeCount;
 
   @override
   Widget build(BuildContext context) {
@@ -312,20 +419,9 @@ class _HeaderIconButton extends StatelessWidget {
                 Icon(icon, color: Colors.white, size: 24),
                 if (showBadge)
                   Positioned(
-                    top: 10,
-                    right: 10,
-                    child: Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFF426F),
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: HomeScreen._surface,
-                          width: 2,
-                        ),
-                      ),
-                    ),
+                    top: 4,
+                    right: 4,
+                    child: _RequestBadge(count: badgeCount),
                   ),
               ],
             ),
@@ -656,12 +752,113 @@ class _FriendsHeader extends StatelessWidget {
           onPressed: onAddFriend ?? () => HomeScreen.openAddFriend(context),
         ),
         const SizedBox(width: 8),
-        _FriendsActionButton(
-          icon: Icons.mark_email_unread_outlined,
-          tooltip: 'Friend requests',
+        _FriendRequestsActionButton(
           onPressed: onRequests ?? () => HomeScreen.openFriendRequests(context),
         ),
       ],
+    );
+  }
+}
+
+
+class _FriendRequestsActionButton extends StatefulWidget {
+  const _FriendRequestsActionButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  State<_FriendRequestsActionButton> createState() =>
+      _FriendRequestsActionButtonState();
+}
+
+class _FriendRequestsActionButtonState
+    extends State<_FriendRequestsActionButton> {
+  final FriendService _friendService = FriendService();
+  late final Stream<int> _countStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _countStream = _friendService.watchPendingFriendRequestCount();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<int>(
+      stream: _countStream,
+      initialData: 0,
+      builder: (context, snapshot) {
+        final count = snapshot.data ?? 0;
+        return Tooltip(
+          message: count > 0 ? '$count pending friend requests' : 'Friend requests',
+          child: Material(
+            color: HomeScreen._surface,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              onTap: widget.onPressed,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: HomeScreen._border),
+                ),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.center,
+                  children: [
+                    Icon(
+                      count > 0
+                          ? Icons.mark_email_unread_rounded
+                          : Icons.mail_outline_rounded,
+                      color: const Color(0xFFC05AFF),
+                      size: 20,
+                    ),
+                    if (count > 0)
+                      Positioned(
+                        top: -5,
+                        right: -5,
+                        child: _RequestBadge(count: count),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _RequestBadge extends StatelessWidget {
+  const _RequestBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = count > 99 ? '99+' : '$count';
+
+    return Container(
+      constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFF426F),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: HomeScreen._surface, width: 2),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 9,
+          fontWeight: FontWeight.w900,
+          height: 1,
+        ),
+      ),
     );
   }
 }

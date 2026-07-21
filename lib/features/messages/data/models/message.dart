@@ -1,10 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum MessageType {
-  text,
-  voice,
-  image,
-}
+enum MessageType { text, voice, image }
 
 class Message {
   const Message({
@@ -15,9 +11,14 @@ class Message {
     required this.content,
     required this.sentAt,
     required this.readBy,
+    required this.reactions,
     this.mediaUrl,
     this.durationSeconds,
     this.isDeleted = false,
+    this.editedAt,
+    this.replyToMessageId,
+    this.replyToSenderId,
+    this.replyToContent,
   });
 
   final String id;
@@ -27,12 +28,16 @@ class Message {
   final String content;
   final DateTime sentAt;
   final List<String> readBy;
+  final Map<String, String> reactions;
   final String? mediaUrl;
   final int? durationSeconds;
   final bool isDeleted;
+  final DateTime? editedAt;
+  final String? replyToMessageId;
+  final String? replyToSenderId;
+  final String? replyToContent;
 
   bool isMine(String currentUserId) => senderId == currentUserId;
-
   bool isReadBy(String userId) => readBy.contains(userId);
 
   factory Message.fromFirestore(
@@ -48,49 +53,21 @@ class Message {
       content: data['content'] as String? ?? '',
       sentAt: _dateTimeFromValue(data['sentAt']),
       readBy: List<String>.from(data['readBy'] as List<dynamic>? ?? const []),
+      reactions: _stringMap(data['reactions']),
       mediaUrl: data['mediaUrl'] as String?,
       durationSeconds: (data['durationSeconds'] as num?)?.toInt(),
       isDeleted: data['isDeleted'] as bool? ?? false,
+      editedAt: _nullableDateTimeFromValue(data['editedAt']),
+      replyToMessageId: data['replyToMessageId'] as String?,
+      replyToSenderId: data['replyToSenderId'] as String?,
+      replyToContent: data['replyToContent'] as String?,
     );
   }
 
-  Map<String, dynamic> toMap() {
-    return <String, dynamic>{
-      'conversationId': conversationId,
-      'senderId': senderId,
-      'type': type.name,
-      'content': content,
-      'sentAt': Timestamp.fromDate(sentAt),
-      'readBy': readBy,
-      'mediaUrl': mediaUrl,
-      'durationSeconds': durationSeconds,
-      'isDeleted': isDeleted,
-    };
-  }
-
-  Message copyWith({
-    String? id,
-    String? conversationId,
-    String? senderId,
-    MessageType? type,
-    String? content,
-    DateTime? sentAt,
-    List<String>? readBy,
-    String? mediaUrl,
-    int? durationSeconds,
-    bool? isDeleted,
-  }) {
-    return Message(
-      id: id ?? this.id,
-      conversationId: conversationId ?? this.conversationId,
-      senderId: senderId ?? this.senderId,
-      type: type ?? this.type,
-      content: content ?? this.content,
-      sentAt: sentAt ?? this.sentAt,
-      readBy: readBy ?? this.readBy,
-      mediaUrl: mediaUrl ?? this.mediaUrl,
-      durationSeconds: durationSeconds ?? this.durationSeconds,
-      isDeleted: isDeleted ?? this.isDeleted,
+  static Map<String, String> _stringMap(Object? value) {
+    if (value is! Map) return <String, String>{};
+    return value.map<String, String>(
+      (key, item) => MapEntry(key.toString(), item?.toString() ?? ''),
     );
   }
 
@@ -102,14 +79,13 @@ class Message {
   }
 
   static DateTime _dateTimeFromValue(Object? value) {
-    if (value is Timestamp) {
-      return value.toDate();
-    }
+    return _nullableDateTimeFromValue(value) ??
+        DateTime.fromMillisecondsSinceEpoch(0);
+  }
 
-    if (value is DateTime) {
-      return value;
-    }
-
-    return DateTime.fromMillisecondsSinceEpoch(0);
+  static DateTime? _nullableDateTimeFromValue(Object? value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    return null;
   }
 }
