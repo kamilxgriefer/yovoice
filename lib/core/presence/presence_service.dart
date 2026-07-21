@@ -8,36 +8,22 @@ class PresenceService {
   PresenceService({
     FirebaseAuth? auth,
     FirebaseFirestore? firestore,
-  }) : _auth = auth ?? FirebaseAuth.instance,
-       _firestore = firestore ?? FirebaseFirestore.instance;
+  })  : _auth = auth ?? FirebaseAuth.instance,
+        _firestore = firestore ?? FirebaseFirestore.instance;
 
   final FirebaseAuth _auth;
   final FirebaseFirestore _firestore;
 
-  DocumentReference<Map<String, dynamic>>? get _currentUserDocument {
-    final user = _auth.currentUser;
-
-    if (user == null) {
-      return null;
-    }
-
-    return _firestore.collection('users').doc(user.uid);
-  }
-
   Future<void> setOnline() async {
     final user = _auth.currentUser;
-    final document = _currentUserDocument;
-
-    if (user == null || document == null) {
-      return;
-    }
+    if (user == null) return;
 
     final fallbackName = user.email?.split('@').first ?? 'YoVoice user';
     final displayName = user.displayName?.trim().isNotEmpty == true
         ? user.displayName!.trim()
         : fallbackName;
 
-    await document.set({
+    await _firestore.collection('users').doc(user.uid).set({
       'displayName': displayName,
       'email': user.email?.trim().toLowerCase(),
       'photoUrl': user.photoURL,
@@ -47,14 +33,8 @@ class PresenceService {
     }, SetOptions(merge: true));
   }
 
-  Future<void> setOffline() async {
-    final document = _currentUserDocument;
-
-    if (document == null) {
-      return;
-    }
-
-    await document.set({
+  Future<void> setOfflineForUser(String userId) async {
+    await _firestore.collection('users').doc(userId).set({
       'isOnline': false,
       'lastSeen': FieldValue.serverTimestamp(),
       'presenceUpdatedAt': FieldValue.serverTimestamp(),
@@ -80,32 +60,46 @@ class _PresenceLifecycleState extends State<PresenceLifecycle>
 
   StreamSubscription<User?>? _authSubscription;
   Timer? _offlineTimer;
+  Timer? _heartbeatTimer;
+
   String? _activeUserId;
   bool _isForeground = true;
 
   @override
   void initState() {
     super.initState();
-
     WidgetsBinding.instance.addObserver(this);
 
-    _authSubscription = FirebaseAuth.instance.authStateChanges().listen(
-      _handleAuthStateChanged,
-    );
+    _authSubscription =
+        FirebaseAuth.instance.authStateChanges().listen(_handleAuthStateChanged);
   }
 
   Future<void> _handleAuthStateChanged(User? user) async {
     _offlineTimer?.cancel();
 
+    final previousUserId = _activeUserId;
+
     if (user == null) {
       _activeUserId = null;
+      _stopHeartbeat();
+
+      // FirebaseAuth.currentUser is already null here, so the previous uid
+      // must be used explicitly. This fixes users remaining online after logout.
+      if (previousUserId != null) {
+        await _safeSetOffline(previousUserId);
+      }
       return;
+    }
+
+    if (previousUserId != null && previousUserId != user.uid) {
+      await _safeSetOffline(previousUserId);
     }
 
     _activeUserId = user.uid;
 
     if (_isForeground) {
       await _safeSetOnline();
+      _startHeartbeat();
     }
   }
 
@@ -116,39 +110,54 @@ class _PresenceLifecycleState extends State<PresenceLifecycle>
         _isForeground = true;
         _offlineTimer?.cancel();
         _safeSetOnline();
+        _startHeartbeat();
         break;
-
       case AppLifecycleState.inactive:
         _scheduleOfflineUpdate();
         break;
-
       case AppLifecycleState.hidden:
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
         _isForeground = false;
         _offlineTimer?.cancel();
-        _safeSetOffline();
+        _stopHeartbeat();
+        final userId = _activeUserId;
+        if (userId != null) {
+          _safeSetOffline(userId);
+        }
         break;
     }
   }
 
-  void _scheduleOfflineUpdate() {
-    _offlineTimer?.cancel();
+  void _startHeartbeat() {
+    _stopHeartbeat();
+    if (_activeUserId == null || !_isForeground) return;
 
-    _offlineTimer = Timer(
-      const Duration(seconds: 3),
-      () {
-        if (!_isForeground) {
-          _safeSetOffline();
-        }
-      },
+    _heartbeatTimer = Timer.periodic(
+      const Duration(seconds: 45),
+      (_) => _safeSetOnline(),
     );
   }
 
+  void _stopHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+  }
+
+  void _scheduleOfflineUpdate() {
+    _offlineTimer?.cancel();
+    _offlineTimer = Timer(const Duration(seconds: 3), () {
+      if (!_isForeground) {
+        final userId = _activeUserId;
+        if (userId != null) {
+          _safeSetOffline(userId);
+        }
+      }
+    });
+  }
+
   Future<void> _safeSetOnline() async {
-    if (_activeUserId == null) {
-      return;
-    }
+    if (_activeUserId == null) return;
 
     try {
       await _presenceService.setOnline();
@@ -158,13 +167,9 @@ class _PresenceLifecycleState extends State<PresenceLifecycle>
     }
   }
 
-  Future<void> _safeSetOffline() async {
-    if (_activeUserId == null) {
-      return;
-    }
-
+  Future<void> _safeSetOffline(String userId) async {
     try {
-      await _presenceService.setOffline();
+      await _presenceService.setOfflineForUser(userId);
     } catch (error, stackTrace) {
       debugPrint('Could not set user offline: $error');
       debugPrintStack(stackTrace: stackTrace);
@@ -174,14 +179,12 @@ class _PresenceLifecycleState extends State<PresenceLifecycle>
   @override
   void dispose() {
     _offlineTimer?.cancel();
+    _stopHeartbeat();
     _authSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) {
-    return widget.child;
-  }
+  Widget build(BuildContext context) => widget.child;
 }

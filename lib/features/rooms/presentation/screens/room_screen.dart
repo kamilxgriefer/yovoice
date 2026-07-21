@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/room_reaction.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -215,6 +216,19 @@ class _RoomScreenState extends State<RoomScreen> {
     );
   }
 
+  void _openChat() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _RoomChatSheet(
+        roomId: widget.room.id,
+        service: _service,
+      ),
+    );
+  }
+
   String _readable(Object error) {
     final text = error.toString();
     if (text.contains('permission-denied')) {
@@ -321,10 +335,7 @@ class _RoomScreenState extends State<RoomScreen> {
                                   style: const TextStyle(color: _muted, height: 1.4)),
                             ],
                             const SizedBox(height: 22),
-                            _ReactionStrip(
-                              stream: _service.watchRecentReactions(room.id),
-                            ),
-                            const SizedBox(height: 20),
+                            const SizedBox(height: 8),
                             _SectionTitle(
                               title: 'On stage',
                               count: participants.where((p) => p.isSpeaker).length,
@@ -363,7 +374,7 @@ class _RoomScreenState extends State<RoomScreen> {
                         onHand: me == null ? null : () => _toggleHand(me),
                         onSpeaker: () =>
                             setState(() => _speakerEnabled = !_speakerEnabled),
-                        onReaction: _showReactions,
+                        onChat: _openChat,
                         onLeave: () => _leave(room),
                       ),
                     ],
@@ -433,6 +444,7 @@ class _ParticipantGrid extends StatelessWidget {
     required this.currentUserId,
     required this.onTap,
   });
+
   final VoiceRoom room;
   final List<RoomParticipant> participants;
   final String currentUserId;
@@ -442,105 +454,158 @@ class _ParticipantGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     if (participants.isEmpty) {
       return Container(
-        padding: const EdgeInsets.all(18),
+        width: double.infinity,
+        padding: const EdgeInsets.all(15),
         decoration: BoxDecoration(
           color: _RoomScreenState._surface,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: _RoomScreenState._border),
         ),
-        child: const Text('Nobody here yet.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: _RoomScreenState._muted)),
+        child: const Text(
+          'Nobody here yet.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: _RoomScreenState._muted),
+        ),
       );
     }
 
-    return GridView.builder(
-      itemCount: participants.length,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        childAspectRatio: .78,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 12,
-      ),
-      itemBuilder: (context, index) {
-        final p = participants[index];
-        return InkWell(
-          onTap: room.hostId == currentUserId && !p.isHost ? () => onTap(p) : null,
-          borderRadius: BorderRadius.circular(18),
-          child: Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: _RoomScreenState._surface,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: p.isHandRaised
-                    ? const Color(0xFFFFB020)
-                    : p.isSpeaker && !p.isMuted
-                        ? _RoomScreenState._purple
-                        : _RoomScreenState._border,
-              ),
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        children: participants.map((participant) {
+          return SizedBox(
+            width: 126,
+            height: 146,
+            child: _ParticipantTile(
+              room: room,
+              participant: participant,
+              currentUserId: currentUserId,
+              onTap: onTap,
             ),
-            child: Column(children: [
-              Stack(children: [
+          );
+        }).toList(growable: false),
+      ),
+    );
+  }
+}
+
+class _ParticipantTile extends StatelessWidget {
+  const _ParticipantTile({
+    required this.room,
+    required this.participant,
+    required this.currentUserId,
+    required this.onTap,
+  });
+
+  final VoiceRoom room;
+  final RoomParticipant participant;
+  final String currentUserId;
+  final ValueChanged<RoomParticipant> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final canManage =
+        room.hostId == currentUserId && !participant.isHost;
+
+    return InkWell(
+      onTap: canManage ? () => onTap(participant) : null,
+      borderRadius: BorderRadius.circular(17),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: _RoomScreenState._surface,
+          borderRadius: BorderRadius.circular(17),
+          border: Border.all(
+            color: participant.isHandRaised
+                ? const Color(0xFFFFB020)
+                : participant.isSpeaker && !participant.isMuted
+                    ? _RoomScreenState._purple
+                    : _RoomScreenState._border,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Stack(
+              children: [
                 CircleAvatar(
-                  radius: 31,
+                  radius: 27,
                   backgroundColor: const Color(0xFF662092),
                   backgroundImage:
-                      p.photoUrl?.trim().isNotEmpty == true ? NetworkImage(p.photoUrl!) : null,
-                  child: p.photoUrl?.trim().isNotEmpty == true
+                      participant.photoUrl?.trim().isNotEmpty == true
+                          ? NetworkImage(participant.photoUrl!)
+                          : null,
+                  child: participant.photoUrl?.trim().isNotEmpty == true
                       ? null
                       : Text(
-                          p.displayName.isEmpty ? '?' : p.displayName[0].toUpperCase(),
+                          participant.displayName.isEmpty
+                              ? '?'
+                              : participant.displayName[0].toUpperCase(),
                           style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w900),
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
                 ),
                 Positioned(
                   right: 0,
                   bottom: 0,
                   child: CircleAvatar(
-                    radius: 12,
+                    radius: 11,
                     backgroundColor: _RoomScreenState._surface2,
                     child: Icon(
-                      p.isHandRaised
+                      participant.isHandRaised
                           ? Icons.back_hand
-                          : p.isSpeaker
-                              ? (p.isMuted ? Icons.mic_off : Icons.mic)
+                          : participant.isSpeaker
+                              ? (participant.isMuted
+                                  ? Icons.mic_off
+                                  : Icons.mic)
                               : Icons.headphones,
-                      size: 14,
-                      color: p.isHandRaised
+                      size: 13,
+                      color: participant.isHandRaised
                           ? const Color(0xFFFFB020)
                           : Colors.white,
                     ),
                   ),
                 ),
-              ]),
-              const SizedBox(height: 8),
-              Text(
-                p.displayName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12),
+              ],
+            ),
+            const SizedBox(height: 9),
+            Text(
+              participant.displayName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 12,
               ),
-              const SizedBox(height: 3),
-              Text(
-                p.isHost ? 'HOST' : p.isSpeaker ? 'SPEAKER' : p.isHandRaised ? 'HAND RAISED' : 'LISTENER',
-                maxLines: 1,
-                style: TextStyle(
-                  color: p.isHandRaised ? const Color(0xFFFFB020) : _RoomScreenState._muted,
-                  fontSize: 8,
-                  fontWeight: FontWeight.w900,
-                ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              participant.isHost
+                  ? 'HOST'
+                  : participant.isSpeaker
+                      ? 'SPEAKER'
+                      : participant.isHandRaised
+                          ? 'HAND RAISED'
+                          : 'LISTENER',
+              maxLines: 1,
+              style: TextStyle(
+                color: participant.isHandRaised
+                    ? const Color(0xFFFFB020)
+                    : _RoomScreenState._muted,
+                fontSize: 8,
+                fontWeight: FontWeight.w900,
               ),
-            ]),
-          ),
-        );
-      },
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -585,6 +650,306 @@ class _ReactionStrip extends StatelessWidget {
       );
 }
 
+class _RoomChatSheet extends StatefulWidget {
+  const _RoomChatSheet({
+    required this.roomId,
+    required this.service,
+  });
+
+  final String roomId;
+  final RoomService service;
+
+  @override
+  State<_RoomChatSheet> createState() => _RoomChatSheetState();
+}
+
+class _RoomChatSheetState extends State<_RoomChatSheet> {
+  final TextEditingController _controller = TextEditingController();
+  final FocusNode _focusNode = FocusNode();
+  bool _sending = false;
+
+  String get _currentUserId =>
+      FirebaseAuth.instance.currentUser?.uid ?? '';
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final text = _controller.text.trim();
+    if (text.isEmpty || _sending) return;
+
+    setState(() => _sending = true);
+    try {
+      await widget.service.sendRoomMessage(
+        roomId: widget.roomId,
+        text: text,
+      );
+      _controller.clear();
+      _focusNode.requestFocus();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.toString())),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  Future<void> _react(String emoji) async {
+    try {
+      await widget.service.sendReaction(
+        roomId: widget.roomId,
+        emoji: emoji,
+      );
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+
+    return FractionallySizedBox(
+      heightFactor: .78,
+      child: Container(
+        padding: EdgeInsets.only(bottom: keyboard),
+        decoration: const BoxDecoration(
+          color: _RoomScreenState._surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+          border: Border(
+            top: BorderSide(color: _RoomScreenState._border),
+          ),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 42,
+              height: 4,
+              decoration: BoxDecoration(
+                color: _RoomScreenState._border,
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 10, 10),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Room chat',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 45,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                children: ['👏', '❤️', '😂', '🔥', '🎉', '💜']
+                    .map(
+                      (emoji) => Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: InkWell(
+                          onTap: () => _react(emoji),
+                          borderRadius: BorderRadius.circular(20),
+                          child: Container(
+                            width: 42,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: _RoomScreenState._surface2,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: _RoomScreenState._border,
+                              ),
+                            ),
+                            child: Text(
+                              emoji,
+                              style: const TextStyle(fontSize: 19),
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: StreamBuilder<List<RoomMessage>>(
+                stream: widget.service.watchRoomMessages(widget.roomId),
+                builder: (context, snapshot) {
+                  final messages = snapshot.data ?? const <RoomMessage>[];
+
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          snapshot.error.toString(),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Color(0xFFFF8CA4),
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+
+                  if (messages.isEmpty) {
+                    return const Center(
+                      child: Text(
+                        'Start the conversation.',
+                        style: TextStyle(
+                          color: _RoomScreenState._muted,
+                        ),
+                      ),
+                    );
+                  }
+
+                  return ListView.builder(
+                    reverse: true,
+                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+                    itemCount: messages.length,
+                    itemBuilder: (context, index) {
+                      final message = messages[index];
+                      final mine = message.senderId == _currentUserId;
+
+                      return Align(
+                        alignment: mine
+                            ? Alignment.centerRight
+                            : Alignment.centerLeft,
+                        child: Container(
+                          constraints: const BoxConstraints(maxWidth: 380),
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 13,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: mine
+                                ? const Color(0xFF7222A2)
+                                : _RoomScreenState._surface2,
+                            borderRadius: BorderRadius.circular(15),
+                            border: Border.all(
+                              color: mine
+                                  ? _RoomScreenState._purple
+                                  : _RoomScreenState._border,
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (!mine)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 3),
+                                  child: Text(
+                                    message.senderName,
+                                    style: const TextStyle(
+                                      color: Color(0xFFD39BFF),
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ),
+                              Text(
+                                message.text,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+              decoration: const BoxDecoration(
+                border: Border(
+                  top: BorderSide(color: _RoomScreenState._border),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _controller,
+                      focusNode: _focusNode,
+                      minLines: 1,
+                      maxLines: 4,
+                      maxLength: 500,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (_) => _send(),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        counterText: '',
+                        hintText: 'Message the room...',
+                        hintStyle: const TextStyle(
+                          color: _RoomScreenState._muted,
+                        ),
+                        filled: true,
+                        fillColor: _RoomScreenState._surface2,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton.filled(
+                    onPressed: _sending ? null : _send,
+                    style: IconButton.styleFrom(
+                      backgroundColor: _RoomScreenState._purple,
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: _sending
+                        ? const SizedBox(
+                            width: 17,
+                            height: 17,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.send_rounded),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _Controls extends StatelessWidget {
   const _Controls({
     required this.participant,
@@ -593,7 +958,7 @@ class _Controls extends StatelessWidget {
     required this.onMute,
     required this.onHand,
     required this.onSpeaker,
-    required this.onReaction,
+    required this.onChat,
     required this.onLeave,
   });
 
@@ -603,7 +968,7 @@ class _Controls extends StatelessWidget {
   final VoidCallback? onMute;
   final VoidCallback? onHand;
   final VoidCallback onSpeaker;
-  final VoidCallback onReaction;
+  final VoidCallback onChat;
   final VoidCallback onLeave;
 
   @override
@@ -638,9 +1003,9 @@ class _Controls extends StatelessWidget {
           active: speakerEnabled,
         ),
         _Button(
-          icon: Icons.emoji_emotions,
-          label: 'React',
-          onTap: onReaction,
+          icon: Icons.chat_bubble_rounded,
+          label: 'Chat',
+          onTap: onChat,
         ),
         _Button(
           icon: Icons.call_end,

@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/room_reaction.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -273,6 +274,48 @@ class RoomService {
       'userId': user.uid,
       'displayName': _resolveUserName(user),
       'emoji': emoji,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Stream<List<RoomMessage>> watchRoomMessages(String roomId) {
+    return _roomsCollection
+        .doc(roomId)
+        .collection('messages')
+        .orderBy('createdAt', descending: true)
+        .limit(100)
+        .snapshots()
+        .map((snapshot) =>
+            snapshot.docs.map(RoomMessage.fromFirestore).toList(growable: false));
+  }
+
+  Future<void> sendRoomMessage({
+    required String roomId,
+    required String text,
+  }) async {
+    final user = _currentUser;
+    final normalizedText = text.trim();
+
+    if (normalizedText.isEmpty) return;
+    if (normalizedText.length > 500) {
+      throw ArgumentError('A room message can contain up to 500 characters.');
+    }
+
+    final participant = await _roomsCollection
+        .doc(roomId)
+        .collection('participants')
+        .doc(user.uid)
+        .get();
+
+    if (!participant.exists) {
+      throw StateError('You must join the room before sending a message.');
+    }
+
+    await _roomsCollection.doc(roomId).collection('messages').add({
+      'senderId': user.uid,
+      'senderName': _resolveUserName(user),
+      'senderPhotoUrl': user.photoURL,
+      'text': normalizedText,
       'createdAt': FieldValue.serverTimestamp(),
     });
   }
