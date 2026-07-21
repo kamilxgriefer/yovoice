@@ -8,6 +8,7 @@ class RoomParticipant {
     required this.role,
     required this.isMuted,
     required this.isSpeaker,
+    required this.isHandRaised,
     required this.joinedAt,
   });
 
@@ -17,22 +18,25 @@ class RoomParticipant {
   final String role;
   final bool isMuted;
   final bool isSpeaker;
+  final bool isHandRaised;
   final DateTime? joinedAt;
 
   bool get isHost => role == 'host';
+  bool get isListener => !isSpeaker;
 
   factory RoomParticipant.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> document,
   ) {
-    final data = document.data()!;
+    final data = document.data() ?? const <String, dynamic>{};
 
     return RoomParticipant(
-      userId: data['userId'] as String? ?? '',
-      displayName: data['displayName'] as String? ?? 'Unknown',
+      userId: data['userId'] as String? ?? document.id,
+      displayName: data['displayName'] as String? ?? 'YoVoice user',
       photoUrl: data['photoUrl'] as String?,
       role: data['role'] as String? ?? 'listener',
       isMuted: data['isMuted'] as bool? ?? true,
       isSpeaker: data['isSpeaker'] as bool? ?? false,
+      isHandRaised: data['isHandRaised'] as bool? ?? false,
       joinedAt: (data['joinedAt'] as Timestamp?)?.toDate(),
     );
   }

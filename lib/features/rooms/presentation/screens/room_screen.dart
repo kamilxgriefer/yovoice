@@ -1,1553 +1,708 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
+import 'package:yovoice/features/rooms/data/models/room_reaction.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 
 class RoomScreen extends StatefulWidget {
   const RoomScreen({required this.room, super.key});
-
   final VoiceRoom room;
 
   @override
   State<RoomScreen> createState() => _RoomScreenState();
 }
 
-class _RoomScreenState extends State<RoomScreen>
-    with SingleTickerProviderStateMixin {
-  static const Color _background = Color(0xFF080711);
-  static const Color _surface = Color(0xFF151020);
-  static const Color _surfaceLight = Color(0xFF21172D);
-  static const Color _border = Color(0xFF392B47);
-  static const Color _secondaryText = Color(0xFF9D95AD);
-  static const Color _danger = Color(0xFFFF416C);
+class _RoomScreenState extends State<RoomScreen> {
+  static const _background = Color(0xFF080711);
+  static const _surface = Color(0xFF151020);
+  static const _surface2 = Color(0xFF21172D);
+  static const _border = Color(0xFF392B47);
+  static const _muted = Color(0xFF9D95AD);
+  static const _purple = Color(0xFFAE35FF);
 
-  final RoomService _roomService = RoomService();
+  final _service = RoomService();
+  bool _joining = true;
+  bool _leaving = false;
+  bool _speakerEnabled = true;
 
-  late final AnimationController _speakingAnimationController;
-  late final Animation<double> _speakingAnimation;
-
-  bool _isMuted = false;
-  bool _isSpeakerEnabled = true;
-  bool _isLeaving = false;
-
-  User? get _currentUser => FirebaseAuth.instance.currentUser;
-
-  bool get _isCurrentUserHost {
-    return _currentUser?.uid == widget.room.hostId;
-  }
+  String get _me => FirebaseAuth.instance.currentUser?.uid ?? '';
 
   @override
   void initState() {
     super.initState();
+    _ensureJoined();
+  }
 
-    _speakingAnimationController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1500),
-    )..repeat(reverse: true);
+  Future<void> _ensureJoined() async {
+    try {
+      await _service.joinRoom(widget.room.id);
+    } catch (error) {
+      if (mounted) _showError(_readable(error));
+    } finally {
+      if (mounted) setState(() => _joining = false);
+    }
+  }
 
-    _speakingAnimation = Tween<double>(begin: 1, end: 1.08).animate(
-      CurvedAnimation(
-        parent: _speakingAnimationController,
-        curve: Curves.easeInOut,
+  Future<void> _leave(VoiceRoom room) async {
+    if (_leaving) return;
+    final host = room.hostId == _me;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: _surface,
+        title: Text(host ? 'End room?' : 'Leave room?',
+            style: const TextStyle(color: Colors.white)),
+        content: Text(
+          host
+              ? 'The room will end for everyone.'
+              : 'You can come back while the room is live.',
+          style: const TextStyle(color: _muted),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFFF416C)),
+            child: Text(host ? 'End room' : 'Leave'),
+          ),
+        ],
       ),
     );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _leaving = true);
+    try {
+      if (host) {
+        await _service.closeRoom(room.id);
+      } else {
+        await _service.leaveRoom(room.id);
+      }
+      if (mounted) Navigator.pop(context);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _leaving = false);
+        _showError(_readable(error));
+      }
+    }
   }
 
-  @override
-  void dispose() {
-    _speakingAnimationController.dispose();
-    super.dispose();
+  Future<void> _toggleMute(RoomParticipant me) async {
+    if (!me.isSpeaker) {
+      _showError('Raise your hand and wait for the host to invite you to speak.');
+      return;
+    }
+    try {
+      await _service.setMuted(roomId: widget.room.id, isMuted: !me.isMuted);
+    } catch (error) {
+      _showError(_readable(error));
+    }
   }
 
-  Future<bool> _confirmLeaveRoom(VoiceRoom room) async {
-    final isHost = _currentUser?.uid == room.hostId;
+  Future<void> _toggleHand(RoomParticipant me) async {
+    try {
+      await _service.setHandRaised(
+        roomId: widget.room.id,
+        isRaised: !me.isHandRaised,
+      );
+    } catch (error) {
+      _showError(_readable(error));
+    }
+  }
 
-    final result = await showModalBottomSheet<bool>(
+  Future<void> _participantActions(
+    VoiceRoom room,
+    RoomParticipant participant,
+  ) async {
+    if (room.hostId != _me || participant.isHost) return;
+
+    final action = await showModalBottomSheet<String>(
       context: context,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.75),
-      builder: (context) {
-        return _LeaveRoomSheet(isHost: isHost);
-      },
+      backgroundColor: _surface,
+      builder: (context) => SafeArea(
+        child: Wrap(children: [
+          ListTile(
+            leading: Icon(
+              participant.isSpeaker ? Icons.headphones : Icons.mic,
+              color: Colors.white,
+            ),
+            title: Text(
+              participant.isSpeaker ? 'Move to listeners' : 'Invite to speak',
+              style: const TextStyle(color: Colors.white),
+            ),
+            onTap: () => Navigator.pop(context, 'speaker'),
+          ),
+          if (participant.isSpeaker)
+            ListTile(
+              leading: Icon(
+                participant.isMuted ? Icons.mic : Icons.mic_off,
+                color: Colors.white,
+              ),
+              title: Text(
+                participant.isMuted ? 'Allow microphone' : 'Mute participant',
+                style: const TextStyle(color: Colors.white),
+              ),
+              onTap: () => Navigator.pop(context, 'mute'),
+            ),
+          ListTile(
+            leading: const Icon(Icons.person_remove, color: Color(0xFFFF6B81)),
+            title: const Text('Remove from room',
+                style: TextStyle(color: Color(0xFFFF6B81))),
+            onTap: () => Navigator.pop(context, 'remove'),
+          ),
+        ]),
+      ),
     );
-
-    return result ?? false;
-  }
-
-  Future<void> _leaveRoom(VoiceRoom room) async {
-    if (_isLeaving) {
-      return;
-    }
-
-    final shouldLeave = await _confirmLeaveRoom(room);
-
-    if (!shouldLeave || !mounted) {
-      return;
-    }
-
-    setState(() {
-      _isLeaving = true;
-    });
 
     try {
-      final isHost = _currentUser?.uid == room.hostId;
-
-      if (isHost) {
-        await _roomService.closeRoom(room.id);
-      } else {
-        await _roomService.leaveRoom(room.id);
+      if (action == 'speaker') {
+        await _service.setSpeaker(
+          roomId: room.id,
+          participantId: participant.userId,
+          isSpeaker: !participant.isSpeaker,
+        );
+      } else if (action == 'mute') {
+        await _service.hostSetMuted(
+          roomId: room.id,
+          participantId: participant.userId,
+          isMuted: !participant.isMuted,
+        );
+      } else if (action == 'remove') {
+        await _service.removeParticipant(
+          roomId: room.id,
+          participantId: participant.userId,
+        );
       }
-
-      if (!mounted) {
-        return;
-      }
-
-      Navigator.of(context).pop();
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _isLeaving = false;
-      });
-
-      _showErrorMessage(_getReadableErrorMessage(error));
+      _showError(_readable(error));
     }
   }
 
-  void _showInviteMessage() {
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Inviting people will be added in the next step.'),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF2A1939),
-        margin: const EdgeInsets.all(16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-    );
-  }
-
-  void _showChatMessage() {
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Live room chat will be added soon.'),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF2A1939),
-        margin: const EdgeInsets.all(16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-    );
-  }
-
-  void _showMoreOptions() {
+  void _showReactions() {
     showModalBottomSheet<void>(
       context: context,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.75),
-      builder: (context) {
-        return _RoomOptionsSheet(isHost: _isCurrentUserHost);
-      },
+      backgroundColor: _surface,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(22),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: ['👏', '❤️', '😂', '🔥', '🎉', '💜']
+                .map((emoji) => InkWell(
+                      onTap: () {
+                        Navigator.pop(context);
+                        _service.sendReaction(
+                          roomId: widget.room.id,
+                          emoji: emoji,
+                        );
+                      },
+                      borderRadius: BorderRadius.circular(30),
+                      child: Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: Text(emoji,
+                            style: const TextStyle(fontSize: 29)),
+                      ),
+                    ))
+                .toList(),
+          ),
+        ),
+      ),
     );
   }
 
-  String _getReadableErrorMessage(Object error) {
-    final errorMessage = error.toString();
-
-    if (errorMessage.contains('permission-denied')) {
-      return 'Firestore permission denied. Check your Firebase rules.';
+  String _readable(Object error) {
+    final text = error.toString();
+    if (text.contains('permission-denied')) {
+      return 'Firestore blocked this action. The final rules still need to be deployed.';
     }
-
-    if (errorMessage.contains('unavailable')) {
-      return 'Firebase is unavailable. Check your internet connection.';
-    }
-
-    if (errorMessage.contains('Only the room host')) {
-      return 'Only the room host can close this room.';
-    }
-
-    return 'Could not leave the room. Please try again.';
+    if (text.contains('full')) return 'This room is full.';
+    if (text.contains('no longer live')) return 'This room has ended.';
+    return text.replaceFirst('Bad state: ', '').replaceFirst('Invalid argument(s): ', '');
   }
 
-  void _showErrorMessage(String message) {
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
         content: Text(message),
         behavior: SnackBarBehavior.floating,
         backgroundColor: const Color(0xFF481C30),
-        margin: const EdgeInsets.all(16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-    );
+      ));
   }
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) {
-        if (didPop) {
-          return;
+    return StreamBuilder<VoiceRoom>(
+      stream: _service.watchRoom(widget.room.id),
+      initialData: widget.room,
+      builder: (context, roomSnapshot) {
+        final room = roomSnapshot.data ?? widget.room;
+        if (!room.isLive && !_leaving) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && Navigator.canPop(context)) Navigator.pop(context);
+          });
         }
 
-        _leaveRoom(widget.room);
-      },
-      child: StreamBuilder<VoiceRoom>(
-        stream: _roomService.watchRoom(widget.room.id),
-        initialData: widget.room,
-        builder: (context, snapshot) {
-          final room = snapshot.data ?? widget.room;
-
-          return Scaffold(
+        return PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) {
+            if (!didPop) _leave(room);
+          },
+          child: Scaffold(
             backgroundColor: _background,
+            appBar: AppBar(
+              backgroundColor: Colors.transparent,
+              surfaceTintColor: Colors.transparent,
+              leading: IconButton(
+                onPressed: _leaving ? null : () => _leave(room),
+                icon: const Icon(Icons.keyboard_arrow_down_rounded,
+                    color: Colors.white, size: 30),
+              ),
+              title: const Text('Voice Room',
+                  style: TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.w800)),
+              centerTitle: true,
+            ),
             body: Container(
               decoration: const BoxDecoration(
                 gradient: RadialGradient(
                   center: Alignment(-0.8, -0.9),
-                  radius: 1.25,
+                  radius: 1.3,
                   colors: [Color(0xFF33134D), Color(0xFF130C1D), _background],
-                  stops: [0, 0.42, 1],
                 ),
               ),
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    _RoomTopBar(
-                      isLeaving: _isLeaving,
-                      onClosePressed: () {
-                        _leaveRoom(room);
-                      },
-                      onMorePressed: _showMoreOptions,
-                    ),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(18, 12, 18, 28),
-                        child: Column(
+              child: StreamBuilder<List<RoomParticipant>>(
+                stream: _service.watchParticipants(room.id),
+                builder: (context, participantSnapshot) {
+                  final participants = participantSnapshot.data ?? const [];
+                  final me = participants.where((p) => p.userId == _me).firstOrNull;
+
+                  return Column(
+                    children: [
+                      Expanded(
+                        child: ListView(
+                          padding: const EdgeInsets.fromLTRB(18, 8, 18, 24),
                           children: [
-                            _RoomHeader(room: room),
-                            const SizedBox(height: 32),
-                            _HostStage(
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                _Pill(
+                                  icon: Icons.circle,
+                                  label: room.isLive ? 'LIVE' : 'ENDED',
+                                  danger: room.isLive,
+                                ),
+                                const SizedBox(width: 8),
+                                _Pill(
+                                  icon: Icons.people,
+                                  label: '${participants.length}/${room.maxParticipants ?? '∞'}',
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              room.name,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 27,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            if (room.description.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Text(room.description,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: _muted, height: 1.4)),
+                            ],
+                            const SizedBox(height: 22),
+                            _ReactionStrip(
+                              stream: _service.watchRecentReactions(room.id),
+                            ),
+                            const SizedBox(height: 20),
+                            _SectionTitle(
+                              title: 'On stage',
+                              count: participants.where((p) => p.isSpeaker).length,
+                            ),
+                            const SizedBox(height: 12),
+                            _ParticipantGrid(
                               room: room,
-                              animation: _speakingAnimation,
-                              isMuted: _isMuted,
+                              participants:
+                                  participants.where((p) => p.isSpeaker).toList(),
+                              currentUserId: _me,
+                              onTap: (p) => _participantActions(room, p),
                             ),
-                            const SizedBox(height: 30),
-                            _RoomStats(
-                              participantCount: room.participantCount,
-                              language: room.language,
-                              visibility: room.visibility,
+                            const SizedBox(height: 26),
+                            _SectionTitle(
+                              title: 'Listeners',
+                              count: participants.where((p) => !p.isSpeaker).length,
                             ),
-                            const SizedBox(height: 18),
-                            _InviteCard(onPressed: _showInviteMessage),
-                            const SizedBox(height: 18),
-                            _ParticipantsSection(room: room),
+                            const SizedBox(height: 12),
+                            _ParticipantGrid(
+                              room: room,
+                              participants:
+                                  participants.where((p) => !p.isSpeaker).toList(),
+                              currentUserId: _me,
+                              onTap: (p) => _participantActions(room, p),
+                            ),
                           ],
                         ),
                       ),
-                    ),
-                    _RoomControls(
-                      isMuted: _isMuted,
-                      isSpeakerEnabled: _isSpeakerEnabled,
-                      isLeaving: _isLeaving,
-                      onMicrophonePressed: () {
-                        setState(() {
-                          _isMuted = !_isMuted;
-                        });
-                      },
-                      onSpeakerPressed: () {
-                        setState(() {
-                          _isSpeakerEnabled = !_isSpeakerEnabled;
-                        });
-                      },
-                      onChatPressed: _showChatMessage,
-                      onLeavePressed: () {
-                        _leaveRoom(room);
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _RoomTopBar extends StatelessWidget {
-  const _RoomTopBar({
-    required this.isLeaving,
-    required this.onClosePressed,
-    required this.onMorePressed,
-  });
-
-  final bool isLeaving;
-  final VoidCallback onClosePressed;
-  final VoidCallback onMorePressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
-      child: Row(
-        children: [
-          _TopBarButton(
-            icon: Icons.keyboard_arrow_down_rounded,
-            onPressed: isLeaving ? null : onClosePressed,
-          ),
-          const Expanded(
-            child: Text(
-              'Voice Room',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 17,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.2,
-              ),
-            ),
-          ),
-          _TopBarButton(
-            icon: Icons.more_horiz_rounded,
-            onPressed: onMorePressed,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TopBarButton extends StatelessWidget {
-  const _TopBarButton({required this.icon, required this.onPressed});
-
-  final IconData icon;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: const Color(0xFF1B1425),
-      shape: const CircleBorder(),
-      child: InkWell(
-        onTap: onPressed,
-        customBorder: const CircleBorder(),
-        child: SizedBox(
-          width: 44,
-          height: 44,
-          child: Icon(
-            icon,
-            color: onPressed == null ? const Color(0xFF665D70) : Colors.white,
-            size: 27,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _RoomHeader extends StatelessWidget {
-  const _RoomHeader({required this.room});
-
-  final VoiceRoom room;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            _LiveBadge(isLive: room.isLive),
-            const SizedBox(width: 9),
-            _CategoryBadge(category: room.category),
-          ],
-        ),
-        const SizedBox(height: 18),
-        Text(
-          room.name,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 27,
-            fontWeight: FontWeight.w900,
-            letterSpacing: -0.8,
-            height: 1.15,
-          ),
-        ),
-        if (room.description.trim().isNotEmpty) ...[
-          const SizedBox(height: 10),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 350),
-            child: Text(
-              room.description,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: _RoomScreenState._secondaryText,
-                fontSize: 14,
-                height: 1.45,
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-class _LiveBadge extends StatelessWidget {
-  const _LiveBadge({required this.isLive});
-
-  final bool isLive;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = isLive ? const Color(0xFFFF3C70) : const Color(0xFF7D7488);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.16),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: color.withValues(alpha: 0.65)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 7,
-            height: 7,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-              boxShadow: isLive
-                  ? [
-                      BoxShadow(
-                        color: color.withValues(alpha: 0.7),
-                        blurRadius: 8,
-                        spreadRadius: 1,
+                      if (_joining)
+                        const LinearProgressIndicator(color: _purple, minHeight: 2),
+                      _Controls(
+                        participant: me,
+                        speakerEnabled: _speakerEnabled,
+                        leaving: _leaving,
+                        onMute: me == null ? null : () => _toggleMute(me),
+                        onHand: me == null ? null : () => _toggleHand(me),
+                        onSpeaker: () =>
+                            setState(() => _speakerEnabled = !_speakerEnabled),
+                        onReaction: _showReactions,
+                        onLeave: () => _leave(room),
                       ),
-                    ]
-                  : null,
+                    ],
+                  );
+                },
+              ),
             ),
           ),
-          const SizedBox(width: 7),
-          Text(
-            isLive ? 'LIVE' : 'ENDED',
-            style: TextStyle(
-              color: color,
-              fontSize: 11,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.9,
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
 
-class _CategoryBadge extends StatelessWidget {
-  const _CategoryBadge({required this.category});
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
+}
 
-  final String category;
-
-  String get _label {
-    if (category.trim().isEmpty) {
-      return 'Talk';
-    }
-
-    return '${category[0].toUpperCase()}${category.substring(1)}';
-  }
-
-  IconData get _icon {
-    switch (category.toLowerCase()) {
-      case 'music':
-        return Icons.music_note_rounded;
-      case 'gaming':
-        return Icons.sports_esports_rounded;
-      case 'chill':
-        return Icons.nightlife_rounded;
-      case 'study':
-        return Icons.school_outlined;
-      case 'business':
-        return Icons.work_outline_rounded;
-      case 'talk':
-      default:
-        return Icons.forum_outlined;
-    }
-  }
+class _Pill extends StatelessWidget {
+  const _Pill({required this.icon, required this.label, this.danger = false});
+  final IconData icon;
+  final String label;
+  final bool danger;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-      decoration: BoxDecoration(
-        color: const Color(0xFF24172F),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: const Color(0xFF4A335B)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(_icon, color: const Color(0xFFC260FF), size: 15),
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+        decoration: BoxDecoration(
+          color: danger ? const Color(0xFF441426) : _RoomScreenState._surface,
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(
+              color: danger ? const Color(0xFFFF416C) : _RoomScreenState._border),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon,
+              size: 11,
+              color: danger ? const Color(0xFFFF416C) : _RoomScreenState._purple),
           const SizedBox(width: 6),
-          Text(
-            _label,
-            style: const TextStyle(
-              color: Color(0xFFD5CCDE),
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _HostStage extends StatelessWidget {
-  const _HostStage({
-    required this.room,
-    required this.animation,
-    required this.isMuted,
-  });
-
-  final VoiceRoom room;
-  final Animation<double> animation;
-  final bool isMuted;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        ScaleTransition(
-          scale: isMuted ? const AlwaysStoppedAnimation<double>(1) : animation,
-          child: Container(
-            width: 154,
-            height: 154,
-            padding: const EdgeInsets.all(7),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: isMuted
-                    ? const [Color(0xFF554A60), Color(0xFF2C2533)]
-                    : const [
-                        Color(0xFFFF4CA5),
-                        Color(0xFFB727FF),
-                        Color(0xFF6A00FF),
-                      ],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: isMuted
-                      ? Colors.black.withValues(alpha: 0.25)
-                      : const Color(0x669D20FF),
-                  blurRadius: isMuted ? 18 : 34,
-                  spreadRadius: isMuted ? 0 : 5,
-                ),
-              ],
-            ),
-            child: Container(
-              padding: const EdgeInsets.all(5),
-              decoration: const BoxDecoration(
-                color: _RoomScreenState._background,
-                shape: BoxShape.circle,
-              ),
-              child: _HostAvatar(
-                photoUrl: room.hostPhotoUrl,
-                hostName: room.hostName,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 18),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Flexible(
-              child: Text(
-                room.hostName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+          Text(label,
+              style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ),
-            const SizedBox(width: 7),
-            const _HostBadge(),
-          ],
-        ),
-        const SizedBox(height: 9),
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
-          decoration: BoxDecoration(
-            color: isMuted ? const Color(0xFF2C2633) : const Color(0xFF251339),
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(
-              color: isMuted
-                  ? const Color(0xFF51485B)
-                  : const Color(0xFF7A2FA7),
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                isMuted ? Icons.mic_off_rounded : Icons.graphic_eq_rounded,
-                color: isMuted
-                    ? const Color(0xFFA098A8)
-                    : const Color(0xFFD66FFF),
-                size: 17,
-              ),
-              const SizedBox(width: 7),
-              Text(
-                isMuted ? 'MICROPHONE MUTED' : 'YOU ARE SPEAKING',
-                style: TextStyle(
-                  color: isMuted
-                      ? const Color(0xFFA098A8)
-                      : const Color(0xFFE3A2FF),
                   fontSize: 10,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0.7,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
+                  fontWeight: FontWeight.w900)),
+        ]),
+      );
 }
 
-class _HostAvatar extends StatelessWidget {
-  const _HostAvatar({required this.photoUrl, required this.hostName});
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle({required this.title, required this.count});
+  final String title;
+  final int count;
 
-  final String? photoUrl;
-  final String hostName;
+  @override
+  Widget build(BuildContext context) => Row(children: [
+        Text(title,
+            style: const TextStyle(
+                color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
+        const Spacer(),
+        Text('$count', style: const TextStyle(color: _RoomScreenState._muted)),
+      ]);
+}
 
-  String get _initial {
-    final normalizedName = hostName.trim();
-
-    if (normalizedName.isEmpty) {
-      return 'Y';
-    }
-
-    return normalizedName[0].toUpperCase();
-  }
+class _ParticipantGrid extends StatelessWidget {
+  const _ParticipantGrid({
+    required this.room,
+    required this.participants,
+    required this.currentUserId,
+    required this.onTap,
+  });
+  final VoiceRoom room;
+  final List<RoomParticipant> participants;
+  final String currentUserId;
+  final ValueChanged<RoomParticipant> onTap;
 
   @override
   Widget build(BuildContext context) {
-    final normalizedPhotoUrl = photoUrl?.trim();
-
-    if (normalizedPhotoUrl != null && normalizedPhotoUrl.isNotEmpty) {
-      return ClipOval(
-        child: Image.network(
-          normalizedPhotoUrl,
-          width: double.infinity,
-          height: double.infinity,
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) {
-            return _AvatarFallback(initial: _initial);
-          },
+    if (participants.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: _RoomScreenState._surface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: _RoomScreenState._border),
         ),
+        child: const Text('Nobody here yet.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: _RoomScreenState._muted)),
       );
     }
 
-    return _AvatarFallback(initial: _initial);
-  }
-}
-
-class _AvatarFallback extends StatelessWidget {
-  const _AvatarFallback({required this.initial});
-
-  final String initial;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF6F1CA1), Color(0xFF311148)],
-        ),
+    return GridView.builder(
+      itemCount: participants.length,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        childAspectRatio: .78,
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 12,
       ),
-      alignment: Alignment.center,
-      child: Text(
-        initial,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 47,
-          fontWeight: FontWeight.w900,
-        ),
-      ),
-    );
-  }
-}
-
-class _HostBadge extends StatelessWidget {
-  const _HostBadge();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF8B20FF), Color(0xFFC12EFF)],
-        ),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: const Text(
-        'HOST',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 9,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 0.7,
-        ),
-      ),
-    );
-  }
-}
-
-class _RoomStats extends StatelessWidget {
-  const _RoomStats({
-    required this.participantCount,
-    required this.language,
-    required this.visibility,
-  });
-
-  final int participantCount;
-  final String language;
-  final String visibility;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
-      decoration: BoxDecoration(
-        color: _RoomScreenState._surface.withValues(alpha: 0.88),
-        borderRadius: BorderRadius.circular(21),
-        border: Border.all(color: _RoomScreenState._border),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _StatItem(
-              icon: Icons.people_alt_rounded,
-              value: '$participantCount',
-              label: participantCount == 1 ? 'person' : 'people',
-            ),
-          ),
-          const _StatDivider(),
-          Expanded(
-            child: _StatItem(
-              icon: Icons.language_rounded,
-              value: language,
-              label: 'language',
-            ),
-          ),
-          const _StatDivider(),
-          Expanded(
-            child: _StatItem(
-              icon: visibility == 'private'
-                  ? Icons.lock_outline_rounded
-                  : Icons.public_rounded,
-              value: visibility == 'private' ? 'Private' : 'Public',
-              label: 'access',
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StatItem extends StatelessWidget {
-  const _StatItem({
-    required this.icon,
-    required this.value,
-    required this.label,
-  });
-
-  final IconData icon;
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Icon(icon, color: const Color(0xFFC05CFF), size: 20),
-        const SizedBox(height: 7),
-        Text(
-          value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 12,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(height: 3),
-        Text(
-          label,
-          style: const TextStyle(
-            color: _RoomScreenState._secondaryText,
-            fontSize: 10,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _StatDivider extends StatelessWidget {
-  const _StatDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(width: 1, height: 40, color: _RoomScreenState._border);
-  }
-}
-
-class _InviteCard extends StatelessWidget {
-  const _InviteCard({required this.onPressed});
-
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(21),
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(21),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
-              colors: [Color(0xFF2B123E), Color(0xFF1D1429)],
-            ),
-            borderRadius: BorderRadius.circular(21),
-            border: Border.all(color: const Color(0xFF62307E)),
-          ),
-          child: const Row(
-            children: [
-              _InviteIcon(),
-              SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Invite people',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    SizedBox(height: 5),
-                    Text(
-                      'Bring friends into the conversation',
-                      style: TextStyle(
-                        color: _RoomScreenState._secondaryText,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
+      itemBuilder: (context, index) {
+        final p = participants[index];
+        return InkWell(
+          onTap: room.hostId == currentUserId && !p.isHost ? () => onTap(p) : null,
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: _RoomScreenState._surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: p.isHandRaised
+                    ? const Color(0xFFFFB020)
+                    : p.isSpeaker && !p.isMuted
+                        ? _RoomScreenState._purple
+                        : _RoomScreenState._border,
               ),
-              Icon(Icons.chevron_right_rounded, color: Color(0xFF9D83AB)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _InviteIcon extends StatelessWidget {
-  const _InviteIcon();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 47,
-      height: 47,
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFFB02FFF), Color(0xFF6C00F9)],
-        ),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: const Icon(
-        Icons.person_add_alt_1_rounded,
-        color: Colors.white,
-        size: 24,
-      ),
-    );
-  }
-}
-
-class _ParticipantsSection extends StatelessWidget {
-  const _ParticipantsSection({required this.room});
-
-  final VoiceRoom room;
-
-  @override
-  Widget build(BuildContext context) {
-    final roomService = RoomService();
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(17),
-      decoration: BoxDecoration(
-        color: _RoomScreenState._surface.withValues(alpha: 0.88),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: _RoomScreenState._border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.groups_2_rounded, color: Color(0xFFC05CFF), size: 21),
-              SizedBox(width: 9),
-              Text(
-                'People in the room',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
+            ),
+            child: Column(children: [
+              Stack(children: [
+                CircleAvatar(
+                  radius: 31,
+                  backgroundColor: const Color(0xFF662092),
+                  backgroundImage:
+                      p.photoUrl?.trim().isNotEmpty == true ? NetworkImage(p.photoUrl!) : null,
+                  child: p.photoUrl?.trim().isNotEmpty == true
+                      ? null
+                      : Text(
+                          p.displayName.isEmpty ? '?' : p.displayName[0].toUpperCase(),
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900),
+                        ),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 17),
-          StreamBuilder<List<RoomParticipant>>(
-            stream: roomService.watchParticipants(room.id),
-            builder: (context, snapshot) {
-              if (snapshot.hasError) {
-                return const _ParticipantsMessage(
-                  icon: Icons.error_outline_rounded,
-                  message: 'Could not load participants.',
-                );
-              }
-
-              if (snapshot.connectionState == ConnectionState.waiting &&
-                  !snapshot.hasData) {
-                return const Center(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 10),
-                    child: SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.4,
-                        color: Color(0xFFC05CFF),
-                      ),
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: CircleAvatar(
+                    radius: 12,
+                    backgroundColor: _RoomScreenState._surface2,
+                    child: Icon(
+                      p.isHandRaised
+                          ? Icons.back_hand
+                          : p.isSpeaker
+                              ? (p.isMuted ? Icons.mic_off : Icons.mic)
+                              : Icons.headphones,
+                      size: 14,
+                      color: p.isHandRaised
+                          ? const Color(0xFFFFB020)
+                          : Colors.white,
                     ),
                   ),
-                );
-              }
-
-              final participants = snapshot.data ?? const <RoomParticipant>[];
-
-              if (participants.isEmpty) {
-                return const _ParticipantsMessage(
-                  icon: Icons.person_off_outlined,
-                  message: 'Nobody is in this room yet.',
-                );
-              }
-
-              return Column(
-                children: [
-                  for (var index = 0; index < participants.length; index++) ...[
-                    _ParticipantTile.fromParticipant(
-                      participant: participants[index],
-                    ),
-                    if (index != participants.length - 1)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 10),
-                        child: Divider(
-                          height: 1,
-                          color: _RoomScreenState._border,
-                        ),
-                      ),
-                  ],
-                ],
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ParticipantsMessage extends StatelessWidget {
-  const _ParticipantsMessage({required this.icon, required this.message});
-
-  final IconData icon;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Icon(icon, color: _RoomScreenState._secondaryText, size: 20),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              message,
-              style: const TextStyle(
-                color: _RoomScreenState._secondaryText,
-                fontSize: 12,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ParticipantTile extends StatelessWidget {
-  const _ParticipantTile({
-    required this.name,
-    required this.photoUrl,
-    required this.role,
-    required this.isMuted,
-    required this.isSpeaker,
-  });
-
-  factory _ParticipantTile.fromParticipant({
-    required RoomParticipant participant,
-  }) {
-    return _ParticipantTile(
-      name: participant.displayName,
-      photoUrl: participant.photoUrl,
-      role: _roleLabel(participant),
-      isMuted: participant.isMuted,
-      isSpeaker: participant.isSpeaker,
-    );
-  }
-
-  final String name;
-  final String? photoUrl;
-  final String role;
-  final bool isMuted;
-  final bool isSpeaker;
-
-  static String _roleLabel(RoomParticipant participant) {
-    if (participant.isHost) {
-      return 'Host';
-    }
-
-    if (participant.isSpeaker) {
-      return 'Speaker';
-    }
-
-    return 'Listener';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 48,
-          height: 48,
-          child: _HostAvatar(photoUrl: photoUrl, hostName: name),
-        ),
-        const SizedBox(width: 13),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+                ),
+              ]),
+              const SizedBox(height: 8),
               Text(
-                name,
+                p.displayName,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                ),
+                    color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 3),
               Text(
-                role,
-                style: const TextStyle(
-                  color: _RoomScreenState._secondaryText,
-                  fontSize: 12,
+                p.isHost ? 'HOST' : p.isSpeaker ? 'SPEAKER' : p.isHandRaised ? 'HAND RAISED' : 'LISTENER',
+                maxLines: 1,
+                style: TextStyle(
+                  color: p.isHandRaised ? const Color(0xFFFFB020) : _RoomScreenState._muted,
+                  fontSize: 8,
+                  fontWeight: FontWeight.w900,
                 ),
               ),
-            ],
+            ]),
           ),
-        ),
-        Container(
-          width: 37,
-          height: 37,
-          decoration: BoxDecoration(
-            color: const Color(0xFF261833),
-            shape: BoxShape.circle,
-            border: Border.all(color: const Color(0xFF55316B)),
-          ),
-          child: Icon(
-            isSpeaker
-                ? (isMuted ? Icons.mic_off_rounded : Icons.mic_rounded)
-                : Icons.headphones_rounded,
-            color: isSpeaker && !isMuted
-                ? const Color(0xFFD36BFF)
-                : const Color(0xFF958B9F),
-            size: 18,
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
 }
 
-class _RoomControls extends StatelessWidget {
-  const _RoomControls({
-    required this.isMuted,
-    required this.isSpeakerEnabled,
-    required this.isLeaving,
-    required this.onMicrophonePressed,
-    required this.onSpeakerPressed,
-    required this.onChatPressed,
-    required this.onLeavePressed,
+class _ReactionStrip extends StatelessWidget {
+  const _ReactionStrip({required this.stream});
+  final Stream<List<RoomReaction>> stream;
+
+  @override
+  Widget build(BuildContext context) => StreamBuilder<List<RoomReaction>>(
+        stream: stream,
+        builder: (context, snapshot) {
+          final reactions = snapshot.data ?? const [];
+          if (reactions.isEmpty) return const SizedBox.shrink();
+          return SizedBox(
+            height: 42,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: reactions.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 7),
+              itemBuilder: (context, index) {
+                final r = reactions[index];
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: _RoomScreenState._surface,
+                    borderRadius: BorderRadius.circular(30),
+                    border: Border.all(color: _RoomScreenState._border),
+                  ),
+                  child: Row(children: [
+                    Text(r.emoji, style: const TextStyle(fontSize: 18)),
+                    const SizedBox(width: 6),
+                    Text(r.displayName,
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 11)),
+                  ]),
+                );
+              },
+            ),
+          );
+        },
+      );
+}
+
+class _Controls extends StatelessWidget {
+  const _Controls({
+    required this.participant,
+    required this.speakerEnabled,
+    required this.leaving,
+    required this.onMute,
+    required this.onHand,
+    required this.onSpeaker,
+    required this.onReaction,
+    required this.onLeave,
   });
 
-  final bool isMuted;
-  final bool isSpeakerEnabled;
-  final bool isLeaving;
-  final VoidCallback onMicrophonePressed;
-  final VoidCallback onSpeakerPressed;
-  final VoidCallback onChatPressed;
-  final VoidCallback onLeavePressed;
+  final RoomParticipant? participant;
+  final bool speakerEnabled;
+  final bool leaving;
+  final VoidCallback? onMute;
+  final VoidCallback? onHand;
+  final VoidCallback onSpeaker;
+  final VoidCallback onReaction;
+  final VoidCallback onLeave;
 
   @override
   Widget build(BuildContext context) {
+    final muted = participant?.isMuted ?? true;
+    final hand = participant?.isHandRaised ?? false;
+
     return Container(
       padding: EdgeInsets.fromLTRB(
-        14,
-        13,
-        14,
-        12 + MediaQuery.paddingOf(context).bottom,
+          10, 10, 10, 10 + MediaQuery.paddingOf(context).bottom),
+      decoration: const BoxDecoration(
+        color: Color(0xFA151020),
+        border: Border(top: BorderSide(color: _RoomScreenState._border)),
       ),
-      decoration: BoxDecoration(
-        color: _RoomScreenState._surface.withValues(alpha: 0.97),
-        border: const Border(top: BorderSide(color: _RoomScreenState._border)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _ControlButton(
-            icon: isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
-            label: isMuted ? 'Unmute' : 'Mute',
-            isActive: !isMuted,
-            onPressed: onMicrophonePressed,
-          ),
-          _ControlButton(
-            icon: isSpeakerEnabled
-                ? Icons.volume_up_rounded
-                : Icons.volume_off_rounded,
-            label: 'Speaker',
-            isActive: isSpeakerEnabled,
-            onPressed: onSpeakerPressed,
-          ),
-          _ControlButton(
-            icon: Icons.chat_bubble_rounded,
-            label: 'Chat',
-            onPressed: onChatPressed,
-          ),
-          _ControlButton(
-            icon: Icons.call_end_rounded,
-            label: 'Leave',
-            isDanger: true,
-            isLoading: isLeaving,
-            onPressed: isLeaving ? null : onLeavePressed,
-          ),
-        ],
-      ),
+      child: Row(children: [
+        _Button(
+          icon: muted ? Icons.mic_off : Icons.mic,
+          label: muted ? 'Unmute' : 'Mute',
+          onTap: onMute,
+          active: !muted,
+        ),
+        _Button(
+          icon: hand ? Icons.back_hand : Icons.back_hand_outlined,
+          label: hand ? 'Lower' : 'Raise',
+          onTap: onHand,
+          active: hand,
+        ),
+        _Button(
+          icon: speakerEnabled ? Icons.volume_up : Icons.volume_off,
+          label: 'Audio',
+          onTap: onSpeaker,
+          active: speakerEnabled,
+        ),
+        _Button(
+          icon: Icons.emoji_emotions,
+          label: 'React',
+          onTap: onReaction,
+        ),
+        _Button(
+          icon: Icons.call_end,
+          label: 'Leave',
+          onTap: leaving ? null : onLeave,
+          danger: true,
+          loading: leaving,
+        ),
+      ]),
     );
   }
 }
 
-class _ControlButton extends StatelessWidget {
-  const _ControlButton({
+class _Button extends StatelessWidget {
+  const _Button({
     required this.icon,
     required this.label,
-    required this.onPressed,
-    this.isActive = false,
-    this.isDanger = false,
-    this.isLoading = false,
+    required this.onTap,
+    this.active = false,
+    this.danger = false,
+    this.loading = false,
   });
-
   final IconData icon;
   final String label;
-  final VoidCallback? onPressed;
-  final bool isActive;
-  final bool isDanger;
-  final bool isLoading;
+  final VoidCallback? onTap;
+  final bool active;
+  final bool danger;
+  final bool loading;
 
   @override
-  Widget build(BuildContext context) {
-    final backgroundColor = isDanger
-        ? const Color(0xFFFF335F)
-        : isActive
-        ? const Color(0xFF7921A8)
-        : _RoomScreenState._surfaceLight;
-
-    final borderColor = isDanger
-        ? const Color(0xFFFF6887)
-        : isActive
-        ? const Color(0xFFB550E6)
-        : _RoomScreenState._border;
-
-    return Expanded(
-      child: Material(
-        color: Colors.transparent,
+  Widget build(BuildContext context) => Expanded(
         child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 3),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  width: 49,
-                  height: 49,
-                  decoration: BoxDecoration(
-                    color: backgroundColor,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: borderColor),
-                    boxShadow: isDanger
-                        ? const [
-                            BoxShadow(color: Color(0x44FF335F), blurRadius: 14),
-                          ]
-                        : null,
-                  ),
-                  alignment: Alignment.center,
-                  child: isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2.3,
-                          ),
-                        )
-                      : Icon(icon, color: Colors.white, size: 22),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  label,
-                  maxLines: 1,
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              CircleAvatar(
+                radius: 23,
+                backgroundColor: danger
+                    ? const Color(0xFFFF335F)
+                    : active
+                        ? const Color(0xFF7921A8)
+                        : _RoomScreenState._surface2,
+                child: loading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : Icon(icon, color: Colors.white, size: 21),
+              ),
+              const SizedBox(height: 5),
+              Text(label,
                   style: TextStyle(
-                    color: isDanger
-                        ? const Color(0xFFFF8CA4)
-                        : const Color(0xFFB9AFBF),
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
+                      color: danger
+                          ? const Color(0xFFFF8CA4)
+                          : Colors.white70,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700)),
+            ]),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _LeaveRoomSheet extends StatelessWidget {
-  const _LeaveRoomSheet({required this.isHost});
-
-  final bool isHost;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-      decoration: const BoxDecoration(
-        color: _RoomScreenState._surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-        border: Border(top: BorderSide(color: _RoomScreenState._border)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 44,
-            height: 5,
-            decoration: BoxDecoration(
-              color: const Color(0xFF51475E),
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-          const SizedBox(height: 24),
-          Container(
-            width: 60,
-            height: 60,
-            decoration: const BoxDecoration(
-              color: Color(0xFF3A1725),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.call_end_rounded,
-              color: _RoomScreenState._danger,
-              size: 29,
-            ),
-          ),
-          const SizedBox(height: 17),
-          Text(
-            isHost ? 'End this room?' : 'Leave this room?',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 21,
-              fontWeight: FontWeight.w900,
-              letterSpacing: -0.4,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            isHost
-                ? 'You are the host. Leaving will end the room for everyone.'
-                : 'You can join this room again while it is still live.',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: _RoomScreenState._secondaryText,
-              fontSize: 13,
-              height: 1.45,
-            ),
-          ),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            height: 54,
-            child: ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop(true);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _RoomScreenState._danger,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(18),
-                ),
-              ),
-              child: Text(
-                isHost ? 'END ROOM' : 'LEAVE ROOM',
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0.8,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: TextButton(
-              onPressed: () {
-                Navigator.of(context).pop(false);
-              },
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(18),
-                ),
-              ),
-              child: const Text(
-                'CANCEL',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.6,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RoomOptionsSheet extends StatelessWidget {
-  const _RoomOptionsSheet({required this.isHost});
-
-  final bool isHost;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 26),
-      decoration: const BoxDecoration(
-        color: _RoomScreenState._surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-        border: Border(top: BorderSide(color: _RoomScreenState._border)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 44,
-            height: 5,
-            decoration: BoxDecoration(
-              color: const Color(0xFF51475E),
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-          const SizedBox(height: 22),
-          const Text(
-            'Room options',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 21,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 20),
-          _OptionTile(
-            icon: Icons.share_rounded,
-            title: 'Share room',
-            subtitle: 'Send a link to other people',
-            onPressed: () {
-              Navigator.of(context).pop();
-            },
-          ),
-          if (isHost) ...[
-            const SizedBox(height: 10),
-            _OptionTile(
-              icon: Icons.settings_rounded,
-              title: 'Room settings',
-              subtitle: 'Manage access and participants',
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-          ],
-          const SizedBox(height: 10),
-          _OptionTile(
-            icon: Icons.flag_outlined,
-            title: 'Report a problem',
-            subtitle: 'Tell us about inappropriate activity',
-            onPressed: () {
-              Navigator.of(context).pop();
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _OptionTile extends StatelessWidget {
-  const _OptionTile({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: _RoomScreenState._surfaceLight,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(18),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: _RoomScreenState._border),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 43,
-                height: 43,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF301840),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(icon, color: const Color(0xFFC263FF), size: 22),
-              ),
-              const SizedBox(width: 13),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        color: _RoomScreenState._secondaryText,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(Icons.chevron_right_rounded, color: Color(0xFF86778F)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+      );
 }

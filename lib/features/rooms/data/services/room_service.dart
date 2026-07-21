@@ -2,18 +2,26 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
+import 'package:yovoice/features/rooms/data/models/room_reaction.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 
 class RoomService {
   RoomService({FirebaseFirestore? firestore, FirebaseAuth? auth})
-    : _firestore = firestore ?? FirebaseFirestore.instance,
-      _auth = auth ?? FirebaseAuth.instance;
+      : _firestore = firestore ?? FirebaseFirestore.instance,
+        _auth = auth ?? FirebaseAuth.instance;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
 
-  CollectionReference<Map<String, dynamic>> get _roomsCollection {
-    return _firestore.collection('rooms');
+  CollectionReference<Map<String, dynamic>> get _roomsCollection =>
+      _firestore.collection('rooms');
+
+  User get _currentUser {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw StateError('You must be signed in to use voice rooms.');
+    }
+    return user;
   }
 
   Future<VoiceRoom> createRoom({
@@ -24,35 +32,23 @@ class RoomService {
     required String language,
     required int? maxParticipants,
   }) async {
-    final user = _auth.currentUser;
-
-    if (user == null) {
-      throw StateError('You must be signed in before creating a room.');
-    }
-
+    final user = _currentUser;
     final normalizedName = name.trim();
-    final normalizedDescription = description.trim();
-
     if (normalizedName.length < 3) {
       throw ArgumentError('Room name must contain at least 3 characters.');
     }
 
-    final roomDocument = _roomsCollection.doc();
-
-    final participantDocument = roomDocument
-        .collection('participants')
-        .doc(user.uid);
-
+    final room = _roomsCollection.doc();
+    final participant = room.collection('participants').doc(user.uid);
     final hostName = _resolveUserName(user);
-
     final batch = _firestore.batch();
 
-    batch.set(roomDocument, {
+    batch.set(room, {
       'hostId': user.uid,
       'hostName': hostName,
       'hostPhotoUrl': user.photoURL,
       'name': normalizedName,
-      'description': normalizedDescription,
+      'description': description.trim(),
       'category': category,
       'visibility': visibility,
       'language': language,
@@ -63,21 +59,20 @@ class RoomService {
       'updatedAt': FieldValue.serverTimestamp(),
     });
 
-    batch.set(participantDocument, {
+    batch.set(participant, {
       'userId': user.uid,
       'displayName': hostName,
       'photoUrl': user.photoURL,
       'role': 'host',
       'isMuted': false,
       'isSpeaker': true,
+      'isHandRaised': false,
       'joinedAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
     });
 
     await batch.commit();
-
-    final createdDocument = await roomDocument.get();
-
-    return VoiceRoom.fromFirestore(createdDocument);
+    return VoiceRoom.fromFirestore(await room.get());
   }
 
   Stream<List<VoiceRoom>> watchLivePublicRooms() {
@@ -86,279 +81,255 @@ class RoomService {
         .where('visibility', isEqualTo: 'public')
         .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((snapshot) {
-          return snapshot.docs.map(VoiceRoom.fromFirestore).toList();
-        });
+        .map((snapshot) =>
+            snapshot.docs.map(VoiceRoom.fromFirestore).toList(growable: false));
   }
 
   Stream<VoiceRoom> watchRoom(String roomId) {
-    final normalizedRoomId = roomId.trim();
-
-    if (normalizedRoomId.isEmpty) {
-      return Stream<VoiceRoom>.error(ArgumentError('Room ID cannot be empty.'));
-    }
-
-    return _roomsCollection.doc(normalizedRoomId).snapshots().map((document) {
-      if (!document.exists) {
-        throw StateError('The requested room does not exist.');
-      }
-
+    return _roomsCollection.doc(roomId).snapshots().map((document) {
+      if (!document.exists) throw StateError('The room no longer exists.');
       return VoiceRoom.fromFirestore(document);
     });
   }
 
   Stream<List<RoomParticipant>> watchParticipants(String roomId) {
-    final normalizedRoomId = roomId.trim();
-
-    if (normalizedRoomId.isEmpty) {
-      return Stream<List<RoomParticipant>>.error(
-        ArgumentError('Room ID cannot be empty.'),
-      );
-    }
-
     return _roomsCollection
-        .doc(normalizedRoomId)
+        .doc(roomId)
         .collection('participants')
-        .orderBy('joinedAt')
         .snapshots()
         .map((snapshot) {
-          final participants = snapshot.docs
-              .map(RoomParticipant.fromFirestore)
-              .toList();
+      final participants =
+          snapshot.docs.map(RoomParticipant.fromFirestore).toList();
+      participants.sort((a, b) {
+        final role = _priority(a).compareTo(_priority(b));
+        if (role != 0) return role;
+        final aTime = a.joinedAt ?? DateTime(2100);
+        final bTime = b.joinedAt ?? DateTime(2100);
+        return aTime.compareTo(bTime);
+      });
+      return participants;
+    });
+  }
 
-          participants.sort((first, second) {
-            final firstPriority = _participantPriority(first);
-            final secondPriority = _participantPriority(second);
-
-            if (firstPriority != secondPriority) {
-              return firstPriority.compareTo(secondPriority);
-            }
-
-            final firstJoinedAt = first.joinedAt;
-            final secondJoinedAt = second.joinedAt;
-
-            if (firstJoinedAt == null && secondJoinedAt == null) {
-              return first.displayName.toLowerCase().compareTo(
-                second.displayName.toLowerCase(),
-              );
-            }
-
-            if (firstJoinedAt == null) {
-              return 1;
-            }
-
-            if (secondJoinedAt == null) {
-              return -1;
-            }
-
-            return firstJoinedAt.compareTo(secondJoinedAt);
-          });
-
-          return participants;
-        });
+  Stream<List<RoomReaction>> watchRecentReactions(String roomId) {
+    return _roomsCollection
+        .doc(roomId)
+        .collection('reactions')
+        .orderBy('createdAt', descending: true)
+        .limit(12)
+        .snapshots()
+        .map((snapshot) =>
+            snapshot.docs.map(RoomReaction.fromFirestore).toList());
   }
 
   Future<VoiceRoom> joinRoom(String roomId) async {
-    final user = _auth.currentUser;
+    final user = _currentUser;
+    final room = _roomsCollection.doc(roomId);
+    final participant = room.collection('participants').doc(user.uid);
 
-    if (user == null) {
-      throw StateError('You must be signed in before joining a room.');
-    }
-
-    final normalizedRoomId = roomId.trim();
-
-    if (normalizedRoomId.isEmpty) {
-      throw ArgumentError('Room ID cannot be empty.');
-    }
-
-    final roomDocument = _roomsCollection.doc(normalizedRoomId);
-
-    final participantDocument = roomDocument
-        .collection('participants')
-        .doc(user.uid);
-
-    await _firestore.runTransaction<void>((transaction) async {
-      final roomSnapshot = await transaction.get(roomDocument);
-
-      if (!roomSnapshot.exists) {
+    await _firestore.runTransaction((transaction) async {
+      final roomSnapshot = await transaction.get(room);
+      final data = roomSnapshot.data();
+      if (!roomSnapshot.exists || data == null) {
         throw StateError('The requested room does not exist.');
       }
-
-      final roomData = roomSnapshot.data();
-
-      if (roomData == null) {
-        throw StateError('The requested room does not contain any data.');
-      }
-
-      final isLive = roomData['isLive'] as bool? ?? false;
-      final visibility = roomData['visibility'] as String? ?? 'private';
-      final hostId = roomData['hostId'] as String? ?? '';
-
-      if (!isLive) {
+      if (data['isLive'] != true) {
         throw StateError('This room is no longer live.');
       }
 
-      if (visibility != 'public' && hostId != user.uid) {
-        throw StateError('This room is private.');
-      }
+      final existing = await transaction.get(participant);
+      if (existing.exists) return;
 
-      final participantSnapshot = await transaction.get(participantDocument);
+      final count = (data['participantCount'] as num?)?.toInt() ?? 0;
+      final max = (data['maxParticipants'] as num?)?.toInt();
+      if (max != null && count >= max) throw StateError('This room is full.');
 
-      if (participantSnapshot.exists) {
-        return;
-      }
-
-      final participantCount =
-          (roomData['participantCount'] as num?)?.toInt() ?? 0;
-
-      final maxParticipants = (roomData['maxParticipants'] as num?)?.toInt();
-
-      if (maxParticipants != null && participantCount >= maxParticipants) {
-        throw StateError('This room is full.');
-      }
-
-      final userName = _resolveUserName(user);
-
-      transaction.set(participantDocument, {
+      transaction.set(participant, {
         'userId': user.uid,
-        'displayName': userName,
+        'displayName': _resolveUserName(user),
         'photoUrl': user.photoURL,
         'role': 'listener',
         'isMuted': true,
         'isSpeaker': false,
+        'isHandRaised': false,
         'joinedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
       });
-
-      transaction.update(roomDocument, {
-        'participantCount': participantCount + 1,
+      transaction.update(room, {
+        'participantCount': count + 1,
         'updatedAt': FieldValue.serverTimestamp(),
       });
     });
 
-    final updatedRoomDocument = await roomDocument.get();
+    return VoiceRoom.fromFirestore(await room.get());
+  }
 
-    if (!updatedRoomDocument.exists) {
-      throw StateError('The requested room does not exist.');
+  Future<void> setMuted({
+    required String roomId,
+    required bool isMuted,
+  }) async {
+    final user = _currentUser;
+    final participant =
+        _roomsCollection.doc(roomId).collection('participants').doc(user.uid);
+    final snapshot = await participant.get();
+    if (!snapshot.exists) throw StateError('You are not in this room.');
+    if (snapshot.data()?['isSpeaker'] != true) {
+      throw StateError('Only speakers can use the microphone.');
+    }
+    await participant.update({
+      'isMuted': isMuted,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<void> setHandRaised({
+    required String roomId,
+    required bool isRaised,
+  }) async {
+    final user = _currentUser;
+    await _roomsCollection
+        .doc(roomId)
+        .collection('participants')
+        .doc(user.uid)
+        .update({
+      'isHandRaised': isRaised,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<void> setSpeaker({
+    required String roomId,
+    required String participantId,
+    required bool isSpeaker,
+  }) async {
+    await _requireHost(roomId);
+    final participant =
+        _roomsCollection.doc(roomId).collection('participants').doc(participantId);
+    final snapshot = await participant.get();
+    if (!snapshot.exists) throw StateError('Participant not found.');
+    if (snapshot.data()?['role'] == 'host') return;
+
+    await participant.update({
+      'role': isSpeaker ? 'speaker' : 'listener',
+      'isSpeaker': isSpeaker,
+      'isMuted': true,
+      'isHandRaised': false,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<void> hostSetMuted({
+    required String roomId,
+    required String participantId,
+    required bool isMuted,
+  }) async {
+    await _requireHost(roomId);
+    await _roomsCollection
+        .doc(roomId)
+        .collection('participants')
+        .doc(participantId)
+        .update({
+      'isMuted': isMuted,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<void> removeParticipant({
+    required String roomId,
+    required String participantId,
+  }) async {
+    await _requireHost(roomId);
+    final room = _roomsCollection.doc(roomId);
+    final participant = room.collection('participants').doc(participantId);
+
+    await _firestore.runTransaction((transaction) async {
+      final roomSnapshot = await transaction.get(room);
+      final participantSnapshot = await transaction.get(participant);
+      if (!participantSnapshot.exists) return;
+      if (participantSnapshot.data()?['role'] == 'host') {
+        throw StateError('The host cannot be removed.');
+      }
+      final count =
+          (roomSnapshot.data()?['participantCount'] as num?)?.toInt() ?? 0;
+      transaction.delete(participant);
+      transaction.update(room, {
+        'participantCount': count > 0 ? count - 1 : 0,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  Future<void> sendReaction({
+    required String roomId,
+    required String emoji,
+  }) async {
+    final user = _currentUser;
+    const allowed = ['👏', '❤️', '😂', '🔥', '🎉', '💜'];
+    if (!allowed.contains(emoji)) {
+      throw ArgumentError('Unsupported reaction.');
     }
 
-    return VoiceRoom.fromFirestore(updatedRoomDocument);
+    await _roomsCollection.doc(roomId).collection('reactions').add({
+      'userId': user.uid,
+      'displayName': _resolveUserName(user),
+      'emoji': emoji,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<void> leaveRoom(String roomId) async {
-    final user = _auth.currentUser;
+    final user = _currentUser;
+    final room = _roomsCollection.doc(roomId);
+    final participant = room.collection('participants').doc(user.uid);
 
-    if (user == null) {
-      throw StateError('You must be signed in before leaving a room.');
-    }
-
-    final normalizedRoomId = roomId.trim();
-
-    if (normalizedRoomId.isEmpty) {
-      throw ArgumentError('Room ID cannot be empty.');
-    }
-
-    final roomDocument = _roomsCollection.doc(normalizedRoomId);
-
-    final participantDocument = roomDocument
-        .collection('participants')
-        .doc(user.uid);
-
-    await _firestore.runTransaction<void>((transaction) async {
-      final roomSnapshot = await transaction.get(roomDocument);
-
-      if (!roomSnapshot.exists) {
-        return;
+    await _firestore.runTransaction((transaction) async {
+      final roomSnapshot = await transaction.get(room);
+      final data = roomSnapshot.data();
+      if (!roomSnapshot.exists || data == null) return;
+      if (data['hostId'] == user.uid) {
+        throw StateError('The host must close the room.');
       }
+      final participantSnapshot = await transaction.get(participant);
+      if (!participantSnapshot.exists) return;
 
-      final roomData = roomSnapshot.data();
-
-      if (roomData == null) {
-        return;
-      }
-
-      final hostId = roomData['hostId'] as String? ?? '';
-
-      if (hostId == user.uid) {
-        throw StateError(
-          'The room host must close the room instead of leaving it.',
-        );
-      }
-
-      final participantSnapshot = await transaction.get(participantDocument);
-
-      if (!participantSnapshot.exists) {
-        return;
-      }
-
-      final participantCount =
-          (roomData['participantCount'] as num?)?.toInt() ?? 0;
-
-      transaction.delete(participantDocument);
-
-      transaction.update(roomDocument, {
-        'participantCount': participantCount > 0 ? participantCount - 1 : 0,
+      final count = (data['participantCount'] as num?)?.toInt() ?? 0;
+      transaction.delete(participant);
+      transaction.update(room, {
+        'participantCount': count > 0 ? count - 1 : 0,
         'updatedAt': FieldValue.serverTimestamp(),
       });
     });
   }
 
   Future<void> closeRoom(String roomId) async {
-    final user = _auth.currentUser;
-
-    if (user == null) {
-      throw StateError('You must be signed in before closing a room.');
-    }
-
-    final normalizedRoomId = roomId.trim();
-
-    if (normalizedRoomId.isEmpty) {
-      throw ArgumentError('Room ID cannot be empty.');
-    }
-
-    final roomDocument = _roomsCollection.doc(normalizedRoomId);
-    final roomSnapshot = await roomDocument.get();
-    final roomData = roomSnapshot.data();
-
-    if (!roomSnapshot.exists || roomData == null) {
-      throw StateError('The requested room does not exist.');
-    }
-
-    if (roomData['hostId'] != user.uid) {
-      throw StateError('Only the room host can close this room.');
-    }
-
-    await roomDocument.update({
+    await _requireHost(roomId);
+    await _roomsCollection.doc(roomId).update({
       'isLive': false,
       'endedAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
-  int _participantPriority(RoomParticipant participant) {
-    if (participant.isHost) {
-      return 0;
+  Future<void> _requireHost(String roomId) async {
+    final user = _currentUser;
+    final room = await _roomsCollection.doc(roomId).get();
+    if (!room.exists || room.data()?['hostId'] != user.uid) {
+      throw StateError('Only the room host can do this.');
     }
-
-    if (participant.isSpeaker) {
-      return 1;
-    }
-
-    return 2;
   }
 
-  String _resolveUserName(User user) {
-    final displayName = user.displayName?.trim();
+  static int _priority(RoomParticipant participant) {
+    if (participant.isHost) return 0;
+    if (participant.isSpeaker) return 1;
+    if (participant.isHandRaised) return 2;
+    return 3;
+  }
 
-    if (displayName != null && displayName.isNotEmpty) {
-      return displayName;
-    }
-
+  static String _resolveUserName(User user) {
+    final name = user.displayName?.trim();
+    if (name != null && name.isNotEmpty) return name;
     final email = user.email?.trim();
-
-    if (email != null && email.isNotEmpty) {
-      return email.split('@').first;
-    }
-
+    if (email != null && email.isNotEmpty) return email.split('@').first;
     return 'YoVoice user';
   }
 }
