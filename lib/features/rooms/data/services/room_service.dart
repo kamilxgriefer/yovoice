@@ -3,7 +3,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
-import 'package:yovoice/features/rooms/data/models/room_reaction.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 
 class RoomService {
@@ -112,16 +111,6 @@ class RoomService {
     });
   }
 
-  Stream<List<RoomReaction>> watchRecentReactions(String roomId) {
-    return _roomsCollection
-        .doc(roomId)
-        .collection('reactions')
-        .orderBy('createdAt', descending: true)
-        .limit(12)
-        .snapshots()
-        .map((snapshot) =>
-            snapshot.docs.map(RoomReaction.fromFirestore).toList());
-  }
 
   Future<VoiceRoom> joinRoom(String roomId) async {
     final user = _currentUser;
@@ -317,6 +306,64 @@ class RoomService {
       'senderPhotoUrl': user.photoURL,
       'text': normalizedText,
       'createdAt': FieldValue.serverTimestamp(),
+      'reactions': <String, List<String>>{},
+    });
+  }
+
+  Future<void> toggleMessageReaction({
+    required String roomId,
+    required String messageId,
+    required String emoji,
+  }) async {
+    const allowed = ['❤️', '🔥', '😂', '👏', '🎉', '💜'];
+    if (!allowed.contains(emoji)) {
+      throw ArgumentError('Unsupported reaction.');
+    }
+
+    final user = _currentUser;
+    final message = _roomsCollection
+        .doc(roomId)
+        .collection('messages')
+        .doc(messageId);
+
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(message);
+      if (!snapshot.exists) {
+        throw StateError('This message no longer exists.');
+      }
+
+      final data = snapshot.data() ?? const <String, dynamic>{};
+      final rawReactions = data['reactions'];
+      final reactions = <String, dynamic>{};
+
+      if (rawReactions is Map) {
+        for (final entry in rawReactions.entries) {
+          reactions[entry.key.toString()] = entry.value;
+        }
+      }
+
+      final users = (reactions[emoji] is List)
+          ? List<String>.from(
+              (reactions[emoji] as List).whereType<String>(),
+            )
+          : <String>[];
+
+      if (users.contains(user.uid)) {
+        users.remove(user.uid);
+      } else {
+        users.add(user.uid);
+      }
+
+      if (users.isEmpty) {
+        reactions.remove(emoji);
+      } else {
+        reactions[emoji] = users;
+      }
+
+      transaction.update(message, {
+        'reactions': reactions,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     });
   }
 
