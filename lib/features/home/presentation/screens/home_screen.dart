@@ -7,6 +7,11 @@ import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/add_friend_screen.dart';
+import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
+import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/moment_service.dart';
+import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
+import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
@@ -15,53 +20,37 @@ import 'package:yovoice/features/rooms/presentation/screens/room_screen.dart';
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
-  static const Color _background = Color(0xFF080711);
-  static const Color _surface = Color(0xFF12101D);
-  static const Color _border = Color(0xFF2C253B);
-  static const Color _secondaryText = Color(0xFF9D95AD);
-
-  static void showComingSoon(BuildContext context, String message) {
-    final messenger = ScaffoldMessenger.of(context);
-
-    messenger.hideCurrentSnackBar();
-
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF2A1939),
-        margin: const EdgeInsets.all(16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-    );
-  }
-
-  static void showError(BuildContext context, String message) {
-    final messenger = ScaffoldMessenger.of(context);
-
-    messenger.hideCurrentSnackBar();
-
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF481C30),
-        margin: const EdgeInsets.all(16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-    );
-  }
+  static const Color background = Color(0xFF080711);
+  static const Color surface = Color(0xFF12101D);
+  static const Color surface2 = Color(0xFF1B1627);
+  static const Color border = Color(0xFF30263F);
+  static const Color muted = Color(0xFF9D95AD);
+  static const Color primary = Color(0xFF9D20FF);
+  static const Color pink = Color(0xFFFF416C);
 
   static Future<void> openCreateRoom(BuildContext context) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) {
-          return const CreateRoomScreen();
-        },
+        builder: (_) => const CreateRoomScreen(),
       ),
     );
   }
 
+  static Future<void> openVoiceMoment(BuildContext context) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const RecordVoiceMomentScreen(),
+      ),
+    );
+  }
+
+  static Future<void> openNotifications(BuildContext context) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const NotificationsScreen(),
+      ),
+    );
+  }
 
   static Future<void> openAddFriend(BuildContext context) async {
     await Navigator.of(context).push<void>(
@@ -71,36 +60,96 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  static Future<void> openFriendRequests(BuildContext context) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.72),
-      builder: (_) => const _FriendRequestsSheet(),
+  static Future<void> openFriendProfile(
+    BuildContext context,
+    FriendUser friend,
+  ) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => FriendProfileScreen(friend: friend),
+      ),
     );
+  }
+
+  static Future<void> openRoom(
+    BuildContext context,
+    VoiceRoom room,
+  ) async {
+    final service = RoomService();
+
+    try {
+      final joined = await service.joinRoom(room.id);
+
+      if (!context.mounted) return;
+
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => RoomScreen(room: joined),
+        ),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      showError(context, error.toString());
+    }
+  }
+
+  static void showInfo(BuildContext context, String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFF2A1939),
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      );
+  }
+
+  static void showError(BuildContext context, String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            message
+                .replaceFirst('Bad state: ', '')
+                .replaceFirst('Invalid argument(s): ', ''),
+          ),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFF481C30),
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      );
   }
 
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
-
-    final rawDisplayName = user?.displayName?.trim();
-
-    final displayName = rawDisplayName != null && rawDisplayName.isNotEmpty
-        ? rawDisplayName.split(' ').first
+    final rawName = user?.displayName?.trim();
+    final displayName = rawName != null && rawName.isNotEmpty
+        ? rawName.split(' ').first
         : user?.email?.split('@').first ?? 'YoVoice user';
 
     return Scaffold(
-      backgroundColor: _background,
+      backgroundColor: background,
       body: Container(
         decoration: const BoxDecoration(
           gradient: RadialGradient(
-            center: Alignment(-0.85, -0.95),
-            radius: 1.25,
-            colors: [Color(0xFF24103B), Color(0xFF100B1B), _background],
-            stops: [0, 0.38, 1],
+            center: Alignment(-.88, -.96),
+            radius: 1.3,
+            colors: [
+              Color(0xFF25103C),
+              Color(0xFF100B1B),
+              background,
+            ],
+            stops: [0, .38, 1],
           ),
         ),
         child: SafeArea(
@@ -108,53 +157,15 @@ class HomeScreen extends StatelessWidget {
           child: _FriendRequestNotifier(
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final isWide = constraints.maxWidth >= 900;
-
-                if (isWide) {
+                if (constraints.maxWidth >= 1120) {
                   return _DesktopHome(displayName: displayName);
                 }
 
-                return _MobileHome(displayName: displayName);
+                return _CompactHome(displayName: displayName);
               },
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _MobileHome extends StatelessWidget {
-  const _MobileHome({required this.displayName});
-
-  final String displayName;
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 110),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _HomeHeader(displayName: displayName, compact: true),
-          const SizedBox(height: 22),
-          const _CreateRoomCard(),
-          const SizedBox(height: 26),
-          _FriendsHeader(
-            onAddFriend: () => HomeScreen.openAddFriend(context),
-            onRequests: () => HomeScreen.openFriendRequests(context),
-          ),
-          const SizedBox(height: 14),
-          const _FriendsRow(),
-          const SizedBox(height: 26),
-          const _SectionTitle(
-            title: 'Active rooms',
-            actionLabel: 'Refresh',
-            actionMessage: 'Rooms update automatically in real time.',
-          ),
-          const SizedBox(height: 14),
-          const _LiveRoomsSection(desktop: false),
-        ],
       ),
     );
   }
@@ -168,48 +179,29 @@ class _DesktopHome extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(28, 24, 28, 110),
+      padding: const EdgeInsets.fromLTRB(28, 22, 28, 116),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1180),
+          constraints: const BoxConstraints(maxWidth: 1500),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _HomeHeader(displayName: displayName, compact: false),
-              const SizedBox(height: 24),
+              _HomeHeader(displayName: displayName),
+              const SizedBox(height: 20),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    flex: 6,
-                    child: Column(
-                      children: [
-                        const _CreateRoomCard(),
-                        const SizedBox(height: 26),
-                        _FriendsHeader(
-                          onAddFriend: () => HomeScreen.openAddFriend(context),
-                          onRequests: () => HomeScreen.openFriendRequests(context),
-                        ),
-                        const SizedBox(height: 14),
-                        const _FriendsRow(),
-                      ],
-                    ),
+                  const Expanded(
+                    flex: 3,
+                    child: _MainHomeContent(),
                   ),
                   const SizedBox(width: 22),
-                  Expanded(
-                    flex: 4,
-                    child: _QuickActivityCard(displayName: displayName),
+                  SizedBox(
+                    width: 340,
+                    child: _DesktopSidePanel(displayName: displayName),
                   ),
                 ],
               ),
-              const SizedBox(height: 30),
-              const _SectionTitle(
-                title: 'Active rooms',
-                actionLabel: 'Refresh',
-                actionMessage: 'Rooms update automatically in real time.',
-              ),
-              const SizedBox(height: 14),
-              const _LiveRoomsSection(desktop: true),
             ],
           ),
         ),
@@ -218,14 +210,77 @@ class _DesktopHome extends StatelessWidget {
   }
 }
 
+class _CompactHome extends StatelessWidget {
+  const _CompactHome({required this.displayName});
+
+  final String displayName;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 112),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _HomeHeader(displayName: displayName, compact: true),
+          const SizedBox(height: 20),
+          const _MainHomeContent(compact: true),
+        ],
+      ),
+    );
+  }
+}
+
+class _MainHomeContent extends StatelessWidget {
+  const _MainHomeContent({this.compact = false});
+
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _CreateActions(compact: compact),
+        const SizedBox(height: 24),
+        const _SectionHeader(
+          title: 'Voice Moments for you',
+          actionLabel: 'See all',
+        ),
+        const SizedBox(height: 12),
+        const _VoiceMomentsSection(),
+        const SizedBox(height: 25),
+        const _SectionHeader(
+          title: 'Friends speaking now',
+          actionLabel: 'Find friends',
+        ),
+        const SizedBox(height: 12),
+        const _FriendsSpeakingSection(),
+        const SizedBox(height: 25),
+        const _SectionHeader(
+          title: 'Live rooms for you',
+          actionLabel: 'See all',
+        ),
+        const SizedBox(height: 12),
+        const _LiveRoomsSection(),
+      ],
+    );
+  }
+}
+
 class _HomeHeader extends StatelessWidget {
-  const _HomeHeader({required this.displayName, required this.compact});
+  const _HomeHeader({
+    required this.displayName,
+    this.compact = false,
+  });
 
   final String displayName;
   final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+
     return Row(
       children: [
         Expanded(
@@ -233,21 +288,22 @@ class _HomeHeader extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Hello, $displayName 👋',
+                'Hello, $displayName! 👋',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: compact ? 24 : 29,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.8,
+                  fontSize: compact ? 26 : 31,
+                  height: 1,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -.8,
                 ),
               ),
-              const SizedBox(height: 5),
+              const SizedBox(height: 8),
               const Text(
-                'Ready to connect?',
+                'What do you want to share today?',
                 style: TextStyle(
-                  color: HomeScreen._secondaryText,
+                  color: HomeScreen.muted,
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
                 ),
@@ -255,444 +311,283 @@ class _HomeHeader extends StatelessWidget {
             ],
           ),
         ),
-        const _FriendRequestsHeaderButton(),
+        const _NotificationButton(),
         const SizedBox(width: 10),
-        if (!compact)
-          _HeaderIconButton(
-            icon: Icons.settings_outlined,
-            tooltip: 'Settings',
-            onPressed: () {
-              HomeScreen.showComingSoon(context, 'Settings are coming soon.');
-            },
+        InkWell(
+          onTap: () => HomeScreen.showInfo(
+            context,
+            'Open the Profile tab to manage your account.',
           ),
+          customBorder: const CircleBorder(),
+          child: CircleAvatar(
+            radius: compact ? 23 : 25,
+            backgroundColor: const Color(0xFF6B2398),
+            backgroundImage: user?.photoURL?.trim().isNotEmpty == true
+                ? NetworkImage(user!.photoURL!)
+                : null,
+            child: user?.photoURL?.trim().isNotEmpty == true
+                ? null
+                : Text(
+                    displayName.isEmpty
+                        ? '?'
+                        : displayName[0].toUpperCase(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+          ),
+        ),
       ],
     );
   }
 }
 
-
-class _FriendRequestNotifier extends StatefulWidget {
-  const _FriendRequestNotifier({required this.child});
-
-  final Widget child;
-
-  @override
-  State<_FriendRequestNotifier> createState() => _FriendRequestNotifierState();
-}
-
-class _FriendRequestNotifierState extends State<_FriendRequestNotifier> {
-  final FriendService _friendService = FriendService();
-  StreamSubscription<int>? _subscription;
-  int? _previousCount;
-
-  @override
-  void initState() {
-    super.initState();
-    _subscription = _friendService.watchPendingFriendRequestCount().listen(
-      _handleCount,
-    );
-  }
-
-  void _handleCount(int count) {
-    final previousCount = _previousCount;
-    _previousCount = count;
-
-    if (!mounted || previousCount == null || count <= previousCount) {
-      return;
-    }
-
-    final added = count - previousCount;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-
-      final label = added == 1
-          ? 'You have a new friend request.'
-          : 'You have $added new friend requests.';
-      final messenger = ScaffoldMessenger.of(context);
-      messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(label),
-          action: SnackBarAction(
-            label: 'Open',
-            textColor: const Color(0xFFD7A1FF),
-            onPressed: () => HomeScreen.openFriendRequests(context),
-          ),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF2A1939),
-          margin: const EdgeInsets.all(16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-        ),
-      );
-    });
-  }
-
-  @override
-  void dispose() {
-    _subscription?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => widget.child;
-}
-
-class _FriendRequestsHeaderButton extends StatefulWidget {
-  const _FriendRequestsHeaderButton();
-
-  @override
-  State<_FriendRequestsHeaderButton> createState() =>
-      _FriendRequestsHeaderButtonState();
-}
-
-class _FriendRequestsHeaderButtonState
-    extends State<_FriendRequestsHeaderButton> {
-  final FriendService _friendService = FriendService();
-  late final Stream<int> _countStream;
-
-  @override
-  void initState() {
-    super.initState();
-    _countStream = _friendService.watchPendingFriendRequestCount();
-  }
+class _NotificationButton extends StatelessWidget {
+  const _NotificationButton();
 
   @override
   Widget build(BuildContext context) {
+    final friendService = FriendService();
+
     return StreamBuilder<int>(
-      stream: _countStream,
-      initialData: 0,
+      stream: friendService.watchPendingFriendRequestCount(),
       builder: (context, snapshot) {
         final count = snapshot.data ?? 0;
-        return _HeaderIconButton(
-          icon: count > 0
-              ? Icons.notifications_active_outlined
-              : Icons.notifications_none_rounded,
-          showBadge: count > 0,
-          badgeCount: count,
-          tooltip: count > 0 ? '$count friend requests' : 'Notifications',
-          onPressed: () => HomeScreen.openFriendRequests(context),
+
+        return InkWell(
+          onTap: () => HomeScreen.openNotifications(context),
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: HomeScreen.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: HomeScreen.border),
+            ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                const Icon(
+                  Icons.notifications_none_rounded,
+                  color: Colors.white,
+                  size: 24,
+                ),
+                if (count > 0)
+                  Positioned(
+                    top: 7,
+                    right: 7,
+                    child: Container(
+                      constraints: const BoxConstraints(
+                        minWidth: 16,
+                        minHeight: 16,
+                      ),
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      decoration: const BoxDecoration(
+                        color: HomeScreen.primary,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        count > 9 ? '9+' : '$count',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         );
       },
     );
   }
 }
 
-class _HeaderIconButton extends StatelessWidget {
-  const _HeaderIconButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-    this.showBadge = false,
-    this.badgeCount = 0,
-  });
+class _CreateActions extends StatelessWidget {
+  const _CreateActions({required this.compact});
 
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onPressed;
-  final bool showBadge;
-  final int badgeCount;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: HomeScreen._surface,
-        borderRadius: BorderRadius.circular(15),
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(15),
-          child: Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(15),
-              border: Border.all(color: HomeScreen._border),
-            ),
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                Icon(icon, color: Colors.white, size: 24),
-                if (showBadge)
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: _RequestBadge(count: badgeCount),
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _CreateRoomCard extends StatelessWidget {
-  const _CreateRoomCard();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF52117D), Color(0xFF39105E), Color(0xFF20122E)],
-        ),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFF762AB0)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x332A0050),
-            blurRadius: 28,
-            offset: Offset(0, 14),
-          ),
+    final cards = [
+      _CreateActionCard(
+        icon: Icons.graphic_eq_rounded,
+        eyebrow: 'Record a',
+        title: 'Voice Moment',
+        subtitle: 'Share your voice\nwith the world',
+        colors: const [
+          Color(0xFF7417B6),
+          Color(0xFF3B0C63),
         ],
+        borderColor: const Color(0xFFA82DFF),
+        onTap: () => HomeScreen.openVoiceMoment(context),
       ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () {
-            HomeScreen.openCreateRoom(context);
-          },
-          borderRadius: BorderRadius.circular(24),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 18, 20),
-            child: Row(
-              children: [
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Start a voice room',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 19,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      SizedBox(height: 7),
-                      Text(
-                        'Talk about anything',
-                        style: TextStyle(
-                          color: Color(0xFFD5C8DE),
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      SizedBox(height: 18),
-                      _CreateRoomLabel(),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Container(
-                  width: 58,
-                  height: 58,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [Color(0xFFC13BFF), Color(0xFF7B18F7)],
-                    ),
-                    borderRadius: BorderRadius.circular(18),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x668D20FF),
-                        blurRadius: 20,
-                        spreadRadius: 1,
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.add_rounded,
-                    color: Colors.white,
-                    size: 34,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+      _CreateActionCard(
+        icon: Icons.podcasts_rounded,
+        eyebrow: 'Start a',
+        title: 'Live Room',
+        subtitle: 'Talk with others\nin real time',
+        colors: const [
+          Color(0xFF29113E),
+          Color(0xFF171021),
+        ],
+        borderColor: const Color(0xFF4C315E),
+        onTap: () => HomeScreen.openCreateRoom(context),
       ),
-    );
-  }
-}
+    ];
 
-class _CreateRoomLabel extends StatelessWidget {
-  const _CreateRoomLabel();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0x26FFFFFF),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: const Row(
-        mainAxisSize: MainAxisSize.min,
+    if (compact) {
+      return Column(
         children: [
-          Icon(Icons.mic_none_rounded, color: Colors.white, size: 18),
-          SizedBox(width: 7),
-          Text(
-            'Create room',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          cards[0],
+          const SizedBox(height: 12),
+          cards[1],
         ],
-      ),
-    );
-  }
-}
+      );
+    }
 
-class _QuickActivityCard extends StatelessWidget {
-  const _QuickActivityCard({required this.displayName});
-
-  final String displayName;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        color: HomeScreen._surface,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: HomeScreen._border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Your activity',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 20),
-          const _ActivityRow(
-            icon: Icons.graphic_eq_rounded,
-            iconColor: Color(0xFFB134FF),
-            title: 'Voice Moments',
-            subtitle: 'No new moments yet',
-          ),
-          const SizedBox(height: 16),
-          const _ActivityRow(
-            icon: Icons.chat_bubble_outline_rounded,
-            iconColor: Color(0xFF6175FF),
-            title: 'Messages',
-            subtitle: 'Your chats are up to date',
-          ),
-          const SizedBox(height: 16),
-          const _ActivityRow(
-            icon: Icons.groups_2_outlined,
-            iconColor: Color(0xFFFF4D8C),
-            title: 'Rooms joined',
-            subtitle: 'Discover your first room',
-          ),
-          const SizedBox(height: 20),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(15),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF35134F), Color(0xFF20142D)],
-              ),
-              borderRadius: BorderRadius.circular(17),
-              border: Border.all(color: const Color(0xFF4C2A63)),
-            ),
-            child: Text(
-              'Welcome, $displayName. Your YoVoice journey starts here.',
-              style: const TextStyle(
-                color: Color(0xFFD9D1E3),
-                fontSize: 13,
-                height: 1.45,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ActivityRow extends StatelessWidget {
-  const _ActivityRow({
-    required this.icon,
-    required this.iconColor,
-    required this.title,
-    required this.subtitle,
-  });
-
-  final IconData icon;
-  final Color iconColor;
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
     return Row(
       children: [
-        Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: iconColor.withValues(alpha: 0.15),
-            borderRadius: BorderRadius.circular(13),
-          ),
-          child: Icon(icon, color: iconColor, size: 22),
-        ),
-        const SizedBox(width: 13),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                subtitle,
-                style: const TextStyle(
-                  color: HomeScreen._secondaryText,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ),
+        Expanded(child: cards[0]),
+        const SizedBox(width: 14),
+        Expanded(child: cards[1]),
       ],
     );
   }
 }
 
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({
+class _CreateActionCard extends StatelessWidget {
+  const _CreateActionCard({
+    required this.icon,
+    required this.eyebrow,
+    required this.title,
+    required this.subtitle,
+    required this.colors,
+    required this.borderColor,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String eyebrow;
+  final String title;
+  final String subtitle;
+  final List<Color> colors;
+  final Color borderColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          height: 140,
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: colors,
+            ),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: borderColor),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x22100020),
+                blurRadius: 24,
+                offset: Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 68,
+                height: 68,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color(0xFFC33BFF),
+                      Color(0xFF7200EC),
+                    ],
+                  ),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: Colors.white, size: 34),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      eyebrow,
+                      style: const TextStyle(
+                        color: Color(0xFFD8CFE1),
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: HomeScreen.muted,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                width: 46,
+                height: 46,
+                decoration: const BoxDecoration(
+                  color: HomeScreen.primary,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.add_rounded,
+                  color: Colors.white,
+                  size: 28,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({
     required this.title,
     required this.actionLabel,
-    required this.actionMessage,
   });
 
   final String title;
   final String actionLabel;
-  final String actionMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -704,21 +599,34 @@ class _SectionTitle extends StatelessWidget {
             style: const TextStyle(
               color: Colors.white,
               fontSize: 18,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w900,
             ),
           ),
         ),
         TextButton(
           onPressed: () {
-            HomeScreen.showComingSoon(context, actionMessage);
+            if (actionLabel == 'Find friends') {
+              HomeScreen.openAddFriend(context);
+            } else {
+              HomeScreen.showInfo(
+                context,
+                'The full feed will be added in the next Voice Moments stage.',
+              );
+            }
           },
           style: TextButton.styleFrom(
-            foregroundColor: const Color(0xFFBE4BFF),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            foregroundColor: const Color(0xFFC64BFF),
           ),
-          child: Text(
-            actionLabel,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                actionLabel,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(width: 3),
+              const Icon(Icons.chevron_right_rounded, size: 19),
+            ],
           ),
         ),
       ],
@@ -726,289 +634,427 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
-class _FriendsHeader extends StatelessWidget {
-  const _FriendsHeader({this.onAddFriend, this.onRequests});
-
-  final VoidCallback? onAddFriend;
-  final VoidCallback? onRequests;
+class _VoiceMomentsSection extends StatelessWidget {
+  const _VoiceMomentsSection();
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        const Expanded(
-          child: Text(
-            'Friends online',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ),
-        _FriendsActionButton(
-          icon: Icons.person_add_alt_1_rounded,
-          tooltip: 'Add friend',
-          onPressed: onAddFriend ?? () => HomeScreen.openAddFriend(context),
-        ),
-        const SizedBox(width: 8),
-        _FriendRequestsActionButton(
-          onPressed: onRequests ?? () => HomeScreen.openFriendRequests(context),
-        ),
-      ],
-    );
-  }
-}
+    final service = MomentService();
 
-
-class _FriendRequestsActionButton extends StatefulWidget {
-  const _FriendRequestsActionButton({required this.onPressed});
-
-  final VoidCallback onPressed;
-
-  @override
-  State<_FriendRequestsActionButton> createState() =>
-      _FriendRequestsActionButtonState();
-}
-
-class _FriendRequestsActionButtonState
-    extends State<_FriendRequestsActionButton> {
-  final FriendService _friendService = FriendService();
-  late final Stream<int> _countStream;
-
-  @override
-  void initState() {
-    super.initState();
-    _countStream = _friendService.watchPendingFriendRequestCount();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<int>(
-      stream: _countStream,
-      initialData: 0,
+    return StreamBuilder<List<VoiceMoment>>(
+      stream: service.watchPublishedMoments(limit: 10),
       builder: (context, snapshot) {
-        final count = snapshot.data ?? 0;
-        return Tooltip(
-          message: count > 0 ? '$count pending friend requests' : 'Friend requests',
-          child: Material(
-            color: HomeScreen._surface,
-            borderRadius: BorderRadius.circular(12),
-            child: InkWell(
-              onTap: widget.onPressed,
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: HomeScreen._border),
-                ),
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  alignment: Alignment.center,
-                  children: [
-                    Icon(
-                      count > 0
-                          ? Icons.mark_email_unread_rounded
-                          : Icons.mail_outline_rounded,
-                      color: const Color(0xFFC05AFF),
-                      size: 20,
-                    ),
-                    if (count > 0)
-                      Positioned(
-                        top: -5,
-                        right: -5,
-                        child: _RequestBadge(count: count),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _RequestBadge extends StatelessWidget {
-  const _RequestBadge({required this.count});
-
-  final int count;
-
-  @override
-  Widget build(BuildContext context) {
-    final label = count > 99 ? '99+' : '$count';
-
-    return Container(
-      constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFF426F),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: HomeScreen._surface, width: 2),
-      ),
-      alignment: Alignment.center,
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 9,
-          fontWeight: FontWeight.w900,
-          height: 1,
-        ),
-      ),
-    );
-  }
-}
-
-class _FriendsActionButton extends StatelessWidget {
-  const _FriendsActionButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: HomeScreen._surface,
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: HomeScreen._border),
-            ),
-            child: Icon(icon, color: const Color(0xFFC05AFF), size: 20),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _FriendsRow extends StatefulWidget {
-  const _FriendsRow();
-
-  @override
-  State<_FriendsRow> createState() => _FriendsRowState();
-}
-
-class _FriendsRowState extends State<_FriendsRow> {
-  final FriendService _friendService = FriendService();
-  late final Stream<List<FriendUser>> _friendsStream;
-
-  @override
-  void initState() {
-    super.initState();
-    _friendsStream = _friendService.watchFriends();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<List<FriendUser>>(
-      stream: _friendsStream,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData) {
-          return const SizedBox(
-            height: 92,
-            child: Center(
-              child: SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.2,
-                  color: Color(0xFFB348FF),
-                ),
-              ),
-            ),
-          );
-        }
-
         if (snapshot.hasError) {
-          return _FriendsMessage(
-            icon: Icons.error_outline_rounded,
-            message: _friendError(snapshot.error),
+          return _MomentEmptyCard(
+            onPressed: () => HomeScreen.openVoiceMoment(context),
           );
         }
 
-        final friends = snapshot.data ?? const <FriendUser>[];
-        final onlineFriends = friends.where((friend) => friend.isOnline).toList();
+        final moments = snapshot.data ?? const <VoiceMoment>[];
 
-        if (onlineFriends.isEmpty) {
-          return _FriendsMessage(
-            icon: Icons.people_outline_rounded,
-            message: friends.isEmpty
-                ? 'Add friends to see them here.'
-                : 'None of your friends are online right now.',
-            actionLabel: friends.isEmpty ? 'Add friend' : null,
-            onAction: friends.isEmpty
-                ? () => HomeScreen.openAddFriend(context)
-                : null,
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            moments.isEmpty) {
+          return const SizedBox(
+            height: 190,
+            child: Center(
+              child: CircularProgressIndicator(
+                color: HomeScreen.primary,
+                strokeWidth: 2.4,
+              ),
+            ),
+          );
+        }
+
+        if (moments.isEmpty) {
+          return _MomentEmptyCard(
+            onPressed: () => HomeScreen.openVoiceMoment(context),
           );
         }
 
         return SizedBox(
-          height: 92,
+          height: 190,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
-            itemCount: onlineFriends.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 17),
+            itemCount: moments.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
             itemBuilder: (context, index) {
-              final friend = onlineFriends[index];
-              return _FriendAvatar(friend: friend);
+              return SizedBox(
+                width: 300,
+                child: _VoiceMomentCard(moment: moments[index]),
+              );
             },
           ),
         );
       },
     );
   }
-
-  String _friendError(Object? error) {
-    final message = error.toString();
-    if (message.contains('permission-denied')) {
-      return 'Firestore permission denied for friends.';
-    }
-    if (message.contains('unavailable')) {
-      return 'Friends are temporarily unavailable.';
-    }
-    return 'Could not load friends.';
-  }
 }
 
-class _FriendAvatar extends StatelessWidget {
-  const _FriendAvatar({required this.friend});
+class _MomentEmptyCard extends StatelessWidget {
+  const _MomentEmptyCard({required this.onPressed});
 
-  final FriendUser friend;
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    final name = friend.displayName.trim().isNotEmpty
-        ? friend.displayName.trim()
-        : friend.email.split('@').first;
-    final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
-    final photoUrl = friend.photoUrl?.trim();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(19),
+      decoration: BoxDecoration(
+        color: HomeScreen.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: HomeScreen.border),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 58,
+            height: 58,
+            decoration: BoxDecoration(
+              color: HomeScreen.primary.withValues(alpha: .18),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: const Icon(
+              Icons.graphic_eq_rounded,
+              color: Color(0xFFC55AFF),
+              size: 30,
+            ),
+          ),
+          const SizedBox(width: 15),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Your feed starts with a voice',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                SizedBox(height: 5),
+                Text(
+                  'Be the first person in your community to publish a Voice Moment.',
+                  style: TextStyle(
+                    color: HomeScreen.muted,
+                    fontSize: 12,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton.filled(
+            onPressed: onPressed,
+            style: IconButton.styleFrom(
+              backgroundColor: HomeScreen.primary,
+            ),
+            icon: const Icon(Icons.mic_rounded),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
+class _VoiceMomentCard extends StatelessWidget {
+  const _VoiceMomentCard({required this.moment});
+
+  final VoiceMoment moment;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: HomeScreen.surface,
+        borderRadius: BorderRadius.circular(19),
+        border: Border.all(color: HomeScreen.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: const Color(0xFF662092),
+                backgroundImage:
+                    moment.authorPhotoUrl?.trim().isNotEmpty == true
+                        ? NetworkImage(moment.authorPhotoUrl!)
+                        : null,
+                child: moment.authorPhotoUrl?.trim().isNotEmpty == true
+                    ? null
+                    : Text(
+                        moment.authorName.isEmpty
+                            ? '?'
+                            : moment.authorName[0].toUpperCase(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      moment.authorName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    Text(
+                      _relativeTime(moment.createdAt),
+                      style: const TextStyle(
+                        color: HomeScreen.muted,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.more_horiz_rounded,
+                color: HomeScreen.muted,
+              ),
+            ],
+          ),
+          const SizedBox(height: 15),
+          Row(
+            children: [
+              InkWell(
+                onTap: () => HomeScreen.showInfo(
+                  context,
+                  moment.audioUrl == null
+                      ? 'This Voice Moment has no uploaded audio yet.'
+                      : 'Audio playback integration is the next stage.',
+                ),
+                customBorder: const CircleBorder(),
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: const Color(0xFFB83BFF),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _Waveform(
+                  seed: moment.id.hashCode,
+                  height: 46,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                moment.durationLabel,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            moment.caption.isEmpty ? 'Voice Moment' : moment.caption,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const Spacer(),
+          Row(
+            children: [
+              const Icon(
+                Icons.favorite_rounded,
+                color: HomeScreen.pink,
+                size: 18,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                '${moment.likeCount}',
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 11,
+                ),
+              ),
+              const SizedBox(width: 16),
+              const Icon(
+                Icons.chat_bubble_outline_rounded,
+                color: HomeScreen.muted,
+                size: 18,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                '${moment.commentCount}',
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 11,
+                ),
+              ),
+              const Spacer(),
+              const Icon(
+                Icons.bookmark_border_rounded,
+                color: HomeScreen.muted,
+                size: 20,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _relativeTime(DateTime? date) {
+    if (date == null) return 'now';
+
+    final difference = DateTime.now().difference(date);
+
+    if (difference.inMinutes < 1) return 'now';
+    if (difference.inMinutes < 60) return '${difference.inMinutes}m ago';
+    if (difference.inHours < 24) return '${difference.inHours}h ago';
+    return '${difference.inDays}d ago';
+  }
+}
+
+class _Waveform extends StatelessWidget {
+  const _Waveform({
+    required this.seed,
+    required this.height,
+  });
+
+  final int seed;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
     return SizedBox(
-      width: 58,
+      height: height,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: List.generate(28, (index) {
+          final raw = ((seed.abs() + index * 19) % 31) + 9;
+
+          return Expanded(
+            child: Container(
+              height: raw.toDouble(),
+              margin: const EdgeInsets.symmetric(horizontal: 1.2),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [
+                    Color(0xFF6A00FF),
+                    Color(0xFFBF3BFF),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(20),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+}
+
+class _FriendsSpeakingSection extends StatelessWidget {
+  const _FriendsSpeakingSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final service = FriendService();
+
+    return StreamBuilder<List<FriendUser>>(
+      stream: service.watchFriends(),
+      builder: (context, snapshot) {
+        final friends = (snapshot.data ?? const <FriendUser>[])
+            .where((friend) => friend.isOnline)
+            .toList(growable: false);
+
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            friends.isEmpty) {
+          return const SizedBox(
+            height: 92,
+            child: Center(
+              child: CircularProgressIndicator(
+                color: HomeScreen.primary,
+                strokeWidth: 2.4,
+              ),
+            ),
+          );
+        }
+
+        if (friends.isEmpty) {
+          return _InlineEmptyCard(
+            icon: Icons.people_outline_rounded,
+            title: 'Nobody is online right now',
+            subtitle: 'Add friends and their live status will appear here.',
+            actionLabel: 'Add friend',
+            onPressed: () => HomeScreen.openAddFriend(context),
+          );
+        }
+
+        return SizedBox(
+          height: 102,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: friends.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 15),
+            itemBuilder: (context, index) {
+              final friend = friends[index];
+
+              return _SpeakingFriend(
+                friend: friend,
+                onTap: () => HomeScreen.openFriendProfile(
+                  context,
+                  friend,
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SpeakingFriend extends StatelessWidget {
+  const _SpeakingFriend({
+    required this.friend,
+    required this.onTap,
+  });
+
+  final FriendUser friend;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 76,
       child: InkWell(
-        onTap: () => HomeScreen.showComingSoon(
-          context,
-          '$name profile is coming soon.',
-        ),
+        onTap: onTap,
         borderRadius: BorderRadius.circular(18),
         child: Column(
           children: [
@@ -1016,54 +1062,60 @@ class _FriendAvatar extends StatelessWidget {
               clipBehavior: Clip.none,
               children: [
                 Container(
-                  width: 56,
-                  height: 56,
                   padding: const EdgeInsets.all(2),
                   decoration: const BoxDecoration(
                     shape: BoxShape.circle,
                     gradient: LinearGradient(
-                      colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
+                      colors: [
+                        Color(0xFFC43BFF),
+                        Color(0xFF5D00D7),
+                      ],
                     ),
                   ),
-                  child: ClipOval(
-                    child: Container(
-                      color: const Color(0xFF30203F),
-                      child: photoUrl != null && photoUrl.isNotEmpty
-                          ? Image.network(
-                              photoUrl,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => _InitialAvatar(
-                                initial: initial,
-                              ),
-                            )
-                          : _InitialAvatar(initial: initial),
-                    ),
+                  child: CircleAvatar(
+                    radius: 29,
+                    backgroundColor: const Color(0xFF25152F),
+                    backgroundImage:
+                        friend.photoUrl?.trim().isNotEmpty == true
+                            ? NetworkImage(friend.photoUrl!)
+                            : null,
+                    child: friend.photoUrl?.trim().isNotEmpty == true
+                        ? null
+                        : Text(
+                            friend.initial,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
                   ),
                 ),
                 Positioned(
-                  right: 0,
-                  bottom: 2,
+                  right: 1,
+                  bottom: 3,
                   child: Container(
-                    width: 14,
-                    height: 14,
+                    width: 15,
+                    height: 15,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF42D47D),
+                      color: const Color(0xFF20D66B),
                       shape: BoxShape.circle,
-                      border: Border.all(color: HomeScreen._background, width: 3),
+                      border: Border.all(
+                        color: HomeScreen.background,
+                        width: 3,
+                      ),
                     ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 7),
             Text(
-              name,
+              friend.displayName,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                color: Color(0xFFD9D2E1),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
+                color: Colors.white70,
+                fontSize: 11,
               ),
             ),
           ],
@@ -1073,972 +1125,547 @@ class _FriendAvatar extends StatelessWidget {
   }
 }
 
-class _InitialAvatar extends StatelessWidget {
-  const _InitialAvatar({required this.initial});
-
-  final String initial;
+class _LiveRoomsSection extends StatelessWidget {
+  const _LiveRoomsSection();
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      alignment: Alignment.center,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF9F75D9), Color(0xFF3C2868)],
-        ),
-      ),
-      child: Text(
-        initial,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 19,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-    );
-  }
-}
+    final service = RoomService();
 
-class _FriendsMessage extends StatelessWidget {
-  const _FriendsMessage({
-    required this.icon,
-    required this.message,
-    this.actionLabel,
-    this.onAction,
-  });
-
-  final IconData icon;
-  final String message;
-  final String? actionLabel;
-  final VoidCallback? onAction;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      constraints: const BoxConstraints(minHeight: 92),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: HomeScreen._surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: HomeScreen._border),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: HomeScreen._secondaryText, size: 24),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              message,
-              style: const TextStyle(
-                color: HomeScreen._secondaryText,
-                fontSize: 13,
-                height: 1.35,
-              ),
-            ),
-          ),
-          if (actionLabel != null && onAction != null) ...[
-            const SizedBox(width: 10),
-            TextButton(
-              onPressed: onAction,
-              child: Text(actionLabel!),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _FriendRequestsSheet extends StatefulWidget {
-  const _FriendRequestsSheet();
-
-  @override
-  State<_FriendRequestsSheet> createState() => _FriendRequestsSheetState();
-}
-
-class _FriendRequestsSheetState extends State<_FriendRequestsSheet> {
-  final FriendService _friendService = FriendService();
-  late final Stream<List<FriendRequest>> _requestsStream;
-  final Set<String> _processingIds = <String>{};
-
-  @override
-  void initState() {
-    super.initState();
-    _requestsStream = _friendService.watchFriendRequests();
-  }
-
-  Future<void> _accept(FriendRequest request) async {
-    await _process(
-      request.senderId,
-      () => _friendService.acceptFriendRequest(request),
-      'Friend request accepted.',
-    );
-  }
-
-  Future<void> _decline(FriendRequest request) async {
-    await _process(
-      request.senderId,
-      () => _friendService.declineFriendRequest(request.senderId),
-      'Friend request declined.',
-    );
-  }
-
-  Future<void> _process(
-    String senderId,
-    Future<void> Function() action,
-    String successMessage,
-  ) async {
-    if (_processingIds.contains(senderId)) return;
-    setState(() => _processingIds.add(senderId));
-
-    try {
-      await action();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(successMessage),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF2A1939),
-        ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      HomeScreen.showError(context, _requestError(error));
-    } finally {
-      if (mounted) setState(() => _processingIds.remove(senderId));
-    }
-  }
-
-  String _requestError(Object error) {
-    final message = error.toString();
-    if (message.contains('permission-denied')) {
-      return 'Firestore permission denied. Check your security rules.';
-    }
-    if (message.contains('not-found')) {
-      return 'This friend request no longer exists.';
-    }
-    return 'Could not update the friend request.';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(context).height * 0.82,
-      ),
-      decoration: const BoxDecoration(
-        color: Color(0xFF12101D),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-        border: Border(top: BorderSide(color: Color(0xFF3A284A))),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(height: 10),
-          Container(
-            width: 44,
-            height: 5,
-            decoration: BoxDecoration(
-              color: const Color(0xFF51475E),
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 12, 12),
-            child: Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Friend requests',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 21,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                IconButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close_rounded, color: Colors.white),
-                ),
-              ],
-            ),
-          ),
-          Flexible(
-            child: StreamBuilder<List<FriendRequest>>(
-              stream: _requestsStream,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting &&
-                    !snapshot.hasData) {
-                  return const Padding(
-                    padding: EdgeInsets.all(36),
-                    child: CircularProgressIndicator(
-                      color: Color(0xFFB348FF),
-                    ),
-                  );
-                }
-
-                if (snapshot.hasError) {
-                  return const Padding(
-                    padding: EdgeInsets.all(28),
-                    child: Text(
-                      'Could not load friend requests.',
-                      style: TextStyle(color: Color(0xFFFF8AA2)),
-                    ),
-                  );
-                }
-
-                final requests = snapshot.data ?? const <FriendRequest>[];
-                if (requests.isEmpty) {
-                  return const Padding(
-                    padding: EdgeInsets.fromLTRB(24, 18, 24, 40),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.mark_email_read_outlined,
-                          color: Color(0xFF8F849D),
-                          size: 46,
-                        ),
-                        SizedBox(height: 14),
-                        Text(
-                          'No pending friend requests',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        SizedBox(height: 6),
-                        Text(
-                          'New requests will appear here.',
-                          style: TextStyle(color: Color(0xFF9D95AD)),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-
-                return ListView.separated(
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.fromLTRB(18, 6, 18, 28),
-                  itemCount: requests.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) {
-                    final request = requests[index];
-                    final processing = _processingIds.contains(request.senderId);
-                    return _FriendRequestTile(
-                      request: request,
-                      processing: processing,
-                      onAccept: () => _accept(request),
-                      onDecline: () => _decline(request),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _FriendRequestTile extends StatelessWidget {
-  const _FriendRequestTile({
-    required this.request,
-    required this.processing,
-    required this.onAccept,
-    required this.onDecline,
-  });
-
-  final FriendRequest request;
-  final bool processing;
-  final VoidCallback onAccept;
-  final VoidCallback onDecline;
-
-  @override
-  Widget build(BuildContext context) {
-    final name = request.senderName.trim().isNotEmpty
-        ? request.senderName.trim()
-        : request.senderEmail.split('@').first;
-    final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
-    final photoUrl = request.senderPhotoUrl?.trim();
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF191624),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: HomeScreen._border),
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 48,
-            height: 48,
-            child: ClipOval(
-              child: photoUrl != null && photoUrl.isNotEmpty
-                  ? Image.network(
-                      photoUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _InitialAvatar(initial: initial),
-                    )
-                  : _InitialAvatar(initial: initial),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  request.senderEmail,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: HomeScreen._secondaryText,
-                    fontSize: 11,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          if (processing)
-            const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.2,
-                color: Color(0xFFB348FF),
-              ),
-            )
-          else ...[
-            IconButton(
-              tooltip: 'Decline',
-              onPressed: onDecline,
-              icon: const Icon(Icons.close_rounded, color: Color(0xFFFF6F8E)),
-            ),
-            IconButton(
-              tooltip: 'Accept',
-              onPressed: onAccept,
-              icon: const Icon(Icons.check_rounded, color: Color(0xFF54DB8C)),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _LiveRoomsSection extends StatefulWidget {
-  const _LiveRoomsSection({required this.desktop});
-
-  final bool desktop;
-
-  @override
-  State<_LiveRoomsSection> createState() => _LiveRoomsSectionState();
-}
-
-class _LiveRoomsSectionState extends State<_LiveRoomsSection> {
-  final RoomService _roomService = RoomService();
-
-  late final Stream<List<VoiceRoom>> _roomsStream;
-
-  @override
-  void initState() {
-    super.initState();
-    _roomsStream = _roomService.watchLivePublicRooms();
-  }
-
-  @override
-  Widget build(BuildContext context) {
     return StreamBuilder<List<VoiceRoom>>(
-      stream: _roomsStream,
+      stream: service.watchLivePublicRooms(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData) {
-          return const _RoomsLoadingState();
-        }
+        final rooms = snapshot.data ?? const <VoiceRoom>[];
 
-        if (snapshot.hasError) {
-          return _RoomsErrorState(
-            message: _getReadableStreamError(snapshot.error),
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            rooms.isEmpty) {
+          return const SizedBox(
+            height: 160,
+            child: Center(
+              child: CircularProgressIndicator(
+                color: HomeScreen.primary,
+                strokeWidth: 2.4,
+              ),
+            ),
           );
         }
 
-        final rooms = snapshot.data ?? const <VoiceRoom>[];
-
-        if (rooms.isEmpty) {
-          return const _EmptyRoomsState();
-        }
-
-        if (!widget.desktop) {
-          return Column(
-            children: [
-              for (var index = 0; index < rooms.length; index++) ...[
-                _LiveRoomCard(room: rooms[index]),
-                if (index != rooms.length - 1) const SizedBox(height: 13),
-              ],
-            ],
+        if (snapshot.hasError || rooms.isEmpty) {
+          return _InlineEmptyCard(
+            icon: Icons.podcasts_rounded,
+            title: 'No public rooms are live',
+            subtitle: 'Start one and invite your community to join.',
+            actionLabel: 'Start room',
+            onPressed: () => HomeScreen.openCreateRoom(context),
           );
         }
 
         return LayoutBuilder(
           builder: (context, constraints) {
-            const spacing = 15.0;
-            const columns = 3;
+            final desktop = constraints.maxWidth >= 820;
 
-            final cardWidth =
-                (constraints.maxWidth - spacing * (columns - 1)) / columns;
+            if (!desktop) {
+              return SizedBox(
+                height: 166,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: rooms.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 12),
+                  itemBuilder: (context, index) {
+                    return SizedBox(
+                      width: 300,
+                      child: _LiveRoomCard(room: rooms[index]),
+                    );
+                  },
+                ),
+              );
+            }
 
             return Wrap(
-              spacing: spacing,
-              runSpacing: spacing,
-              children: rooms.map((room) {
+              spacing: 12,
+              runSpacing: 12,
+              children: rooms.take(6).map((room) {
                 return SizedBox(
-                  width: cardWidth,
+                  width: (constraints.maxWidth - 24) / 3,
                   child: _LiveRoomCard(room: room),
                 );
-              }).toList(),
+              }).toList(growable: false),
             );
           },
         );
       },
     );
   }
-
-  String _getReadableStreamError(Object? error) {
-    final message = error.toString();
-
-    if (message.contains('failed-precondition') || message.contains('index')) {
-      return 'Firestore needs an index for active rooms. Open the Firebase link shown in the debug console and create the index.';
-    }
-
-    if (message.contains('permission-denied')) {
-      return 'Firestore permission denied. Check your security rules.';
-    }
-
-    if (message.contains('unavailable')) {
-      return 'Rooms are temporarily unavailable. Check your internet connection.';
-    }
-
-    return 'Could not load active rooms.';
-  }
 }
 
-class _LiveRoomCard extends StatefulWidget {
+class _LiveRoomCard extends StatelessWidget {
   const _LiveRoomCard({required this.room});
 
   final VoiceRoom room;
 
   @override
-  State<_LiveRoomCard> createState() => _LiveRoomCardState();
-}
-
-class _LiveRoomCardState extends State<_LiveRoomCard> {
-  final RoomService _roomService = RoomService();
-
-  bool _isJoining = false;
-
-  Future<void> _joinRoom() async {
-    if (_isJoining) {
-      return;
-    }
-
-    setState(() {
-      _isJoining = true;
-    });
-
-    try {
-      final joinedRoom = await _roomService.joinRoom(widget.room.id);
-
-      if (!mounted) {
-        return;
-      }
-
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) {
-            return RoomScreen(room: joinedRoom);
-          },
-        ),
-      );
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
-      HomeScreen.showError(context, _getReadableJoinError(error));
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isJoining = false;
-        });
-      }
-    }
-  }
-
-  String _getReadableJoinError(Object error) {
-    final message = error.toString();
-
-    if (message.contains('no longer live')) {
-      return 'This room is no longer live.';
-    }
-
-    if (message.contains('room is full')) {
-      return 'This room is full.';
-    }
-
-    if (message.contains('private')) {
-      return 'This room is private.';
-    }
-
-    if (message.contains('does not exist')) {
-      return 'This room no longer exists.';
-    }
-
-    if (message.contains('signed in')) {
-      return 'You must be signed in before joining a room.';
-    }
-
-    if (message.contains('permission-denied')) {
-      return 'Firestore permission denied. Check your Firebase security rules.';
-    }
-
-    return 'Could not join the room. Please try again.';
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final room = widget.room;
-    final accent = _categoryColor(room.category);
-    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
-    final isHost = currentUserId == room.hostId;
-
     return Material(
-      color: HomeScreen._surface,
-      borderRadius: BorderRadius.circular(21),
+      color: Colors.transparent,
       child: InkWell(
-        onTap: _isJoining ? null : _joinRoom,
-        borderRadius: BorderRadius.circular(21),
+        onTap: () => HomeScreen.openRoom(context, room),
+        borderRadius: BorderRadius.circular(19),
         child: Container(
-          padding: const EdgeInsets.all(16),
+          height: 166,
+          padding: const EdgeInsets.all(15),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(21),
-            border: Border.all(color: HomeScreen._border),
-            gradient: LinearGradient(
+            gradient: const LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
               colors: [
-                accent.withValues(alpha: 0.15),
-                HomeScreen._surface,
-                HomeScreen._surface,
+                Color(0xFF29123D),
+                Color(0xFF12101D),
               ],
             ),
+            borderRadius: BorderRadius.circular(19),
+            border: Border.all(color: HomeScreen.border),
           ),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 53,
-                height: 53,
-                decoration: BoxDecoration(
-                  color: accent.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: accent.withValues(alpha: 0.32)),
-                ),
-                child: Icon(
-                  _categoryIcon(room.category),
-                  color: accent,
-                  size: 27,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            room.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFF315D),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Text(
-                            'LIVE',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 9,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.3,
-                            ),
-                          ),
-                        ),
-                      ],
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
                     ),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Icon(
-                          _categoryIcon(room.category),
-                          color: HomeScreen._secondaryText,
-                          size: 15,
-                        ),
-                        const SizedBox(width: 5),
-                        Flexible(
-                          child: Text(
-                            _categoryLabel(room.category),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: HomeScreen._secondaryText,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 7),
-                        const Text(
-                          '•',
-                          style: TextStyle(
-                            color: Color(0xFF625A6F),
-                            fontSize: 12,
-                          ),
-                        ),
-                        const SizedBox(width: 7),
-                        Flexible(
-                          child: Text(
-                            room.language,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: HomeScreen._secondaryText,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ],
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFB71E4D),
+                      borderRadius: BorderRadius.circular(20),
                     ),
-                    const SizedBox(height: 9),
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.people_alt_outlined,
-                          color: Color(0xFFB8B0C4),
-                          size: 15,
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          _participantText(room),
-                          style: const TextStyle(
-                            color: Color(0xFFB8B0C4),
-                            fontSize: 11,
-                          ),
-                        ),
-                        const SizedBox(width: 9),
-                        const Text(
-                          '•',
-                          style: TextStyle(
-                            color: Color(0xFF625A6F),
-                            fontSize: 11,
-                          ),
-                        ),
-                        const SizedBox(width: 9),
-                        Expanded(
-                          child: Text(
-                            isHost ? 'Your room' : 'Hosted by ${room.hostName}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: isHost
-                                  ? const Color(0xFFC05AFF)
-                                  : const Color(0xFFB8B0C4),
-                              fontSize: 11,
-                              fontWeight: isHost
-                                  ? FontWeight.w700
-                                  : FontWeight.w400,
-                            ),
-                          ),
-                        ),
-                      ],
+                    child: const Text(
+                      'LIVE',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (_isJoining)
-                const SizedBox(
-                  width: 21,
-                  height: 21,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.2,
-                    color: Color(0xFFB348FF),
                   ),
-                )
-              else
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  color: Color(0xFF766D82),
+                  const Spacer(),
+                  Text(
+                    room.language,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 13),
+              Text(
+                room.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
                 ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                room.description.isEmpty
+                    ? 'Hosted by ${room.hostName}'
+                    : room.description,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: HomeScreen.muted,
+                  fontSize: 11,
+                  height: 1.4,
+                ),
+              ),
+              const Spacer(),
+              Row(
+                children: [
+                  const Icon(
+                    Icons.people_alt_rounded,
+                    color: Colors.white70,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${room.participantCount}/${room.maxParticipants ?? '∞'}',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11,
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: HomeScreen.surface2,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      room.category,
+                      style: const TextStyle(
+                        color: Color(0xFFD5A1FF),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
       ),
     );
   }
-
-  String _participantText(VoiceRoom room) {
-    final maximum = room.maxParticipants;
-
-    if (maximum == null) {
-      return '${room.participantCount} joined';
-    }
-
-    return '${room.participantCount}/$maximum joined';
-  }
-
-  static String _categoryLabel(String category) {
-    switch (category.toLowerCase()) {
-      case 'music':
-        return 'Music';
-      case 'gaming':
-        return 'Gaming';
-      case 'chill':
-        return 'Chill';
-      case 'study':
-        return 'Study';
-      case 'business':
-        return 'Business';
-      case 'talk':
-      default:
-        return 'Talk';
-    }
-  }
-
-  static IconData _categoryIcon(String category) {
-    switch (category.toLowerCase()) {
-      case 'music':
-        return Icons.music_note_rounded;
-      case 'gaming':
-        return Icons.sports_esports_rounded;
-      case 'chill':
-        return Icons.nightlife_rounded;
-      case 'study':
-        return Icons.school_outlined;
-      case 'business':
-        return Icons.work_outline_rounded;
-      case 'talk':
-      default:
-        return Icons.record_voice_over_rounded;
-    }
-  }
-
-  static Color _categoryColor(String category) {
-    switch (category.toLowerCase()) {
-      case 'music':
-        return const Color(0xFFFF4C68);
-      case 'gaming':
-        return const Color(0xFF5977FF);
-      case 'chill':
-        return const Color(0xFF3EC7A5);
-      case 'study':
-        return const Color(0xFFFFA63D);
-      case 'business':
-        return const Color(0xFF4BA9FF);
-      case 'talk':
-      default:
-        return const Color(0xFF9C42FF);
-    }
-  }
 }
 
-class _RoomsLoadingState extends StatelessWidget {
-  const _RoomsLoadingState();
+class _InlineEmptyCard extends StatelessWidget {
+  const _InlineEmptyCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.actionLabel,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String actionLabel;
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: HomeScreen._surface,
-        borderRadius: BorderRadius.circular(21),
-        border: Border.all(color: HomeScreen._border),
-      ),
-      child: const Column(
-        children: [
-          SizedBox(
-            width: 28,
-            height: 28,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.5,
-              color: Color(0xFFB348FF),
-            ),
-          ),
-          SizedBox(height: 14),
-          Text(
-            'Loading active rooms...',
-            style: TextStyle(
-              color: HomeScreen._secondaryText,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _EmptyRoomsState extends StatelessWidget {
-  const _EmptyRoomsState();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 28, 20, 26),
-      decoration: BoxDecoration(
-        color: HomeScreen._surface,
-        borderRadius: BorderRadius.circular(21),
-        border: Border.all(color: HomeScreen._border),
-      ),
-      child: Column(
-        children: [
-          Container(
-            width: 58,
-            height: 58,
-            decoration: BoxDecoration(
-              color: const Color(0xFF9C42FF).withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: const Icon(
-              Icons.graphic_eq_rounded,
-              color: Color(0xFFB348FF),
-              size: 29,
-            ),
-          ),
-          const SizedBox(height: 15),
-          const Text(
-            'No active rooms yet',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 7),
-          const Text(
-            'Be the first person to start a conversation.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: HomeScreen._secondaryText,
-              fontSize: 13,
-              height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 17),
-          TextButton.icon(
-            onPressed: () {
-              HomeScreen.openCreateRoom(context);
-            },
-            icon: const Icon(Icons.add_rounded, size: 19),
-            label: const Text(
-              'Create room',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-            style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFFC05AFF),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _RoomsErrorState extends StatelessWidget {
-  const _RoomsErrorState({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFF21121B),
-        borderRadius: BorderRadius.circular(21),
-        border: Border.all(color: const Color(0xFF5B293C)),
+        color: HomeScreen.surface,
+        borderRadius: BorderRadius.circular(19),
+        border: Border.all(color: HomeScreen.border),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(
-            Icons.error_outline_rounded,
-            color: Color(0xFFFF6785),
-            size: 25,
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: HomeScreen.surface2,
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: Icon(
+              icon,
+              color: const Color(0xFFC25AFF),
+            ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 13),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Could not load rooms',
-                  style: TextStyle(
+                Text(
+                  title,
+                  style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
-                const SizedBox(height: 5),
+                const SizedBox(height: 4),
                 Text(
-                  message,
+                  subtitle,
                   style: const TextStyle(
-                    color: Color(0xFFCDB3BD),
+                    color: HomeScreen.muted,
                     fontSize: 12,
-                    height: 1.45,
                   ),
                 ),
               ],
             ),
           ),
+          TextButton(
+            onPressed: onPressed,
+            child: Text(actionLabel),
+          ),
         ],
       ),
     );
   }
+}
+
+class _DesktopSidePanel extends StatelessWidget {
+  const _DesktopSidePanel({required this.displayName});
+
+  final String displayName;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(21),
+      decoration: BoxDecoration(
+        color: HomeScreen.surface.withValues(alpha: .92),
+        borderRadius: BorderRadius.circular(23),
+        border: Border.all(color: HomeScreen.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SideTitle(
+            icon: Icons.auto_awesome_rounded,
+            title: 'Quick tips',
+          ),
+          const SizedBox(height: 18),
+          const _SideRow(
+            icon: Icons.graphic_eq_rounded,
+            color: Color(0xFFB23AFF),
+            title: 'Voice Moments',
+            subtitle: 'Share short audio clips',
+          ),
+          const SizedBox(height: 14),
+          const _SideRow(
+            icon: Icons.podcasts_rounded,
+            color: Color(0xFFFF416C),
+            title: 'Live Rooms',
+            subtitle: 'Talk in real time',
+          ),
+          const SizedBox(height: 14),
+          const _SideRow(
+            icon: Icons.people_alt_rounded,
+            color: Color(0xFFFFB020),
+            title: 'Connect',
+            subtitle: 'Find and meet new people',
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 22),
+            child: Divider(color: HomeScreen.border),
+          ),
+          const _SideTitle(
+            icon: Icons.insights_rounded,
+            title: 'Your activity',
+          ),
+          const SizedBox(height: 18),
+          const _SideRow(
+            icon: Icons.graphic_eq_rounded,
+            color: Color(0xFFB23AFF),
+            title: 'Voice Moments',
+            subtitle: 'Ready for your first post',
+          ),
+          const SizedBox(height: 14),
+          const _SideRow(
+            icon: Icons.chat_bubble_outline_rounded,
+            color: Color(0xFF667BFF),
+            title: 'Messages',
+            subtitle: 'Your chats are waiting',
+          ),
+          const SizedBox(height: 14),
+          const _SideRow(
+            icon: Icons.groups_2_rounded,
+            color: Color(0xFFFF4D8C),
+            title: 'Rooms joined',
+            subtitle: 'Discover live conversations',
+          ),
+          const SizedBox(height: 20),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(15),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [
+                  Color(0xFF35134F),
+                  Color(0xFF20142D),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(17),
+              border: Border.all(color: const Color(0xFF4C2A63)),
+            ),
+            child: Text(
+              'Welcome, $displayName. Your YoVoice journey starts with one authentic voice.',
+              style: const TextStyle(
+                color: Color(0xFFD9D1E3),
+                fontSize: 12,
+                height: 1.45,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SideTitle extends StatelessWidget {
+  const _SideTitle({
+    required this.icon,
+    required this.title,
+  });
+
+  final IconData icon;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, color: Colors.white, size: 20),
+        const SizedBox(width: 9),
+        Text(
+          title,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 17,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SideRow extends StatelessWidget {
+  const _SideRow({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 45,
+          height: 45,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: .16),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Icon(icon, color: color, size: 23),
+        ),
+        const SizedBox(width: 13),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                subtitle,
+                style: const TextStyle(
+                  color: HomeScreen.muted,
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _FriendRequestNotifier extends StatefulWidget {
+  const _FriendRequestNotifier({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_FriendRequestNotifier> createState() =>
+      _FriendRequestNotifierState();
+}
+
+class _FriendRequestNotifierState extends State<_FriendRequestNotifier> {
+  final FriendService _friendService = FriendService();
+
+  StreamSubscription<List<FriendRequest>>? _subscription;
+  Set<String>? _previousRequestIds;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _subscription =
+        _friendService.watchFriendRequests().listen(_handleRequests);
+  }
+
+  void _handleRequests(List<FriendRequest> requests) {
+    final currentIds =
+        requests.map((request) => request.senderId).toSet();
+    final previousIds = _previousRequestIds;
+
+    _previousRequestIds = currentIds;
+
+    if (!mounted || previousIds == null) {
+      return;
+    }
+
+    final newRequests = requests
+        .where((request) => !previousIds.contains(request.senderId))
+        .toList(growable: false);
+
+    if (newRequests.isEmpty) {
+      return;
+    }
+
+    final FriendRequest newestRequest = newRequests.first;
+    final senderName = newestRequest.senderName.trim().isNotEmpty
+        ? newestRequest.senderName.trim()
+        : newestRequest.senderEmail.split('@').first;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      final message = newRequests.length == 1
+          ? '$senderName sent you a friend request.'
+          : 'You have ${newRequests.length} new friend requests.';
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(message),
+            action: SnackBarAction(
+              label: 'Open',
+              textColor: const Color(0xFFD7A1FF),
+              onPressed: () => HomeScreen.openNotifications(context),
+            ),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: const Color(0xFF2A1939),
+            margin: const EdgeInsets.all(16),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+        );
+    });
+  }
+
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

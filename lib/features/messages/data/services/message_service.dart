@@ -4,9 +4,21 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 
+class ChatPresence {
+  const ChatPresence({
+    required this.isOnline,
+    required this.lastSeen,
+  });
+
+  final bool isOnline;
+  final DateTime? lastSeen;
+}
+
 class MessageService {
-  MessageService({FirebaseFirestore? firestore, FirebaseAuth? auth})
-      : _firestore = firestore ?? FirebaseFirestore.instance,
+  MessageService({
+    FirebaseFirestore? firestore,
+    FirebaseAuth? auth,
+  })  : _firestore = firestore ?? FirebaseFirestore.instance,
         _auth = auth ?? FirebaseAuth.instance;
 
   final FirebaseFirestore _firestore;
@@ -15,25 +27,40 @@ class MessageService {
   CollectionReference<Map<String, dynamic>> get _conversations =>
       _firestore.collection('conversations');
 
+  CollectionReference<Map<String, dynamic>> get _users =>
+      _firestore.collection('users');
+
   String get _currentUserId {
     final user = _auth.currentUser;
+
     if (user == null) {
       throw StateError('You must be signed in to use messages.');
     }
+
     return user.uid;
   }
 
-  Stream<List<Conversation>> watchConversations() {
+  Stream<List<Conversation>> watchConversations({
+    bool includeArchived = false,
+  }) {
     final currentUserId = _currentUserId;
+
     return _conversations
         .where('participantIds', arrayContains: currentUserId)
         .snapshots()
         .map((snapshot) {
-      final items =
-          snapshot.docs.map(Conversation.fromFirestore).toList(growable: false);
-      items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-      return items;
-    });
+          final items = snapshot.docs
+              .map(Conversation.fromFirestore)
+              .where(
+                (conversation) =>
+                    includeArchived ||
+                    !conversation.isArchivedFor(currentUserId),
+              )
+              .toList(growable: false);
+
+          items.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+          return items;
+        });
   }
 
   Stream<List<Message>> watchMessages(String conversationId) {
@@ -41,10 +68,25 @@ class MessageService {
         .doc(conversationId)
         .collection('messages')
         .orderBy('sentAt', descending: true)
-        .limit(200)
+        .limit(250)
         .snapshots()
-        .map((snapshot) =>
-            snapshot.docs.map(Message.fromFirestore).toList(growable: false));
+        .map(
+          (snapshot) => snapshot.docs
+              .map(Message.fromFirestore)
+              .toList(growable: false),
+        );
+  }
+
+  Stream<ChatPresence> watchUserPresence(String userId) {
+    return _users.doc(userId).snapshots().map((snapshot) {
+      final data = snapshot.data() ?? const <String, dynamic>{};
+      final lastSeenValue = data['lastSeen'];
+
+      return ChatPresence(
+        isOnline: data['isOnline'] as bool? ?? false,
+        lastSeen: lastSeenValue is Timestamp ? lastSeenValue.toDate() : null,
+      );
+    });
   }
 
   Stream<bool> watchTyping({
@@ -56,7 +98,11 @@ class MessageService {
       final value = typing?[otherUserId] as Map?;
       final isTyping = value?['isTyping'] as bool? ?? false;
       final updatedAt = value?['updatedAt'];
-      if (!isTyping || updatedAt is! Timestamp) return false;
+
+      if (!isTyping || updatedAt is! Timestamp) {
+        return false;
+      }
+
       return DateTime.now().difference(updatedAt.toDate()).inSeconds < 8;
     });
   }
@@ -66,14 +112,18 @@ class MessageService {
     required bool isTyping,
   }) async {
     final userId = _currentUserId;
-    await _conversations.doc(conversationId).set({
-      'typing': {
-        userId: {
-          'isTyping': isTyping,
-          'updatedAt': FieldValue.serverTimestamp(),
+
+    await _conversations.doc(conversationId).set(
+      {
+        'typing': {
+          userId: {
+            'isTyping': isTyping,
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
         },
       },
-    }, SetOptions(merge: true));
+      SetOptions(merge: true),
+    );
   }
 
   Future<String> openOrCreateConversation({
@@ -83,26 +133,39 @@ class MessageService {
     required String otherPhotoUrl,
   }) async {
     final currentUser = _auth.currentUser;
+
     if (currentUser == null) {
       throw StateError('You must be signed in to start a conversation.');
     }
+
     if (otherUserId == currentUser.uid) {
       throw ArgumentError('You cannot start a conversation with yourself.');
     }
 
-    final conversationId = buildConversationId(currentUser.uid, otherUserId);
+    final conversationId = buildConversationId(
+      currentUser.uid,
+      otherUserId,
+    );
     final reference = _conversations.doc(conversationId);
     final now = Timestamp.now();
 
     await _firestore.runTransaction((transaction) async {
       final existing = await transaction.get(reference);
-      if (existing.exists) return;
+
+      if (existing.exists) {
+        transaction.update(reference, {
+          'archivedBy': FieldValue.arrayRemove([currentUser.uid]),
+        });
+        return;
+      }
 
       transaction.set(reference, {
         'participantIds': [currentUser.uid, otherUserId],
         'participantNames': {
-          currentUser.uid:
-              _currentDisplayName(currentUser.displayName, currentUser.email),
+          currentUser.uid: _currentDisplayName(
+            currentUser.displayName,
+            currentUser.email,
+          ),
           otherUserId: otherDisplayName.trim().isEmpty
               ? _displayNameFromEmail(otherEmail)
               : otherDisplayName.trim(),
@@ -115,8 +178,13 @@ class MessageService {
           currentUser.uid: currentUser.photoURL ?? '',
           otherUserId: otherPhotoUrl,
         },
-        'unreadCounts': {currentUser.uid: 0, otherUserId: 0},
-        'typing': {},
+        'unreadCounts': {
+          currentUser.uid: 0,
+          otherUserId: 0,
+        },
+        'typing': <String, dynamic>{},
+        'archivedBy': <String>[],
+        'mutedBy': <String>[],
         'lastMessage': '',
         'lastMessageType': MessageType.text.name,
         'lastMessageSenderId': '',
@@ -136,7 +204,10 @@ class MessageService {
   }) async {
     final currentUserId = _currentUserId;
     final trimmed = text.trim();
-    if (trimmed.isEmpty) return;
+
+    if (trimmed.isEmpty) {
+      return;
+    }
 
     final conversation = _conversations.doc(conversationId);
     final message = conversation.collection('messages').doc();
@@ -159,7 +230,9 @@ class MessageService {
       'replyToSenderId': replyTo?.senderId,
       'replyToContent': replyTo == null
           ? null
-          : (replyTo.isDeleted ? 'Message deleted' : replyTo.content),
+          : replyTo.isDeleted
+              ? 'Message deleted'
+              : replyTo.previewText(),
     });
 
     batch.update(conversation, {
@@ -167,6 +240,7 @@ class MessageService {
       'lastMessageType': MessageType.text.name,
       'lastMessageSenderId': currentUserId,
       'updatedAt': now,
+      'archivedBy': <String>[],
       'unreadCounts.$currentUserId': 0,
       'unreadCounts.$recipientId': FieldValue.increment(1),
       'typing.$currentUserId.isTyping': false,
@@ -182,17 +256,34 @@ class MessageService {
     required String text,
   }) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty) return;
-    final reference =
-        _conversations.doc(conversationId).collection('messages').doc(messageId);
+
+    if (trimmed.isEmpty) {
+      return;
+    }
+
+    final reference = _conversations
+        .doc(conversationId)
+        .collection('messages')
+        .doc(messageId);
     final snapshot = await reference.get();
+
     if (snapshot.data()?['senderId'] != _currentUserId) {
       throw StateError('You can only edit your own messages.');
     }
+
     await reference.update({
       'content': trimmed,
       'editedAt': FieldValue.serverTimestamp(),
     });
+
+    final conversation = await _conversations.doc(conversationId).get();
+    final lastMessage = conversation.data()?['lastMessage'] as String? ?? '';
+
+    if (lastMessage == snapshot.data()?['content']) {
+      await conversation.reference.update({
+        'lastMessage': trimmed,
+      });
+    }
   }
 
   Future<void> toggleReaction({
@@ -201,17 +292,23 @@ class MessageService {
     required String emoji,
   }) async {
     final userId = _currentUserId;
-    final reference =
-        _conversations.doc(conversationId).collection('messages').doc(messageId);
+    final reference = _conversations
+        .doc(conversationId)
+        .collection('messages')
+        .doc(messageId);
     final snapshot = await reference.get();
     final reactions = Map<String, dynamic>.from(
-      snapshot.data()?['reactions'] as Map? ?? const {},
+      snapshot.data()?['reactions'] as Map? ?? const <String, dynamic>{},
     );
 
     if (reactions[userId] == emoji) {
-      await reference.update({'reactions.$userId': FieldValue.delete()});
+      await reference.update({
+        'reactions.$userId': FieldValue.delete(),
+      });
     } else {
-      await reference.update({'reactions.$userId': emoji});
+      await reference.update({
+        'reactions.$userId': emoji,
+      });
     }
   }
 
@@ -221,23 +318,28 @@ class MessageService {
     final latest = await conversation
         .collection('messages')
         .orderBy('sentAt', descending: true)
-        .limit(100)
+        .limit(150)
         .get();
-
     final batch = _firestore.batch();
-    batch.update(conversation, {'unreadCounts.$currentUserId': 0});
+
+    batch.update(conversation, {
+      'unreadCounts.$currentUserId': 0,
+    });
 
     for (final document in latest.docs) {
       final data = document.data();
       final senderId = data['senderId'] as String? ?? '';
-      final readBy =
-          List<String>.from(data['readBy'] as List<dynamic>? ?? const []);
+      final readBy = List<String>.from(
+        data['readBy'] as List<dynamic>? ?? const <dynamic>[],
+      );
+
       if (senderId != currentUserId && !readBy.contains(currentUserId)) {
         batch.update(document.reference, {
           'readBy': FieldValue.arrayUnion([currentUserId]),
         });
       }
     }
+
     await batch.commit();
   }
 
@@ -245,12 +347,16 @@ class MessageService {
     required String conversationId,
     required String messageId,
   }) async {
-    final reference =
-        _conversations.doc(conversationId).collection('messages').doc(messageId);
+    final reference = _conversations
+        .doc(conversationId)
+        .collection('messages')
+        .doc(messageId);
     final snapshot = await reference.get();
+
     if (snapshot.data()?['senderId'] != _currentUserId) {
       throw StateError('You can only delete your own messages.');
     }
+
     await reference.update({
       'content': '',
       'mediaUrl': null,
@@ -260,18 +366,52 @@ class MessageService {
     });
   }
 
-  static String buildConversationId(String a, String b) {
-    final ids = [a, b]..sort();
+  Future<void> setConversationMuted({
+    required String conversationId,
+    required bool muted,
+  }) async {
+    final userId = _currentUserId;
+
+    await _conversations.doc(conversationId).update({
+      'mutedBy': muted
+          ? FieldValue.arrayUnion([userId])
+          : FieldValue.arrayRemove([userId]),
+    });
+  }
+
+  Future<void> archiveConversation(String conversationId) async {
+    final userId = _currentUserId;
+
+    await _conversations.doc(conversationId).update({
+      'archivedBy': FieldValue.arrayUnion([userId]),
+      'unreadCounts.$userId': 0,
+    });
+  }
+
+  Future<void> unarchiveConversation(String conversationId) async {
+    final userId = _currentUserId;
+
+    await _conversations.doc(conversationId).update({
+      'archivedBy': FieldValue.arrayRemove([userId]),
+    });
+  }
+
+  static String buildConversationId(String firstId, String secondId) {
+    final ids = [firstId, secondId]..sort();
     return '${ids[0]}_${ids[1]}';
   }
 
   static String _currentDisplayName(String? name, String? email) {
     final value = name?.trim() ?? '';
-    return value.isNotEmpty ? value : _displayNameFromEmail(email ?? '');
+
+    return value.isNotEmpty
+        ? value
+        : _displayNameFromEmail(email ?? '');
   }
 
   static String _displayNameFromEmail(String email) {
     final value = email.trim();
+
     return value.isEmpty ? 'YoVoice user' : value.split('@').first;
   }
 }

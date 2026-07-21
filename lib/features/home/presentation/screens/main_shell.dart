@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/discover_screen.dart';
+import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
 
@@ -364,25 +365,18 @@ class _VoiceActionSheet extends StatelessWidget {
 
   Future<void> _openVoiceMoment(BuildContext context) async {
     final NavigatorState navigator = Navigator.of(context);
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
 
     navigator.pop();
 
     await Future<void>.delayed(const Duration(milliseconds: 180));
 
-    if (!messenger.mounted) {
+    if (!navigator.mounted) {
       return;
     }
 
-    messenger.hideCurrentSnackBar();
-
-    messenger.showSnackBar(
-      SnackBar(
-        content: const Text('Voice Moments recording is coming next.'),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF2A1939),
-        margin: const EdgeInsets.all(16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    await navigator.push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const RecordVoiceMomentScreen(),
       ),
     );
   }

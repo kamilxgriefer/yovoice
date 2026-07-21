@@ -15,6 +15,8 @@ class Conversation {
     required this.lastMessageSenderId,
     required this.updatedAt,
     required this.createdAt,
+    required this.archivedBy,
+    required this.mutedBy,
   });
 
   final String id;
@@ -28,6 +30,8 @@ class Conversation {
   final String lastMessageSenderId;
   final DateTime updatedAt;
   final DateTime createdAt;
+  final List<String> archivedBy;
+  final List<String> mutedBy;
 
   String otherUserId(String currentUserId) {
     return participantIds.firstWhere(
@@ -64,6 +68,27 @@ class Conversation {
     return unreadCounts[userId] ?? 0;
   }
 
+  bool isArchivedFor(String userId) => archivedBy.contains(userId);
+
+  bool isMutedFor(String userId) => mutedBy.contains(userId);
+
+  String previewFor(String currentUserId) {
+    if (lastMessage.isEmpty) {
+      return 'Start a conversation';
+    }
+
+    final prefix = lastMessageSenderId == currentUserId ? 'You: ' : '';
+
+    switch (lastMessageType) {
+      case MessageType.voice:
+        return '${prefix}Voice message';
+      case MessageType.image:
+        return '${prefix}Photo';
+      case MessageType.text:
+        return '$prefix$lastMessage';
+    }
+  }
+
   factory Conversation.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> document,
   ) {
@@ -72,7 +97,7 @@ class Conversation {
     return Conversation(
       id: document.id,
       participantIds: List<String>.from(
-        data['participantIds'] as List<dynamic>? ?? const [],
+        data['participantIds'] as List<dynamic>? ?? const <dynamic>[],
       ),
       participantNames: _stringMap(data['participantNames']),
       participantEmails: _stringMap(data['participantEmails']),
@@ -85,6 +110,12 @@ class Conversation {
       lastMessageSenderId: data['lastMessageSenderId'] as String? ?? '',
       updatedAt: _dateTimeFromValue(data['updatedAt']),
       createdAt: _dateTimeFromValue(data['createdAt']),
+      archivedBy: List<String>.from(
+        data['archivedBy'] as List<dynamic>? ?? const <dynamic>[],
+      ),
+      mutedBy: List<String>.from(
+        data['mutedBy'] as List<dynamic>? ?? const <dynamic>[],
+      ),
     );
   }
 
@@ -104,7 +135,10 @@ class Conversation {
     }
 
     return value.map<String, int>(
-      (key, item) => MapEntry(key.toString(), (item as num?)?.toInt() ?? 0),
+      (key, item) => MapEntry(
+        key.toString(),
+        (item as num?)?.toInt() ?? 0,
+      ),
     );
   }
 

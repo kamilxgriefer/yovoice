@@ -38,7 +38,23 @@ class Message {
   final String? replyToContent;
 
   bool isMine(String currentUserId) => senderId == currentUserId;
+
   bool isReadBy(String userId) => readBy.contains(userId);
+
+  String previewText() {
+    if (isDeleted) {
+      return 'Message deleted';
+    }
+
+    switch (type) {
+      case MessageType.voice:
+        return 'Voice message';
+      case MessageType.image:
+        return 'Photo';
+      case MessageType.text:
+        return content;
+    }
+  }
 
   factory Message.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> document,
@@ -52,7 +68,9 @@ class Message {
       type: _messageTypeFromString(data['type'] as String?),
       content: data['content'] as String? ?? '',
       sentAt: _dateTimeFromValue(data['sentAt']),
-      readBy: List<String>.from(data['readBy'] as List<dynamic>? ?? const []),
+      readBy: List<String>.from(
+        data['readBy'] as List<dynamic>? ?? const <dynamic>[],
+      ),
       reactions: _stringMap(data['reactions']),
       mediaUrl: data['mediaUrl'] as String?,
       durationSeconds: (data['durationSeconds'] as num?)?.toInt(),
@@ -65,7 +83,10 @@ class Message {
   }
 
   static Map<String, String> _stringMap(Object? value) {
-    if (value is! Map) return <String, String>{};
+    if (value is! Map) {
+      return <String, String>{};
+    }
+
     return value.map<String, String>(
       (key, item) => MapEntry(key.toString(), item?.toString() ?? ''),
     );
@@ -84,8 +105,14 @@ class Message {
   }
 
   static DateTime? _nullableDateTimeFromValue(Object? value) {
-    if (value is Timestamp) return value.toDate();
-    if (value is DateTime) return value;
+    if (value is Timestamp) {
+      return value.toDate();
+    }
+
+    if (value is DateTime) {
+      return value;
+    }
+
     return null;
   }
 }
