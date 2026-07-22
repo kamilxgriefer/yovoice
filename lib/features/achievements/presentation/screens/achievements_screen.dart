@@ -4,13 +4,9 @@ import '../../../profile/data/models/user_profile.dart';
 import '../../data/achievement_catalog.dart';
 import '../../data/models/achievement_definition.dart';
 import '../../data/services/achievement_service.dart';
-import '../widgets/title_badge.dart';
 
 class AchievementsScreen extends StatefulWidget {
-  const AchievementsScreen({
-    required this.profile,
-    super.key,
-  });
+  const AchievementsScreen({required this.profile, super.key});
 
   final UserProfile profile;
 
@@ -24,7 +20,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final unlocked = widget.profile.unlockedTitleIds.toSet();
+    final unlockedIds = widget.profile.unlockedTitleIds.toSet();
 
     return Scaffold(
       backgroundColor: const Color(0xFF09050F),
@@ -37,15 +33,14 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${unlocked.length}/100 titles',
-              style: const TextStyle(
-                fontWeight: FontWeight.w900,
-              ),
+              '${unlockedIds.length}/100 titles',
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
             ),
+            const SizedBox(height: 2),
             const Text(
               'Choose the title shown on your profile',
               style: TextStyle(
-                color: Color(0xFF94889F),
+                color: Color(0xFFA79CAD),
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
               ),
@@ -55,25 +50,25 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
       ),
       body: LayoutBuilder(
         builder: (context, constraints) {
-          final isCompact = constraints.maxWidth < 700;
+          final isWide = constraints.maxWidth >= 900;
 
           return GridView.builder(
             padding: EdgeInsets.fromLTRB(
-              isCompact ? 16 : 22,
+              isWide ? 24 : 16,
               14,
-              isCompact ? 16 : 22,
+              isWide ? 24 : 16,
               40,
             ),
             gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: isCompact ? 360 : 390,
-              mainAxisExtent: isCompact ? 226 : 218,
-              crossAxisSpacing: 14,
-              mainAxisSpacing: 14,
+              maxCrossAxisExtent: isWide ? 560 : 520,
+              mainAxisExtent: 250,
+              crossAxisSpacing: 16,
+              mainAxisSpacing: 16,
             ),
             itemCount: AchievementCatalog.all.length,
             itemBuilder: (context, index) {
               final achievement = AchievementCatalog.all[index];
-              final isUnlocked = unlocked.contains(achievement.id);
+              final isUnlocked = unlockedIds.contains(achievement.id);
               final progress =
                   widget.profile.achievementStats[achievement.metric] ?? 0;
               final isSelected =
@@ -131,106 +126,123 @@ class _AchievementCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = _RarityPalette.forRarity(achievement.rarity);
-    final ratio = achievement.threshold <= 0
-        ? 0.0
-        : (progress / achievement.threshold).clamp(0.0, 1.0);
+    final safeThreshold = achievement.threshold <= 0
+        ? 1
+        : achievement.threshold;
+    final ratio = (progress / safeThreshold).clamp(0.0, 1.0);
     final shownProgress = progress.clamp(0, achievement.threshold);
 
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 220),
+      duration: const Duration(milliseconds: 240),
       curve: Curves.easeOutCubic,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: selected
-            ? [
-                BoxShadow(
-                  color: palette.accent.withValues(alpha: .35),
-                  blurRadius: 22,
-                  spreadRadius: 1,
-                ),
-              ]
-            : achievement.rarity.index >= AchievementRarity.legendary.index &&
-                    unlocked
-                ? [
-                    BoxShadow(
-                      color: palette.accent.withValues(alpha: .13),
-                      blurRadius: 18,
-                    ),
-                  ]
-                : null,
+        borderRadius: BorderRadius.circular(26),
+        boxShadow: [
+          if (selected)
+            BoxShadow(
+              color: palette.accent.withValues(alpha: .34),
+              blurRadius: 26,
+              spreadRadius: 1,
+            )
+          else if (unlocked &&
+              achievement.rarity.index >= AchievementRarity.epic.index)
+            BoxShadow(
+              color: palette.accent.withValues(alpha: .13),
+              blurRadius: 20,
+            ),
+        ],
       ),
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(26),
         child: InkWell(
           onTap: saving ? null : onSelect,
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(26),
           child: Ink(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: unlocked
-                    ? [
-                        palette.surfaceStart,
-                        palette.surfaceEnd,
-                      ]
-                    : const [
-                        Color(0xFF17111E),
-                        Color(0xFF110C17),
-                      ],
+                    ? [palette.surfaceStart, palette.surfaceEnd]
+                    : const [Color(0xFF17111E), Color(0xFF100B16)],
               ),
-              borderRadius: BorderRadius.circular(24),
+              borderRadius: BorderRadius.circular(26),
               border: Border.all(
                 width: selected ? 2 : 1,
                 color: selected
                     ? palette.accent
                     : unlocked
-                        ? palette.border.withValues(alpha: .8)
-                        : const Color(0xFF3A2C43),
+                    ? palette.border
+                    : const Color(0xFF3B2D44),
               ),
             ),
             child: Stack(
               children: [
-                if (selected)
-                  Positioned(
-                    top: 0,
-                    right: 0,
-                    child: Container(
-                      width: 74,
-                      height: 74,
-                      decoration: BoxDecoration(
-                        gradient: RadialGradient(
-                          center: Alignment.topRight,
-                          radius: 1,
-                          colors: [
-                            palette.accent.withValues(alpha: .30),
-                            Colors.transparent,
-                          ],
-                        ),
-                        borderRadius: const BorderRadius.only(
-                          topRight: Radius.circular(23),
-                        ),
+                Positioned(
+                  top: -40,
+                  right: -34,
+                  child: Container(
+                    width: 150,
+                    height: 150,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          palette.accent.withValues(
+                            alpha: unlocked ? .14 : .06,
+                          ),
+                          Colors.transparent,
+                        ],
                       ),
                     ),
                   ),
+                ),
                 Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(18),
                   child: Opacity(
-                    opacity: unlocked ? 1 : .56,
+                    opacity: unlocked ? 1 : .62,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            _AchievementIcon(
+                              icon: _iconForMetric(achievement.metric),
+                              color: palette.accent,
+                              unlocked: unlocked,
+                            ),
+                            const SizedBox(width: 14),
                             Expanded(
-                              child: TitleBadge(
-                                achievement: achievement,
-                                compact: true,
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      achievement.title,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: unlocked
+                                            ? palette.accent
+                                            : const Color(0xFFC4BBC9),
+                                        fontSize: 19,
+                                        height: 1.08,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    _RarityChip(
+                                      label: palette.label,
+                                      color: palette.accent,
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
-                            const SizedBox(width: 8),
+                            const SizedBox(width: 10),
                             _StatusIcon(
                               unlocked: unlocked,
                               selected: selected,
@@ -238,75 +250,63 @@ class _AchievementCard extends StatelessWidget {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 18),
                         Text(
-                          palette.label.toUpperCase(),
-                          maxLines: 1,
+                          achievement.description,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: palette.accent,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 1.15,
+                            color: unlocked
+                                ? const Color(0xFFD4CBD9)
+                                : const Color(0xFFAAA0B0),
+                            fontSize: 15,
+                            height: 1.35,
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        Expanded(
-                          child: Align(
-                            alignment: Alignment.topLeft,
-                            child: Text(
-                              achievement.description,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: unlocked
-                                    ? const Color(0xFFD1C7D8)
-                                    : const Color(0xFFA297A9),
-                                fontSize: 14,
-                                height: 1.32,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
+                        const Spacer(),
                         TweenAnimationBuilder<double>(
-                          duration: const Duration(milliseconds: 650),
+                          tween: Tween<double>(begin: 0, end: ratio),
+                          duration: const Duration(milliseconds: 700),
                           curve: Curves.easeOutCubic,
-                          tween: Tween<double>(
-                            begin: 0,
-                            end: ratio,
-                          ),
-                          builder: (context, value, _) {
-                            return ClipRRect(
-                              borderRadius: BorderRadius.circular(99),
-                              child: LinearProgressIndicator(
-                                value: value,
-                                minHeight: 7,
-                                backgroundColor:
-                                    const Color(0xFF2A2130),
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  unlocked
-                                      ? palette.accent
-                                      : palette.accent.withValues(alpha: .58),
-                                ),
-                              ),
+                          builder: (context, value, child) {
+                            return _AnimatedProgressBar(
+                              value: value,
+                              color: palette.accent,
+                              mythic:
+                                  achievement.rarity ==
+                                  AchievementRarity.mythic,
                             );
                           },
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 10),
                         Row(
                           children: [
                             Expanded(
-                              child: Text(
-                                '$shownProgress / ${achievement.threshold}',
+                              child: Text.rich(
+                                TextSpan(
+                                  children: [
+                                    TextSpan(
+                                      text: '$shownProgress',
+                                      style: TextStyle(
+                                        color: unlocked
+                                            ? palette.accent
+                                            : const Color(0xFFACA2B2),
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    TextSpan(
+                                      text: ' / ${achievement.threshold}',
+                                      style: const TextStyle(
+                                        color: Color(0xFF968B9D),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Color(0xFFA99EB1),
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                ),
+                                style: const TextStyle(fontSize: 12),
                               ),
                             ),
                             if (selected)
@@ -314,7 +314,7 @@ class _AchievementCard extends StatelessWidget {
                                 'ACTIVE',
                                 style: TextStyle(
                                   color: Colors.white,
-                                  fontSize: 10,
+                                  fontSize: 11,
                                   fontWeight: FontWeight.w900,
                                   letterSpacing: 1,
                                 ),
@@ -324,7 +324,7 @@ class _AchievementCard extends StatelessWidget {
                                 'TAP TO USE',
                                 style: TextStyle(
                                   color: palette.accent,
-                                  fontSize: 10,
+                                  fontSize: 11,
                                   fontWeight: FontWeight.w900,
                                   letterSpacing: .8,
                                 ),
@@ -334,7 +334,7 @@ class _AchievementCard extends StatelessWidget {
                                 'LOCKED',
                                 style: TextStyle(
                                   color: Color(0xFF8E8397),
-                                  fontSize: 10,
+                                  fontSize: 11,
                                   fontWeight: FontWeight.w900,
                                   letterSpacing: .8,
                                 ),
@@ -346,6 +346,129 @@ class _AchievementCard extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AchievementIcon extends StatelessWidget {
+  const _AchievementIcon({
+    required this.icon,
+    required this.color,
+    required this.unlocked,
+  });
+
+  final IconData icon;
+  final Color color;
+  final bool unlocked;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            color.withValues(alpha: unlocked ? .22 : .10),
+            const Color(0xFF100B16),
+          ],
+        ),
+        border: Border.all(
+          color: color.withValues(alpha: unlocked ? .75 : .25),
+        ),
+        boxShadow: unlocked
+            ? [BoxShadow(color: color.withValues(alpha: .22), blurRadius: 18)]
+            : null,
+      ),
+      child: Icon(
+        icon,
+        color: unlocked ? color : const Color(0xFF9F95A6),
+        size: 30,
+      ),
+    );
+  }
+}
+
+class _RarityChip extends StatelessWidget {
+  const _RarityChip({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .13),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: .20)),
+      ),
+      child: Text(
+        label.toUpperCase(),
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 1.1,
+        ),
+      ),
+    );
+  }
+}
+
+class _AnimatedProgressBar extends StatelessWidget {
+  const _AnimatedProgressBar({
+    required this.value,
+    required this.color,
+    required this.mythic,
+  });
+
+  final double value;
+  final Color color;
+  final bool mythic;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 10,
+      decoration: BoxDecoration(
+        color: const Color(0xFF241B2A),
+        borderRadius: BorderRadius.circular(99),
+        border: Border.all(color: color.withValues(alpha: .14)),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(99),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: FractionallySizedBox(
+            widthFactor: value,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: mythic
+                      ? const [
+                          Color(0xFFFF78DD),
+                          Color(0xFFC345FF),
+                          Color(0xFF775CFF),
+                        ]
+                      : [color.withValues(alpha: .78), color],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: color.withValues(alpha: .40),
+                    blurRadius: 10,
+                  ),
+                ],
+              ),
+              child: const SizedBox.expand(),
             ),
           ),
         ),
@@ -369,44 +492,35 @@ class _StatusIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     if (selected) {
       return Container(
-        width: 30,
-        height: 30,
+        width: 42,
+        height: 42,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: color,
           boxShadow: [
-            BoxShadow(
-              color: color.withValues(alpha: .38),
-              blurRadius: 12,
-            ),
+            BoxShadow(color: color.withValues(alpha: .38), blurRadius: 14),
           ],
         ),
-        child: const Icon(
-          Icons.check_rounded,
-          color: Colors.white,
-          size: 18,
-        ),
+        child: const Icon(Icons.check_rounded, color: Colors.white, size: 22),
       );
     }
 
     return Container(
-      width: 30,
-      height: 30,
+      width: 42,
+      height: 42,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: unlocked
-            ? color.withValues(alpha: .15)
-            : const Color(0xFF2A2230),
+        color: const Color(0xFF211927),
         border: Border.all(
           color: unlocked
-              ? color.withValues(alpha: .35)
-              : const Color(0xFF44374D),
+              ? color.withValues(alpha: .30)
+              : const Color(0xFF46384F),
         ),
       ),
       child: Icon(
         unlocked ? Icons.lock_open_rounded : Icons.lock_rounded,
-        color: unlocked ? color : const Color(0xFF918698),
-        size: 16,
+        color: unlocked ? color : const Color(0xFF93889A),
+        size: 20,
       ),
     );
   }
@@ -430,47 +544,74 @@ class _RarityPalette {
   static _RarityPalette forRarity(AchievementRarity rarity) {
     return switch (rarity) {
       AchievementRarity.common => const _RarityPalette(
-          label: 'Common',
-          accent: Color(0xFFB9ADBF),
-          border: Color(0xFF5A4A63),
-          surfaceStart: Color(0xFF211827),
-          surfaceEnd: Color(0xFF17111D),
-        ),
+        label: 'Common',
+        accent: Color(0xFFB8ADBF),
+        border: Color(0xFF594A62),
+        surfaceStart: Color(0xFF211827),
+        surfaceEnd: Color(0xFF15101B),
+      ),
       AchievementRarity.uncommon => const _RarityPalette(
-          label: 'Uncommon',
-          accent: Color(0xFF55E0A8),
-          border: Color(0xFF267B5F),
-          surfaceStart: Color(0xFF132A24),
-          surfaceEnd: Color(0xFF111B18),
-        ),
+        label: 'Uncommon',
+        accent: Color(0xFF4DE09E),
+        border: Color(0xFF267A5D),
+        surfaceStart: Color(0xFF122A22),
+        surfaceEnd: Color(0xFF0E1815),
+      ),
       AchievementRarity.rare => const _RarityPalette(
-          label: 'Rare',
-          accent: Color(0xFF5CA6FF),
-          border: Color(0xFF2E67A8),
-          surfaceStart: Color(0xFF14243A),
-          surfaceEnd: Color(0xFF101925),
-        ),
+        label: 'Rare',
+        accent: Color(0xFF4B9DFF),
+        border: Color(0xFF2B65A9),
+        surfaceStart: Color(0xFF12253C),
+        surfaceEnd: Color(0xFF0C1624),
+      ),
       AchievementRarity.epic => const _RarityPalette(
-          label: 'Epic',
-          accent: Color(0xFFC56BFF),
-          border: Color(0xFF7D35A8),
-          surfaceStart: Color(0xFF2B1538),
-          surfaceEnd: Color(0xFF1B1024),
-        ),
+        label: 'Epic',
+        accent: Color(0xFFC466FF),
+        border: Color(0xFF7B35A6),
+        surfaceStart: Color(0xFF2B1538),
+        surfaceEnd: Color(0xFF180D21),
+      ),
       AchievementRarity.legendary => const _RarityPalette(
-          label: 'Legendary',
-          accent: Color(0xFFFFB84D),
-          border: Color(0xFFB2651C),
-          surfaceStart: Color(0xFF382111),
-          surfaceEnd: Color(0xFF21150D),
-        ),
+        label: 'Legendary',
+        accent: Color(0xFFFFA52B),
+        border: Color(0xFFB2651C),
+        surfaceStart: Color(0xFF342010),
+        surfaceEnd: Color(0xFF1A100A),
+      ),
       AchievementRarity.mythic => const _RarityPalette(
-          label: 'Mythic',
-          accent: Color(0xFFFF67D7),
-          border: Color(0xFF9E34C7),
-          surfaceStart: Color(0xFF35153D),
-          surfaceEnd: Color(0xFF17102A),
-        ),
+        label: 'Mythic',
+        accent: Color(0xFFFF6DDA),
+        border: Color(0xFFB53AA8),
+        surfaceStart: Color(0xFF341437),
+        surfaceEnd: Color(0xFF160E22),
+      ),
     };
+  }
+}
+
+IconData _iconForMetric(String metric) {
+  switch (metric) {
+    case 'messages':
+      return Icons.chat_bubble_rounded;
+    case 'followers':
+      return Icons.groups_rounded;
+    case 'voiceMinutes':
+      return Icons.graphic_eq_rounded;
+    case 'rooms':
+      return Icons.meeting_room_rounded;
+    case 'communities':
+      return Icons.hub_rounded;
+    case 'friends':
+      return Icons.people_alt_rounded;
+    case 'reactions':
+      return Icons.auto_awesome_rounded;
+    case 'hostMinutes':
+      return Icons.podcasts_rounded;
+    case 'activeDays':
+      return Icons.local_fire_department_rounded;
+    case 'moments':
+      return Icons.mic_rounded;
+    default:
+      return Icons.workspace_premium_rounded;
   }
 }
