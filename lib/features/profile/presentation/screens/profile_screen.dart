@@ -105,7 +105,7 @@ class _ProfileContent extends StatelessWidget {
     final unlocked =
         profile.unlockedTitleIds
             .map(AchievementCatalog.byId)
-            .whereType()
+            .whereType<AchievementDefinition>()
             .toList(growable: false)
           ..sort((a, b) => b.rarity.index.compareTo(a.rarity.index));
 
@@ -277,7 +277,8 @@ class _Hero extends StatelessWidget {
                           ),
                         ),
                       const SizedBox(height: 8),
-                      if (title != null) TitleBadge(achievement: title),
+                      if (title case final selectedTitle?)
+                        TitleBadge(achievement: selectedTitle),
                     ],
                   ),
                 ),
