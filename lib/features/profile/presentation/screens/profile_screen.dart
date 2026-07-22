@@ -56,16 +56,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
             builder: (context, constraints) {
               final content = _ProfileContent(
                 profile: profile,
-                onEdit: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => EditProfileScreen(profile: profile),
-                  ),
-                ),
-                onAchievements: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => AchievementsScreen(profile: profile),
-                  ),
-                ),
+                onEdit: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => EditProfileScreen(profile: profile),
+                    ),
+                  );
+                },
+                onAchievements: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => AchievementsScreen(profile: profile),
+                    ),
+                  );
+                },
                 onLogout: _authService.signOut,
               );
 
@@ -77,6 +81,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 );
               }
+
               return content;
             },
           ),
@@ -134,10 +139,8 @@ class _ProfileContent extends StatelessWidget {
                 onEdit: onEdit,
                 onAchievements: onAchievements,
                 onLogout: onLogout,
-                  ),
-                ],
-              );
-            },
+              ),
+            ],
           ),
         ),
       ],
@@ -161,138 +164,152 @@ class _Hero extends StatelessWidget {
     final avatar = profile.photoUrl?.trim();
     final banner = profile.bannerUrl?.trim();
 
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Container(
-          height: 275,
-          decoration: BoxDecoration(
-            image: banner?.isNotEmpty == true
-                ? DecorationImage(
-                    image: NetworkImage(banner!),
-                    fit: BoxFit.cover,
-                  )
-                : null,
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF4B0D7D), Color(0xFF1E0B37), Color(0xFF09050F)],
+    return SizedBox(
+      height: 275,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                image: banner?.isNotEmpty == true
+                    ? DecorationImage(
+                        image: NetworkImage(banner!),
+                        fit: BoxFit.cover,
+                      )
+                    : null,
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0xFF4B0D7D),
+                    Color(0xFF1E0B37),
+                    Color(0xFF09050F),
+                  ],
+                ),
+              ),
             ),
           ),
-        ),
-        Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.black.withValues(alpha: .08),
-                  const Color(0xFF09050F).withValues(alpha: .92),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withValues(alpha: .08),
+                    const Color(0xFF09050F).withValues(alpha: .92),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Profile',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 30,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  IconButton.filledTonal(
+                    onPressed: onEdit,
+                    icon: const Icon(Icons.edit_rounded),
+                  ),
                 ],
               ),
             ),
           ),
-        ),
-        SafeArea(
-          bottom: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-            child: Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Profile',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 30,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-                IconButton.filledTonal(
-                  onPressed: onEdit,
-                  icon: const Icon(Icons.edit_rounded),
-                ),
-              ],
-            ),
-          ),
-        ),
-        Positioned(
-          left: 20,
-          right: 20,
-          bottom: 18,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final isCompact = constraints.maxWidth < 390;
+          Positioned(
+            left: 20,
+            right: 20,
+            bottom: 18,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isCompact = constraints.maxWidth < 390;
 
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(4),
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
-                  ),
-                ),
-                child: CircleAvatar(
-                  radius: isCompact ? 48 : 56,
-                  backgroundColor: const Color(0xFF281133),
-                  backgroundImage: avatar?.isNotEmpty == true
-                      ? NetworkImage(avatar!)
-                      : null,
-                  child: avatar?.isNotEmpty == true
-                      ? null
-                      : Text(
-                          profile.displayName.isEmpty
-                              ? '?'
-                              : profile.displayName[0].toUpperCase(),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 42,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                ),
-              ),
-                  SizedBox(width: isCompact ? 14 : 17),
-                  Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        profile.displayName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: isCompact ? 25 : 29,
-                          fontWeight: FontWeight.w900,
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: LinearGradient(
+                          colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
                         ),
                       ),
-                      if (profile.username.isNotEmpty)
-                        Text(
-                          '@${profile.username.replaceAll(' ', '').toLowerCase()}',
-                          style: const TextStyle(
-                            color: Color(0xFFBEB2C8),
-                            fontSize: 14,
-                          ),
+                      child: CircleAvatar(
+                        radius: isCompact ? 48 : 56,
+                        backgroundColor: const Color(0xFF281133),
+                        backgroundImage: avatar?.isNotEmpty == true
+                            ? NetworkImage(avatar!)
+                            : null,
+                        child: avatar?.isNotEmpty == true
+                            ? null
+                            : Text(
+                                profile.displayName.isEmpty
+                                    ? '?'
+                                    : profile.displayName[0].toUpperCase(),
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: isCompact ? 36 : 42,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                      ),
+                    ),
+                    SizedBox(width: isCompact ? 14 : 17),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              profile.displayName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: isCompact ? 25 : 29,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            if (profile.username.isNotEmpty)
+                              Text(
+                                '@${profile.username.replaceAll(' ', '').toLowerCase()}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFFBEB2C8),
+                                  fontSize: 14,
+                                ),
+                              ),
+                            if (title != null) ...[
+                              const SizedBox(height: 8),
+                              TitleBadge(achievement: title!),
+                            ],
+                          ],
                         ),
-                      const SizedBox(height: 8),
-                      if (title case final selectedTitle?)
-                        TitleBadge(achievement: selectedTitle),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -313,68 +330,74 @@ class _StatsGrid extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isCompact = constraints.maxWidth < 420;
-        final cardWidth = isCompact
-            ? (constraints.maxWidth - 12) / 2
-            : 230.0;
+        final isPhone = constraints.maxWidth < 600;
+        final columns = isPhone ? 2 : 4;
+        final spacing = 12.0;
+        final totalSpacing = spacing * (columns - 1);
+        final cardWidth = (constraints.maxWidth - totalSpacing) / columns;
 
         return Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: stats.map((stat) {
-            return SizedBox(
-              width: cardWidth,
-              height: isCompact ? 108 : 112,
-              child: _Panel(
-                padding: EdgeInsets.symmetric(
-                  horizontal: isCompact ? 14 : 18,
-                  vertical: 16,
-                ),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: isCompact ? 21 : 23,
-                      backgroundColor: const Color(0xFF32133E),
-                      child: Icon(
-                        stat.$3,
-                        size: isCompact ? 22 : 24,
-                        color: const Color(0xFFB63EFF),
-                      ),
+          spacing: spacing,
+          runSpacing: spacing,
+          children: stats
+              .map((stat) {
+                return SizedBox(
+                  width: cardWidth,
+                  height: 112,
+                  child: _Panel(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isPhone ? 12 : 16,
+                      vertical: 16,
                     ),
-                    SizedBox(width: isCompact ? 11 : 13),
-                    Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '${stat.$2}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: isCompact ? 22 : 24,
-                              fontWeight: FontWeight.w900,
-                            ),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: isPhone ? 20 : 22,
+                          backgroundColor: const Color(0xFF32133E),
+                          child: Icon(
+                            stat.$3,
+                            size: isPhone ? 21 : 23,
+                            color: const Color(0xFFB63EFF),
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            stat.$1,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: const Color(0xFF9D92A7),
-                              fontSize: isCompact ? 12.5 : 14,
-                            ),
+                        ),
+                        SizedBox(width: isPhone ? 10 : 12),
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${stat.$2}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: isPhone ? 22 : 24,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  stat.$1,
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    color: const Color(0xFF9D92A7),
+                                    fontSize: isPhone ? 13 : 14,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
-            );
-          }).toList(growable: false),
+                  ),
+                );
+              })
+              .toList(growable: false),
         );
       },
     );
