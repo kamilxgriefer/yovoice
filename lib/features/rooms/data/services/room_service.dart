@@ -7,8 +7,8 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 
 class RoomService {
   RoomService({FirebaseFirestore? firestore, FirebaseAuth? auth})
-      : _firestore = firestore ?? FirebaseFirestore.instance,
-        _auth = auth ?? FirebaseAuth.instance;
+    : _firestore = firestore ?? FirebaseFirestore.instance,
+      _auth = auth ?? FirebaseAuth.instance;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
@@ -99,39 +99,41 @@ class RoomService {
         .where('visibility', isEqualTo: 'public')
         .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map(VoiceRoom.fromFirestore)
-            .where((room) => room.isActive)
-            .toList(growable: false));
+        .map(
+          (snapshot) => snapshot.docs
+              .map(VoiceRoom.fromFirestore)
+              .where((room) => room.isActive)
+              .toList(growable: false),
+        );
   }
 
   Stream<List<VoiceRoom>> watchPublicRooms() {
-    return _rooms
-        .where('visibility', isEqualTo: 'public')
-        .snapshots()
-        .map((snapshot) {
+    return _rooms.where('visibility', isEqualTo: 'public').snapshots().map((
+      snapshot,
+    ) {
       final rooms = snapshot.docs
           .map(VoiceRoom.fromFirestore)
           .where((room) => room.isActive)
           .toList();
-      rooms.sort((a, b) =>
-          (b.updatedAt ?? b.createdAt ?? DateTime(1970)).compareTo(
-            a.updatedAt ?? a.createdAt ?? DateTime(1970),
-          ));
+      rooms.sort(
+        (a, b) => (b.updatedAt ?? b.createdAt ?? DateTime(1970)).compareTo(
+          a.updatedAt ?? a.createdAt ?? DateTime(1970),
+        ),
+      );
       return rooms;
     });
   }
 
   Stream<List<VoiceRoom>> watchOwnedRooms() {
-    return _rooms
-        .where('hostId', isEqualTo: _user.uid)
-        .snapshots()
-        .map((snapshot) {
+    return _rooms.where('hostId', isEqualTo: _user.uid).snapshots().map((
+      snapshot,
+    ) {
       final rooms = snapshot.docs.map(VoiceRoom.fromFirestore).toList();
-      rooms.sort((a, b) =>
-          (b.updatedAt ?? b.createdAt ?? DateTime(1970)).compareTo(
-            a.updatedAt ?? a.createdAt ?? DateTime(1970),
-          ));
+      rooms.sort(
+        (a, b) => (b.updatedAt ?? b.createdAt ?? DateTime(1970)).compareTo(
+          a.updatedAt ?? a.createdAt ?? DateTime(1970),
+        ),
+      );
       return rooms;
     });
   }
@@ -153,18 +155,19 @@ class RoomService {
   }
 
   Stream<List<RoomParticipant>> watchParticipants(String roomId) {
-    return _rooms.doc(roomId).collection('participants').snapshots().map(
-      (snapshot) {
-        final participants =
-            snapshot.docs.map(RoomParticipant.fromFirestore).toList();
-        participants.sort((a, b) {
-          if (a.isHost != b.isHost) return a.isHost ? -1 : 1;
-          if (a.isSpeaker != b.isSpeaker) return a.isSpeaker ? -1 : 1;
-          return a.displayName.compareTo(b.displayName);
-        });
-        return participants;
-      },
-    );
+    return _rooms.doc(roomId).collection('participants').snapshots().map((
+      snapshot,
+    ) {
+      final participants = snapshot.docs
+          .map(RoomParticipant.fromFirestore)
+          .toList();
+      participants.sort((a, b) {
+        if (a.isHost != b.isHost) return a.isHost ? -1 : 1;
+        if (a.isSpeaker != b.isSpeaker) return a.isSpeaker ? -1 : 1;
+        return a.displayName.compareTo(b.displayName);
+      });
+      return participants;
+    });
   }
 
   Stream<List<RoomMessage>> watchRoomMessages(String roomId) {
@@ -174,9 +177,11 @@ class RoomService {
         .orderBy('createdAt', descending: true)
         .limit(100)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map(RoomMessage.fromFirestore)
-            .toList(growable: false));
+        .map(
+          (snapshot) => snapshot.docs
+              .map(RoomMessage.fromFirestore)
+              .toList(growable: false),
+        );
   }
 
   Future<void> updateRoomSettings({
@@ -320,7 +325,8 @@ class RoomService {
     final room = await _rooms.doc(roomId).get();
     final data = room.data();
     if (!room.exists || data == null) throw StateError('Room not found.');
-    final canStart = data['hostId'] == _user.uid ||
+    final canStart =
+        data['hostId'] == _user.uid ||
         (data['membersCanStartVoice'] == true &&
             await _isMember(roomId, _user.uid));
     if (!canStart) throw StateError('You cannot start voice in this room.');
@@ -346,7 +352,10 @@ class RoomService {
     await _deleteCollection(_rooms.doc(roomId).collection('participants'));
   }
 
-  Future<void> sendRoomMessage({required String roomId, required String text}) async {
+  Future<void> sendRoomMessage({
+    required String roomId,
+    required String text,
+  }) async {
     final user = _user;
     final normalized = text.trim();
     if (normalized.isEmpty) return;
@@ -361,7 +370,9 @@ class RoomService {
       'createdAt': FieldValue.serverTimestamp(),
       'reactions': <String, List<String>>{},
     });
-    await _rooms.doc(roomId).update({'updatedAt': FieldValue.serverTimestamp()});
+    await _rooms.doc(roomId).update({
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<void> setMuted({required String roomId, required bool isMuted}) async {
@@ -371,7 +382,10 @@ class RoomService {
     });
   }
 
-  Future<void> setHandRaised({required String roomId, required bool isRaised}) async {
+  Future<void> setHandRaised({
+    required String roomId,
+    required bool isRaised,
+  }) async {
     await _rooms.doc(roomId).collection('participants').doc(_user.uid).update({
       'isHandRaised': isRaised,
       'updatedAt': FieldValue.serverTimestamp(),
@@ -413,7 +427,8 @@ class RoomService {
   }
 
   Future<bool> _isMember(String roomId, String userId) async {
-    return (await _rooms.doc(roomId).collection('members').doc(userId).get()).exists;
+    return (await _rooms.doc(roomId).collection('members').doc(userId).get())
+        .exists;
   }
 
   Future<void> _requireHost(String roomId) async {

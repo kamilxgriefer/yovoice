@@ -36,8 +36,7 @@ class _ChatScreenState extends State<ChatScreen> {
   static const Color _primary = Color(0xFF9D20FF);
 
   final MessageService _service = MessageService();
-  final TextEditingController _controller =
-      TextEditingController();
+  final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
   late final Stream<List<Message>> _messages;
@@ -49,8 +48,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _sending = false;
   bool _isMuted = false;
 
-  String get _currentUserId =>
-      FirebaseAuth.instance.currentUser?.uid ?? '';
+  String get _currentUserId => FirebaseAuth.instance.currentUser?.uid ?? '';
 
   @override
   void initState() {
@@ -137,9 +135,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (error) {
       if (mounted) {
-        _showMessage(
-          error.toString().replaceFirst('Bad state: ', ''),
-        );
+        _showMessage(error.toString().replaceFirst('Bad state: ', ''));
       }
     } finally {
       if (mounted) {
@@ -188,9 +184,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _editMessage(Message message) async {
-    final editController = TextEditingController(
-      text: message.content,
-    );
+    final editController = TextEditingController(text: message.content);
 
     final result = await showDialog<String>(
       context: context,
@@ -224,13 +218,9 @@ class _ChatScreenState extends State<ChatScreen> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(
-                dialogContext,
-                editController.text,
-              ),
-              style: FilledButton.styleFrom(
-                backgroundColor: _primary,
-              ),
+              onPressed: () =>
+                  Navigator.pop(dialogContext, editController.text),
+              style: FilledButton.styleFrom(backgroundColor: _primary),
               child: const Text('Save'),
             ),
           ],
@@ -314,9 +304,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) {
         setState(() => _isMuted = !_isMuted);
         _showMessage(
-          _isMuted
-              ? 'Conversation muted.'
-              : 'Notifications turned on.',
+          _isMuted ? 'Conversation muted.' : 'Notifications turned on.',
         );
       }
     } catch (_) {
@@ -375,11 +363,7 @@ class _ChatScreenState extends State<ChatScreen> {
           gradient: RadialGradient(
             center: Alignment(-.75, -1),
             radius: 1.2,
-            colors: [
-              Color(0xFF26103E),
-              Color(0xFF100B1B),
-              _background,
-            ],
+            colors: [Color(0xFF26103E), Color(0xFF100B1B), _background],
             stops: [0, .35, 1],
           ),
         ),
@@ -400,8 +384,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: StreamBuilder<List<Message>>(
                   stream: _messages,
                   builder: (context, snapshot) {
-                    if (snapshot.connectionState ==
-                            ConnectionState.waiting &&
+                    if (snapshot.connectionState == ConnectionState.waiting &&
                         !snapshot.hasData) {
                       return const Center(
                         child: CircularProgressIndicator(
@@ -420,8 +403,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       );
                     }
 
-                    final messages =
-                        snapshot.data ?? const <Message>[];
+                    final messages = snapshot.data ?? const <Message>[];
 
                     if (messages.isEmpty) {
                       return _EmptyConversation(
@@ -434,34 +416,24 @@ class _ChatScreenState extends State<ChatScreen> {
 
                     return ListView.builder(
                       reverse: true,
-                      padding: const EdgeInsets.fromLTRB(
-                        14,
-                        18,
-                        14,
-                        18,
-                      ),
+                      padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
                       itemCount: messages.length,
                       itemBuilder: (context, index) {
                         final message = messages[index];
-                        final nextMessage =
-                            index + 1 < messages.length
-                                ? messages[index + 1]
-                                : null;
-                        final showDate = nextMessage == null ||
-                            !_sameDay(
-                              message.sentAt,
-                              nextMessage.sentAt,
-                            );
+                        final nextMessage = index + 1 < messages.length
+                            ? messages[index + 1]
+                            : null;
+                        final showDate =
+                            nextMessage == null ||
+                            !_sameDay(message.sentAt, nextMessage.sentAt);
 
                         return Column(
                           children: [
-                            if (showDate)
-                              _DateDivider(date: message.sentAt),
+                            if (showDate) _DateDivider(date: message.sentAt),
                             MessageBubble(
                               message: message,
                               currentUserId: _currentUserId,
-                              onLongPress: () =>
-                                  _messageActions(message),
+                              onLongPress: () => _messageActions(message),
                             ),
                           ],
                         );
@@ -492,10 +464,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 focusNode: _focusNode,
                 sending: _sending,
                 onSend: _send,
-                onPhoto: () =>
-                    _showAttachmentNotice('Photo sharing'),
-                onVoice: () =>
-                    _showAttachmentNotice('Voice messages'),
+                onPhoto: () => _showAttachmentNotice('Photo sharing'),
+                onVoice: () => _showAttachmentNotice('Voice messages'),
               ),
             ],
           ),
@@ -536,9 +506,7 @@ class _ChatHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(7, 8, 8, 8),
       decoration: const BoxDecoration(
         color: Color(0xCC0E0A15),
-        border: Border(
-          bottom: BorderSide(color: _ChatScreenState._border),
-        ),
+        border: Border(bottom: BorderSide(color: _ChatScreenState._border)),
       ),
       child: Row(
         children: [
@@ -550,11 +518,7 @@ class _ChatHeader extends StatelessWidget {
               size: 20,
             ),
           ),
-          _Avatar(
-            name: displayName,
-            url: photoUrl,
-            radius: 20,
-          ),
+          _Avatar(name: displayName, url: photoUrl, radius: 20),
           const SizedBox(width: 11),
           Expanded(
             child: StreamBuilder<ChatPresence>(
@@ -593,17 +557,11 @@ class _ChatHeader extends StatelessWidget {
           IconButton(
             onPressed: () {},
             tooltip: 'Voice call',
-            icon: const Icon(
-              Icons.call_outlined,
-              color: Colors.white,
-            ),
+            icon: const Icon(Icons.call_outlined, color: Colors.white),
           ),
           PopupMenuButton<String>(
             color: _ChatScreenState._surface,
-            icon: const Icon(
-              Icons.more_horiz_rounded,
-              color: Colors.white,
-            ),
+            icon: const Icon(Icons.more_horiz_rounded, color: Colors.white),
             onSelected: (value) {
               if (value == 'mute') {
                 onMute();
@@ -634,15 +592,9 @@ class _ChatHeader extends StatelessWidget {
                 value: 'archive',
                 child: Row(
                   children: [
-                    Icon(
-                      Icons.archive_outlined,
-                      color: Colors.white,
-                    ),
+                    Icon(Icons.archive_outlined, color: Colors.white),
                     SizedBox(width: 12),
-                    Text(
-                      'Archive',
-                      style: TextStyle(color: Colors.white),
-                    ),
+                    Text('Archive', style: TextStyle(color: Colors.white)),
                   ],
                 ),
               ),
@@ -683,10 +635,7 @@ class _ChatHeader extends StatelessWidget {
 }
 
 class _EmptyConversation extends StatelessWidget {
-  const _EmptyConversation({
-    required this.name,
-    required this.photoUrl,
-  });
+  const _EmptyConversation({required this.name, required this.photoUrl});
 
   final String name;
   final String photoUrl;
@@ -699,11 +648,7 @@ class _EmptyConversation extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _Avatar(
-              name: name,
-              url: photoUrl,
-              radius: 43,
-            ),
+            _Avatar(name: name, url: photoUrl, radius: 43),
             const SizedBox(height: 17),
             Text(
               name,
@@ -717,10 +662,7 @@ class _EmptyConversation extends StatelessWidget {
             const SizedBox(height: 6),
             const Text(
               'You are friends on YoVoice',
-              style: TextStyle(
-                color: _ChatScreenState._muted,
-                fontSize: 13,
-              ),
+              style: TextStyle(color: _ChatScreenState._muted, fontSize: 13),
             ),
             const SizedBox(height: 18),
             const Text(
@@ -749,8 +691,8 @@ class _DateDivider extends StatelessWidget {
     final label = _sameDate(date, now)
         ? 'Today'
         : _sameDate(date, yesterday)
-            ? 'Yesterday'
-            : '${date.day}/${date.month}/${date.year}';
+        ? 'Yesterday'
+        : '${date.day}/${date.month}/${date.year}';
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 16),
@@ -782,16 +724,11 @@ class _TypingIndicator extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 13,
-              vertical: 10,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
             decoration: BoxDecoration(
               color: _ChatScreenState._surface,
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: _ChatScreenState._border,
-              ),
+              border: Border.all(color: _ChatScreenState._border),
             ),
             child: const Row(
               children: [
@@ -806,10 +743,7 @@ class _TypingIndicator extends StatelessWidget {
           const SizedBox(width: 9),
           const Text(
             'typing…',
-            style: TextStyle(
-              color: _ChatScreenState._muted,
-              fontSize: 11,
-            ),
+            style: TextStyle(color: _ChatScreenState._muted, fontSize: 11),
           ),
         ],
       ),
@@ -842,21 +776,13 @@ class _TypingDotState extends State<_TypingDot>
     _animation = Tween<double>(
       begin: .55,
       end: 1,
-    ).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: Curves.easeInOut,
-      ),
-    );
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
 
-    _delayTimer = Timer(
-      Duration(milliseconds: widget.delay),
-      () {
-        if (mounted) {
-          _controller.repeat(reverse: true);
-        }
-      },
-    );
+    _delayTimer = Timer(Duration(milliseconds: widget.delay), () {
+      if (mounted) {
+        _controller.repeat(reverse: true);
+      }
+    });
   }
 
   @override
@@ -883,10 +809,7 @@ class _TypingDotState extends State<_TypingDot>
 }
 
 class _ReplyPreview extends StatelessWidget {
-  const _ReplyPreview({
-    required this.message,
-    required this.onClose,
-  });
+  const _ReplyPreview({required this.message, required this.onClose});
 
   final Message message;
   final VoidCallback onClose;
@@ -898,9 +821,7 @@ class _ReplyPreview extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
       decoration: const BoxDecoration(
         color: Color(0xFF171121),
-        border: Border(
-          top: BorderSide(color: _ChatScreenState._border),
-        ),
+        border: Border(top: BorderSide(color: _ChatScreenState._border)),
       ),
       child: Row(
         children: [
@@ -913,11 +834,7 @@ class _ReplyPreview extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 11),
-          const Icon(
-            Icons.reply_rounded,
-            color: Color(0xFFC05AFF),
-            size: 20,
-          ),
+          const Icon(Icons.reply_rounded, color: Color(0xFFC05AFF), size: 20),
           const SizedBox(width: 9),
           Expanded(
             child: Column(
@@ -936,10 +853,7 @@ class _ReplyPreview extends StatelessWidget {
                   message.previewText(),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
-                  ),
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
                 ),
               ],
             ),
@@ -985,9 +899,7 @@ class _Composer extends StatelessWidget {
       ),
       decoration: const BoxDecoration(
         color: Color(0xFF0F0B16),
-        border: Border(
-          top: BorderSide(color: _ChatScreenState._border),
-        ),
+        border: Border(top: BorderSide(color: _ChatScreenState._border)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -1006,9 +918,7 @@ class _Composer extends StatelessWidget {
               decoration: BoxDecoration(
                 color: _ChatScreenState._surface,
                 borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: _ChatScreenState._border,
-                ),
+                border: Border.all(color: _ChatScreenState._border),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -1019,21 +929,13 @@ class _Composer extends StatelessWidget {
                       focusNode: focusNode,
                       minLines: 1,
                       maxLines: 5,
-                      textCapitalization:
-                          TextCapitalization.sentences,
+                      textCapitalization: TextCapitalization.sentences,
                       style: const TextStyle(color: Colors.white),
                       decoration: const InputDecoration(
                         hintText: 'Message…',
-                        hintStyle: TextStyle(
-                          color: _ChatScreenState._muted,
-                        ),
+                        hintStyle: TextStyle(color: _ChatScreenState._muted),
                         border: InputBorder.none,
-                        contentPadding: EdgeInsets.fromLTRB(
-                          15,
-                          12,
-                          8,
-                          12,
-                        ),
+                        contentPadding: EdgeInsets.fromLTRB(15, 12, 8, 12),
                       ),
                       onSubmitted: (_) => onSend(),
                     ),
@@ -1048,22 +950,19 @@ class _Composer extends StatelessWidget {
                         child: hasText
                             ? IconButton(
                                 key: const ValueKey('send'),
-                                onPressed:
-                                    sending ? null : onSend,
+                                onPressed: sending ? null : onSend,
                                 icon: sending
                                     ? const SizedBox(
                                         width: 20,
                                         height: 20,
-                                        child:
-                                            CircularProgressIndicator(
+                                        child: CircularProgressIndicator(
                                           strokeWidth: 2,
                                           color: Colors.white,
                                         ),
                                       )
                                     : const Icon(
                                         Icons.send_rounded,
-                                        color:
-                                            _ChatScreenState._primary,
+                                        color: _ChatScreenState._primary,
                                       ),
                               )
                             : IconButton(
@@ -1115,9 +1014,7 @@ class _MessageActionsSheet extends StatelessWidget {
       ),
       decoration: const BoxDecoration(
         color: Color(0xFF15101E),
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(26),
-        ),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1140,10 +1037,7 @@ class _MessageActionsSheet extends StatelessWidget {
                     customBorder: const CircleBorder(),
                     child: Padding(
                       padding: const EdgeInsets.all(8),
-                      child: Text(
-                        emoji,
-                        style: const TextStyle(fontSize: 27),
-                      ),
+                      child: Text(emoji, style: const TextStyle(fontSize: 27)),
                     ),
                   ),
                 )
@@ -1152,26 +1046,14 @@ class _MessageActionsSheet extends StatelessWidget {
           const Divider(color: _ChatScreenState._border),
           ListTile(
             onTap: onReply,
-            leading: const Icon(
-              Icons.reply_rounded,
-              color: Colors.white,
-            ),
-            title: const Text(
-              'Reply',
-              style: TextStyle(color: Colors.white),
-            ),
+            leading: const Icon(Icons.reply_rounded, color: Colors.white),
+            title: const Text('Reply', style: TextStyle(color: Colors.white)),
           ),
           if (isMine)
             ListTile(
               onTap: onEdit,
-              leading: const Icon(
-                Icons.edit_outlined,
-                color: Colors.white,
-              ),
-              title: const Text(
-                'Edit',
-                style: TextStyle(color: Colors.white),
-              ),
+              leading: const Icon(Icons.edit_outlined, color: Colors.white),
+              title: const Text('Edit', style: TextStyle(color: Colors.white)),
             ),
           if (isMine)
             ListTile(
@@ -1192,11 +1074,7 @@ class _MessageActionsSheet extends StatelessWidget {
 }
 
 class _Avatar extends StatelessWidget {
-  const _Avatar({
-    required this.name,
-    required this.url,
-    required this.radius,
-  });
+  const _Avatar({required this.name, required this.url, required this.radius});
 
   final String name;
   final String url;
@@ -1211,8 +1089,7 @@ class _Avatar extends StatelessWidget {
     return CircleAvatar(
       radius: radius,
       backgroundColor: const Color(0xFF7B25E8),
-      backgroundImage:
-          url.trim().isNotEmpty ? NetworkImage(url) : null,
+      backgroundImage: url.trim().isNotEmpty ? NetworkImage(url) : null,
       child: url.trim().isEmpty
           ? Text(
               initial,

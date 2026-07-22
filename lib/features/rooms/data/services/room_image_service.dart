@@ -9,9 +9,9 @@ class RoomImageService {
     FirebaseStorage? storage,
     FirebaseAuth? auth,
     ImagePicker? picker,
-  })  : _storage = storage ?? FirebaseStorage.instance,
-        _auth = auth ?? FirebaseAuth.instance,
-        _picker = picker ?? ImagePicker();
+  }) : _storage = storage ?? FirebaseStorage.instance,
+       _auth = auth ?? FirebaseAuth.instance,
+       _picker = picker ?? ImagePicker();
 
   final FirebaseStorage _storage;
   final FirebaseAuth _auth;

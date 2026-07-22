@@ -135,10 +135,7 @@ class Conversation {
     }
 
     return value.map<String, int>(
-      (key, item) => MapEntry(
-        key.toString(),
-        (item as num?)?.toInt() ?? 0,
-      ),
+      (key, item) => MapEntry(key.toString(), (item as num?)?.toInt() ?? 0),
     );
   }
 

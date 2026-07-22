@@ -13,9 +13,7 @@ class YoVoiceApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'YO Voice',
       theme: AppTheme.darkTheme,
-      home: const PresenceLifecycle(
-        child: AuthGate(),
-      ),
+      home: const PresenceLifecycle(child: AuthGate()),
     );
   }
 }

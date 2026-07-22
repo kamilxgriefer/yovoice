@@ -229,7 +229,9 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                               style: FilledButton.styleFrom(
                                 backgroundColor: const Color(0xFF8A2BE2),
                                 foregroundColor: Colors.white,
-                                disabledBackgroundColor: const Color(0xFF352B42),
+                                disabledBackgroundColor: const Color(
+                                  0xFF352B42,
+                                ),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(16),
                                 ),
@@ -243,7 +245,9 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                                         color: Colors.white,
                                       ),
                                     )
-                                  : const Icon(Icons.chat_bubble_outline_rounded),
+                                  : const Icon(
+                                      Icons.chat_bubble_outline_rounded,
+                                    ),
                               label: Text(
                                 _isOpeningChat ? 'Opening chat...' : 'Message',
                                 style: const TextStyle(
@@ -272,7 +276,8 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                                 SizedBox(width: 13),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         'Voice Moments',
@@ -401,9 +406,8 @@ class _ProfileAvatar extends StatelessWidget {
                   ? Image.network(
                       photoUrl,
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _LargeInitial(
-                        initial: friend.initial,
-                      ),
+                      errorBuilder: (_, __, ___) =>
+                          _LargeInitial(initial: friend.initial),
                     )
                   : _LargeInitial(initial: friend.initial),
             ),
@@ -464,7 +468,9 @@ class _OnlineStatus extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = friend.isOnline ? 'Online now' : _lastSeenText(friend.lastSeen);
+    final text = friend.isOnline
+        ? 'Online now'
+        : _lastSeenText(friend.lastSeen);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),

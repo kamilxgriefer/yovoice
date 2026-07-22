@@ -65,9 +65,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     try {
       final users = await _friendService.searchUsers(query);
       final statuses = await Future.wait(
-        users.map(
-          (user) => _friendService.getRelationshipStatus(user.id),
-        ),
+        users.map((user) => _friendService.getRelationshipStatus(user.id)),
       );
 
       if (!mounted || _searchController.text.trim() != query) {
@@ -102,8 +100,8 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
   Future<void> _handlePrimaryAction(FriendUser user) async {
     if (_processingIds.contains(user.id)) return;
 
-    final status = _relationshipStatuses[user.id] ??
-        FriendRelationshipStatus.none;
+    final status =
+        _relationshipStatuses[user.id] ?? FriendRelationshipStatus.none;
 
     if (status == FriendRelationshipStatus.friends) {
       return;
@@ -151,8 +149,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         });
       } else if (message == 'Friend request already sent.') {
         setState(() {
-          _relationshipStatuses[user.id] =
-              FriendRelationshipStatus.requestSent;
+          _relationshipStatuses[user.id] = FriendRelationshipStatus.requestSent;
         });
       }
 
@@ -390,8 +387,8 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         final user = _results[index];
         return _UserResultCard(
           user: user,
-          relationshipStatus: _relationshipStatuses[user.id] ??
-              FriendRelationshipStatus.none,
+          relationshipStatus:
+              _relationshipStatuses[user.id] ?? FriendRelationshipStatus.none,
           isProcessing: _processingIds.contains(user.id),
           onPressed: () => _handlePrimaryAction(user),
         );
@@ -461,7 +458,8 @@ class _UserResultCard extends StatelessWidget {
           SizedBox(
             height: 40,
             child: FilledButton(
-              onPressed: isProcessing ||
+              onPressed:
+                  isProcessing ||
                       relationshipStatus == FriendRelationshipStatus.friends
                   ? null
                   : onPressed,

@@ -68,9 +68,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       }
 
       await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => RoomScreen(room: joinedRoom),
-        ),
+        MaterialPageRoute<void>(builder: (_) => RoomScreen(room: joinedRoom)),
       );
     } catch (error) {
       if (!mounted) {
@@ -119,7 +117,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   List<VoiceRoom> _filteredRooms(List<VoiceRoom> rooms) {
     final filtered = rooms.where((room) {
-      final matchesCategory = _selectedCategory == 'All' ||
+      final matchesCategory =
+          _selectedCategory == 'All' ||
           room.category.toLowerCase() == _selectedCategory.toLowerCase();
 
       if (!matchesCategory) {
@@ -142,8 +141,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     }).toList();
 
     filtered.sort((a, b) {
-      final countComparison =
-          b.participantCount.compareTo(a.participantCount);
+      final countComparison = b.participantCount.compareTo(a.participantCount);
 
       if (countComparison != 0) {
         return countComparison;
@@ -167,11 +165,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           gradient: RadialGradient(
             center: Alignment(-0.8, -0.95),
             radius: 1.25,
-            colors: [
-              Color(0xFF301346),
-              Color(0xFF130C1D),
-              _background,
-            ],
+            colors: [Color(0xFF301346), Color(0xFF130C1D), _background],
             stops: [0, 0.38, 1],
           ),
         ),
@@ -194,9 +188,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                 backgroundColor: _surface,
                 onRefresh: () async {
                   setState(() {});
-                  await Future<void>.delayed(
-                    const Duration(milliseconds: 350),
-                  );
+                  await Future<void>.delayed(const Duration(milliseconds: 350));
                 },
                 child: CustomScrollView(
                   physics: const AlwaysScrollableScrollPhysics(),
@@ -231,8 +223,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                           title: _query.isNotEmpty
                               ? 'Search results'
                               : _selectedCategory == 'All'
-                                  ? 'Trending now'
-                                  : _selectedCategory,
+                              ? 'Trending now'
+                              : _selectedCategory,
                           subtitle: _query.isNotEmpty
                               ? '${rooms.length} matching rooms'
                               : 'Live conversations happening right now',
@@ -381,9 +373,7 @@ class _DiscoverHeader extends StatelessWidget {
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(18),
-              borderSide: const BorderSide(
-                color: _DiscoverScreenState._border,
-              ),
+              borderSide: const BorderSide(color: _DiscoverScreenState._border),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(18),
@@ -414,11 +404,7 @@ class _LiveIndicator extends StatelessWidget {
       child: const Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            Icons.circle,
-            color: Color(0xFFFF416C),
-            size: 9,
-          ),
+          Icon(Icons.circle, color: Color(0xFFFF416C), size: 9),
           SizedBox(width: 7),
           Text(
             'LIVE',
@@ -479,11 +465,7 @@ class _CategorySelector extends StatelessWidget {
                 ),
                 child: Row(
                   children: [
-                    Icon(
-                      category.icon,
-                      color: Colors.white,
-                      size: 17,
-                    ),
+                    Icon(category.icon, color: Colors.white, size: 17),
                     const SizedBox(width: 7),
                     Text(
                       category.label,
@@ -505,10 +487,7 @@ class _CategorySelector extends StatelessWidget {
 }
 
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({
-    required this.title,
-    required this.subtitle,
-  });
+  const _SectionHeader({required this.title, required this.subtitle});
 
   final String title;
   final String subtitle;
@@ -595,9 +574,7 @@ class _DiscoverRoomCard extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: color.withValues(alpha: 0.17),
                       borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: color.withValues(alpha: 0.7),
-                      ),
+                      border: Border.all(color: color.withValues(alpha: 0.7)),
                     ),
                     child: Icon(icon, color: color, size: 28),
                   ),
@@ -772,10 +749,7 @@ class _DiscoverRoomCard extends StatelessWidget {
 }
 
 class _RoomTag extends StatelessWidget {
-  const _RoomTag({
-    required this.icon,
-    required this.label,
-  });
+  const _RoomTag({required this.icon, required this.label});
 
   final IconData icon;
   final String label;
@@ -791,11 +765,7 @@ class _RoomTag extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            icon,
-            color: _DiscoverScreenState._secondaryText,
-            size: 13,
-          ),
+          Icon(icon, color: _DiscoverScreenState._secondaryText, size: 13),
           const SizedBox(width: 5),
           Text(
             label,
@@ -830,10 +800,7 @@ class _DiscoverLoadingState extends StatelessWidget {
 }
 
 class _DiscoverEmptyState extends StatelessWidget {
-  const _DiscoverEmptyState({
-    required this.hasFilters,
-    required this.onClear,
-  });
+  const _DiscoverEmptyState({required this.hasFilters, required this.onClear});
 
   final bool hasFilters;
   final VoidCallback onClear;

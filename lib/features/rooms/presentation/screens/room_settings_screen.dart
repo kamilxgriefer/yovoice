@@ -11,10 +11,7 @@ const _primary = Color(0xFFA226FF);
 const _danger = Color(0xFFFF416C);
 
 class RoomSettingsScreen extends StatefulWidget {
-  const RoomSettingsScreen({
-    required this.room,
-    super.key,
-  });
+  const RoomSettingsScreen({required this.room, super.key});
 
   final VoiceRoom room;
 
@@ -84,9 +81,9 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString())),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
@@ -97,7 +94,8 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
       RoomStatus.closed => 'close',
       RoomStatus.archived => 'archive',
     };
-    final confirmed = await showDialog<bool>(
+    final confirmed =
+        await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
             backgroundColor: _surface,
@@ -109,8 +107,8 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
               status == RoomStatus.active
                   ? 'The room will be visible and usable again.'
                   : status == RoomStatus.closed
-                      ? 'Members will keep their membership, but voice and chat access can be paused until you reopen it.'
-                      : 'The room will be hidden from Discover until you restore it.',
+                  ? 'Members will keep their membership, but voice and chat access can be paused until you reopen it.'
+                  : 'The room will be hidden from Discover until you restore it.',
               style: const TextStyle(color: _muted),
             ),
             actions: [
@@ -135,15 +133,16 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString())),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
   Future<void> _delete() async {
     final confirmation = TextEditingController();
-    final confirmed = await showDialog<bool>(
+    final confirmed =
+        await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
             backgroundColor: _surface,
@@ -197,9 +196,9 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString())),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
@@ -309,8 +308,9 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
                   value: _maxParticipants?.toString() ?? 'Unlimited',
                   values: const ['10', '25', '50', '100', 'Unlimited'],
                   onChanged: (value) => setState(() {
-                    _maxParticipants =
-                        value == 'Unlimited' ? null : int.parse(value);
+                    _maxParticipants = value == 'Unlimited'
+                        ? null
+                        : int.parse(value);
                   }),
                 ),
                 SwitchListTile.adaptive(

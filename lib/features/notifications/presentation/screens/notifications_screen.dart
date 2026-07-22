@@ -370,10 +370,7 @@ class _FriendRequestCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _Avatar(
-            name: name,
-            photoUrl: request.senderPhotoUrl ?? '',
-          ),
+          _Avatar(name: name, photoUrl: request.senderPhotoUrl ?? ''),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -414,18 +411,12 @@ class _FriendRequestCard extends StatelessWidget {
             IconButton(
               tooltip: 'Decline',
               onPressed: onDecline,
-              icon: const Icon(
-                Icons.close_rounded,
-                color: Color(0xFFFF6F8E),
-              ),
+              icon: const Icon(Icons.close_rounded, color: Color(0xFFFF6F8E)),
             ),
             IconButton(
               tooltip: 'Accept',
               onPressed: onAccept,
-              icon: const Icon(
-                Icons.check_rounded,
-                color: Color(0xFF54DB8C),
-              ),
+              icon: const Icon(Icons.check_rounded, color: Color(0xFF54DB8C)),
             ),
           ],
         ],
@@ -519,10 +510,7 @@ class _UnreadMessageCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 4),
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: Color(0xFF766D82),
-              ),
+              const Icon(Icons.chevron_right_rounded, color: Color(0xFF766D82)),
             ],
           ),
         ),
@@ -558,7 +546,8 @@ class _Avatar extends StatelessWidget {
               ? Image.network(
                   photoUrl,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _AvatarInitial(initial: initial),
+                  errorBuilder: (_, __, ___) =>
+                      _AvatarInitial(initial: initial),
                 )
               : _AvatarInitial(initial: initial),
         ),
@@ -610,7 +599,9 @@ class _EmptyState extends StatelessWidget {
               width: 72,
               height: 72,
               decoration: BoxDecoration(
-                color: _NotificationsScreenState._primary.withValues(alpha: 0.15),
+                color: _NotificationsScreenState._primary.withValues(
+                  alpha: 0.15,
+                ),
                 borderRadius: BorderRadius.circular(22),
               ),
               child: Icon(

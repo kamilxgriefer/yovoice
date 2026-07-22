@@ -24,7 +24,6 @@ const _primary = Color(0xFFA226FF);
 const _danger = Color(0xFFFF416C);
 
 class _RoomScreenState extends State<RoomScreen> {
-
   final _service = RoomService();
   final _message = TextEditingController();
 
@@ -51,7 +50,8 @@ class _RoomScreenState extends State<RoomScreen> {
   Future<void> _leave(VoiceRoom room) async {
     if (_isLeaving) return;
 
-    final confirmed = await showDialog<bool>(
+    final confirmed =
+        await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
             backgroundColor: _surface,
@@ -89,9 +89,9 @@ class _RoomScreenState extends State<RoomScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _isLeaving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString())),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
@@ -247,18 +247,17 @@ class _RoomMain extends StatelessWidget {
                 builder: (context, snapshot) {
                   final participants =
                       snapshot.data ?? const <RoomParticipant>[];
-                  final speakers =
-                      participants.where((item) => item.isSpeaker).toList();
-                  final listeners =
-                      participants.where((item) => !item.isSpeaker).toList();
+                  final speakers = participants
+                      .where((item) => item.isSpeaker)
+                      .toList();
+                  final listeners = participants
+                      .where((item) => !item.isSpeaker)
+                      .toList();
 
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _SectionTitle(
-                        title: 'On stage',
-                        count: speakers.length,
-                      ),
+                      _SectionTitle(title: 'On stage', count: speakers.length),
                       const SizedBox(height: 12),
                       _PeopleGrid(people: speakers),
                       const SizedBox(height: 24),
@@ -295,9 +294,9 @@ class _RoomMain extends StatelessWidget {
                     await service.startCommunityVoice(room.id);
                   } catch (error) {
                     if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(error.toString())),
-                    );
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text(error.toString())));
                   }
                 },
                 onChat: onOpenChat,
@@ -311,9 +310,9 @@ class _RoomMain extends StatelessWidget {
                     await service.joinRoom(room.id);
                   } catch (error) {
                     if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(error.toString())),
-                    );
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text(error.toString())));
                   }
                 },
                 onChat: onOpenChat,
@@ -405,11 +404,7 @@ class _Hero extends StatelessWidget {
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            Color(0xFF2C0F44),
-            Color(0xFF171020),
-            Color(0xFF0D0A14),
-          ],
+          colors: [Color(0xFF2C0F44), Color(0xFF171020), Color(0xFF0D0A14)],
         ),
         borderRadius: BorderRadius.circular(26),
         border: Border.all(color: const Color(0xFF47295A)),
@@ -504,30 +499,20 @@ class _RoomDetails extends StatelessWidget {
             _Badge(
               label: room.isLive ? 'LIVE' : 'OFFLINE',
               icon: Icons.circle,
-              accent: room.isLive
-                  ? _danger
-                  : const Color(0xFF8E849A),
+              accent: room.isLive ? _danger : const Color(0xFF8E849A),
             ),
             _Badge(
               label: room.isPersistent ? 'COMMUNITY' : 'TEMPORARY',
-              icon: room.isPersistent
-                  ? Icons.hub_rounded
-                  : Icons.bolt_rounded,
+              icon: room.isPersistent ? Icons.hub_rounded : Icons.bolt_rounded,
             ),
-            _Badge(
-              label: room.language,
-              icon: Icons.language_rounded,
-            ),
+            _Badge(label: room.language, icon: Icons.language_rounded),
           ],
         ),
         if (room.description.trim().isNotEmpty) ...[
           const SizedBox(height: 14),
           Text(
             room.description,
-            style: const TextStyle(
-              color: Color(0xFFAAA1B6),
-              height: 1.4,
-            ),
+            style: const TextStyle(color: Color(0xFFAAA1B6), height: 1.4),
           ),
         ],
         const SizedBox(height: 14),
@@ -685,8 +670,8 @@ class _PeopleGrid extends StatelessWidget {
                           person.isHost
                               ? 'HOST'
                               : person.isSpeaker
-                                  ? 'SPEAKER'
-                                  : 'LISTENER',
+                              ? 'SPEAKER'
+                              : 'LISTENER',
                           style: TextStyle(
                             color: person.isHost
                                 ? _danger
@@ -796,7 +781,10 @@ class _JoinVoiceFooter extends StatelessWidget {
           const Expanded(
             child: Text(
               'A voice session is live now.',
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
           if (onChat != null)
@@ -834,7 +822,10 @@ class _RoomUnavailableFooter extends StatelessWidget {
               status == RoomStatus.archived
                   ? 'This room is archived.'
                   : 'This room is currently closed.',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
         ],
@@ -905,9 +896,7 @@ class _Controls extends StatelessWidget {
             onTap: onMute,
           ),
           _Control(
-            icon: handRaised
-                ? Icons.pan_tool_rounded
-                : Icons.pan_tool_outlined,
+            icon: handRaised ? Icons.pan_tool_rounded : Icons.pan_tool_outlined,
             label: handRaised ? 'Lower hand' : 'Raise hand',
             active: handRaised,
             onTap: onRaiseHand,
@@ -952,8 +941,8 @@ class _Control extends StatelessWidget {
     final color = danger
         ? _danger
         : active
-            ? const Color(0xFFA226FF)
-            : const Color(0xFF1C1627);
+        ? const Color(0xFFA226FF)
+        : const Color(0xFF1C1627);
 
     return InkWell(
       onTap: onTap,
@@ -1027,8 +1016,7 @@ class _ChatPanel extends StatelessWidget {
             child: StreamBuilder<List<RoomMessage>>(
               stream: service.watchRoomMessages(room.id),
               builder: (context, snapshot) {
-                final messages =
-                    snapshot.data ?? const <RoomMessage>[];
+                final messages = snapshot.data ?? const <RoomMessage>[];
 
                 if (messages.isEmpty) {
                   return const Center(
@@ -1116,16 +1104,12 @@ class _ChatPanel extends StatelessWidget {
                     decoration: InputDecoration(
                       counterText: '',
                       hintText: 'Type a message...',
-                      hintStyle: const TextStyle(
-                        color: Color(0xFF81778B),
-                      ),
+                      hintStyle: const TextStyle(color: Color(0xFF81778B)),
                       filled: true,
                       fillColor: const Color(0xFF1A1424),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(16),
-                        borderSide: const BorderSide(
-                          color: Color(0xFF392B47),
-                        ),
+                        borderSide: const BorderSide(color: Color(0xFF392B47)),
                       ),
                     ),
                   ),
@@ -1133,9 +1117,7 @@ class _ChatPanel extends StatelessWidget {
                 const SizedBox(width: 10),
                 IconButton.filled(
                   onPressed: onSend,
-                  style: IconButton.styleFrom(
-                    backgroundColor: _primary,
-                  ),
+                  style: IconButton.styleFrom(backgroundColor: _primary),
                   icon: const Icon(Icons.send_rounded),
                 ),
               ],

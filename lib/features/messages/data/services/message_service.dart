@@ -5,21 +5,16 @@ import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 
 class ChatPresence {
-  const ChatPresence({
-    required this.isOnline,
-    required this.lastSeen,
-  });
+  const ChatPresence({required this.isOnline, required this.lastSeen});
 
   final bool isOnline;
   final DateTime? lastSeen;
 }
 
 class MessageService {
-  MessageService({
-    FirebaseFirestore? firestore,
-    FirebaseAuth? auth,
-  })  : _firestore = firestore ?? FirebaseFirestore.instance,
-        _auth = auth ?? FirebaseAuth.instance;
+  MessageService({FirebaseFirestore? firestore, FirebaseAuth? auth})
+    : _firestore = firestore ?? FirebaseFirestore.instance,
+      _auth = auth ?? FirebaseAuth.instance;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
@@ -71,9 +66,8 @@ class MessageService {
         .limit(250)
         .snapshots()
         .map(
-          (snapshot) => snapshot.docs
-              .map(Message.fromFirestore)
-              .toList(growable: false),
+          (snapshot) =>
+              snapshot.docs.map(Message.fromFirestore).toList(growable: false),
         );
   }
 
@@ -113,17 +107,14 @@ class MessageService {
   }) async {
     final userId = _currentUserId;
 
-    await _conversations.doc(conversationId).set(
-      {
-        'typing': {
-          userId: {
-            'isTyping': isTyping,
-            'updatedAt': FieldValue.serverTimestamp(),
-          },
+    await _conversations.doc(conversationId).set({
+      'typing': {
+        userId: {
+          'isTyping': isTyping,
+          'updatedAt': FieldValue.serverTimestamp(),
         },
       },
-      SetOptions(merge: true),
-    );
+    }, SetOptions(merge: true));
   }
 
   Future<String> openOrCreateConversation({
@@ -142,10 +133,7 @@ class MessageService {
       throw ArgumentError('You cannot start a conversation with yourself.');
     }
 
-    final conversationId = buildConversationId(
-      currentUser.uid,
-      otherUserId,
-    );
+    final conversationId = buildConversationId(currentUser.uid, otherUserId);
     final reference = _conversations.doc(conversationId);
     final now = Timestamp.now();
 
@@ -178,10 +166,7 @@ class MessageService {
           currentUser.uid: currentUser.photoURL ?? '',
           otherUserId: otherPhotoUrl,
         },
-        'unreadCounts': {
-          currentUser.uid: 0,
-          otherUserId: 0,
-        },
+        'unreadCounts': {currentUser.uid: 0, otherUserId: 0},
         'typing': <String, dynamic>{},
         'archivedBy': <String>[],
         'mutedBy': <String>[],
@@ -231,8 +216,8 @@ class MessageService {
       'replyToContent': replyTo == null
           ? null
           : replyTo.isDeleted
-              ? 'Message deleted'
-              : replyTo.previewText(),
+          ? 'Message deleted'
+          : replyTo.previewText(),
     });
 
     batch.update(conversation, {
@@ -280,9 +265,7 @@ class MessageService {
     final lastMessage = conversation.data()?['lastMessage'] as String? ?? '';
 
     if (lastMessage == snapshot.data()?['content']) {
-      await conversation.reference.update({
-        'lastMessage': trimmed,
-      });
+      await conversation.reference.update({'lastMessage': trimmed});
     }
   }
 
@@ -302,13 +285,9 @@ class MessageService {
     );
 
     if (reactions[userId] == emoji) {
-      await reference.update({
-        'reactions.$userId': FieldValue.delete(),
-      });
+      await reference.update({'reactions.$userId': FieldValue.delete()});
     } else {
-      await reference.update({
-        'reactions.$userId': emoji,
-      });
+      await reference.update({'reactions.$userId': emoji});
     }
   }
 
@@ -322,9 +301,7 @@ class MessageService {
         .get();
     final batch = _firestore.batch();
 
-    batch.update(conversation, {
-      'unreadCounts.$currentUserId': 0,
-    });
+    batch.update(conversation, {'unreadCounts.$currentUserId': 0});
 
     for (final document in latest.docs) {
       final data = document.data();
@@ -404,9 +381,7 @@ class MessageService {
   static String _currentDisplayName(String? name, String? email) {
     final value = name?.trim() ?? '';
 
-    return value.isNotEmpty
-        ? value
-        : _displayNameFromEmail(email ?? '');
+    return value.isNotEmpty ? value : _displayNameFromEmail(email ?? '');
   }
 
   static String _displayNameFromEmail(String email) {

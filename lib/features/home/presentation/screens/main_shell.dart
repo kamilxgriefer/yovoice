@@ -46,8 +46,7 @@ class _MainShellState extends State<MainShell> {
     ProfileScreen(),
   ];
 
-  String get _currentUserId =>
-      FirebaseAuth.instance.currentUser?.uid ?? '';
+  String get _currentUserId => FirebaseAuth.instance.currentUser?.uid ?? '';
 
   @override
   void initState() {
@@ -80,8 +79,7 @@ class _MainShellState extends State<MainShell> {
     }
 
     final unreadConversations = conversations.where(
-      (conversation) =>
-          conversation.unreadCountFor(currentUserId) > 0,
+      (conversation) => conversation.unreadCountFor(currentUserId) > 0,
     );
 
     final newUnreadConversationCount = unreadConversations.length;
@@ -90,10 +88,8 @@ class _MainShellState extends State<MainShell> {
     int largestIncrease = 0;
 
     for (final conversation in conversations) {
-      final currentUnread =
-          conversation.unreadCountFor(currentUserId);
-      final previousUnread =
-          _previousUnreadCounts[conversation.id] ?? 0;
+      final currentUnread = conversation.unreadCountFor(currentUserId);
+      final previousUnread = _previousUnreadCounts[conversation.id] ?? 0;
       final increase = currentUnread - previousUnread;
 
       if (_hasInitialConversationSnapshot &&
@@ -112,12 +108,10 @@ class _MainShellState extends State<MainShell> {
         .toSet();
 
     _previousUnreadCounts.removeWhere(
-      (conversationId, _) =>
-          !activeConversationIds.contains(conversationId),
+      (conversationId, _) => !activeConversationIds.contains(conversationId),
     );
 
-    if (mounted &&
-        newUnreadConversationCount != _unreadConversationCount) {
+    if (mounted && newUnreadConversationCount != _unreadConversationCount) {
       setState(() {
         _unreadConversationCount = newUnreadConversationCount;
       });
@@ -126,10 +120,7 @@ class _MainShellState extends State<MainShell> {
     if (_hasInitialConversationSnapshot &&
         newestIncomingConversation != null &&
         _selectedIndex != 2) {
-      _showIncomingMessageOverlay(
-        newestIncomingConversation,
-        currentUserId,
-      );
+      _showIncomingMessageOverlay(newestIncomingConversation, currentUserId);
     }
 
     _hasInitialConversationSnapshot = true;
@@ -139,14 +130,10 @@ class _MainShellState extends State<MainShell> {
     Conversation conversation,
     String currentUserId,
   ) {
-    final otherUserId =
-        conversation.otherUserId(currentUserId);
-    final senderName =
-        conversation.displayNameFor(otherUserId);
-    final photoUrl =
-        conversation.photoUrlFor(otherUserId);
-    final preview =
-        conversation.previewFor(currentUserId);
+    final otherUserId = conversation.otherUserId(currentUserId);
+    final senderName = conversation.displayNameFor(otherUserId);
+    final photoUrl = conversation.photoUrlFor(otherUserId);
+    final preview = conversation.previewFor(currentUserId);
 
     _removeMessageOverlay();
 
@@ -154,8 +141,7 @@ class _MainShellState extends State<MainShell> {
 
     _messageOverlay = OverlayEntry(
       builder: (overlayContext) {
-        final topPadding =
-            MediaQuery.paddingOf(overlayContext).top;
+        final topPadding = MediaQuery.paddingOf(overlayContext).top;
 
         return Positioned(
           top: topPadding + 10,
@@ -170,10 +156,7 @@ class _MainShellState extends State<MainShell> {
               builder: (context, value, child) {
                 return Transform.translate(
                   offset: Offset(0, value * 90),
-                  child: Opacity(
-                    opacity: 1 + value,
-                    child: child,
-                  ),
+                  child: Opacity(opacity: 1 + value, child: child),
                 );
               },
               child: _IncomingMessageBanner(
@@ -242,14 +225,10 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _background,
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: _screens,
-      ),
+      body: IndexedStack(index: _selectedIndex, children: _screens),
       bottomNavigationBar: _BottomNavigation(
         selectedIndex: _selectedIndex,
-        unreadConversationCount:
-            _unreadConversationCount,
+        unreadConversationCount: _unreadConversationCount,
         onDestinationSelected: _onDestinationSelected,
         onVoicePressed: _openVoiceAction,
       ),
@@ -291,16 +270,11 @@ class _IncomingMessageBanner extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(12, 11, 8, 11),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: const Color(0xFF513065),
-            ),
+            border: Border.all(color: const Color(0xFF513065)),
             gradient: const LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [
-                Color(0xFF251432),
-                Color(0xFF17101F),
-              ],
+              colors: [Color(0xFF251432), Color(0xFF17101F)],
             ),
           ),
           child: Row(
@@ -311,8 +285,7 @@ class _IncomingMessageBanner extends StatelessWidget {
                   CircleAvatar(
                     radius: 23,
                     backgroundColor: const Color(0xFF7526B4),
-                    backgroundImage:
-                        hasPhoto ? NetworkImage(photoUrl) : null,
+                    backgroundImage: hasPhoto ? NetworkImage(photoUrl) : null,
                     child: hasPhoto
                         ? null
                         : Text(
@@ -419,8 +392,7 @@ class _BottomNavigation extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double safeBottom =
-        MediaQuery.paddingOf(context).bottom;
+    final double safeBottom = MediaQuery.paddingOf(context).bottom;
 
     return SizedBox(
       height: 104 + safeBottom,
@@ -437,10 +409,7 @@ class _BottomNavigation extends StatelessWidget {
               decoration: const BoxDecoration(
                 color: _MainShellState._navigationBackground,
                 border: Border(
-                  top: BorderSide(
-                    color: Color(0xFF2B2436),
-                    width: 1,
-                  ),
+                  top: BorderSide(color: Color(0xFF2B2436), width: 1),
                 ),
               ),
               child: Padding(
@@ -477,10 +446,8 @@ class _BottomNavigation extends StatelessWidget {
                     const SizedBox(width: 84),
                     Expanded(
                       child: _NavigationItem(
-                        icon:
-                            Icons.chat_bubble_outline_rounded,
-                        selectedIcon:
-                            Icons.chat_bubble_rounded,
+                        icon: Icons.chat_bubble_outline_rounded,
+                        selectedIcon: Icons.chat_bubble_rounded,
                         label: 'Chats',
                         badgeCount: unreadConversationCount,
                         isSelected: selectedIndex == 2,
@@ -507,9 +474,7 @@ class _BottomNavigation extends StatelessWidget {
           ),
           Positioned(
             top: 0,
-            child: _VoiceActionButton(
-              onPressed: onVoicePressed,
-            ),
+            child: _VoiceActionButton(onPressed: onVoicePressed),
           ),
         ],
       ),
@@ -536,9 +501,7 @@ class _NavigationItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color color = isSelected
-        ? Colors.white
-        : _MainShellState._inactive;
+    final Color color = isSelected ? Colors.white : _MainShellState._inactive;
 
     return Semantics(
       button: true,
@@ -553,10 +516,7 @@ class _NavigationItem extends StatelessWidget {
           borderRadius: BorderRadius.circular(18),
           child: SizedBox.expand(
             child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 2,
-                vertical: 5,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -564,8 +524,7 @@ class _NavigationItem extends StatelessWidget {
                     clipBehavior: Clip.none,
                     children: [
                       AnimatedContainer(
-                        duration:
-                            const Duration(milliseconds: 220),
+                        duration: const Duration(milliseconds: 220),
                         curve: Curves.easeOutCubic,
                         width: isSelected ? 52 : 42,
                         height: 34,
@@ -573,8 +532,7 @@ class _NavigationItem extends StatelessWidget {
                           color: isSelected
                               ? _MainShellState._primary
                               : Colors.transparent,
-                          borderRadius:
-                              BorderRadius.circular(18),
+                          borderRadius: BorderRadius.circular(18),
                           boxShadow: isSelected
                               ? const [
                                   BoxShadow(
@@ -601,16 +559,12 @@ class _NavigationItem extends StatelessWidget {
                               minHeight: 20,
                             ),
                             alignment: Alignment.center,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 5,
-                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 5),
                             decoration: BoxDecoration(
                               color: const Color(0xFFFF3F72),
-                              borderRadius:
-                                  BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(12),
                               border: Border.all(
-                                color: _MainShellState
-                                    ._navigationBackground,
+                                color: _MainShellState._navigationBackground,
                                 width: 2,
                               ),
                               boxShadow: const [
@@ -621,9 +575,7 @@ class _NavigationItem extends StatelessWidget {
                               ],
                             ),
                             child: Text(
-                              badgeCount > 99
-                                  ? '99+'
-                                  : '$badgeCount',
+                              badgeCount > 99 ? '99+' : '$badgeCount',
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 9,
@@ -696,9 +648,7 @@ class _VoiceActionButton extends StatelessWidget {
                 ),
               ],
             ),
-            child: const Center(
-              child: _WaveformIcon(),
-            ),
+            child: const Center(child: _WaveformIcon()),
           ),
         ),
       ),
@@ -756,41 +706,30 @@ class _VoiceActionSheet extends StatelessWidget {
 
     navigator.pop();
 
-    await Future<void>.delayed(
-      const Duration(milliseconds: 180),
-    );
+    await Future<void>.delayed(const Duration(milliseconds: 180));
 
     if (!navigator.mounted) {
       return;
     }
 
     await navigator.push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => const CreateRoomScreen(),
-      ),
+      MaterialPageRoute<void>(builder: (_) => const CreateRoomScreen()),
     );
   }
 
-  Future<void> _openVoiceMoment(
-    BuildContext context,
-  ) async {
+  Future<void> _openVoiceMoment(BuildContext context) async {
     final navigator = Navigator.of(context);
 
     navigator.pop();
 
-    await Future<void>.delayed(
-      const Duration(milliseconds: 180),
-    );
+    await Future<void>.delayed(const Duration(milliseconds: 180));
 
     if (!navigator.mounted) {
       return;
     }
 
     await navigator.push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) =>
-            const RecordVoiceMomentScreen(),
-      ),
+      MaterialPageRoute<void>(builder: (_) => const RecordVoiceMomentScreen()),
     );
   }
 
@@ -800,12 +739,8 @@ class _VoiceActionSheet extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
       decoration: const BoxDecoration(
         color: Color(0xFF151020),
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(30),
-        ),
-        border: Border(
-          top: BorderSide(color: Color(0xFF3A284A)),
-        ),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+        border: Border(top: BorderSide(color: Color(0xFF3A284A))),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -832,21 +767,14 @@ class _VoiceActionSheet extends StatelessWidget {
           const Text(
             'Choose what you want to create.',
             textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Color(0xFF9D95AD),
-              fontSize: 14,
-            ),
+            style: TextStyle(color: Color(0xFF9D95AD), fontSize: 14),
           ),
           const SizedBox(height: 24),
           _VoiceOption(
             icon: Icons.mic_rounded,
             title: 'Create Voice Moment',
-            subtitle:
-                'Record and share a short voice update',
-            colors: const [
-              Color(0xFF9F22FF),
-              Color(0xFF6A00FF),
-            ],
+            subtitle: 'Record and share a short voice update',
+            colors: const [Color(0xFF9F22FF), Color(0xFF6A00FF)],
             onPressed: () {
               _openVoiceMoment(context);
             },
@@ -855,12 +783,8 @@ class _VoiceActionSheet extends StatelessWidget {
           _VoiceOption(
             icon: Icons.groups_2_rounded,
             title: 'Start Voice Room',
-            subtitle:
-                'Open a live room and invite people',
-            colors: const [
-              Color(0xFFFF3E81),
-              Color(0xFF9C1DFF),
-            ],
+            subtitle: 'Open a live room and invite people',
+            colors: const [Color(0xFFFF3E81), Color(0xFF9C1DFF)],
             onPressed: () {
               _openCreateRoom(context);
             },
@@ -898,9 +822,7 @@ class _VoiceOption extends StatelessWidget {
           padding: const EdgeInsets.all(15),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: const Color(0xFF382A47),
-            ),
+            border: Border.all(color: const Color(0xFF382A47)),
           ),
           child: Row(
             children: [
@@ -915,17 +837,12 @@ class _VoiceOption extends StatelessWidget {
                   ),
                   borderRadius: BorderRadius.circular(17),
                 ),
-                child: Icon(
-                  icon,
-                  color: Colors.white,
-                  size: 27,
-                ),
+                child: Icon(icon, color: Colors.white, size: 27),
               ),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       title,
@@ -947,10 +864,7 @@ class _VoiceOption extends StatelessWidget {
                   ],
                 ),
               ),
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: Color(0xFF81768E),
-              ),
+              const Icon(Icons.chevron_right_rounded, color: Color(0xFF81768E)),
             ],
           ),
         ),

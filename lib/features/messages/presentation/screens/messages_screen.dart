@@ -26,8 +26,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
   final MessageService _messageService = MessageService();
   final FriendService _friendService = FriendService();
-  final TextEditingController _searchController =
-      TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
 
   late final Stream<List<Conversation>> _conversationsStream;
   late final Stream<List<FriendUser>> _friendsStream;
@@ -63,9 +62,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
     setState(() => _query = value);
   }
 
-  Future<void> _openConversation(
-    Conversation conversation,
-  ) async {
+  Future<void> _openConversation(Conversation conversation) async {
     final currentUserId = FirebaseAuth.instance.currentUser?.uid;
 
     if (currentUserId == null) {
@@ -97,8 +94,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
   Future<void> _startChat(FriendUser friend) async {
     try {
-      final conversationId =
-          await _messageService.openOrCreateConversation(
+      final conversationId = await _messageService.openOrCreateConversation(
         otherUserId: friend.id,
         otherDisplayName: friend.displayName,
         otherEmail: friend.email,
@@ -125,9 +121,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
         return;
       }
 
-      _showMessage(
-        error.toString().replaceFirst('Bad state: ', ''),
-      );
+      _showMessage(error.toString().replaceFirst('Bad state: ', ''));
     }
   }
 
@@ -148,9 +142,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
     );
   }
 
-  Future<void> _archiveConversation(
-    Conversation conversation,
-  ) async {
+  Future<void> _archiveConversation(Conversation conversation) async {
     try {
       await _messageService.archiveConversation(conversation.id);
       if (mounted) {
@@ -163,10 +155,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
     }
   }
 
-  Future<void> _toggleMute(
-    Conversation conversation,
-    bool isMuted,
-  ) async {
+  Future<void> _toggleMute(Conversation conversation, bool isMuted) async {
     try {
       await _messageService.setConversationMuted(
         conversationId: conversation.id,
@@ -175,9 +164,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
       if (mounted) {
         _showMessage(
-          isMuted
-              ? 'Notifications turned on.'
-              : 'Conversation muted.',
+          isMuted ? 'Notifications turned on.' : 'Conversation muted.',
         );
       }
     } catch (_) {
@@ -214,11 +201,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
           gradient: RadialGradient(
             center: Alignment(-.86, -.96),
             radius: 1.25,
-            colors: [
-              Color(0xFF28103F),
-              Color(0xFF100B1B),
-              _background,
-            ],
+            colors: [Color(0xFF28103F), Color(0xFF100B1B), _background],
             stops: [0, .38, 1],
           ),
         ),
@@ -247,8 +230,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                 child: StreamBuilder<List<Conversation>>(
                   stream: _conversationsStream,
                   builder: (context, snapshot) {
-                    if (snapshot.connectionState ==
-                            ConnectionState.waiting &&
+                    if (snapshot.connectionState == ConnectionState.waiting &&
                         !snapshot.hasData) {
                       return const Center(
                         child: CircularProgressIndicator(
@@ -272,36 +254,38 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
                     final allConversations =
                         snapshot.data ?? const <Conversation>[];
-                    final conversations = allConversations.where(
-                      (conversation) {
-                        final archived =
-                            conversation.isArchivedFor(currentUserId);
+                    final conversations = allConversations
+                        .where((conversation) {
+                          final archived = conversation.isArchivedFor(
+                            currentUserId,
+                          );
 
-                        if (_showArchived != archived) {
-                          return false;
-                        }
+                          if (_showArchived != archived) {
+                            return false;
+                          }
 
-                        if (_query.isEmpty) {
-                          return true;
-                        }
+                          if (_query.isEmpty) {
+                            return true;
+                          }
 
-                        final otherId =
-                            conversation.otherUserId(currentUserId);
-                        final name = conversation
-                            .displayNameFor(otherId)
-                            .toLowerCase();
-                        final email = conversation
-                            .emailFor(otherId)
-                            .toLowerCase();
-                        final preview = conversation
-                            .previewFor(currentUserId)
-                            .toLowerCase();
+                          final otherId = conversation.otherUserId(
+                            currentUserId,
+                          );
+                          final name = conversation
+                              .displayNameFor(otherId)
+                              .toLowerCase();
+                          final email = conversation
+                              .emailFor(otherId)
+                              .toLowerCase();
+                          final preview = conversation
+                              .previewFor(currentUserId)
+                              .toLowerCase();
 
-                        return name.contains(_query) ||
-                            email.contains(_query) ||
-                            preview.contains(_query);
-                      },
-                    ).toList(growable: false);
+                          return name.contains(_query) ||
+                              email.contains(_query) ||
+                              preview.contains(_query);
+                        })
+                        .toList(growable: false);
 
                     if (conversations.isEmpty) {
                       return _EmptyMessages(
@@ -312,30 +296,20 @@ class _MessagesScreenState extends State<MessagesScreen> {
                     }
 
                     return ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(
-                        14,
-                        4,
-                        14,
-                        118,
-                      ),
+                      padding: const EdgeInsets.fromLTRB(14, 4, 14, 118),
                       itemCount: conversations.length,
-                      separatorBuilder: (_, __) =>
-                          const SizedBox(height: 4),
+                      separatorBuilder: (_, __) => const SizedBox(height: 4),
                       itemBuilder: (context, index) {
                         final conversation = conversations[index];
-                        final muted =
-                            conversation.isMutedFor(currentUserId);
+                        final muted = conversation.isMutedFor(currentUserId);
 
                         return _ConversationTile(
                           conversation: conversation,
                           currentUserId: currentUserId,
                           muted: muted,
-                          onTap: () =>
-                              _openConversation(conversation),
-                          onArchive: () =>
-                              _archiveConversation(conversation),
-                          onToggleMute: () =>
-                              _toggleMute(conversation, muted),
+                          onTap: () => _openConversation(conversation),
+                          onArchive: () => _archiveConversation(conversation),
+                          onToggleMute: () => _toggleMute(conversation, muted),
                         );
                       },
                     );
@@ -356,8 +330,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
       return 'Firestore permission denied. Check your security rules.';
     }
 
-    if (message.contains('failed-precondition') ||
-        message.contains('index')) {
+    if (message.contains('failed-precondition') || message.contains('index')) {
       return 'Firestore needs an index for conversations.';
     }
 
@@ -409,9 +382,7 @@ class _MessagesHeader extends StatelessWidget {
             ),
           ),
           _HeaderButton(
-            icon: showArchived
-                ? Icons.inbox_rounded
-                : Icons.archive_outlined,
+            icon: showArchived ? Icons.inbox_rounded : Icons.archive_outlined,
             onTap: onToggleArchived,
           ),
           const SizedBox(width: 9),
@@ -454,15 +425,9 @@ class _HeaderButton extends StatelessWidget {
             borderRadius: BorderRadius.circular(15),
             border: highlighted
                 ? null
-                : Border.all(
-                    color: _MessagesScreenState._border,
-                  ),
+                : Border.all(color: _MessagesScreenState._border),
           ),
-          child: Icon(
-            icon,
-            color: Colors.white,
-            size: 21,
-          ),
+          child: Icon(icon, color: Colors.white, size: 21),
         ),
       ),
     );
@@ -481,9 +446,7 @@ class _SearchField extends StatelessWidget {
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         hintText: 'Search',
-        hintStyle: const TextStyle(
-          color: _MessagesScreenState._muted,
-        ),
+        hintStyle: const TextStyle(color: _MessagesScreenState._muted),
         prefixIcon: const Icon(
           Icons.search_rounded,
           color: _MessagesScreenState._muted,
@@ -509,21 +472,15 @@ class _SearchField extends StatelessWidget {
         contentPadding: const EdgeInsets.symmetric(vertical: 13),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(17),
-          borderSide: const BorderSide(
-            color: _MessagesScreenState._border,
-          ),
+          borderSide: const BorderSide(color: _MessagesScreenState._border),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(17),
-          borderSide: const BorderSide(
-            color: _MessagesScreenState._border,
-          ),
+          borderSide: const BorderSide(color: _MessagesScreenState._border),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(17),
-          borderSide: const BorderSide(
-            color: _MessagesScreenState._primary,
-          ),
+          borderSide: const BorderSide(color: _MessagesScreenState._primary),
         ),
       ),
     );
@@ -548,19 +505,16 @@ class _FriendsRow extends StatelessWidget {
       child: StreamBuilder<List<FriendUser>>(
         stream: friendsStream,
         builder: (context, snapshot) {
-          final friends =
-              snapshot.data ?? const <FriendUser>[];
+          final friends = snapshot.data ?? const <FriendUser>[];
 
           return ListView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 18),
             children: [
-              _FriendStory(
-                label: 'New',
-                icon: Icons.add_rounded,
-                onTap: onAdd,
-              ),
-              ...friends.take(12).map(
+              _FriendStory(label: 'New', icon: Icons.add_rounded, onTap: onAdd),
+              ...friends
+                  .take(12)
+                  .map(
                     (friend) => _FriendStory(
                       label: friend.displayName,
                       friend: friend,
@@ -617,26 +571,21 @@ class _FriendStory extends StatelessWidget {
                   ),
                   child: CircleAvatar(
                     radius: 27,
-                    backgroundColor:
-                        _MessagesScreenState._surface2,
+                    backgroundColor: _MessagesScreenState._surface2,
                     backgroundImage: hasPhoto
                         ? NetworkImage(user!.photoUrl!)
                         : null,
                     child: icon != null
-                        ? Icon(
-                            icon,
-                            color: Colors.white,
-                            size: 26,
-                          )
+                        ? Icon(icon, color: Colors.white, size: 26)
                         : hasPhoto
-                            ? null
-                            : Text(
-                                user?.initial ?? '?',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
+                        ? null
+                        : Text(
+                            user?.initial ?? '?',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
                   ),
                 ),
                 if (user?.isOnline == true)
@@ -664,10 +613,7 @@ class _FriendStory extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 11,
-              ),
+              style: const TextStyle(color: Colors.white70, fontSize: 11),
             ),
           ],
         ),
@@ -708,14 +654,9 @@ class _ConversationTile extends StatelessWidget {
         onLongPress: () => _showActions(context),
         borderRadius: BorderRadius.circular(18),
         child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 8,
-            vertical: 10,
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
           decoration: BoxDecoration(
-            color: unread > 0
-                ? const Color(0x141E8BFF)
-                : Colors.transparent,
+            color: unread > 0 ? const Color(0x141E8BFF) : Colors.transparent,
             borderRadius: BorderRadius.circular(18),
           ),
           child: Row(
@@ -796,9 +737,7 @@ class _ConversationTile extends StatelessWidget {
                               minHeight: 20,
                             ),
                             alignment: Alignment.center,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
                             decoration: const BoxDecoration(
                               color: _MessagesScreenState._primary,
                               shape: BoxShape.circle,
@@ -866,15 +805,7 @@ class _ConversationTile extends StatelessWidget {
     }
 
     if (difference.inDays < 7) {
-      const weekdays = [
-        'Mon',
-        'Tue',
-        'Wed',
-        'Thu',
-        'Fri',
-        'Sat',
-        'Sun',
-      ];
+      const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
       return weekdays[date.weekday - 1];
     }
 
@@ -914,9 +845,7 @@ class _ConversationAvatar extends StatelessWidget {
               child: photoUrl.trim().isNotEmpty
                   ? null
                   : Text(
-                      name.trim().isEmpty
-                          ? '?'
-                          : name.trim()[0].toUpperCase(),
+                      name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase(),
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w900,
@@ -969,9 +898,7 @@ class _ConversationActionsSheet extends StatelessWidget {
       ),
       decoration: const BoxDecoration(
         color: Color(0xFF15101E),
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(26),
-        ),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1000,10 +927,7 @@ class _ConversationActionsSheet extends StatelessWidget {
           ),
           ListTile(
             onTap: onArchive,
-            leading: const Icon(
-              Icons.archive_outlined,
-              color: Colors.white,
-            ),
+            leading: const Icon(Icons.archive_outlined, color: Colors.white),
             title: const Text(
               'Archive conversation',
               style: TextStyle(color: Colors.white),
@@ -1025,13 +949,11 @@ class _NewMessageSheet extends StatefulWidget {
   final ValueChanged<FriendUser> onFriendSelected;
 
   @override
-  State<_NewMessageSheet> createState() =>
-      _NewMessageSheetState();
+  State<_NewMessageSheet> createState() => _NewMessageSheetState();
 }
 
 class _NewMessageSheetState extends State<_NewMessageSheet> {
-  final TextEditingController _controller =
-      TextEditingController();
+  final TextEditingController _controller = TextEditingController();
 
   String _query = '';
 
@@ -1063,9 +985,7 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
         return Container(
           decoration: const BoxDecoration(
             color: Color(0xFF120D1A),
-            borderRadius: BorderRadius.vertical(
-              top: Radius.circular(28),
-            ),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
           ),
           child: Column(
             children: [
@@ -1102,23 +1022,21 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
                 child: StreamBuilder<List<FriendUser>>(
                   stream: widget.friendsStream,
                   builder: (context, snapshot) {
-                    final friends =
-                        snapshot.data ?? const <FriendUser>[];
-                    final filtered = friends.where((friend) {
-                      if (_query.isEmpty) {
-                        return true;
-                      }
+                    final friends = snapshot.data ?? const <FriendUser>[];
+                    final filtered = friends
+                        .where((friend) {
+                          if (_query.isEmpty) {
+                            return true;
+                          }
 
-                      return friend.displayName
-                              .toLowerCase()
-                              .contains(_query) ||
-                          friend.email
-                              .toLowerCase()
-                              .contains(_query);
-                    }).toList(growable: false);
+                          return friend.displayName.toLowerCase().contains(
+                                _query,
+                              ) ||
+                              friend.email.toLowerCase().contains(_query);
+                        })
+                        .toList(growable: false);
 
-                    if (snapshot.connectionState ==
-                            ConnectionState.waiting &&
+                    if (snapshot.connectionState == ConnectionState.waiting &&
                         friends.isEmpty) {
                       return const Center(
                         child: CircularProgressIndicator(
@@ -1131,47 +1049,32 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
                       return const Center(
                         child: Text(
                           'No friends found.',
-                          style: TextStyle(
-                            color: _MessagesScreenState._muted,
-                          ),
+                          style: TextStyle(color: _MessagesScreenState._muted),
                         ),
                       );
                     }
 
                     return ListView.builder(
                       controller: scrollController,
-                      padding: const EdgeInsets.fromLTRB(
-                        12,
-                        4,
-                        12,
-                        24,
-                      ),
+                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
                       itemCount: filtered.length,
                       itemBuilder: (context, index) {
                         final friend = filtered[index];
 
                         return ListTile(
-                          onTap: () =>
-                              widget.onFriendSelected(friend),
+                          onTap: () => widget.onFriendSelected(friend),
                           leading: Stack(
                             clipBehavior: Clip.none,
                             children: [
                               CircleAvatar(
                                 radius: 25,
-                                backgroundColor:
-                                    const Color(0xFF67259A),
+                                backgroundColor: const Color(0xFF67259A),
                                 backgroundImage:
-                                    friend.photoUrl?.trim().isNotEmpty ==
-                                            true
-                                        ? NetworkImage(
-                                            friend.photoUrl!,
-                                          )
-                                        : null,
-                                child: friend
-                                            .photoUrl
-                                            ?.trim()
-                                            .isNotEmpty ==
-                                        true
+                                    friend.photoUrl?.trim().isNotEmpty == true
+                                    ? NetworkImage(friend.photoUrl!)
+                                    : null,
+                                child:
+                                    friend.photoUrl?.trim().isNotEmpty == true
                                     ? null
                                     : Text(
                                         friend.initial,
@@ -1192,8 +1095,7 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
                                       color: const Color(0xFF20D66B),
                                       shape: BoxShape.circle,
                                       border: Border.all(
-                                        color:
-                                            const Color(0xFF120D1A),
+                                        color: const Color(0xFF120D1A),
                                         width: 3,
                                       ),
                                     ),
@@ -1209,9 +1111,7 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
                             ),
                           ),
                           subtitle: Text(
-                            friend.isOnline
-                                ? 'Active now'
-                                : friend.email,
+                            friend.isOnline ? 'Active now' : friend.email,
                             style: const TextStyle(
                               color: _MessagesScreenState._muted,
                             ),
@@ -1250,13 +1150,13 @@ class _EmptyMessages extends StatelessWidget {
     final title = hasSearch
         ? 'No matching chats'
         : archived
-            ? 'No archived chats'
-            : 'Your inbox is quiet';
+        ? 'No archived chats'
+        : 'Your inbox is quiet';
     final subtitle = hasSearch
         ? 'Try another name or message.'
         : archived
-            ? 'Archived conversations will appear here.'
-            : 'Start a private conversation with one of your friends.';
+        ? 'Archived conversations will appear here.'
+        : 'Start a private conversation with one of your friends.';
 
     return Center(
       child: Padding(
@@ -1269,10 +1169,7 @@ class _EmptyMessages extends StatelessWidget {
               height: 78,
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  colors: [
-                    Color(0xFFB82FFF),
-                    Color(0xFF6D19E7),
-                  ],
+                  colors: [Color(0xFFB82FFF), Color(0xFF6D19E7)],
                 ),
                 borderRadius: BorderRadius.circular(26),
               ),
@@ -1309,8 +1206,7 @@ class _EmptyMessages extends StatelessWidget {
               FilledButton.icon(
                 onPressed: onNewMessage,
                 style: FilledButton.styleFrom(
-                  backgroundColor:
-                      _MessagesScreenState._primary,
+                  backgroundColor: _MessagesScreenState._primary,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 20,

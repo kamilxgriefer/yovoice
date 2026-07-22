@@ -38,8 +38,9 @@ class RoomMessage {
       for (final entry in rawReactions.entries) {
         final value = entry.value;
         if (value is List) {
-          reactions[entry.key.toString()] =
-              value.whereType<String>().toList(growable: false);
+          reactions[entry.key.toString()] = value.whereType<String>().toList(
+            growable: false,
+          );
         }
       }
     }

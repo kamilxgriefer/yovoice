@@ -35,8 +35,9 @@ class MessageBubble extends StatelessWidget {
             bottom: reactionSummary.isEmpty ? 10 : 18,
           ),
           child: Column(
-            crossAxisAlignment:
-                isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            crossAxisAlignment: isMine
+                ? CrossAxisAlignment.end
+                : CrossAxisAlignment.start,
             children: [
               Stack(
                 clipBehavior: Clip.none,
@@ -51,10 +52,7 @@ class MessageBubble extends StatelessWidget {
                           ? const LinearGradient(
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
-                              colors: [
-                                Color(0xFFA72DFF),
-                                Color(0xFF7821E8),
-                              ],
+                              colors: [Color(0xFFA72DFF), Color(0xFF7821E8)],
                             )
                           : null,
                       color: isMine ? null : _surface,
@@ -115,10 +113,7 @@ class MessageBubble extends StatelessWidget {
                           borderRadius: BorderRadius.circular(14),
                           border: Border.all(color: _border),
                           boxShadow: const [
-                            BoxShadow(
-                              color: Color(0x44000000),
-                              blurRadius: 8,
-                            ),
+                            BoxShadow(color: Color(0x44000000), blurRadius: 8),
                           ],
                         ),
                         child: Text(
@@ -135,31 +130,21 @@ class MessageBubble extends StatelessWidget {
                 children: [
                   Text(
                     _formatTime(context, message.sentAt),
-                    style: const TextStyle(
-                      color: _muted,
-                      fontSize: 10,
-                    ),
+                    style: const TextStyle(color: _muted, fontSize: 10),
                   ),
                   if (message.editedAt != null) ...[
                     const SizedBox(width: 4),
                     const Text(
                       'edited',
-                      style: TextStyle(
-                        color: _muted,
-                        fontSize: 10,
-                      ),
+                      style: TextStyle(color: _muted, fontSize: 10),
                     ),
                   ],
                   if (isMine) ...[
                     const SizedBox(width: 5),
                     Icon(
-                      wasRead
-                          ? Icons.done_all_rounded
-                          : Icons.done_rounded,
+                      wasRead ? Icons.done_all_rounded : Icons.done_rounded,
                       size: 15,
-                      color: wasRead
-                          ? const Color(0xFFD276FF)
-                          : _muted,
+                      color: wasRead ? const Color(0xFFD276FF) : _muted,
                     ),
                   ],
                 ],
@@ -184,21 +169,16 @@ class MessageBubble extends StatelessWidget {
 
     return counts.entries
         .map(
-          (entry) => entry.value > 1
-              ? '${entry.key} ${entry.value}'
-              : entry.key,
+          (entry) =>
+              entry.value > 1 ? '${entry.key} ${entry.value}' : entry.key,
         )
         .join(' ');
   }
 
-  static String _formatTime(
-    BuildContext context,
-    DateTime dateTime,
-  ) {
+  static String _formatTime(BuildContext context, DateTime dateTime) {
     return MaterialLocalizations.of(context).formatTimeOfDay(
       TimeOfDay.fromDateTime(dateTime.toLocal()),
-      alwaysUse24HourFormat:
-          MediaQuery.alwaysUse24HourFormatOf(context),
+      alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
     );
   }
 }
@@ -214,11 +194,7 @@ class _MessageContent extends StatelessWidget {
       return const Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            Icons.block_rounded,
-            color: Colors.white54,
-            size: 16,
-          ),
+          Icon(Icons.block_rounded, color: Colors.white54, size: 16),
           SizedBox(width: 7),
           Text(
             'Message deleted',
@@ -262,11 +238,7 @@ class _VoiceMessageContent extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(
-          Icons.play_arrow_rounded,
-          color: Colors.white,
-          size: 27,
-        ),
+        const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 27),
         const SizedBox(width: 6),
         SizedBox(
           width: 126,
@@ -292,10 +264,7 @@ class _VoiceMessageContent extends StatelessWidget {
         const SizedBox(width: 8),
         Text(
           '${duration ~/ 60}:${(duration % 60).toString().padLeft(2, '0')}',
-          style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 11,
-          ),
+          style: const TextStyle(color: Colors.white70, fontSize: 11),
         ),
       ],
     );
@@ -315,15 +284,9 @@ class _ImageMessageContent extends StatelessWidget {
       return const Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            Icons.image_outlined,
-            color: Colors.white70,
-          ),
+          Icon(Icons.image_outlined, color: Colors.white70),
           SizedBox(width: 8),
-          Text(
-            'Photo',
-            style: TextStyle(color: Colors.white),
-          ),
+          Text('Photo', style: TextStyle(color: Colors.white)),
         ],
       );
     }
@@ -340,10 +303,7 @@ class _ImageMessageContent extends StatelessWidget {
             width: 210,
             height: 130,
             child: Center(
-              child: Icon(
-                Icons.broken_image_outlined,
-                color: Colors.white54,
-              ),
+              child: Icon(Icons.broken_image_outlined, color: Colors.white54),
             ),
           );
         },

@@ -6,12 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../models/friend_request.dart';
 import '../models/friend_user.dart';
 
-enum FriendRelationshipStatus {
-  none,
-  friends,
-  requestSent,
-  requestReceived,
-}
+enum FriendRelationshipStatus { none, friends, requestSent, requestReceived }
 
 class FriendService {
   FriendService({FirebaseFirestore? firestore, FirebaseAuth? auth})
@@ -59,9 +54,11 @@ class FriendService {
   Stream<List<FriendUser>> watchFriends() {
     final currentUserId = _currentUser.uid;
     final controller = StreamController<List<FriendUser>>();
-    final userSubscriptions = <String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>{};
+    final userSubscriptions =
+        <String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>{};
     final friendsById = <String, FriendUser>{};
-    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? friendshipSubscription;
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+    friendshipSubscription;
     var isClosed = false;
 
     void emit() {
@@ -91,42 +88,43 @@ class FriendService {
             .doc(currentUserId)
             .collection('friends')
             .snapshots()
-            .listen(
-              (snapshot) {
-                final friendIds = snapshot.docs.map((document) => document.id).toSet();
-                final removedIds = userSubscriptions.keys
-                    .where((friendId) => !friendIds.contains(friendId))
-                    .toList(growable: false);
+            .listen((snapshot) {
+              final friendIds = snapshot.docs
+                  .map((document) => document.id)
+                  .toSet();
+              final removedIds = userSubscriptions.keys
+                  .where((friendId) => !friendIds.contains(friendId))
+                  .toList(growable: false);
 
-                for (final friendId in removedIds) {
-                  userSubscriptions.remove(friendId)?.cancel();
-                  friendsById.remove(friendId);
+              for (final friendId in removedIds) {
+                userSubscriptions.remove(friendId)?.cancel();
+                friendsById.remove(friendId);
+              }
+
+              for (final friendId in friendIds) {
+                if (userSubscriptions.containsKey(friendId)) {
+                  continue;
                 }
 
-                for (final friendId in friendIds) {
-                  if (userSubscriptions.containsKey(friendId)) {
-                    continue;
-                  }
-
-                  userSubscriptions[friendId] = _users.doc(friendId).snapshots().listen(
-                    (userDocument) {
+                userSubscriptions[friendId] = _users
+                    .doc(friendId)
+                    .snapshots()
+                    .listen((userDocument) {
                       if (!userDocument.exists || userDocument.data() == null) {
                         friendsById.remove(friendId);
                         emit();
                         return;
                       }
 
-                      friendsById[friendId] = FriendUser.fromFirestore(userDocument);
+                      friendsById[friendId] = FriendUser.fromFirestore(
+                        userDocument,
+                      );
                       emit();
-                    },
-                    onError: controller.addError,
-                  );
-                }
+                    }, onError: controller.addError);
+              }
 
-                emit();
-              },
-              onError: controller.addError,
-            );
+              emit();
+            }, onError: controller.addError);
       } catch (error, stackTrace) {
         controller.addError(error, stackTrace);
       }
@@ -191,14 +189,17 @@ class FriendService {
 
     final snapshot = await _users.limit(100).get();
 
-    final results = snapshot.docs.map(FriendUser.fromFirestore).where((user) {
-      if (user.id == _currentUser.uid) {
-        return false;
-      }
+    final results = snapshot.docs
+        .map(FriendUser.fromFirestore)
+        .where((user) {
+          if (user.id == _currentUser.uid) {
+            return false;
+          }
 
-      return user.searchableDisplayName.contains(search) ||
-          user.searchableEmail.contains(search);
-    }).toList(growable: false);
+          return user.searchableDisplayName.contains(search) ||
+              user.searchableEmail.contains(search);
+        })
+        .toList(growable: false);
 
     results.sort(
       (first, second) => first.displayName.toLowerCase().compareTo(
@@ -252,14 +253,16 @@ class FriendService {
 
     final senderDocument = await _users.doc(sender.uid).get();
     final senderData = senderDocument.data() ?? const <String, dynamic>{};
-    final senderEmail = (senderData['email'] as String?)?.trim().isNotEmpty == true
+    final senderEmail =
+        (senderData['email'] as String?)?.trim().isNotEmpty == true
         ? (senderData['email'] as String).trim()
         : sender.email?.trim() ?? '';
     final senderName = _displayNameFromData(
       senderData,
       fallbackEmail: senderEmail,
     );
-    final senderPhotoUrl = _nullableString(senderData['photoUrl']) ?? sender.photoURL;
+    final senderPhotoUrl =
+        _nullableString(senderData['photoUrl']) ?? sender.photoURL;
 
     final myFriendReference = _users
         .doc(sender.uid)
@@ -301,7 +304,8 @@ class FriendService {
 
       if (snapshots[2].exists) {
         final receiverData = receiverDocument.data()!;
-        final receiverEmail = (receiverData['email'] as String?)?.trim() ?? receiver.email;
+        final receiverEmail =
+            (receiverData['email'] as String?)?.trim() ?? receiver.email;
         final receiverName = _displayNameFromData(
           receiverData,
           fallbackEmail: receiverEmail,
@@ -397,10 +401,12 @@ class FriendService {
 
       final myData = snapshots[1].data() ?? const <String, dynamic>{};
       final senderData = snapshots[2].data() ?? const <String, dynamic>{};
-      final myEmail = (myData['email'] as String?)?.trim() ?? me.email?.trim() ?? '';
+      final myEmail =
+          (myData['email'] as String?)?.trim() ?? me.email?.trim() ?? '';
       final myName = _displayNameFromData(myData, fallbackEmail: myEmail);
       final myPhotoUrl = _nullableString(myData['photoUrl']) ?? me.photoURL;
-      final senderEmail = (senderData['email'] as String?)?.trim().isNotEmpty == true
+      final senderEmail =
+          (senderData['email'] as String?)?.trim().isNotEmpty == true
           ? (senderData['email'] as String).trim()
           : request.senderEmail;
       final senderName = _displayNameFromData(
@@ -408,7 +414,8 @@ class FriendService {
         fallbackEmail: senderEmail,
         fallbackName: request.senderName,
       );
-      final senderPhotoUrl = _nullableString(senderData['photoUrl']) ?? request.senderPhotoUrl;
+      final senderPhotoUrl =
+          _nullableString(senderData['photoUrl']) ?? request.senderPhotoUrl;
       final now = FieldValue.serverTimestamp();
 
       transaction.set(myFriendReference, <String, dynamic>{
@@ -421,9 +428,7 @@ class FriendService {
       });
       transaction.delete(requestReference);
       transaction.delete(
-        senderDocumentReference
-            .collection('sentFriendRequests')
-            .doc(me.uid),
+        senderDocumentReference.collection('sentFriendRequests').doc(me.uid),
       );
 
       transaction.set(
@@ -452,10 +457,7 @@ class FriendService {
     final batch = _firestore.batch();
 
     batch.delete(
-      _users
-          .doc(receiverId)
-          .collection('friendRequests')
-          .doc(currentUserId),
+      _users.doc(receiverId).collection('friendRequests').doc(currentUserId),
     );
     batch.delete(
       _users
@@ -472,16 +474,10 @@ class FriendService {
     final batch = _firestore.batch();
 
     batch.delete(
-      _users
-          .doc(currentUserId)
-          .collection('friendRequests')
-          .doc(senderId),
+      _users.doc(currentUserId).collection('friendRequests').doc(senderId),
     );
     batch.delete(
-      _users
-          .doc(senderId)
-          .collection('sentFriendRequests')
-          .doc(currentUserId),
+      _users.doc(senderId).collection('sentFriendRequests').doc(currentUserId),
     );
 
     await batch.commit();
@@ -491,12 +487,8 @@ class FriendService {
     final currentUserId = _currentUser.uid;
     final batch = _firestore.batch();
 
-    batch.delete(
-      _users.doc(currentUserId).collection('friends').doc(friendId),
-    );
-    batch.delete(
-      _users.doc(friendId).collection('friends').doc(currentUserId),
-    );
+    batch.delete(_users.doc(currentUserId).collection('friends').doc(friendId));
+    batch.delete(_users.doc(friendId).collection('friends').doc(currentUserId));
     batch.delete(
       _users.doc(currentUserId).collection('friendCache').doc(friendId),
     );

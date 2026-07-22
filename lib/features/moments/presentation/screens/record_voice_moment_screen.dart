@@ -85,11 +85,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
           gradient: RadialGradient(
             center: Alignment(0, -0.8),
             radius: 1.1,
-            colors: [
-              Color(0xFF31104D),
-              Color(0xFF120B1B),
-              _background,
-            ],
+            colors: [Color(0xFF31104D), Color(0xFF120B1B), _background],
           ),
         ),
         child: SafeArea(
@@ -148,10 +144,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
                             const Text(
                               'A Voice Moment can be up to 60 seconds long.',
                               textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: _muted,
-                                fontSize: 14,
-                              ),
+                              style: TextStyle(color: _muted, fontSize: 14),
                             ),
                             const SizedBox(height: 38),
                             SizedBox(
@@ -163,12 +156,11 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
                                   final pattern = ((index * 17) % 48) + 18;
                                   final animated = _recording
                                       ? (pattern + ((_seconds + index) % 15))
-                                          .toDouble()
+                                            .toDouble()
                                       : pattern.toDouble();
 
                                   return AnimatedContainer(
-                                    duration:
-                                        const Duration(milliseconds: 240),
+                                    duration: const Duration(milliseconds: 240),
                                     width: 5,
                                     height: animated,
                                     margin: const EdgeInsets.symmetric(
@@ -218,10 +210,11 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
                                         : _primary,
                                     boxShadow: [
                                       BoxShadow(
-                                        color: (_recording
-                                                ? const Color(0xFFFF416C)
-                                                : _primary)
-                                            .withValues(alpha: .42),
+                                        color:
+                                            (_recording
+                                                    ? const Color(0xFFFF416C)
+                                                    : _primary)
+                                                .withValues(alpha: .42),
                                         blurRadius: 28,
                                         spreadRadius: 3,
                                       ),
@@ -241,15 +234,18 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
                             SizedBox(
                               width: double.infinity,
                               child: FilledButton.icon(
-                                onPressed:
-                                    _seconds == 0 ? null : _showEngineNotice,
+                                onPressed: _seconds == 0
+                                    ? null
+                                    : _showEngineNotice,
                                 style: FilledButton.styleFrom(
                                   backgroundColor: _primary,
-                                  disabledBackgroundColor:
-                                      const Color(0xFF2B2435),
+                                  disabledBackgroundColor: const Color(
+                                    0xFF2B2435,
+                                  ),
                                   foregroundColor: Colors.white,
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 16),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 16,
+                                  ),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(17),
                                   ),
@@ -257,9 +253,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
                                 icon: const Icon(Icons.arrow_forward_rounded),
                                 label: const Text(
                                   'Continue',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w900,
-                                  ),
+                                  style: TextStyle(fontWeight: FontWeight.w900),
                                 ),
                               ),
                             ),

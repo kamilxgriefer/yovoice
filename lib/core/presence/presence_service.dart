@@ -5,11 +5,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 class PresenceService {
-  PresenceService({
-    FirebaseAuth? auth,
-    FirebaseFirestore? firestore,
-  })  : _auth = auth ?? FirebaseAuth.instance,
-        _firestore = firestore ?? FirebaseFirestore.instance;
+  PresenceService({FirebaseAuth? auth, FirebaseFirestore? firestore})
+    : _auth = auth ?? FirebaseAuth.instance,
+      _firestore = firestore ?? FirebaseFirestore.instance;
 
   final FirebaseAuth _auth;
   final FirebaseFirestore _firestore;
@@ -43,10 +41,7 @@ class PresenceService {
 }
 
 class PresenceLifecycle extends StatefulWidget {
-  const PresenceLifecycle({
-    required this.child,
-    super.key,
-  });
+  const PresenceLifecycle({required this.child, super.key});
 
   final Widget child;
 
@@ -70,8 +65,9 @@ class _PresenceLifecycleState extends State<PresenceLifecycle>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    _authSubscription =
-        FirebaseAuth.instance.authStateChanges().listen(_handleAuthStateChanged);
+    _authSubscription = FirebaseAuth.instance.authStateChanges().listen(
+      _handleAuthStateChanged,
+    );
   }
 
   Future<void> _handleAuthStateChanged(User? user) async {

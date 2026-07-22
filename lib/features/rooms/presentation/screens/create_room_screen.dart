@@ -76,9 +76,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
       if (!mounted) return;
 
       await Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(
-          builder: (_) => RoomScreen(room: room),
-        ),
+        MaterialPageRoute<void>(builder: (_) => RoomScreen(room: room)),
       );
     } catch (error) {
       if (!mounted) return;
@@ -218,7 +216,14 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
             _Dropdown(
               label: 'Category',
               value: _category,
-              values: const ['talk', 'music', 'gaming', 'chill', 'study', 'business'],
+              values: const [
+                'talk',
+                'music',
+                'gaming',
+                'chill',
+                'study',
+                'business',
+              ],
               onChanged: (value) => setState(() => _category = value),
             ),
             const SizedBox(height: 14),
@@ -250,8 +255,9 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
               values: const ['10', '25', '50', '100', 'Unlimited'],
               onChanged: (value) {
                 setState(() {
-                  _maxParticipants =
-                      value == 'Unlimited' ? null : int.parse(value);
+                  _maxParticipants = value == 'Unlimited'
+                      ? null
+                      : int.parse(value);
                 });
               },
             ),
@@ -436,16 +442,11 @@ class _Dropdown extends StatelessWidget {
         labelStyle: const TextStyle(color: Color(0xFFB6AFC0)),
         filled: true,
         fillColor: const Color(0xFF151020),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(18)),
       ),
       items: values
           .map(
-            (item) => DropdownMenuItem<String>(
-              value: item,
-              child: Text(item),
-            ),
+            (item) => DropdownMenuItem<String>(value: item, child: Text(item)),
           )
           .toList(growable: false),
       onChanged: (item) {
