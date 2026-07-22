@@ -134,8 +134,10 @@ class _ProfileContent extends StatelessWidget {
                 onEdit: onEdit,
                 onAchievements: onAchievements,
                 onLogout: onLogout,
-              ),
-            ],
+                  ),
+                ],
+              );
+            },
           ),
         ),
       ],
@@ -220,11 +222,15 @@ class _Hero extends StatelessWidget {
           left: 20,
           right: 20,
           bottom: 18,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(4),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isCompact = constraints.maxWidth < 390;
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(4),
                 decoration: const BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: LinearGradient(
@@ -232,7 +238,7 @@ class _Hero extends StatelessWidget {
                   ),
                 ),
                 child: CircleAvatar(
-                  radius: 56,
+                  radius: isCompact ? 48 : 56,
                   backgroundColor: const Color(0xFF281133),
                   backgroundImage: avatar?.isNotEmpty == true
                       ? NetworkImage(avatar!)
@@ -251,8 +257,8 @@ class _Hero extends StatelessWidget {
                         ),
                 ),
               ),
-              const SizedBox(width: 17),
-              Expanded(
+                  SizedBox(width: isCompact ? 14 : 17),
+                  Expanded(
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 4),
                   child: Column(
@@ -262,9 +268,9 @@ class _Hero extends StatelessWidget {
                         profile.displayName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: Colors.white,
-                          fontSize: 29,
+                          fontSize: isCompact ? 25 : 29,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
@@ -305,47 +311,70 @@ class _StatsGrid extends StatelessWidget {
       ('Voice hours', profile.voiceMinutes ~/ 60, Icons.graphic_eq_rounded),
     ];
 
-    return GridView.builder(
-      itemCount: stats.length,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 310,
-        mainAxisExtent: 112,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-      ),
-      itemBuilder: (context, index) {
-        final stat = stats[index];
-        return _Panel(
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 23,
-                backgroundColor: const Color(0xFF32133E),
-                child: Icon(stat.$3, color: const Color(0xFFB63EFF)),
-              ),
-              const SizedBox(width: 13),
-              Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${stat.$2}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w900,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = constraints.maxWidth < 420;
+        final cardWidth = isCompact
+            ? (constraints.maxWidth - 12) / 2
+            : 230.0;
+
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: stats.map((stat) {
+            return SizedBox(
+              width: cardWidth,
+              height: isCompact ? 108 : 112,
+              child: _Panel(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isCompact ? 14 : 18,
+                  vertical: 16,
+                ),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: isCompact ? 21 : 23,
+                      backgroundColor: const Color(0xFF32133E),
+                      child: Icon(
+                        stat.$3,
+                        size: isCompact ? 22 : 24,
+                        color: const Color(0xFFB63EFF),
+                      ),
                     ),
-                  ),
-                  Text(
-                    stat.$1,
-                    style: const TextStyle(color: Color(0xFF9D92A7)),
-                  ),
-                ],
+                    SizedBox(width: isCompact ? 11 : 13),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${stat.$2}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: isCompact ? 22 : 24,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            stat.$1,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: const Color(0xFF9D92A7),
+                              fontSize: isCompact ? 12.5 : 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ],
-          ),
+            );
+          }).toList(growable: false),
         );
       },
     );
