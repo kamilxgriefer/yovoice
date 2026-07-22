@@ -30,9 +30,29 @@ service cloud.firestore {
           ).data.participantIds;
     }
 
+    function roomExists(roomId) {
+      return exists(
+        /databases/$(database)/documents/rooms/$(roomId)
+      );
+    }
+
+    function isRoomHost(roomId) {
+      return isSignedIn() &&
+          roomExists(roomId) &&
+          get(
+            /databases/$(database)/documents/rooms/$(roomId)
+          ).data.hostId == request.auth.uid;
+    }
+
     function isRoomParticipant(roomId) {
       return isSignedIn() && exists(
         /databases/$(database)/documents/rooms/$(roomId)/participants/$(request.auth.uid)
+      );
+    }
+
+    function isRoomMember(roomId) {
+      return isSignedIn() && exists(
+        /databases/$(database)/documents/rooms/$(roomId)/members/$(request.auth.uid)
       );
     }
 
@@ -43,20 +63,16 @@ service cloud.firestore {
 
       match /friendRequests/{senderId} {
         allow read: if isOwner(userId);
-
         allow create: if isSignedIn() &&
             request.auth.uid == senderId &&
             senderId != userId &&
             request.resource.data.senderId == senderId;
-
         allow update: if false;
-
         allow delete: if isOneOfUsers(userId, senderId);
       }
 
       match /friends/{friendId} {
         allow read: if isOwner(userId);
-
         allow create, update, delete: if isOneOfUsers(userId, friendId) &&
             userId != friendId;
       }
@@ -79,10 +95,8 @@ service cloud.firestore {
 
       match /messages/{messageId} {
         allow read: if isConversationParticipant(conversationId);
-
         allow create: if isConversationParticipant(conversationId) &&
             request.resource.data.senderId == request.auth.uid;
-
         allow update, delete: if false;
       }
     }
@@ -96,30 +110,41 @@ service cloud.firestore {
       allow update: if isSignedIn() &&
           (
             resource.data.hostId == request.auth.uid ||
-            isRoomParticipant(roomId)
+            isRoomParticipant(roomId) ||
+            isRoomMember(roomId)
           );
 
-      allow delete: if isSignedIn() &&
-          resource.data.hostId == request.auth.uid;
+      allow delete: if isRoomHost(roomId);
 
       match /participants/{participantId} {
         allow read: if isSignedIn();
-
         allow create, update, delete: if isSignedIn() &&
             (
               request.auth.uid == participantId ||
-              get(
-                /databases/$(database)/documents/rooms/$(roomId)
-              ).data.hostId == request.auth.uid
+              isRoomHost(roomId)
+            );
+      }
+
+      match /members/{memberId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() &&
+            request.auth.uid == memberId;
+        allow update, delete: if isSignedIn() &&
+            (
+              request.auth.uid == memberId ||
+              isRoomHost(roomId)
             );
       }
 
       match /messages/{messageId} {
         allow read: if isSignedIn();
-
         allow create: if isSignedIn() &&
-            request.resource.data.senderId == request.auth.uid;
-
+            request.resource.data.senderId == request.auth.uid &&
+            (
+              isRoomParticipant(roomId) ||
+              isRoomMember(roomId) ||
+              isRoomHost(roomId)
+            );
         allow update, delete: if false;
       }
     }
