@@ -6,6 +6,8 @@ import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
+import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/calls/presentation/screens/voice_call_screen.dart';
 
 class RoomScreen extends StatefulWidget {
   const RoomScreen({required this.room, super.key});
@@ -84,6 +86,7 @@ class _RoomScreenState extends State<RoomScreen> {
     setState(() => _isLeaving = true);
 
     try {
+      await VoiceCallService.instance.disconnect();
       await _service.leaveRoom(room.id);
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
@@ -308,6 +311,16 @@ class _RoomMain extends StatelessWidget {
                 onJoin: () async {
                   try {
                     await service.joinRoom(room.id);
+                    if (!context.mounted) return;
+
+                    await Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => VoiceCallScreen(
+                          roomId: room.id,
+                          roomName: room.name,
+                        ),
+                      ),
+                    );
                   } catch (error) {
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(
