@@ -14,73 +14,179 @@ class TitleBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = _colors(achievement.rarity);
-    final rare = achievement.rarity.index >= AchievementRarity.epic.index;
+    final palette = _BadgePalette.forRarity(achievement.rarity);
+    final isHighRarity =
+        achievement.rarity.index >= AchievementRarity.epic.index;
+    final isMythic = achievement.rarity == AchievementRarity.mythic;
 
     final badge = Container(
+      constraints: const BoxConstraints(
+        minHeight: 34,
+      ),
       padding: EdgeInsets.symmetric(
-        horizontal: compact ? 10 : 14,
-        vertical: compact ? 5 : 7,
+        horizontal: compact ? 11 : 14,
+        vertical: compact ? 7 : 8,
       ),
       decoration: BoxDecoration(
-        gradient: LinearGradient(colors: colors),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: colors.last.withValues(alpha: .8)),
-        boxShadow: rare
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: palette.gradient,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: palette.border.withValues(alpha: .9),
+        ),
+        boxShadow: isHighRarity
             ? [
                 BoxShadow(
-                  color: colors.last.withValues(alpha: .34),
-                  blurRadius: achievement.rarity == AchievementRarity.mythic
-                      ? 24
-                      : 14,
-                  spreadRadius: 1,
+                  color: palette.glow.withValues(
+                    alpha: isMythic ? .40 : .26,
+                  ),
+                  blurRadius: isMythic ? 22 : 14,
+                  spreadRadius: isMythic ? 1 : 0,
                 ),
               ]
             : null,
       ),
-      child: Text(
-        achievement.title,
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: compact ? 11 : 13,
-          fontWeight: rare ? FontWeight.w900 : FontWeight.w700,
-          letterSpacing: rare ? .7 : .15,
-          fontStyle: achievement.rarity == AchievementRarity.mythic
-              ? FontStyle.italic
-              : FontStyle.normal,
-        ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isHighRarity) ...[
+            Icon(
+              isMythic
+                  ? Icons.auto_awesome_rounded
+                  : Icons.workspace_premium_rounded,
+              color: palette.foreground,
+              size: compact ? 14 : 16,
+            ),
+            const SizedBox(width: 6),
+          ],
+          Flexible(
+            child: Text(
+              achievement.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: palette.foreground,
+                fontSize: compact ? 12 : 13,
+                height: 1.15,
+                fontWeight:
+                    isHighRarity ? FontWeight.w900 : FontWeight.w800,
+                letterSpacing: isHighRarity ? .35 : .1,
+                fontStyle: isMythic
+                    ? FontStyle.italic
+                    : FontStyle.normal,
+              ),
+            ),
+          ),
+        ],
       ),
     );
 
-    if (achievement.rarity != AchievementRarity.mythic) return badge;
+    if (!isMythic) {
+      return badge;
+    }
 
-    return ShaderMask(
-      shaderCallback: (bounds) => const LinearGradient(
-        colors: [
-          Color(0xFFFFD76A),
-          Color(0xFFFF72E1),
-          Color(0xFF9A5CFF),
-          Color(0xFF52D9FF),
-        ],
-      ).createShader(bounds),
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: -1, end: 2),
+      duration: const Duration(milliseconds: 1800),
+      curve: Curves.easeInOut,
+      builder: (context, value, child) {
+        return ShaderMask(
+          blendMode: BlendMode.srcATop,
+          shaderCallback: (bounds) {
+            return LinearGradient(
+              begin: Alignment(value - 1, -1),
+              end: Alignment(value, 1),
+              colors: const [
+                Color(0xFFFF79DF),
+                Color(0xFFFFD76A),
+                Color(0xFF9A72FF),
+                Color(0xFF5CE1FF),
+                Color(0xFFFF79DF),
+              ],
+              stops: const [0, .25, .5, .75, 1],
+            ).createShader(bounds);
+          },
+          child: child,
+        );
+      },
       child: badge,
     );
   }
+}
 
-  List<Color> _colors(AchievementRarity rarity) {
+class _BadgePalette {
+  const _BadgePalette({
+    required this.gradient,
+    required this.border,
+    required this.glow,
+    required this.foreground,
+  });
+
+  final List<Color> gradient;
+  final Color border;
+  final Color glow;
+  final Color foreground;
+
+  static _BadgePalette forRarity(AchievementRarity rarity) {
     return switch (rarity) {
-      AchievementRarity.common => const [Color(0xFF30283B), Color(0xFF45384F)],
-      AchievementRarity.uncommon => const [
-        Color(0xFF144A39),
-        Color(0xFF1C7A59),
-      ],
-      AchievementRarity.rare => const [Color(0xFF173B6B), Color(0xFF276FD0)],
-      AchievementRarity.epic => const [Color(0xFF4F176B), Color(0xFFA226FF)],
-      AchievementRarity.legendary => const [
-        Color(0xFF8B3F0C),
-        Color(0xFFFF9D20),
-      ],
-      AchievementRarity.mythic => const [Color(0xFF5A145F), Color(0xFFC22DFF)],
+      AchievementRarity.common => const _BadgePalette(
+          gradient: [
+            Color(0xFF33283A),
+            Color(0xFF4A3A53),
+          ],
+          border: Color(0xFF65566D),
+          glow: Color(0xFF65566D),
+          foreground: Color(0xFFF1EAF4),
+        ),
+      AchievementRarity.uncommon => const _BadgePalette(
+          gradient: [
+            Color(0xFF124532),
+            Color(0xFF1B7656),
+          ],
+          border: Color(0xFF49C894),
+          glow: Color(0xFF49C894),
+          foreground: Color(0xFFE7FFF5),
+        ),
+      AchievementRarity.rare => const _BadgePalette(
+          gradient: [
+            Color(0xFF15355F),
+            Color(0xFF276FD0),
+          ],
+          border: Color(0xFF5FAAFF),
+          glow: Color(0xFF5FAAFF),
+          foreground: Color(0xFFF0F7FF),
+        ),
+      AchievementRarity.epic => const _BadgePalette(
+          gradient: [
+            Color(0xFF4D1767),
+            Color(0xFFA52BFF),
+          ],
+          border: Color(0xFFD07CFF),
+          glow: Color(0xFFC052FF),
+          foreground: Color(0xFFFFF4FF),
+        ),
+      AchievementRarity.legendary => const _BadgePalette(
+          gradient: [
+            Color(0xFF7D3A0D),
+            Color(0xFFFF9E24),
+          ],
+          border: Color(0xFFFFC566),
+          glow: Color(0xFFFFA52B),
+          foreground: Color(0xFFFFF8E8),
+        ),
+      AchievementRarity.mythic => const _BadgePalette(
+          gradient: [
+            Color(0xFF67156A),
+            Color(0xFF4B24C9),
+            Color(0xFFC52DFF),
+          ],
+          border: Color(0xFFFF77DF),
+          glow: Color(0xFFD84CFF),
+          foreground: Color(0xFFFFFFFF),
+        ),
     };
   }
 }
