@@ -5,6 +5,7 @@ import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
 
 class RoomScreen extends StatefulWidget {
   const RoomScreen({required this.room, super.key});
@@ -234,7 +235,7 @@ class _RoomMain extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _TopBar(room: room),
+        _TopBar(room: room, isOwner: room.hostId == uid),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.fromLTRB(22, 16, 22, 24),
@@ -276,13 +277,58 @@ class _RoomMain extends StatelessWidget {
             ],
           ),
         ),
-        _Controls(
-          isMuted: isMuted,
-          handRaised: handRaised,
-          onMute: onMute,
-          onRaiseHand: onRaiseHand,
-          onChat: onOpenChat,
-          onLeave: onLeave,
+        StreamBuilder<bool>(
+          stream: service.watchIsParticipant(room.id),
+          initialData: false,
+          builder: (context, snapshot) {
+            final isParticipant = snapshot.data ?? false;
+
+            if (!room.isActive) {
+              return _RoomUnavailableFooter(status: room.status);
+            }
+
+            if (!room.isLive) {
+              return _OfflineVoiceFooter(
+                isOwner: room.hostId == uid,
+                onStart: () async {
+                  try {
+                    await service.startCommunityVoice(room.id);
+                  } catch (error) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(error.toString())),
+                    );
+                  }
+                },
+                onChat: onOpenChat,
+              );
+            }
+
+            if (!isParticipant) {
+              return _JoinVoiceFooter(
+                onJoin: () async {
+                  try {
+                    await service.joinRoom(room.id);
+                  } catch (error) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(error.toString())),
+                    );
+                  }
+                },
+                onChat: onOpenChat,
+              );
+            }
+
+            return _Controls(
+              isMuted: isMuted,
+              handRaised: handRaised,
+              onMute: onMute,
+              onRaiseHand: onRaiseHand,
+              onChat: onOpenChat,
+              onLeave: onLeave,
+            );
+          },
         ),
       ],
     );
@@ -290,9 +336,10 @@ class _RoomMain extends StatelessWidget {
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.room});
+  const _TopBar({required this.room, required this.isOwner});
 
   final VoiceRoom room;
+  final bool isOwner;
 
   @override
   Widget build(BuildContext context) {
@@ -306,6 +353,7 @@ class _TopBar extends StatelessWidget {
       child: Row(
         children: [
           IconButton(
+            tooltip: 'Minimize room',
             onPressed: () => Navigator.of(context).pop(),
             icon: const Icon(
               Icons.keyboard_arrow_down_rounded,
@@ -324,7 +372,20 @@ class _TopBar extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 48),
+          if (isOwner)
+            IconButton(
+              tooltip: 'Room settings',
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => RoomSettingsScreen(room: room),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+            )
+          else
+            const SizedBox(width: 48),
         ],
       ),
     );
@@ -671,6 +732,135 @@ class _EmptyPeople extends StatelessWidget {
         textAlign: TextAlign.center,
         style: TextStyle(color: Color(0xFF9D95AD)),
       ),
+    );
+  }
+}
+
+class _OfflineVoiceFooter extends StatelessWidget {
+  const _OfflineVoiceFooter({
+    required this.isOwner,
+    required this.onStart,
+    required this.onChat,
+  });
+
+  final bool isOwner;
+  final VoidCallback onStart;
+  final VoidCallback? onChat;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FooterShell(
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              isOwner
+                  ? 'Your community is online. Start voice whenever you are ready.'
+                  : 'This community is available, but voice is currently offline.',
+              style: const TextStyle(color: _muted, height: 1.35),
+            ),
+          ),
+          if (onChat != null) ...[
+            const SizedBox(width: 10),
+            IconButton.filledTonal(
+              onPressed: onChat,
+              icon: const Icon(Icons.chat_bubble_rounded),
+            ),
+          ],
+          if (isOwner) ...[
+            const SizedBox(width: 10),
+            FilledButton.icon(
+              onPressed: onStart,
+              icon: const Icon(Icons.mic_rounded),
+              label: const Text('Start voice'),
+              style: FilledButton.styleFrom(backgroundColor: _primary),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _JoinVoiceFooter extends StatelessWidget {
+  const _JoinVoiceFooter({required this.onJoin, required this.onChat});
+
+  final VoidCallback onJoin;
+  final VoidCallback? onChat;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FooterShell(
+      child: Row(
+        children: [
+          const Expanded(
+            child: Text(
+              'A voice session is live now.',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+            ),
+          ),
+          if (onChat != null)
+            IconButton.filledTonal(
+              onPressed: onChat,
+              icon: const Icon(Icons.chat_bubble_rounded),
+            ),
+          const SizedBox(width: 10),
+          FilledButton.icon(
+            onPressed: onJoin,
+            icon: const Icon(Icons.login_rounded),
+            label: const Text('Join voice'),
+            style: FilledButton.styleFrom(backgroundColor: _primary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RoomUnavailableFooter extends StatelessWidget {
+  const _RoomUnavailableFooter({required this.status});
+
+  final RoomStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    return _FooterShell(
+      child: Row(
+        children: [
+          const Icon(Icons.lock_rounded, color: _danger),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              status == RoomStatus.archived
+                  ? 'This room is archived.'
+                  : 'This room is currently closed.',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FooterShell extends StatelessWidget {
+  const _FooterShell({required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        16,
+        14,
+        16,
+        14 + MediaQuery.paddingOf(context).bottom,
+      ),
+      decoration: const BoxDecoration(
+        color: Color(0xFF090612),
+        border: Border(top: BorderSide(color: _border)),
+      ),
+      child: child,
     );
   }
 }

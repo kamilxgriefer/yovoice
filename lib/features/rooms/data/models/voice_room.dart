@@ -9,6 +9,20 @@ enum RoomType {
   }
 }
 
+enum RoomStatus {
+  active,
+  closed,
+  archived;
+
+  static RoomStatus fromValue(Object? value) {
+    return switch (value) {
+      'closed' => RoomStatus.closed,
+      'archived' => RoomStatus.archived,
+      _ => RoomStatus.active,
+    };
+  }
+}
+
 class VoiceRoom {
   const VoiceRoom({
     required this.id,
@@ -25,7 +39,12 @@ class VoiceRoom {
     required this.memberCount,
     required this.isLive,
     required this.roomType,
+    required this.status,
     required this.imageUrl,
+    required this.approvalRequired,
+    required this.slowModeSeconds,
+    required this.autoMuteNewUsers,
+    required this.membersCanStartVoice,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -44,21 +63,26 @@ class VoiceRoom {
   final int memberCount;
   final bool isLive;
   final RoomType roomType;
+  final RoomStatus status;
   final String? imageUrl;
+  final bool approvalRequired;
+  final int slowModeSeconds;
+  final bool autoMuteNewUsers;
+  final bool membersCanStartVoice;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
   bool get isPersistent => roomType == RoomType.community;
+  bool get isActive => status == RoomStatus.active;
+  bool get isClosed => status == RoomStatus.closed;
+  bool get isArchived => status == RoomStatus.archived;
 
   factory VoiceRoom.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> document,
   ) {
     final data = document.data();
-
     if (data == null) {
-      throw StateError(
-        'Room document ${document.id} does not contain any data.',
-      );
+      throw StateError('Room document ${document.id} does not contain data.');
     }
 
     DateTime? readDate(Object? value) {
@@ -80,7 +104,12 @@ class VoiceRoom {
       memberCount: (data['memberCount'] as num?)?.toInt() ?? 0,
       isLive: data['isLive'] as bool? ?? false,
       roomType: RoomType.fromValue(data['roomType']),
+      status: RoomStatus.fromValue(data['status']),
       imageUrl: data['imageUrl'] as String?,
+      approvalRequired: data['approvalRequired'] as bool? ?? false,
+      slowModeSeconds: (data['slowModeSeconds'] as num?)?.toInt() ?? 0,
+      autoMuteNewUsers: data['autoMuteNewUsers'] as bool? ?? true,
+      membersCanStartVoice: data['membersCanStartVoice'] as bool? ?? false,
       createdAt: readDate(data['createdAt']),
       updatedAt: readDate(data['updatedAt']),
     );
@@ -101,7 +130,12 @@ class VoiceRoom {
       'memberCount': memberCount,
       'isLive': isLive,
       'roomType': roomType.name,
+      'status': status.name,
       'imageUrl': imageUrl,
+      'approvalRequired': approvalRequired,
+      'slowModeSeconds': slowModeSeconds,
+      'autoMuteNewUsers': autoMuteNewUsers,
+      'membersCanStartVoice': membersCanStartVoice,
       'createdAt': createdAt == null
           ? FieldValue.serverTimestamp()
           : Timestamp.fromDate(createdAt!),
