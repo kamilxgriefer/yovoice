@@ -15,7 +15,7 @@ import 'package:yovoice/features/notifications/presentation/screens/notification
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
-import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
+import 'package:yovoice/features/rooms/presentation/screens/room_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   static VoidCallback? openDiscoverTab;
@@ -74,7 +74,7 @@ class HomeScreen extends StatelessWidget {
       if (!context.mounted) return;
 
       await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: joined)),
+        MaterialPageRoute<void>(builder: (_) => RoomScreen(room: joined)),
       );
     } catch (error) {
       if (!context.mounted) return;

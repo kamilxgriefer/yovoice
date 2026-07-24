@@ -3,10 +3,9 @@ import 'package:cloud_functions/cloud_functions.dart';
 import '../models/voice_connection_info.dart';
 
 class VoiceTokenService {
-  VoiceTokenService({
-    FirebaseFunctions? functions,
-  }) : _functions =
-           functions ?? FirebaseFunctions.instanceFor(region: 'europe-west1');
+  VoiceTokenService({FirebaseFunctions? functions})
+    : _functions =
+          functions ?? FirebaseFunctions.instanceFor(region: 'europe-west1');
 
   final FirebaseFunctions _functions;
 

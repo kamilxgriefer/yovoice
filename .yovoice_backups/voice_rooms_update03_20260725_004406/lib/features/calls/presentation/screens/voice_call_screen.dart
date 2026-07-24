@@ -27,6 +27,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
 
   final List<_FloatingReaction> _reactions = [];
   Timer? _reactionTimer;
+  bool _handRaised = false;
 
   @override
   void initState() {
@@ -53,9 +54,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('You must be signed in.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You must be signed in.')),
+      );
       return;
     }
 
@@ -72,9 +73,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
     } catch (_) {
       if (!mounted) return;
       final message = _voice.errorMessage ?? 'Could not join voice chat.';
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
     }
   }
 
@@ -158,7 +159,9 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
               connected: _voice.isConnected,
               isMuted: _voice.isMuted,
               muteBusy: _voice.muteChangeInProgress,
+              handRaised: _handRaised,
               onMute: _voice.toggleMute,
+              onHand: () => setState(() => _handRaised = !_handRaised),
               onLeave: _leave,
             ),
           ],
@@ -228,11 +231,8 @@ class _TopBar extends StatelessWidget {
             ),
             child: Row(
               children: [
-                const Icon(
-                  Icons.people_alt_rounded,
-                  color: Colors.white,
-                  size: 17,
-                ),
+                const Icon(Icons.people_alt_rounded,
+                    color: Colors.white, size: 17),
                 const SizedBox(width: 6),
                 Text(
                   '$participantCount',
@@ -247,10 +247,8 @@ class _TopBar extends StatelessWidget {
           PopupMenuButton<String>(
             tooltip: 'Send reaction',
             color: const Color(0xFF171020),
-            icon: const Icon(
-              Icons.auto_awesome_rounded,
-              color: Color(0xFFC864FF),
-            ),
+            icon: const Icon(Icons.auto_awesome_rounded,
+                color: Color(0xFFC864FF)),
             onSelected: onReaction,
             itemBuilder: (_) => const [
               PopupMenuItem(value: '😂', child: Text('😂  Laugh')),
@@ -298,8 +296,7 @@ class _OrbitalStage extends StatelessWidget {
         final size = Size(constraints.maxWidth, constraints.maxHeight);
         final center = Offset(size.width / 2, size.height / 2);
         final compact = size.width < 600;
-        final coreSize =
-            math.min(size.width, size.height) * (compact ? .31 : .28);
+        final coreSize = math.min(size.width, size.height) * (compact ? .31 : .28);
 
         return ClipRect(
           child: Stack(
@@ -370,39 +367,35 @@ class _OrbitalStage extends StatelessWidget {
       return Positioned(
         left: x.clamp(4, size.width - avatarSize - 4).toDouble(),
         top: y.clamp(4, size.height - avatarSize - 38).toDouble(),
-        child: _OrbitingParticipant(participant: participant, size: avatarSize),
+        child: _OrbitingParticipant(
+          participant: participant,
+          size: avatarSize,
+        ),
       );
     });
   }
 
   List<Widget> _buildReactions(Size size, Offset center, double coreSize) {
-    return reactions
-        .map((reaction) {
-          final ageMs = DateTime.now()
-              .difference(reaction.createdAt)
-              .inMilliseconds;
-          final progress = (ageMs / 4000).clamp(0.0, 1.0);
-          final radius = coreSize * .7 + progress * coreSize * .9;
-          final angle = reaction.angle + progress * .9;
-          final x = center.dx + math.cos(angle) * radius - 20;
-          final y = center.dy + math.sin(angle) * radius - 20 - progress * 45;
+    return reactions.map((reaction) {
+      final ageMs = DateTime.now().difference(reaction.createdAt).inMilliseconds;
+      final progress = (ageMs / 4000).clamp(0.0, 1.0);
+      final radius = coreSize * .7 + progress * coreSize * .9;
+      final angle = reaction.angle + progress * .9;
+      final x = center.dx + math.cos(angle) * radius - 20;
+      final y = center.dy + math.sin(angle) * radius - 20 - progress * 45;
 
-          return Positioned(
-            left: x,
-            top: y,
-            child: Opacity(
-              opacity: 1 - progress,
-              child: Transform.scale(
-                scale: .8 + (1 - progress) * .35,
-                child: Text(
-                  reaction.emoji,
-                  style: const TextStyle(fontSize: 34),
-                ),
-              ),
-            ),
-          );
-        })
-        .toList(growable: false);
+      return Positioned(
+        left: x,
+        top: y,
+        child: Opacity(
+          opacity: 1 - progress,
+          child: Transform.scale(
+            scale: .8 + (1 - progress) * .35,
+            child: Text(reaction.emoji, style: const TextStyle(fontSize: 34)),
+          ),
+        ),
+      );
+    }).toList(growable: false);
   }
 }
 
@@ -447,9 +440,7 @@ class _VoiceEnergyCore extends StatelessWidget {
         ),
         boxShadow: [
           BoxShadow(
-            color: const Color(
-              0xFFB024FF,
-            ).withValues(alpha: .22 + energy * .35),
+            color: const Color(0xFFB024FF).withValues(alpha: .22 + energy * .35),
             blurRadius: 32 + energy * 44,
             spreadRadius: 3 + energy * 7,
           ),
@@ -483,10 +474,10 @@ class _VoiceEnergyCore extends StatelessWidget {
             Text(
               connected
                   ? energy > .65
-                        ? 'The room is on fire 🔥'
-                        : energy > .25
-                        ? 'The room is vibing ✨'
-                        : 'Listening for voices'
+                      ? 'The room is on fire 🔥'
+                      : energy > .25
+                          ? 'The room is vibing ✨'
+                          : 'Listening for voices'
                   : 'Connecting…',
               textAlign: TextAlign.center,
               style: const TextStyle(
@@ -503,7 +494,10 @@ class _VoiceEnergyCore extends StatelessWidget {
 }
 
 class _OrbitingParticipant extends StatelessWidget {
-  const _OrbitingParticipant({required this.participant, required this.size});
+  const _OrbitingParticipant({
+    required this.participant,
+    required this.size,
+  });
 
   final VoiceParticipantViewData participant;
   final double size;
@@ -562,9 +556,7 @@ class _OrbitingParticipant extends StatelessWidget {
               ),
               boxShadow: [
                 BoxShadow(
-                  color: aura.withValues(
-                    alpha: speaking ? .48 + level * .42 : .2,
-                  ),
+                  color: aura.withValues(alpha: speaking ? .48 + level * .42 : .2),
                   blurRadius: speaking ? 24 + level * 42 : 10,
                   spreadRadius: speaking ? 3 + level * 7 : 0,
                 ),
@@ -587,30 +579,16 @@ class _OrbitingParticipant extends StatelessWidget {
               child: Transform.rotate(
                 angle: math.sin(level * 20) * .04,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
                     color: const Color(0xE8A9001A),
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(color: const Color(0xFFFF3652)),
                     boxShadow: const [
-                      BoxShadow(
-                        color: Color(0xCCFF173F),
-                        blurRadius: 20,
-                        spreadRadius: 2,
-                      ),
+                      BoxShadow(color: Color(0xCCFF173F), blurRadius: 20, spreadRadius: 2),
                     ],
                   ),
-                  child: const Text(
-                    'ಠ益ಠ',
-                    style: TextStyle(
-                      fontSize: 20,
-                      color: Colors.white,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
+                  child: const Text('ಠ益ಠ', style: TextStyle(fontSize: 20, color: Colors.white, fontWeight: FontWeight.w900)),
                 ),
               ),
             ),
@@ -644,11 +622,7 @@ class _OrbitingParticipant extends StatelessWidget {
                       participant.isLocal ? 'You' : participant.displayName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                      ),
+                      style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900),
                     ),
                   ),
                   const SizedBox(width: 5),
@@ -656,14 +630,14 @@ class _OrbitingParticipant extends StatelessWidget {
                     participant.isMuted
                         ? Icons.mic_off_rounded
                         : speaking
-                        ? Icons.graphic_eq_rounded
-                        : Icons.mic_rounded,
+                            ? Icons.graphic_eq_rounded
+                            : Icons.mic_rounded,
                     size: 14,
                     color: participant.isMuted
                         ? const Color(0xFF8E8398)
                         : speaking
-                        ? aura
-                        : const Color(0xFFC5B8CF),
+                            ? aura
+                            : const Color(0xFFC5B8CF),
                   ),
                 ],
               ),
@@ -745,19 +719,24 @@ class _VoiceAuraPainter extends CustomPainter {
   }
 }
 
+
 class _VoiceControls extends StatelessWidget {
   const _VoiceControls({
     required this.connected,
     required this.isMuted,
     required this.muteBusy,
+    required this.handRaised,
     required this.onMute,
+    required this.onHand,
     required this.onLeave,
   });
 
   final bool connected;
   final bool isMuted;
   final bool muteBusy;
+  final bool handRaised;
   final Future<void> Function() onMute;
+  final VoidCallback onHand;
   final Future<void> Function() onLeave;
 
   @override
@@ -769,7 +748,9 @@ class _VoiceControls extends StatelessWidget {
         color: const Color(0xE8120B1C),
         borderRadius: BorderRadius.circular(28),
         border: Border.all(color: const Color(0xFF3B284A)),
-        boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 24)],
+        boxShadow: const [
+          BoxShadow(color: Color(0x66000000), blurRadius: 24),
+        ],
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -779,10 +760,16 @@ class _VoiceControls extends StatelessWidget {
             label: muteBusy
                 ? 'Changing…'
                 : isMuted
-                ? 'Unmute'
-                : 'Mute',
+                    ? 'Unmute'
+                    : 'Mute',
             emphasized: !isMuted,
             onTap: connected && !muteBusy ? () => onMute() : null,
+          ),
+          _RoundControl(
+            icon: handRaised ? Icons.pan_tool_rounded : Icons.pan_tool_outlined,
+            label: handRaised ? 'Hand raised' : 'Raise hand',
+            emphasized: handRaised,
+            onTap: onHand,
           ),
           _RoundControl(
             icon: Icons.call_end_rounded,
@@ -816,8 +803,8 @@ class _RoundControl extends StatelessWidget {
     final background = danger
         ? const Color(0xFFFF3D68)
         : emphasized
-        ? const Color(0xFF9F27FF)
-        : const Color(0xFF23172E);
+            ? const Color(0xFF9F27FF)
+            : const Color(0xFF23172E);
 
     return InkWell(
       onTap: onTap,
@@ -836,7 +823,10 @@ class _RoundControl extends StatelessWidget {
                 color: onTap == null ? const Color(0xFF241D29) : background,
                 boxShadow: emphasized
                     ? const [
-                        BoxShadow(color: Color(0x779F27FF), blurRadius: 20),
+                        BoxShadow(
+                          color: Color(0x779F27FF),
+                          blurRadius: 20,
+                        ),
                       ]
                     : null,
               ),
@@ -878,11 +868,8 @@ class _ConnectionError extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.cloud_off_rounded,
-              color: Color(0xFFFF5C7B),
-              size: 58,
-            ),
+            const Icon(Icons.cloud_off_rounded,
+                color: Color(0xFFFF5C7B), size: 58),
             const SizedBox(height: 14),
             const Text(
               'Could not connect to voice',
@@ -938,9 +925,9 @@ class _OrbitalBackgroundPainter extends CustomPainter {
       final orbitPaint = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = i == 0 ? 1.4 : .8
-        ..color = const Color(
-          0xFFB42FFF,
-        ).withValues(alpha: .22 - i * .025 + energy * .08);
+        ..color = const Color(0xFFB42FFF).withValues(
+          alpha: .22 - i * .025 + energy * .08,
+        );
       canvas.drawCircle(center, radius, orbitPaint);
     }
 
@@ -950,9 +937,10 @@ class _OrbitalBackgroundPainter extends CustomPainter {
       final radius = random.nextDouble() * maxRadius * 1.2;
       final point = center + Offset(math.cos(angle), math.sin(angle)) * radius;
       final star = Paint()
-        ..color =
-            (i % 4 == 0 ? const Color(0xFF4FA8FF) : const Color(0xFFC44DFF))
-                .withValues(alpha: .18 + random.nextDouble() * .5);
+        ..color = (i % 4 == 0
+                ? const Color(0xFF4FA8FF)
+                : const Color(0xFFC44DFF))
+            .withValues(alpha: .18 + random.nextDouble() * .5);
       canvas.drawCircle(point, .5 + random.nextDouble() * 1.4, star);
     }
   }

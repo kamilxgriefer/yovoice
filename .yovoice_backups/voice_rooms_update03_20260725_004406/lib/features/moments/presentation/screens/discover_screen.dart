@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
-import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
+import 'package:yovoice/features/rooms/presentation/screens/room_screen.dart';
 
 class DiscoverScreen extends StatefulWidget {
   const DiscoverScreen({super.key});
@@ -68,9 +68,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       }
 
       await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => RoomEntryScreen(room: joinedRoom),
-        ),
+        MaterialPageRoute<void>(builder: (_) => RoomScreen(room: joinedRoom)),
       );
     } catch (error) {
       if (!mounted) {

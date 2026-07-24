@@ -341,10 +341,8 @@ class _RoomMain extends StatelessWidget {
                 onJoin: () async {
                   await Navigator.of(context).push(
                     MaterialPageRoute<void>(
-                      builder: (_) => VoiceCallScreen(
-                        roomId: room.id,
-                        roomName: room.name,
-                      ),
+                      builder: (_) =>
+                          VoiceCallScreen(roomId: room.id, roomName: room.name),
                     ),
                   );
                 },
@@ -357,10 +355,7 @@ class _RoomMain extends StatelessWidget {
               handRaised: handRaised,
               onMute: () async {
                 await voice.toggleMute();
-                await service.setMuted(
-                  roomId: room.id,
-                  isMuted: voice.isMuted,
-                );
+                await service.setMuted(roomId: room.id, isMuted: voice.isMuted);
               },
               onRaiseHand: onRaiseHand,
               onChat: onOpenChat,

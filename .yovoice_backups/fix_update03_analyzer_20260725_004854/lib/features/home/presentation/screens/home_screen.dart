@@ -74,7 +74,7 @@ class HomeScreen extends StatelessWidget {
       if (!context.mounted) return;
 
       await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: joined)),
+        MaterialPageRoute<void>(builder: (_) => RoomScreen(room: joined)),
       );
     } catch (error) {
       if (!context.mounted) return;

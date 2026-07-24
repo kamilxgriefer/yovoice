@@ -223,8 +223,6 @@ class _MainShellState extends State<MainShell> {
 
   @override
   Widget build(BuildContext context) {
-    HomeScreen.openDiscoverTab = () => _onDestinationSelected(1);
-
     return Scaffold(
       backgroundColor: _background,
       body: IndexedStack(index: _selectedIndex, children: _screens),

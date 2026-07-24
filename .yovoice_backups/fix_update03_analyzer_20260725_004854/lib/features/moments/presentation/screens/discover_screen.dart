@@ -68,9 +68,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
       }
 
       await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => RoomEntryScreen(room: joinedRoom),
-        ),
+        MaterialPageRoute<void>(builder: (_) => RoomScreen(room: joinedRoom)),
       );
     } catch (error) {
       if (!mounted) {

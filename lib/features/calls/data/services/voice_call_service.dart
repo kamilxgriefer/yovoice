@@ -23,6 +23,7 @@ class VoiceCallService extends ChangeNotifier {
 
   Room? _room;
   EventsListener<RoomEvent>? _events;
+  Timer? _audioMeterTimer;
 
   VoiceCallStatus _status = VoiceCallStatus.disconnected;
   String? _roomId;
@@ -89,9 +90,7 @@ class VoiceCallService extends ChangeNotifier {
     result.sort((a, b) {
       if (a.isLocal != b.isLocal) return a.isLocal ? -1 : 1;
       if (a.isSpeaking != b.isSpeaking) return a.isSpeaking ? -1 : 1;
-      return a.displayName.toLowerCase().compareTo(
-            b.displayName.toLowerCase(),
-          );
+      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
     });
 
     return result;
@@ -123,10 +122,7 @@ class VoiceCallService extends ChangeNotifier {
       );
 
       final room = Room(
-        roomOptions: const RoomOptions(
-          adaptiveStream: true,
-          dynacast: true,
-        ),
+        roomOptions: const RoomOptions(adaptiveStream: true, dynacast: true),
       );
 
       _room = room;
@@ -157,6 +153,7 @@ class VoiceCallService extends ChangeNotifier {
 
       await localParticipant.setMicrophoneEnabled(true);
       _isMuted = false;
+      _startAudioMeter();
       _setStatus(VoiceCallStatus.connected);
     } catch (error) {
       _errorMessage = _friendlyError(error);
@@ -202,7 +199,17 @@ class VoiceCallService extends ChangeNotifier {
     await _disposeRoom();
   }
 
+  void _startAudioMeter() {
+    _audioMeterTimer?.cancel();
+    _audioMeterTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      if (_room == null || !isConnected) return;
+      notifyListeners();
+    });
+  }
+
   Future<void> _disposeRoom() async {
+    _audioMeterTimer?.cancel();
+    _audioMeterTimer = null;
     final room = _room;
     _room = null;
 
@@ -221,9 +228,7 @@ class VoiceCallService extends ChangeNotifier {
 
     final microphone = await Permission.microphone.request();
     if (!microphone.isGranted) {
-      throw StateError(
-        'Microphone permission is required to join voice chat.',
-      );
+      throw StateError('Microphone permission is required to join voice chat.');
     }
 
     if (defaultTargetPlatform == TargetPlatform.android) {
@@ -278,5 +283,5 @@ class VoiceParticipantViewData {
   final double audioLevel;
   final bool isMuted;
 
-  bool get isShouting => isSpeaking && audioLevel >= .72;
+  bool get isShouting => isSpeaking && audioLevel >= .58;
 }

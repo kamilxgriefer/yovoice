@@ -46,10 +46,8 @@ class _ActiveVoiceBarState extends State<ActiveVoiceBar> {
         onTap: () {
           Navigator.of(context).push(
             MaterialPageRoute<void>(
-              builder: (_) => VoiceCallScreen(
-                roomId: roomId,
-                roomName: roomName,
-              ),
+              builder: (_) =>
+                  VoiceCallScreen(roomId: roomId, roomName: roomName),
             ),
           );
         },
@@ -57,10 +55,7 @@ class _ActiveVoiceBarState extends State<ActiveVoiceBar> {
           top: false,
           bottom: false,
           child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 10,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             child: Row(
               children: [
                 Icon(
