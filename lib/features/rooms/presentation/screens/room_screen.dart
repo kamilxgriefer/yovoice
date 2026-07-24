@@ -332,10 +332,36 @@ class _RoomMain extends StatelessWidget {
               );
             }
 
+            final voice = VoiceCallService.instance;
+            final connectedToThisRoom =
+                voice.isConnected && voice.roomId == room.id;
+
+            if (!connectedToThisRoom) {
+              return _JoinVoiceFooter(
+                onJoin: () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => VoiceCallScreen(
+                        roomId: room.id,
+                        roomName: room.name,
+                      ),
+                    ),
+                  );
+                },
+                onChat: onOpenChat,
+              );
+            }
+
             return _Controls(
-              isMuted: isMuted,
+              isMuted: voice.isMuted,
               handRaised: handRaised,
-              onMute: onMute,
+              onMute: () async {
+                await voice.toggleMute();
+                await service.setMuted(
+                  roomId: room.id,
+                  isMuted: voice.isMuted,
+                );
+              },
               onRaiseHand: onRaiseHand,
               onChat: onOpenChat,
               onLeave: onLeave,

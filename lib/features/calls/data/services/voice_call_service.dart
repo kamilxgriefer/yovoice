@@ -29,24 +29,33 @@ class VoiceCallService extends ChangeNotifier {
   String? _roomName;
   String? _errorMessage;
   bool _isMuted = false;
+  bool _muteChangeInProgress = false;
 
   VoiceCallStatus get status => _status;
   String? get roomId => _roomId;
   String? get roomName => _roomName;
   String? get errorMessage => _errorMessage;
   bool get isMuted => _isMuted;
+  bool get muteChangeInProgress => _muteChangeInProgress;
   bool get isConnected => _status == VoiceCallStatus.connected;
   bool get isBusy =>
       _status == VoiceCallStatus.connecting ||
       _status == VoiceCallStatus.reconnecting;
 
+  double get roomEnergy {
+    final values = participants
+        .where((participant) => participant.isSpeaking)
+        .map((participant) => participant.audioLevel)
+        .toList(growable: false);
+
+    if (values.isEmpty) return 0;
+    final sum = values.fold<double>(0, (total, value) => total + value);
+    return (sum / values.length).clamp(0, 1).toDouble();
+  }
+
   List<VoiceParticipantViewData> get participants {
     final room = _room;
     if (room == null) return const [];
-
-    final activeIdentities = room.activeSpeakers
-        .map((participant) => participant.identity)
-        .toSet();
 
     final result = <VoiceParticipantViewData>[];
     final local = room.localParticipant;
@@ -57,7 +66,9 @@ class VoiceCallService extends ChangeNotifier {
           identity: local.identity,
           displayName: _displayName(local.name, local.identity),
           isLocal: true,
-          isSpeaking: activeIdentities.contains(local.identity),
+          isSpeaking: local.isSpeaking,
+          audioLevel: local.audioLevel.clamp(0, 1).toDouble(),
+          isMuted: _isMuted,
         ),
       );
     }
@@ -66,12 +77,11 @@ class VoiceCallService extends ChangeNotifier {
       result.add(
         VoiceParticipantViewData(
           identity: participant.identity,
-          displayName: _displayName(
-            participant.name,
-            participant.identity,
-          ),
+          displayName: _displayName(participant.name, participant.identity),
           isLocal: false,
-          isSpeaking: activeIdentities.contains(participant.identity),
+          isSpeaking: participant.isSpeaking,
+          audioLevel: participant.audioLevel.clamp(0, 1).toDouble(),
+          isMuted: false,
         ),
       );
     }
@@ -80,8 +90,8 @@ class VoiceCallService extends ChangeNotifier {
       if (a.isLocal != b.isLocal) return a.isLocal ? -1 : 1;
       if (a.isSpeaking != b.isSpeaking) return a.isSpeaking ? -1 : 1;
       return a.displayName.toLowerCase().compareTo(
-        b.displayName.toLowerCase(),
-      );
+            b.displayName.toLowerCase(),
+          );
     });
 
     return result;
@@ -98,12 +108,11 @@ class VoiceCallService extends ChangeNotifier {
       await disconnect();
     }
 
-    _setStatus(VoiceCallStatus.connecting);
     _roomId = roomId;
     _roomName = roomName;
     _errorMessage = null;
     _isMuted = false;
-    notifyListeners();
+    _setStatus(VoiceCallStatus.connecting);
 
     try {
       await _requestPermissions();
@@ -130,7 +139,7 @@ class VoiceCallService extends ChangeNotifier {
         ..on<RoomReconnectedEvent>((_) {
           _setStatus(VoiceCallStatus.connected);
         })
-        ..on<RoomDisconnectedEvent>((event) {
+        ..on<RoomDisconnectedEvent>((_) {
           _status = VoiceCallStatus.disconnected;
           _isMuted = false;
           notifyListeners();
@@ -147,6 +156,7 @@ class VoiceCallService extends ChangeNotifier {
       }
 
       await localParticipant.setMicrophoneEnabled(true);
+      _isMuted = false;
       _setStatus(VoiceCallStatus.connected);
     } catch (error) {
       _errorMessage = _friendlyError(error);
@@ -158,18 +168,33 @@ class VoiceCallService extends ChangeNotifier {
 
   Future<void> toggleMute() async {
     final localParticipant = _room?.localParticipant;
-    if (localParticipant == null || !isConnected) return;
+    if (localParticipant == null || !isConnected || _muteChangeInProgress) {
+      return;
+    }
 
-    final nextMuted = !_isMuted;
-    await localParticipant.setMicrophoneEnabled(!nextMuted);
-    _isMuted = nextMuted;
+    final previous = _isMuted;
+    final next = !previous;
+
+    _muteChangeInProgress = true;
+    _isMuted = next;
     notifyListeners();
+
+    try {
+      await localParticipant.setMicrophoneEnabled(!next);
+    } catch (_) {
+      _isMuted = previous;
+      rethrow;
+    } finally {
+      _muteChangeInProgress = false;
+      notifyListeners();
+    }
   }
 
   Future<void> disconnect() async {
     _status = VoiceCallStatus.disconnected;
     _errorMessage = null;
     _isMuted = false;
+    _muteChangeInProgress = false;
     _roomId = null;
     _roomName = null;
     notifyListeners();
@@ -242,10 +267,16 @@ class VoiceParticipantViewData {
     required this.displayName,
     required this.isLocal,
     required this.isSpeaking,
+    required this.audioLevel,
+    required this.isMuted,
   });
 
   final String identity;
   final String displayName;
   final bool isLocal;
   final bool isSpeaking;
+  final double audioLevel;
+  final bool isMuted;
+
+  bool get isShouting => isSpeaking && audioLevel >= .72;
 }
