@@ -145,14 +145,6 @@ class RoomService {
     });
   }
 
-  Future<VoiceRoom> getRoom(String roomId) async {
-    final document = await _rooms.doc(roomId).get();
-    if (!document.exists) {
-      throw StateError('The room no longer exists.');
-    }
-    return VoiceRoom.fromFirestore(document);
-  }
-
   Stream<bool> watchIsParticipant(String roomId) {
     return _rooms
         .doc(roomId)

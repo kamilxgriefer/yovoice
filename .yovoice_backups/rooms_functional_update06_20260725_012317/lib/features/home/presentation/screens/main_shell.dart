@@ -10,8 +10,6 @@ import 'package:yovoice/features/messages/presentation/screens/messages_screen.d
 import 'package:yovoice/features/moments/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
-import 'package:yovoice/features/rooms/data/services/room_service.dart';
-import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_screen.dart';
 
 class MainShell extends StatefulWidget {
@@ -28,8 +26,6 @@ class _MainShellState extends State<MainShell> {
   static const Color _inactive = Color(0xFF8B8299);
 
   final MessageService _messageService = MessageService();
-  final RoomService _roomService = RoomService();
-  bool _handledInitialRoomLink = false;
 
   late final Stream<List<Conversation>> _conversationsStream;
   StreamSubscription<List<Conversation>>? _conversationSubscription;
@@ -60,51 +56,12 @@ class _MainShellState extends State<MainShell> {
       includeArchived: true,
     );
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _openInitialRoomLink();
-    });
-
     _conversationSubscription = _conversationsStream.listen(
       _handleConversations,
       onError: (_) {
         // The Chats screen displays Firestore errors directly.
       },
     );
-  }
-
-  Future<void> _openInitialRoomLink() async {
-    if (_handledInitialRoomLink) {
-      return;
-    }
-    _handledInitialRoomLink = true;
-
-    final roomId = Uri.base.queryParameters['room']?.trim();
-    if (roomId == null || roomId.isEmpty) {
-      return;
-    }
-
-    try {
-      final room = await _roomService.getRoom(roomId);
-      if (!mounted || !room.isLive || !room.isActive) {
-        return;
-      }
-      final joined = await _roomService.joinRoom(roomId);
-      if (!mounted) {
-        return;
-      }
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: joined)),
-      );
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(error.toString().replaceFirst('Bad state: ', '')),
-        ),
-      );
-    }
   }
 
   @override

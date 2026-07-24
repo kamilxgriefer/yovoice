@@ -137,6 +137,7 @@ class _ProfileContent extends StatelessWidget {
               const SizedBox(height: 18),
               _SettingsCard(
                 onEdit: onEdit,
+                onAchievements: onAchievements,
                 onLogout: onLogout,
               ),
             ],
@@ -530,10 +531,12 @@ class _CommunityPreview extends StatelessWidget {
 class _SettingsCard extends StatelessWidget {
   const _SettingsCard({
     required this.onEdit,
+    required this.onAchievements,
     required this.onLogout,
   });
 
   final VoidCallback onEdit;
+  final VoidCallback onAchievements;
   final Future<void> Function() onLogout;
 
   @override
@@ -546,6 +549,11 @@ class _SettingsCard extends StatelessWidget {
             icon: Icons.edit_outlined,
             title: 'Edit profile',
             onTap: onEdit,
+          ),
+          _Option(
+            icon: Icons.workspace_premium_outlined,
+            title: 'Titles and achievements',
+            onTap: onAchievements,
           ),
           _Option(
             icon: Icons.notifications_outlined,
@@ -682,9 +690,6 @@ class _Option extends StatelessWidget {
       children: [
         ListTile(
           onTap: onTap,
-          minTileHeight: 66,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 18),
-          horizontalTitleGap: 14,
           leading: Icon(
             icon,
             color: danger ? const Color(0xFFFF6685) : const Color(0xFFB63EFF),
@@ -702,7 +707,7 @@ class _Option extends StatelessWidget {
           ),
         ),
         if (showDivider)
-          const Divider(height: 1, indent: 58, endIndent: 18, color: Color(0xFF302338)),
+          const Divider(height: 1, indent: 58, color: Color(0xFF302338)),
       ],
     );
   }

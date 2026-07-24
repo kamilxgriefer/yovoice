@@ -1133,34 +1133,22 @@ class _LiveRoomCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isPodcast = room.isPodcast;
-    final accent = isPodcast
-        ? const Color(0xFFFF3F8E)
-        : const Color(0xFFA226FF);
-    final typeLabel = isPodcast ? 'PODCAST' : 'COMMUNITY';
-    final typeIcon = isPodcast ? Icons.podcasts_rounded : Icons.groups_rounded;
-
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: () => HomeScreen.openRoom(context, room),
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(19),
         child: Container(
-          height: 180,
-          padding: const EdgeInsets.all(16),
+          height: 166,
+          padding: const EdgeInsets.all(15),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
+            gradient: const LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: isPodcast
-                  ? const [Color(0xFF42152C), Color(0xFF15101D)]
-                  : const [Color(0xFF32154B), Color(0xFF15101D)],
+              colors: [Color(0xFF29123D), Color(0xFF12101D)],
             ),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: accent.withValues(alpha: .72)),
-            boxShadow: [
-              BoxShadow(color: accent.withValues(alpha: .13), blurRadius: 24),
-            ],
+            borderRadius: BorderRadius.circular(19),
+            border: Border.all(color: HomeScreen.border),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1170,50 +1158,36 @@ class _LiveRoomCard extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 9,
-                      vertical: 6,
+                      vertical: 5,
                     ),
                     decoration: BoxDecoration(
-                      color: accent.withValues(alpha: .18),
+                      color: const Color(0xFFB71E4D),
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: accent.withValues(alpha: .75)),
                     ),
-                    child: Row(
-                      children: [
-                        Icon(typeIcon, color: accent, size: 15),
-                        const SizedBox(width: 6),
-                        Text(
-                          typeLabel,
-                          style: TextStyle(
-                            color: accent,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: .7,
-                          ),
-                        ),
-                      ],
+                    child: const Text(
+                      'LIVE',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
                   ),
                   const Spacer(),
-                  const Icon(Icons.circle, color: Color(0xFFFF416C), size: 8),
-                  const SizedBox(width: 5),
-                  const Text(
-                    'LIVE',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w900,
-                    ),
+                  Text(
+                    room.language,
+                    style: const TextStyle(color: Colors.white70, fontSize: 11),
                   ),
                 ],
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 13),
               Text(
                 room.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 18,
+                  fontSize: 17,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -1233,24 +1207,34 @@ class _LiveRoomCard extends StatelessWidget {
               const Spacer(),
               Row(
                 children: [
-                  Icon(
-                    isPodcast
-                        ? Icons.headphones_rounded
-                        : Icons.record_voice_over_rounded,
-                    color: accent,
-                    size: 17,
+                  const Icon(
+                    Icons.people_alt_rounded,
+                    color: Colors.white70,
+                    size: 16,
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    isPodcast
-                        ? '${room.participantCount} listening'
-                        : '${room.participantCount} talking',
+                    '${room.participantCount}/${room.maxParticipants ?? '∞'}',
                     style: const TextStyle(color: Colors.white70, fontSize: 11),
                   ),
                   const Spacer(),
-                  Text(
-                    room.language,
-                    style: const TextStyle(color: Colors.white70, fontSize: 11),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: HomeScreen.surface2,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      room.category,
+                      style: const TextStyle(
+                        color: Color(0xFFD5A1FF),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
                 ],
               ),

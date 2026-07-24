@@ -545,12 +545,8 @@ class _DiscoverRoomCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isPodcast = room.isPodcast;
-    final accent = isPodcast
-        ? const Color(0xFFFF3F8E)
-        : const Color(0xFFA226FF);
-    final icon = isPodcast ? Icons.podcasts_rounded : Icons.groups_rounded;
-    final typeLabel = isPodcast ? 'PODCAST ROOM' : 'COMMUNITY ROOM';
+    final color = _categoryColor(room.category);
+    final icon = _categoryIcon(room.category);
     final max = room.maxParticipants;
     final occupancy = max == null || max <= 0
         ? null
@@ -560,22 +556,13 @@ class _DiscoverRoomCard extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onPressed,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(22),
         child: Container(
           padding: const EdgeInsets.all(17),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: isPodcast
-                  ? const [Color(0xFF351225), Color(0xFF151020)]
-                  : const [Color(0xFF2C1540), Color(0xFF151020)],
-            ),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: accent.withValues(alpha: .68)),
-            boxShadow: [
-              BoxShadow(color: accent.withValues(alpha: .10), blurRadius: 22),
-            ],
+            color: _DiscoverScreenState._surface,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: _DiscoverScreenState._border),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -584,22 +571,22 @@ class _DiscoverRoomCard extends StatelessWidget {
                 clipBehavior: Clip.none,
                 children: [
                   Container(
-                    width: 64,
-                    height: 64,
+                    width: 58,
+                    height: 58,
                     decoration: BoxDecoration(
-                      color: accent.withValues(alpha: .18),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: accent.withValues(alpha: .80)),
+                      color: color.withValues(alpha: 0.17),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: color.withValues(alpha: 0.7)),
                     ),
-                    child: Icon(icon, color: accent, size: 31),
+                    child: Icon(icon, color: color, size: 28),
                   ),
                   if (rank <= 3)
                     Positioned(
                       left: -7,
                       top: -7,
                       child: Container(
-                        width: 24,
-                        height: 24,
+                        width: 23,
+                        height: 23,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
                           color: rank == 1
@@ -629,29 +616,6 @@ class _DiscoverRoomCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: accent.withValues(alpha: .15),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: accent.withValues(alpha: .55),
-                        ),
-                      ),
-                      child: Text(
-                        typeLabel,
-                        style: TextStyle(
-                          color: accent,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: .7,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
                     Row(
                       children: [
                         Expanded(
@@ -661,11 +625,12 @@ class _DiscoverRoomCard extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               color: Colors.white,
-                              fontSize: 17,
+                              fontSize: 16,
                               fontWeight: FontWeight.w900,
                             ),
                           ),
                         ),
+                        const SizedBox(width: 8),
                         const Icon(
                           Icons.circle,
                           color: Color(0xFFFF416C),
@@ -692,18 +657,17 @@ class _DiscoverRoomCard extends StatelessWidget {
                       runSpacing: 7,
                       children: [
                         _RoomTag(
-                          icon: isPodcast
-                              ? Icons.headphones_rounded
-                              : Icons.record_voice_over_rounded,
-                          label: isPodcast
-                              ? '${room.participantCount} listening'
-                              : '${room.participantCount} talking',
+                          icon: Icons.people_alt_rounded,
+                          label: '${room.participantCount} listening',
                         ),
                         _RoomTag(
                           icon: Icons.language_rounded,
                           label: room.language,
                         ),
-                        _RoomTag(icon: icon, label: room.category),
+                        _RoomTag(
+                          icon: icon,
+                          label: _categoryLabel(room.category),
+                        ),
                       ],
                     ),
                     if (occupancy != null) ...[
@@ -714,9 +678,9 @@ class _DiscoverRoomCard extends StatelessWidget {
                           value: occupancy,
                           minHeight: 4,
                           backgroundColor: _DiscoverScreenState._surfaceLight,
-                          color: occupancy >= .9
+                          color: occupancy >= 0.9
                               ? const Color(0xFFFF416C)
-                              : accent,
+                              : _DiscoverScreenState._primary,
                         ),
                       ),
                     ],
@@ -725,7 +689,7 @@ class _DiscoverRoomCard extends StatelessWidget {
               ),
               const SizedBox(width: 7),
               const Padding(
-                padding: EdgeInsets.only(top: 22),
+                padding: EdgeInsets.only(top: 17),
                 child: Icon(
                   Icons.chevron_right_rounded,
                   color: _DiscoverScreenState._secondaryText,
@@ -737,6 +701,52 @@ class _DiscoverRoomCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  static String _categoryLabel(String category) {
+    if (category.trim().isEmpty) {
+      return 'Talk';
+    }
+
+    final value = category.trim();
+
+    return '${value[0].toUpperCase()}${value.substring(1).toLowerCase()}';
+  }
+
+  static IconData _categoryIcon(String category) {
+    switch (category.toLowerCase()) {
+      case 'music':
+        return Icons.music_note_rounded;
+      case 'gaming':
+        return Icons.sports_esports_rounded;
+      case 'chill':
+        return Icons.nightlife_rounded;
+      case 'study':
+        return Icons.school_rounded;
+      case 'business':
+        return Icons.work_rounded;
+      case 'talk':
+      default:
+        return Icons.record_voice_over_rounded;
+    }
+  }
+
+  static Color _categoryColor(String category) {
+    switch (category.toLowerCase()) {
+      case 'music':
+        return const Color(0xFFFF4C68);
+      case 'gaming':
+        return const Color(0xFF6682FF);
+      case 'chill':
+        return const Color(0xFF3ED0A7);
+      case 'study':
+        return const Color(0xFFFFB04B);
+      case 'business':
+        return const Color(0xFF4CAEFF);
+      case 'talk':
+      default:
+        return const Color(0xFFB348FF);
+    }
   }
 }
 

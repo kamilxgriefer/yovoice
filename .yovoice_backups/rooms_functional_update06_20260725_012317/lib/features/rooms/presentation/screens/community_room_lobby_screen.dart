@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/calls/presentation/screens/voice_call_screen.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
@@ -27,10 +25,6 @@ class _CommunityRoomLobbyScreenState extends State<CommunityRoomLobbyScreen> {
 
   final RoomService _rooms = RoomService();
   bool _joining = false;
-  bool _closing = false;
-
-  bool get _isHost =>
-      FirebaseAuth.instance.currentUser?.uid == widget.room.hostId;
 
   Future<void> _joinVoice() async {
     if (_joining) return;
@@ -58,71 +52,6 @@ class _CommunityRoomLobbyScreenState extends State<CommunityRoomLobbyScreen> {
     }
   }
 
-  Future<void> _shareRoom() async {
-    final uri = Uri.https('yovoice.app', '/', {'room': widget.room.id});
-    await SharePlus.instance.share(
-      ShareParams(
-        title: 'Join ${widget.room.name} on YoVoice',
-        subject: 'YoVoice room invitation',
-        text: 'Join "${widget.room.name}" on YoVoice.\n\n$uri',
-      ),
-    );
-  }
-
-  Future<void> _closeRoom() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor: _surface,
-          title: const Text(
-            'Close this room?',
-            style: TextStyle(color: Colors.white),
-          ),
-          content: const Text(
-            'The live session will end for everyone and the room will disappear from Home and Discover.',
-            style: TextStyle(color: _muted),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              style: FilledButton.styleFrom(backgroundColor: Color(0xFFFF416C)),
-              child: const Text('Close room'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (confirmed != true || _closing) {
-      return;
-    }
-
-    setState(() => _closing = true);
-    try {
-      await _rooms.setRoomStatus(widget.room.id, RoomStatus.closed);
-      if (!mounted) {
-        return;
-      }
-      Navigator.of(context).popUntil((route) => route.isFirst);
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
-    } finally {
-      if (mounted) {
-        setState(() => _closing = false);
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -144,13 +73,7 @@ class _CommunityRoomLobbyScreenState extends State<CommunityRoomLobbyScreen> {
 
               return Column(
                 children: [
-                  _TopBar(
-                    roomName: widget.room.name,
-                    isHost: _isHost,
-                    closing: _closing,
-                    onShare: _shareRoom,
-                    onClose: _closeRoom,
-                  ),
+                  _TopBar(roomName: widget.room.name),
                   Expanded(
                     child: ListView(
                       padding: const EdgeInsets.fromLTRB(18, 12, 18, 26),
@@ -188,19 +111,9 @@ class _CommunityRoomLobbyScreenState extends State<CommunityRoomLobbyScreen> {
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({
-    required this.roomName,
-    required this.isHost,
-    required this.closing,
-    required this.onShare,
-    required this.onClose,
-  });
+  const _TopBar({required this.roomName});
 
   final String roomName;
-  final bool isHost;
-  final bool closing;
-  final VoidCallback onShare;
-  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -240,35 +153,11 @@ class _TopBar extends StatelessWidget {
               ],
             ),
           ),
-          IconButton.filled(
-            onPressed: onShare,
-            style: IconButton.styleFrom(
-              backgroundColor: _CommunityRoomLobbyScreenState._primary,
-              foregroundColor: Colors.white,
-            ),
+          IconButton.filledTonal(
+            onPressed: () {},
             icon: const Icon(Icons.ios_share_rounded),
             tooltip: 'Share room',
           ),
-          if (isHost) ...[
-            const SizedBox(width: 6),
-            IconButton.filled(
-              onPressed: closing ? null : onClose,
-              style: IconButton.styleFrom(
-                backgroundColor: const Color(0xFFFF416C),
-                foregroundColor: Colors.white,
-              ),
-              icon: closing
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.stop_circle_rounded),
-              tooltip: 'Close room',
-            ),
-          ],
         ],
       ),
     );

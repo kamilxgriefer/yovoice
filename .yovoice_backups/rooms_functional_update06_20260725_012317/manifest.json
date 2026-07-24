@@ -1,0 +1,12 @@
+{
+  "created_at": "20260725_012317",
+  "project": "/Users/kamil/Documents/GitHub/yovoice",
+  "touched_files": [
+    "lib/features/home/presentation/screens/home_screen.dart",
+    "lib/features/home/presentation/screens/main_shell.dart",
+    "lib/features/moments/presentation/screens/discover_screen.dart",
+    "lib/features/rooms/data/services/room_service.dart",
+    "lib/features/rooms/presentation/screens/community_room_lobby_screen.dart",
+    "lib/features/rooms/presentation/screens/podcast_room_screen.dart"
+  ]
+}

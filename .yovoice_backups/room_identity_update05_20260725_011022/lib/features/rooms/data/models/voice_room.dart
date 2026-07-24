@@ -47,7 +47,6 @@ class VoiceRoom {
     required this.membersCanStartVoice,
     required this.createdAt,
     required this.updatedAt,
-    this.experience = 'community',
   });
 
   final String id;
@@ -72,10 +71,6 @@ class VoiceRoom {
   final bool membersCanStartVoice;
   final DateTime? createdAt;
   final DateTime? updatedAt;
-  final String experience;
-
-  bool get isPodcast => experience == 'podcast';
-  bool get isCommunityExperience => !isPodcast;
 
   bool get isPersistent => roomType == RoomType.community;
   bool get isActive => status == RoomStatus.active;
@@ -117,7 +112,6 @@ class VoiceRoom {
       membersCanStartVoice: data['membersCanStartVoice'] as bool? ?? false,
       createdAt: readDate(data['createdAt']),
       updatedAt: readDate(data['updatedAt']),
-      experience: data['experience'] as String? ?? 'community',
     );
   }
 
@@ -148,7 +142,6 @@ class VoiceRoom {
       'updatedAt': updatedAt == null
           ? FieldValue.serverTimestamp()
           : Timestamp.fromDate(updatedAt!),
-      'experience': experience,
     };
   }
 }

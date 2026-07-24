@@ -183,138 +183,115 @@ class _PodcastRoomScreenState extends State<PodcastRoomScreen>
     showModalBottomSheet<void>(
       context: context,
       useSafeArea: true,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) {
-        return FractionallySizedBox(
-          heightFactor: .76,
-          child: Material(
-            color: _surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-            clipBehavior: Clip.antiAlias,
-            child: SafeArea(
-              top: false,
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Host controls',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    ListTile(
-                      leading: const Icon(
-                        Icons.ios_share_rounded,
-                        color: _accent,
-                      ),
-                      title: const Text(
-                        'Share podcast',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      subtitle: const Text(
-                        'Invite people with a direct YoVoice link.',
-                        style: TextStyle(color: _muted),
-                      ),
-                      onTap: () {
-                        Navigator.of(context).pop();
-                        _shareRoom();
-                      },
-                    ),
-                    ListTile(
-                      leading: const Icon(
-                        Icons.person_add_alt_1_rounded,
-                        color: _accent,
-                      ),
-                      title: const Text(
-                        'Invite a speaker',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      subtitle: const Text(
-                        'Choose someone from raised hands.',
-                        style: TextStyle(color: _muted),
-                      ),
-                      onTap: () => Navigator.of(context).pop(),
-                    ),
-                    ListTile(
-                      leading: const Icon(
-                        Icons.pan_tool_rounded,
-                        color: _accent,
-                      ),
-                      title: const Text(
-                        'Manage raised hands',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      subtitle: const Text(
-                        'Requests are shown directly in the room.',
-                        style: TextStyle(color: _muted),
-                      ),
-                      onTap: () => Navigator.of(context).pop(),
-                    ),
-                    ListTile(
-                      leading: const Icon(
-                        Icons.settings_voice_rounded,
-                        color: _accent,
-                      ),
-                      title: const Text(
-                        'Stage management',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      subtitle: const Text(
-                        'Move speakers back to the audience.',
-                        style: TextStyle(color: _muted),
-                      ),
-                      onTap: () => Navigator.of(context).pop(),
-                    ),
-                    const Divider(color: _border),
-                    ListTile(
-                      leading: const Icon(
-                        Icons.stop_circle_rounded,
-                        color: Color(0xFFFF416C),
-                      ),
-                      title: const Text(
-                        'End podcast',
-                        style: TextStyle(
-                          color: Color(0xFFFF7895),
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      subtitle: const Text(
-                        'Close the live room for everyone.',
-                        style: TextStyle(color: _muted),
-                      ),
-                      onTap: _closing
-                          ? null
-                          : () {
-                              Navigator.of(context).pop();
-                              _closeRoom();
-                            },
-                    ),
-                  ],
-                ),
+      backgroundColor: _surface,
+      builder: (_) => Padding(
+        padding: const EdgeInsets.fromLTRB(18, 14, 18, 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Host controls',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
               ),
             ),
-          ),
-        );
-      },
+            const SizedBox(height: 16),
+            ListTile(
+              leading: const Icon(Icons.ios_share_rounded, color: _accent),
+              title: const Text(
+                'Share podcast',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              subtitle: const Text(
+                'Invite people with a direct YoVoice link.',
+                style: TextStyle(color: _muted),
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                _shareRoom();
+              },
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.person_add_alt_1_rounded,
+                color: _accent,
+              ),
+              title: const Text(
+                'Invite a speaker',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              subtitle: const Text(
+                'Choose someone from raised hands.',
+                style: TextStyle(color: _muted),
+              ),
+              onTap: () => Navigator.of(context).pop(),
+            ),
+            ListTile(
+              leading: const Icon(Icons.pan_tool_rounded, color: _accent),
+              title: const Text(
+                'Manage raised hands',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              subtitle: const Text(
+                'Requests are shown directly in the room.',
+                style: TextStyle(color: _muted),
+              ),
+              onTap: () => Navigator.of(context).pop(),
+            ),
+            ListTile(
+              leading: const Icon(Icons.settings_voice_rounded, color: _accent),
+              title: const Text(
+                'Stage management',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              subtitle: const Text(
+                'Move speakers back to the audience.',
+                style: TextStyle(color: _muted),
+              ),
+              onTap: () => Navigator.of(context).pop(),
+            ),
+            const Divider(color: _border),
+            ListTile(
+              leading: const Icon(
+                Icons.stop_circle_rounded,
+                color: Color(0xFFFF416C),
+              ),
+              title: const Text(
+                'End podcast',
+                style: TextStyle(
+                  color: Color(0xFFFF7895),
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              subtitle: const Text(
+                'Close the live room for everyone.',
+                style: TextStyle(color: _muted),
+              ),
+              onTap: _closing
+                  ? null
+                  : () {
+                      Navigator.of(context).pop();
+                      _closeRoom();
+                    },
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -465,7 +442,7 @@ class _PodcastRoomScreenState extends State<PodcastRoomScreen>
                           : 'Join audience',
                     ),
                     style: FilledButton.styleFrom(
-                      backgroundColor: _PodcastRoomScreenState._accent,
+                      backgroundColor: _accent,
                       minimumSize: const Size.fromHeight(54),
                     ),
                   ),
@@ -485,7 +462,7 @@ class _PodcastRoomScreenState extends State<PodcastRoomScreen>
                   tooltip: 'Chat',
                   onPressed: _openChat,
                   style: IconButton.styleFrom(
-                    backgroundColor: _PodcastRoomScreenState._accent,
+                    backgroundColor: _accent,
                     foregroundColor: Colors.white,
                   ),
                   icon: const Icon(Icons.chat_bubble_rounded),
@@ -950,16 +927,11 @@ class _PodcastChat extends StatelessWidget {
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(20),
-                      borderSide: const BorderSide(
-                        color: _PodcastRoomScreenState._border,
-                      ),
+                      borderSide: const BorderSide(color: _border),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(20),
-                      borderSide: const BorderSide(
-                        color: _PodcastRoomScreenState._accent,
-                        width: 1.5,
-                      ),
+                      borderSide: const BorderSide(color: _accent, width: 1.5),
                     ),
                   ),
                 ),
@@ -968,7 +940,7 @@ class _PodcastChat extends StatelessWidget {
               IconButton.filled(
                 onPressed: onSend,
                 style: IconButton.styleFrom(
-                  backgroundColor: _PodcastRoomScreenState._accent,
+                  backgroundColor: _accent,
                   foregroundColor: Colors.white,
                   minimumSize: const Size(52, 52),
                 ),
