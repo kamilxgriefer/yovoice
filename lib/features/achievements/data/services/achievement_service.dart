@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../achievement_catalog.dart';
+import '../models/achievement_definition.dart';
 
 class AchievementService {
   AchievementService({FirebaseFirestore? firestore, FirebaseAuth? auth})
@@ -20,13 +21,19 @@ class AchievementService {
   DocumentReference<Map<String, dynamic>> get _user =>
       _firestore.collection('users').doc(_uid);
 
-  Future<void> incrementMetric(String metric, {int by = 1}) async {
-    if (by <= 0) return;
+  Future<List<AchievementDefinition>> incrementMetric(
+    String metric, {
+    int by = 1,
+  }) async {
+    if (by <= 0) return const <AchievementDefinition>[];
 
-    await _firestore.runTransaction((transaction) async {
+    return _firestore.runTransaction<List<AchievementDefinition>>((
+      transaction,
+    ) async {
       final snapshot = await transaction.get(_user);
       final data = snapshot.data() ?? const <String, dynamic>{};
-      final current = (data[metric] as num?)?.toInt() ?? 0;
+      final fieldName = _fieldForMetric(metric);
+      final current = (data[fieldName] as num?)?.toInt() ?? 0;
       final next = current + by;
 
       final stats = <String, int>{
@@ -42,9 +49,16 @@ class AchievementService {
         'moments': (data['momentCount'] as num?)?.toInt() ?? 0,
       };
 
-      final fieldName = _fieldForMetric(metric);
       stats[metric] = next;
+
+      final previouslyUnlocked =
+          (data['unlockedTitleIds'] as List<dynamic>? ?? const <dynamic>[])
+              .whereType<String>()
+              .toSet();
       final unlocked = AchievementCatalog.unlockedBy(stats);
+      final newlyUnlocked = unlocked
+          .where((achievement) => !previouslyUnlocked.contains(achievement.id))
+          .toList(growable: false);
       final best = AchievementCatalog.bestUnlocked(stats);
 
       transaction.set(_user, {
@@ -56,6 +70,8 @@ class AchievementService {
           'selectedTitleId': best.id,
         'achievementsUpdatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+
+      return newlyUnlocked;
     });
   }
 

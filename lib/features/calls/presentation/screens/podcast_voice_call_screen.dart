@@ -21,10 +21,10 @@ class PodcastVoiceCallScreen extends StatefulWidget {
 
 class _PodcastVoiceCallScreenState extends State<PodcastVoiceCallScreen>
     with SingleTickerProviderStateMixin {
-  static const _background = Color(0xFF07050D);
-  static const _surface = Color(0xFF171020);
-  static const _border = Color(0xFF4A2740);
-  static const _accent = Color(0xFFFF3F8E);
+  static const _background = Color(0xFF090305);
+  static const _surface = Color(0xFF1A0B0F);
+  static const _border = Color(0xFF5D202A);
+  static const _accent = Color(0xFFFF314F);
   static const _muted = Color(0xFFA69CAF);
 
   final VoiceCallService _voice = VoiceCallService.instance;
@@ -72,7 +72,7 @@ class _PodcastVoiceCallScreenState extends State<PodcastVoiceCallScreen>
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(_voice.errorMessage ?? 'Could not join podcast.'),
+          content: Text(_voice.errorMessage ?? 'Could not join broadcast.'),
         ),
       );
     }
@@ -203,7 +203,7 @@ class _PodcastTopBar extends StatelessWidget {
                   ),
                 ),
                 const Text(
-                  'PODCAST ROOM',
+                  'BROADCAST ROOM',
                   style: TextStyle(
                     color: _PodcastVoiceCallScreenState._accent,
                     fontSize: 10,
@@ -269,7 +269,7 @@ class _HostCenter extends StatelessWidget {
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF351225), Color(0xFF171020)],
+          colors: [Color(0xFF3A0E15), Color(0xFF171020)],
         ),
         borderRadius: BorderRadius.circular(30),
         border: Border.all(color: const Color(0xFF6A304E)),
@@ -295,21 +295,21 @@ class _HostCenter extends StatelessWidget {
                 shape: BoxShape.circle,
                 gradient: const RadialGradient(
                   colors: [
-                    Color(0xFFFF5AA3),
-                    Color(0xFF7D174A),
-                    Color(0xFF310D22),
+                    Color(0xFFFF5D6E),
+                    Color(0xFF8B1E31),
+                    Color(0xFF350A12),
                   ],
                 ),
                 border: Border.all(
                   color: speaking
-                      ? const Color(0xFFFF85B7)
-                      : const Color(0xFF7B3557),
+                      ? const Color(0xFFFF7A86)
+                      : const Color(0xFF7A2935),
                   width: speaking ? 4 : 2,
                 ),
                 boxShadow: speaking
                     ? const [
                         BoxShadow(
-                          color: Color(0x99FF3F8E),
+                          color: Color(0x99FF314F),
                           blurRadius: 34,
                           spreadRadius: 7,
                         ),
@@ -392,7 +392,7 @@ class _SpeakerCard extends StatelessWidget {
         children: [
           CircleAvatar(
             radius: 31,
-            backgroundColor: const Color(0xFF6D214C),
+            backgroundColor: const Color(0xFF7A1C2D),
             child: Text(
               initial,
               style: const TextStyle(
@@ -437,7 +437,7 @@ class _CountBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     return CircleAvatar(
       radius: 14,
-      backgroundColor: const Color(0xFF6E214F),
+      backgroundColor: const Color(0xFF751F30),
       child: Text(
         '$count',
         style: const TextStyle(
@@ -471,7 +471,7 @@ class _EmptyStage extends StatelessWidget {
           ),
           SizedBox(height: 10),
           Text(
-            'The host is live. Speakers invited to the stage will appear here.',
+            'The host is live. Approved speakers will appear on stage.',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: _PodcastVoiceCallScreenState._muted,
@@ -532,7 +532,7 @@ class _PodcastControls extends StatelessWidget {
           IconButton.filled(
             onPressed: () => onLeave(),
             style: IconButton.styleFrom(
-              backgroundColor: const Color(0xFFFF416C),
+              backgroundColor: const Color(0xFFFF314F),
             ),
             icon: const Icon(Icons.call_end_rounded),
             tooltip: 'Leave',
@@ -559,12 +559,12 @@ class _ConnectionError extends StatelessWidget {
           children: [
             const Icon(
               Icons.cloud_off_rounded,
-              color: Color(0xFFFF5C7B),
+              color: Color(0xFFFF6A76),
               size: 58,
             ),
             const SizedBox(height: 14),
             const Text(
-              'Could not connect to podcast',
+              'Could not connect to broadcast',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 21,

@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
+import 'package:yovoice/features/achievements/data/services/achievement_service.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
@@ -36,6 +38,7 @@ class _ChatScreenState extends State<ChatScreen> {
   static const Color _primary = Color(0xFF9D20FF);
 
   final MessageService _service = MessageService();
+  final AchievementService _achievementService = AchievementService();
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
@@ -133,6 +136,19 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) {
         setState(() => _replyTo = null);
       }
+
+      try {
+        final unlocked = await _achievementService.incrementMetric('messages');
+
+        if (mounted) {
+          for (final achievement in unlocked) {
+            _showAchievementUnlocked(achievement);
+          }
+        }
+      } catch (_) {
+        // A sent message must remain successful even if achievement tracking
+        // is temporarily unavailable.
+      }
     } catch (error) {
       if (mounted) {
         _showMessage(error.toString().replaceFirst('Bad state: ', ''));
@@ -142,6 +158,69 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() => _sending = false);
       }
     }
+  }
+
+  void _showAchievementUnlocked(AchievementDefinition achievement) {
+    final messenger = ScaffoldMessenger.of(context);
+
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+          duration: const Duration(seconds: 4),
+          backgroundColor: const Color(0xFF21142F),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(color: Color(0xFF8F2CFF)),
+          ),
+          content: Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF7625FF), Color(0xFFBD28FF)],
+                  ),
+                ),
+                child: const Icon(
+                  Icons.emoji_events_rounded,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Achievement unlocked!',
+                      style: TextStyle(
+                        color: Color(0xFFD8A6FF),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      achievement.title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
   }
 
   Future<void> _messageActions(Message message) async {

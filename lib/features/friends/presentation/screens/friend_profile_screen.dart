@@ -4,6 +4,10 @@ import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
+import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
 
 class FriendProfileScreen extends StatefulWidget {
   const FriendProfileScreen({required this.friend, super.key});
@@ -15,23 +19,23 @@ class FriendProfileScreen extends StatefulWidget {
 }
 
 class _FriendProfileScreenState extends State<FriendProfileScreen> {
-  static const Color _background = Color(0xFF080711);
-  static const Color _surface = Color(0xFF12101D);
-  static const Color _border = Color(0xFF2C253B);
-  static const Color _secondaryText = Color(0xFF9D95AD);
-  static const Color _primary = Color(0xFFB348FF);
+  static const _background = Color(0xFF080711);
+  static const _surface = Color(0xFF15101E);
+  static const _border = Color(0xFF352840);
+  static const _muted = Color(0xFFA99DB3);
 
-  final FriendService _friendService = FriendService();
-  final MessageService _messageService = MessageService();
+  final _friendService = FriendService();
+  final _messageService = MessageService();
+  final _profileService = ProfileService();
+  final _followService = FollowService();
 
-  bool _isOpeningChat = false;
-  bool _isRemovingFriend = false;
+  bool _openingChat = false;
+  bool _removingFriend = false;
+  bool _changingFollow = false;
 
   Future<void> _openChat() async {
-    if (_isOpeningChat || _isRemovingFriend) return;
-
-    setState(() => _isOpeningChat = true);
-
+    if (_openingChat || _removingFriend) return;
+    setState(() => _openingChat = true);
     try {
       final friend = widget.friend;
       final conversationId = await _messageService.openOrCreateConversation(
@@ -40,9 +44,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
         otherEmail: friend.email,
         otherPhotoUrl: friend.photoUrl ?? '',
       );
-
       if (!mounted) return;
-
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (_) => ChatScreen(
@@ -55,467 +57,411 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
         ),
       );
     } catch (error) {
-      if (mounted) {
-        _showError(_readableError(error));
-      }
+      if (mounted) _showError(error.toString());
     } finally {
-      if (mounted) {
-        setState(() => _isOpeningChat = false);
+      if (mounted) setState(() => _openingChat = false);
+    }
+  }
+
+  Future<void> _toggleFollow(bool isFollowing) async {
+    if (_changingFollow) return;
+    setState(() => _changingFollow = true);
+    try {
+      if (isFollowing) {
+        await _followService.unfollow(widget.friend.id);
+      } else {
+        await _followService.follow(widget.friend.id);
       }
+    } catch (error) {
+      if (mounted) _showError(error.toString());
+    } finally {
+      if (mounted) setState(() => _changingFollow = false);
     }
   }
 
   Future<void> _confirmRemoveFriend() async {
-    if (_isOpeningChat || _isRemovingFriend) return;
-
-    final shouldRemove = await showDialog<bool>(
+    if (_openingChat || _removingFriend) return;
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF171320),
-          surfaceTintColor: Colors.transparent,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(22),
-            side: const BorderSide(color: _border),
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF171320),
+        title: const Text(
+          'Remove friend?',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          '${widget.friend.displayName} will be removed from your friends list.',
+          style: const TextStyle(color: _muted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
           ),
-          title: const Text(
-            'Remove friend?',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
-          ),
-          content: Text(
-            '${widget.friend.displayName} will be removed from your friends list. The existing conversation will not be deleted.',
-            style: const TextStyle(color: _secondaryText, height: 1.45),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFB3264E),
             ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFB3264E),
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Remove'),
-            ),
-          ],
-        );
-      },
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
     );
-
-    if (shouldRemove != true || !mounted) return;
-
-    setState(() => _isRemovingFriend = true);
-
+    if (confirmed != true || !mounted) return;
+    setState(() => _removingFriend = true);
     try {
       await _friendService.removeFriend(widget.friend.id);
-
       if (!mounted) return;
-
       Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${widget.friend.displayName} was removed.'),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF2A1939),
-          margin: const EdgeInsets.all(16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-        ),
-      );
     } catch (error) {
-      if (mounted) {
-        _showError(_readableError(error));
-      }
+      if (mounted) _showError(error.toString());
     } finally {
-      if (mounted) {
-        setState(() => _isRemovingFriend = false);
-      }
+      if (mounted) setState(() => _removingFriend = false);
     }
-  }
-
-  String _readableError(Object error) {
-    final message = error.toString();
-
-    if (message.contains('permission-denied')) {
-      return 'Firestore permission denied. Check your security rules.';
-    }
-    if (message.contains('signed in')) {
-      return 'You must be signed in.';
-    }
-    if (message.contains('unavailable')) {
-      return 'Service is temporarily unavailable. Check your connection.';
-    }
-
-    return 'Something went wrong. Please try again.';
   }
 
   void _showError(String message) {
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF481C30),
-        margin: const EdgeInsets.all(16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            message.contains('permission-denied')
+                ? 'Firestore permission denied. Deploy the included rules.'
+                : 'Something went wrong. Please try again.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  void _openList(FollowListType type) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => FollowListScreen(userId: widget.friend.id, type: type),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final friend = widget.friend;
-
-    return Scaffold(
-      backgroundColor: _background,
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment(-0.85, -0.95),
-            radius: 1.25,
-            colors: [Color(0xFF24103B), Color(0xFF100B1B), _background],
-            stops: [0, 0.38, 1],
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              _buildHeader(),
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(22, 24, 22, 40),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 520),
-                      child: Column(
-                        children: [
-                          _ProfileAvatar(friend: friend),
-                          const SizedBox(height: 18),
-                          Text(
-                            friend.displayName,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 26,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.6,
-                            ),
-                          ),
-                          if (friend.email.isNotEmpty) ...[
-                            const SizedBox(height: 6),
+    return StreamBuilder<UserProfile>(
+      stream: _profileService.watchProfile(widget.friend.id),
+      builder: (context, profileSnapshot) {
+        final profile = profileSnapshot.data;
+        return StreamBuilder<bool>(
+          stream: _followService.watchIsFollowing(widget.friend.id),
+          builder: (context, followSnapshot) {
+            final isFollowing = followSnapshot.data ?? false;
+            return Scaffold(
+              backgroundColor: _background,
+              body: Container(
+                decoration: const BoxDecoration(
+                  gradient: RadialGradient(
+                    center: Alignment(-.8, -1),
+                    radius: 1.3,
+                    colors: [Color(0xFF321051), Color(0xFF120B1E), _background],
+                  ),
+                ),
+                child: SafeArea(
+                  child: CustomScrollView(
+                    slivers: [
+                      SliverToBoxAdapter(child: _header()),
+                      SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 40),
+                        sliver: SliverList.list(
+                          children: [
+                            _avatar(profile),
+                            const SizedBox(height: 16),
                             Text(
-                              friend.email,
+                              profile?.displayName ?? widget.friend.displayName,
                               textAlign: TextAlign.center,
                               style: const TextStyle(
-                                color: _secondaryText,
-                                fontSize: 14,
+                                color: Colors.white,
+                                fontSize: 28,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            if ((profile?.username ?? '').isNotEmpty)
+                              Text(
+                                '@${profile!.username.replaceAll(' ', '').toLowerCase()}',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: _muted,
+                                  fontSize: 15,
+                                ),
+                              ),
+                            const SizedBox(height: 12),
+                            Center(child: _status()),
+                            if ((profile?.bio ?? '').trim().isNotEmpty) ...[
+                              const SizedBox(height: 18),
+                              Text(
+                                profile!.bio,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Color(0xFFD4CADC),
+                                  height: 1.45,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 22),
+                            _socialStats(profile),
+                            const SizedBox(height: 18),
+                            Row(
+                              children: [
+                                Expanded(child: _followButton(isFollowing)),
+                                const SizedBox(width: 10),
+                                Expanded(child: _messageButton()),
+                              ],
+                            ),
+                            const SizedBox(height: 14),
+                            _voiceIdentity(profile),
+                            const SizedBox(height: 26),
+                            TextButton.icon(
+                              onPressed: _removingFriend
+                                  ? null
+                                  : _confirmRemoveFriend,
+                              icon: _removingFriend
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.person_remove_outlined),
+                              label: Text(
+                                _removingFriend
+                                    ? 'Removing...'
+                                    : 'Remove friend',
+                              ),
+                              style: TextButton.styleFrom(
+                                foregroundColor: const Color(0xFFFF6F8E),
                               ),
                             ),
                           ],
-                          const SizedBox(height: 12),
-                          _OnlineStatus(friend: friend),
-                          const SizedBox(height: 28),
-                          SizedBox(
-                            width: double.infinity,
-                            height: 52,
-                            child: FilledButton.icon(
-                              onPressed: _isOpeningChat || _isRemovingFriend
-                                  ? null
-                                  : _openChat,
-                              style: FilledButton.styleFrom(
-                                backgroundColor: const Color(0xFF8A2BE2),
-                                foregroundColor: Colors.white,
-                                disabledBackgroundColor: const Color(
-                                  0xFF352B42,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                              ),
-                              icon: _isOpeningChat
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                  : const Icon(
-                                      Icons.chat_bubble_outline_rounded,
-                                    ),
-                              label: Text(
-                                _isOpeningChat ? 'Opening chat...' : 'Message',
-                                style: const TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(18),
-                            decoration: BoxDecoration(
-                              color: _surface,
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: _border),
-                            ),
-                            child: const Row(
-                              children: [
-                                Icon(
-                                  Icons.graphic_eq_rounded,
-                                  color: _primary,
-                                  size: 24,
-                                ),
-                                SizedBox(width: 13),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Voice Moments',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      SizedBox(height: 3),
-                                      Text(
-                                        'Shared voice activity will appear here later.',
-                                        style: TextStyle(
-                                          color: _secondaryText,
-                                          fontSize: 12,
-                                          height: 1.35,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 28),
-                          TextButton.icon(
-                            onPressed: _isOpeningChat || _isRemovingFriend
-                                ? null
-                                : _confirmRemoveFriend,
-                            style: TextButton.styleFrom(
-                              foregroundColor: const Color(0xFFFF6F8E),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 18,
-                                vertical: 13,
-                              ),
-                            ),
-                            icon: _isRemovingFriend
-                                ? const SizedBox(
-                                    width: 17,
-                                    height: 17,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Color(0xFFFF6F8E),
-                                    ),
-                                  )
-                                : const Icon(Icons.person_remove_outlined),
-                            label: Text(
-                              _isRemovingFriend
-                                  ? 'Removing...'
-                                  : 'Remove friend',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                 ),
               ),
-            ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _header() => Padding(
+    padding: const EdgeInsets.fromLTRB(8, 8, 18, 4),
+    child: Row(
+      children: [
+        IconButton(
+          onPressed: () => Navigator.pop(context),
+          icon: const Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Colors.white,
           ),
+        ),
+        const Expanded(
+          child: Text(
+            'Profile',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _avatar(UserProfile? profile) {
+    final photo = profile?.photoUrl ?? widget.friend.photoUrl;
+    final name = profile?.displayName ?? widget.friend.displayName;
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(4),
+        decoration: const BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: LinearGradient(
+            colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
+          ),
+        ),
+        child: CircleAvatar(
+          radius: 58,
+          backgroundColor: const Color(0xFF281133),
+          backgroundImage: photo?.isNotEmpty == true
+              ? NetworkImage(photo!)
+              : null,
+          child: photo?.isNotEmpty == true
+              ? null
+              : Text(
+                  name.isEmpty ? '?' : name[0].toUpperCase(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 42,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
         ),
       ),
     );
   }
 
-  Widget _buildHeader() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 10, 18, 8),
-      child: Row(
+  Widget _status() => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+    decoration: BoxDecoration(
+      color: widget.friend.isOnline
+          ? const Color(0xFF173726)
+          : const Color(0xFF211D29),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Text(
+      widget.friend.isOnline ? 'Online now' : 'Offline',
+      style: TextStyle(
+        color: widget.friend.isOnline ? const Color(0xFF73D99A) : _muted,
+        fontWeight: FontWeight.w700,
+        fontSize: 12,
+      ),
+    ),
+  );
+
+  Widget _socialStats(UserProfile? profile) => Container(
+    padding: const EdgeInsets.symmetric(vertical: 17),
+    decoration: BoxDecoration(
+      color: _surface,
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: _border),
+    ),
+    child: Row(
+      children: [
+        _stat(profile?.friendCount ?? 0, 'Friends', null),
+        _stat(
+          profile?.followerCount ?? 0,
+          'Followers',
+          () => _openList(FollowListType.followers),
+        ),
+        _stat(
+          profile?.followingCount ?? 0,
+          'Following',
+          () => _openList(FollowListType.following),
+        ),
+      ],
+    ),
+  );
+
+  Widget _stat(int value, String label, VoidCallback? onTap) => Expanded(
+    child: InkWell(
+      onTap: onTap,
+      child: Column(
         children: [
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            tooltip: 'Back',
-            icon: const Icon(
-              Icons.arrow_back_ios_new_rounded,
+          Text(
+            '$value',
+            style: const TextStyle(
               color: Colors.white,
-              size: 21,
+              fontSize: 21,
+              fontWeight: FontWeight.w900,
             ),
           ),
-          const SizedBox(width: 4),
-          const Expanded(
-            child: Text(
-              'Friend profile',
-              style: TextStyle(
+          Text(label, style: const TextStyle(color: _muted, fontSize: 12)),
+        ],
+      ),
+    ),
+  );
+
+  Widget _followButton(bool isFollowing) => SizedBox(
+    height: 52,
+    child: FilledButton.icon(
+      onPressed: _changingFollow ? null : () => _toggleFollow(isFollowing),
+      style: FilledButton.styleFrom(
+        backgroundColor: isFollowing
+            ? const Color(0xFF2A2033)
+            : const Color(0xFF9F20F4),
+        foregroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+      icon: _changingFollow
+          ? const SizedBox(
+              width: 17,
+              height: 17,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
                 color: Colors.white,
-                fontSize: 21,
-                fontWeight: FontWeight.w800,
+              ),
+            )
+          : Icon(
+              isFollowing
+                  ? Icons.check_rounded
+                  : Icons.person_add_alt_1_rounded,
+            ),
+      label: Text(
+        isFollowing ? 'Following' : 'Follow',
+        style: const TextStyle(fontWeight: FontWeight.w800),
+      ),
+    ),
+  );
+
+  Widget _messageButton() => SizedBox(
+    height: 52,
+    child: OutlinedButton.icon(
+      onPressed: _openingChat ? null : _openChat,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: Colors.white,
+        side: const BorderSide(color: Color(0xFF6B4A7B)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+      icon: _openingChat
+          ? const SizedBox(
+              width: 17,
+              height: 17,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+          : const Icon(Icons.chat_bubble_outline_rounded),
+      label: const Text(
+        'Message',
+        style: TextStyle(fontWeight: FontWeight.w800),
+      ),
+    ),
+  );
+
+  Widget _voiceIdentity(UserProfile? profile) {
+    final languages = <String>{
+      if ((profile?.nativeLanguage ?? '').isNotEmpty) profile!.nativeLanguage,
+      ...?profile?.spokenLanguages,
+      ...?profile?.learningLanguages,
+    }.toList();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _border),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.language_rounded, color: Color(0xFFB348FF)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              languages.isEmpty
+                  ? 'Voice identity not added yet.'
+                  : languages.join(' • '),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ),
         ],
       ),
     );
-  }
-}
-
-class _ProfileAvatar extends StatelessWidget {
-  const _ProfileAvatar({required this.friend});
-
-  final FriendUser friend;
-
-  @override
-  Widget build(BuildContext context) {
-    final photoUrl = friend.photoUrl;
-
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Container(
-          width: 118,
-          height: 118,
-          padding: const EdgeInsets.all(3),
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: LinearGradient(
-              colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
-            ),
-          ),
-          child: ClipOval(
-            child: Container(
-              color: const Color(0xFF2A173C),
-              child: photoUrl != null && photoUrl.isNotEmpty
-                  ? Image.network(
-                      photoUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) =>
-                          _LargeInitial(initial: friend.initial),
-                    )
-                  : _LargeInitial(initial: friend.initial),
-            ),
-          ),
-        ),
-        Positioned(
-          right: 7,
-          bottom: 7,
-          child: Container(
-            width: 22,
-            height: 22,
-            decoration: BoxDecoration(
-              color: friend.isOnline
-                  ? const Color(0xFF42D47D)
-                  : const Color(0xFF746D7D),
-              shape: BoxShape.circle,
-              border: Border.all(color: const Color(0xFF080711), width: 4),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _LargeInitial extends StatelessWidget {
-  const _LargeInitial({required this.initial});
-
-  final String initial;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      alignment: Alignment.center,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF9F75D9), Color(0xFF3C2868)],
-        ),
-      ),
-      child: Text(
-        initial,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 42,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-    );
-  }
-}
-
-class _OnlineStatus extends StatelessWidget {
-  const _OnlineStatus({required this.friend});
-
-  final FriendUser friend;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = friend.isOnline
-        ? 'Online now'
-        : _lastSeenText(friend.lastSeen);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
-      decoration: BoxDecoration(
-        color: friend.isOnline
-            ? const Color(0xFF173726)
-            : const Color(0xFF211D29),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: friend.isOnline
-              ? const Color(0xFF2D6B46)
-              : const Color(0xFF383140),
-        ),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: friend.isOnline
-              ? const Color(0xFF73D99A)
-              : const Color(0xFFA69DAD),
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-
-  static String _lastSeenText(DateTime? lastSeen) {
-    if (lastSeen == null) return 'Offline';
-
-    final difference = DateTime.now().difference(lastSeen);
-
-    if (difference.inMinutes < 1) return 'Last seen just now';
-    if (difference.inMinutes < 60) {
-      return 'Last seen ${difference.inMinutes} min ago';
-    }
-    if (difference.inHours < 24) {
-      return 'Last seen ${difference.inHours} h ago';
-    }
-    if (difference.inDays < 7) {
-      return 'Last seen ${difference.inDays} d ago';
-    }
-
-    final day = lastSeen.day.toString().padLeft(2, '0');
-    final month = lastSeen.month.toString().padLeft(2, '0');
-    return 'Last seen $day.$month.${lastSeen.year}';
   }
 }

@@ -3,8 +3,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 
-class PodcastHandRequest {
-  const PodcastHandRequest({
+class BroadcastHandRequest {
+  const BroadcastHandRequest({
     required this.userId,
     required this.displayName,
     required this.photoUrl,
@@ -16,12 +16,12 @@ class PodcastHandRequest {
   final String? photoUrl;
   final DateTime? createdAt;
 
-  factory PodcastHandRequest.fromFirestore(
+  factory BroadcastHandRequest.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> document,
   ) {
     final data = document.data() ?? const <String, dynamic>{};
     final timestamp = data['createdAt'];
-    return PodcastHandRequest(
+    return BroadcastHandRequest(
       userId: document.id,
       displayName: data['displayName'] as String? ?? 'YoVoice user',
       photoUrl: data['photoUrl'] as String?,
@@ -69,7 +69,7 @@ class RoomExperienceService {
       'topic': topic.trim(),
       'audienceCanSpeak': audienceCanSpeak,
       'handRaisingEnabled': handRaisingEnabled,
-      'stageLimit': experience == RoomExperience.podcast ? 8 : null,
+      'stageLimit': experience == RoomExperience.broadcast ? 8 : null,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
@@ -85,14 +85,14 @@ class RoomExperienceService {
     return RoomExperience.fromValue(snapshot.data()?['experience']);
   }
 
-  Stream<List<PodcastHandRequest>> watchRaisedHands(String roomId) {
+  Stream<List<BroadcastHandRequest>> watchRaisedHands(String roomId) {
     return _room(roomId)
         .collection('handRequests')
         .orderBy('createdAt')
         .snapshots()
         .map(
           (snapshot) => snapshot.docs
-              .map(PodcastHandRequest.fromFirestore)
+              .map(BroadcastHandRequest.fromFirestore)
               .toList(growable: false),
         );
   }
@@ -121,8 +121,8 @@ class RoomExperienceService {
     final room = await _room(roomId).get();
     final data = room.data();
     if (data == null) throw StateError('Room not found.');
-    if (data['experience'] != 'podcast') {
-      throw StateError('Raise hand is available only in Podcast Rooms.');
+    if (!RoomExperience.fromValue(data['experience']).isBroadcast) {
+      throw StateError('Raise hand is available only in Broadcast Rooms.');
     }
     if (data['handRaisingEnabled'] == false) {
       throw StateError('The host disabled hand raising.');
@@ -137,7 +137,7 @@ class RoomExperienceService {
 
   Future<void> inviteToStage({
     required String roomId,
-    required PodcastHandRequest request,
+    required BroadcastHandRequest request,
   }) async {
     final roomRef = _room(roomId);
     final room = await roomRef.get();
@@ -182,3 +182,7 @@ class RoomExperienceService {
     }, SetOptions(merge: true));
   }
 }
+
+/// Compatibility alias for code created before Podcast Rooms were renamed.
+@Deprecated('Use BroadcastHandRequest instead.')
+typedef PodcastHandRequest = BroadcastHandRequest;

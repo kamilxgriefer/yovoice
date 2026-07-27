@@ -39,7 +39,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   bool _handRaisingEnabled = true;
   bool _busy = false;
 
-  bool get _isPodcast => widget.experience == RoomExperience.podcast;
+  bool get _isBroadcast => widget.experience == RoomExperience.broadcast;
 
   @override
   void dispose() {
@@ -67,9 +67,9 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
       await _experienceService.configureRoom(
         roomId: room.id,
         experience: widget.experience,
-        topic: _isPodcast ? _topic.text : '',
-        audienceCanSpeak: !_isPodcast,
-        handRaisingEnabled: _isPodcast && _handRaisingEnabled,
+        topic: _isBroadcast ? _topic.text : '',
+        audienceCanSpeak: !_isBroadcast,
+        handRaisingEnabled: _isBroadcast && _handRaisingEnabled,
       );
 
       if (!mounted) return;
@@ -89,7 +89,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final accent = _isPodcast ? const Color(0xFFFF3F8E) : _primary;
+    final accent = _isBroadcast ? const Color(0xFFFF3F8E) : _primary;
     return Scaffold(
       backgroundColor: _background,
       appBar: AppBar(
@@ -97,7 +97,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         foregroundColor: Colors.white,
         centerTitle: true,
         title: Text(
-          _isPodcast ? 'Create Podcast Room' : 'Create Community Room',
+          _isBroadcast ? 'Create Broadcast Room' : 'Create Community Room',
           style: const TextStyle(fontWeight: FontWeight.w900),
         ),
       ),
@@ -106,19 +106,19 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(18, 12, 18, 130),
           children: [
-            _IntroCard(isPodcast: _isPodcast, accent: accent),
+            _IntroCard(isBroadcast: _isBroadcast, accent: accent),
             const SizedBox(height: 22),
             _Field(
               controller: _name,
-              label: _isPodcast ? 'Show title' : 'Room name',
-              hint: _isPodcast ? 'e.g. Flutter Weekly' : 'e.g. Late Night Talk',
+              label: _isBroadcast ? 'Show title' : 'Room name',
+              hint: _isBroadcast ? 'e.g. Flutter Weekly' : 'e.g. Late Night Talk',
               maxLength: 50,
               validator: (value) => (value?.trim().length ?? 0) < 3
                   ? 'Enter at least 3 characters'
                   : null,
             ),
             const SizedBox(height: 14),
-            if (_isPodcast) ...[
+            if (_isBroadcast) ...[
               _Field(
                 controller: _topic,
                 label: 'Episode topic',
@@ -174,7 +174,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
             ),
             const SizedBox(height: 14),
             _Dropdown(
-              label: _isPodcast ? 'Audience capacity' : 'Voice capacity',
+              label: _isBroadcast ? 'Audience capacity' : 'Voice capacity',
               value: _maxParticipants?.toString() ?? 'Unlimited',
               values: const ['10', '25', '50', '100', 'Unlimited'],
               onChanged: (value) => setState(
@@ -183,7 +183,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
                     : int.parse(value),
               ),
             ),
-            if (_isPodcast) ...[
+            if (_isBroadcast) ...[
               const SizedBox(height: 18),
               SwitchListTile.adaptive(
                 value: _handRaisingEnabled,
@@ -231,7 +231,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
           child: _busy
               ? const CircularProgressIndicator(color: Colors.white)
               : Text(
-                  _isPodcast ? 'Go live with podcast' : 'Start community room',
+                  _isBroadcast ? 'Start broadcast' : 'Start community room',
                   style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
         ),
@@ -241,8 +241,8 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
 }
 
 class _IntroCard extends StatelessWidget {
-  const _IntroCard({required this.isPodcast, required this.accent});
-  final bool isPodcast;
+  const _IntroCard({required this.isBroadcast, required this.accent});
+  final bool isBroadcast;
   final Color accent;
 
   @override
@@ -257,14 +257,14 @@ class _IntroCard extends StatelessWidget {
       child: Row(
         children: [
           Icon(
-            isPodcast ? Icons.podcasts_rounded : Icons.groups_rounded,
+            isBroadcast ? Icons.campaign_rounded : Icons.groups_rounded,
             color: accent,
             size: 34,
           ),
           const SizedBox(width: 14),
           Expanded(
             child: Text(
-              isPodcast
+              isBroadcast
                   ? 'You control the stage. Listeners can request to speak.'
                   : 'A free-flowing room where everyone can join the conversation.',
               style: const TextStyle(color: Colors.white, height: 1.4),

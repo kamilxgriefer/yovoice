@@ -5,7 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../models/user_profile.dart';
+import 'package:yovoice/features/profile/data/models/user_profile.dart';
 
 enum ProfileImageKind { avatar, banner }
 
@@ -38,6 +38,14 @@ class ProfileService {
     return _document.snapshots().map(UserProfile.fromFirestore);
   }
 
+  Stream<UserProfile> watchProfile(String userId) {
+    return _firestore
+        .collection('users')
+        .doc(userId)
+        .snapshots()
+        .map(UserProfile.fromFirestore);
+  }
+
   Future<void> ensureProfile() async {
     final user = _auth.currentUser;
     if (user == null) return;
@@ -58,6 +66,7 @@ class ProfileService {
       'spokenLanguages': <String>[],
       'learningLanguages': <String>[],
       'website': '',
+      'accountType': AccountType.personal.name,
       'friendCount': 0,
       'followerCount': 0,
       'followingCount': 0,
@@ -83,6 +92,7 @@ class ProfileService {
     required List<String> spokenLanguages,
     required List<String> learningLanguages,
     required String website,
+    required AccountType accountType,
   }) async {
     final cleanDisplayName = displayName.trim();
     final cleanUsername = username.trim();
@@ -103,6 +113,7 @@ class ProfileService {
       'spokenLanguages': spokenLanguages,
       'learningLanguages': learningLanguages,
       'website': website.trim(),
+      'accountType': accountType.name,
       'profileUpdatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
 
@@ -142,9 +153,27 @@ class ProfileService {
     required String field,
     required bool updateAuthPhoto,
   }) async {
-    final reference = _storage.ref(path);
-    await reference.putData(bytes, SettableMetadata(contentType: contentType));
-    final url = await reference.getDownloadURL();
+    final reference = _storage.ref().child(path);
+    final uploadTask = reference.putData(
+      bytes,
+      SettableMetadata(
+        contentType: contentType,
+        cacheControl: 'public,max-age=3600',
+      ),
+    );
+    final snapshot = await uploadTask;
+
+    if (snapshot.state != TaskState.success) {
+      throw FirebaseException(
+        plugin: 'firebase_storage',
+        code: 'upload-failed',
+        message: 'The image upload did not finish successfully.',
+      );
+    }
+
+    // Use the exact reference returned by the completed upload task. This
+    // avoids asking Storage for a stale or differently-normalized path.
+    final url = await snapshot.ref.getDownloadURL();
 
     await _document.set({
       field: url,

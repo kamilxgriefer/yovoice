@@ -163,6 +163,28 @@ class VoiceCallService extends ChangeNotifier {
     }
   }
 
+  Future<void> setMuted(bool muted) async {
+    final localParticipant = _room?.localParticipant;
+    if (localParticipant == null || !isConnected || _muteChangeInProgress) {
+      return;
+    }
+    if (_isMuted == muted) return;
+
+    final previous = _isMuted;
+    _muteChangeInProgress = true;
+    _isMuted = muted;
+    notifyListeners();
+    try {
+      await localParticipant.setMicrophoneEnabled(!muted);
+    } catch (_) {
+      _isMuted = previous;
+      rethrow;
+    } finally {
+      _muteChangeInProgress = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> toggleMute() async {
     final localParticipant = _room?.localParticipant;
     if (localParticipant == null || !isConnected || _muteChangeInProgress) {

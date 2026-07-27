@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'package:yovoice/features/rooms/data/models/room_experience.dart';
+
 enum RoomType {
   temporary,
   community;
@@ -74,8 +76,14 @@ class VoiceRoom {
   final DateTime? updatedAt;
   final String experience;
 
-  bool get isPodcast => experience == 'podcast';
-  bool get isCommunityExperience => !isPodcast;
+  RoomExperience get roomExperience => RoomExperience.fromValue(experience);
+
+  bool get isBroadcast => roomExperience == RoomExperience.broadcast;
+  bool get isCommunityExperience => roomExperience == RoomExperience.community;
+
+  /// Temporary compatibility getter for code created before Broadcast Rooms.
+  @Deprecated('Use isBroadcast instead.')
+  bool get isPodcast => isBroadcast;
 
   bool get isPersistent => roomType == RoomType.community;
   bool get isActive => status == RoomStatus.active;

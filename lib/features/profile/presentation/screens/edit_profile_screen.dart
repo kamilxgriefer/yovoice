@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../data/models/user_profile.dart';
-import '../../data/services/profile_service.dart';
+import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/data/services/profile_service.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({required this.profile, super.key});
@@ -28,6 +28,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _saving = false;
   bool _uploadingAvatar = false;
   bool _uploadingBanner = false;
+  late AccountType _accountType;
 
   @override
   void initState() {
@@ -45,6 +46,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       text: profile.learningLanguages.join(', '),
     );
     _website = TextEditingController(text: profile.website);
+    _accountType = profile.accountType;
   }
 
   @override
@@ -83,6 +85,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         spokenLanguages: _split(_spokenLanguages),
         learningLanguages: _split(_learningLanguages),
         website: _website.text,
+        accountType: _accountType,
       );
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
@@ -106,12 +109,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     });
 
     try {
-      await _service.pickAndUploadImage(kind);
+      final url = await _service.pickAndUploadImage(kind);
+      if (!mounted || url == null) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(avatar ? 'Avatar updated.' : 'Banner updated.')),
+      );
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
+        ).showSnackBar(SnackBar(content: Text(_friendlyUploadError(error))));
       }
     } finally {
       if (mounted) {
@@ -124,6 +131,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         });
       }
     }
+  }
+
+  String _friendlyUploadError(Object error) {
+    final message = error.toString();
+    if (message.contains('object-not-found')) {
+      return 'Storage could not find the uploaded image. Deploy storage rules, then try again.';
+    }
+    if (message.contains('unauthorized')) {
+      return 'Storage blocked this upload. Deploy storage rules and make sure you are signed in.';
+    }
+    if (message.contains('canceled')) {
+      return 'Image upload was cancelled.';
+    }
+    return message;
   }
 
   @override
@@ -168,6 +189,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               ],
             ),
             const SizedBox(height: 20),
+            _AccountTypePicker(
+              value: _accountType,
+              onChanged: (value) {
+                setState(() {
+                  _accountType = value;
+                });
+              },
+            ),
+            const SizedBox(height: 14),
             _field(_displayName, 'Display name', required: true),
             _field(_username, 'Username', required: true),
             _field(_bio, 'Bio', maxLines: 4, maxLength: 220),
@@ -278,6 +308,74 @@ class _ImageAction extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _AccountTypePicker extends StatelessWidget {
+  const _AccountTypePicker({required this.value, required this.onChanged});
+
+  final AccountType value;
+  final ValueChanged<AccountType> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF17101F),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF3B2B48)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Account type',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Creator accounts are prepared for public followers, broadcasts and creator tools.',
+            style: TextStyle(
+              color: Color(0xFF9E92A8),
+              fontSize: 12,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 12),
+          SegmentedButton<AccountType>(
+            segments: const [
+              ButtonSegment(
+                value: AccountType.personal,
+                icon: Icon(Icons.person_rounded),
+                label: Text('Personal'),
+              ),
+              ButtonSegment(
+                value: AccountType.creator,
+                icon: Icon(Icons.auto_awesome_rounded),
+                label: Text('Creator'),
+              ),
+            ],
+            selected: <AccountType>{
+              value == AccountType.official ? AccountType.creator : value,
+            },
+            onSelectionChanged: (selection) => onChanged(selection.first),
+            showSelectedIcon: false,
+          ),
+          if (value == AccountType.official) ...[
+            const SizedBox(height: 10),
+            const Text(
+              'Official status is verified by YoVoice and cannot be selected manually.',
+              style: TextStyle(color: Color(0xFFD3A5FF), fontSize: 11),
+            ),
+          ],
+        ],
       ),
     );
   }

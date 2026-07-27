@@ -21,18 +21,12 @@ class FriendService {
 
   User get _currentUser {
     final user = _auth.currentUser;
-
-    if (user == null) {
-      throw StateError('User is not signed in.');
-    }
-
+    if (user == null) throw StateError('User is not signed in.');
     return user;
   }
 
   Future<void> ensureUserDocument() async {
     final user = _currentUser;
-    final document = _users.doc(user.uid);
-    final snapshot = await document.get();
     final email = user.email?.trim() ?? '';
     final displayName = user.displayName?.trim().isNotEmpty == true
         ? user.displayName!.trim()
@@ -40,89 +34,68 @@ class FriendService {
         ? email.split('@').first
         : 'YoVoice user';
 
-    final data = <String, dynamic>{
+    await _users.doc(user.uid).set({
+      'uid': user.uid,
       'displayName': displayName,
       'email': email.toLowerCase(),
       'photoUrl': user.photoURL,
       'isOnline': true,
       'lastSeen': FieldValue.serverTimestamp(),
-    };
-
-    await document.set(data, SetOptions(merge: snapshot.exists));
+    }, SetOptions(merge: true));
   }
 
   Stream<List<FriendUser>> watchFriends() {
     final currentUserId = _currentUser.uid;
     final controller = StreamController<List<FriendUser>>();
-    final userSubscriptions =
+    final subscriptions =
         <String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>{};
-    final friendsById = <String, FriendUser>{};
-    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
-    friendshipSubscription;
-    var isClosed = false;
+    final friends = <String, FriendUser>{};
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? rootSubscription;
+    var closed = false;
 
     void emit() {
-      if (isClosed || controller.isClosed) {
-        return;
-      }
-
-      final friends = friendsById.values.toList(growable: false)
-        ..sort((first, second) {
-          if (first.isOnline != second.isOnline) {
-            return first.isOnline ? -1 : 1;
-          }
-
-          return first.displayName.toLowerCase().compareTo(
-            second.displayName.toLowerCase(),
+      if (closed || controller.isClosed) return;
+      final result = friends.values.toList(growable: false)
+        ..sort((a, b) {
+          if (a.isOnline != b.isOnline) return a.isOnline ? -1 : 1;
+          return a.displayName.toLowerCase().compareTo(
+            b.displayName.toLowerCase(),
           );
         });
-
-      controller.add(friends);
+      controller.add(result);
     }
 
     Future<void> start() async {
       try {
         await ensureUserDocument();
-
-        friendshipSubscription = _users
+        rootSubscription = _users
             .doc(currentUserId)
             .collection('friends')
             .snapshots()
             .listen((snapshot) {
-              final friendIds = snapshot.docs
-                  .map((document) => document.id)
-                  .toSet();
-              final removedIds = userSubscriptions.keys
-                  .where((friendId) => !friendIds.contains(friendId))
-                  .toList(growable: false);
+              final ids = snapshot.docs.map((doc) => doc.id).toSet();
 
-              for (final friendId in removedIds) {
-                userSubscriptions.remove(friendId)?.cancel();
-                friendsById.remove(friendId);
+              for (final removed
+                  in subscriptions.keys
+                      .where((id) => !ids.contains(id))
+                      .toList(growable: false)) {
+                subscriptions.remove(removed)?.cancel();
+                friends.remove(removed);
               }
 
-              for (final friendId in friendIds) {
-                if (userSubscriptions.containsKey(friendId)) {
-                  continue;
-                }
-
-                userSubscriptions[friendId] = _users
-                    .doc(friendId)
-                    .snapshots()
-                    .listen((userDocument) {
-                      if (!userDocument.exists || userDocument.data() == null) {
-                        friendsById.remove(friendId);
-                        emit();
-                        return;
-                      }
-
-                      friendsById[friendId] = FriendUser.fromFirestore(
-                        userDocument,
-                      );
-                      emit();
-                    }, onError: controller.addError);
+              for (final id in ids) {
+                if (subscriptions.containsKey(id)) continue;
+                subscriptions[id] = _users.doc(id).snapshots().listen((
+                  document,
+                ) {
+                  if (!document.exists || document.data() == null) {
+                    friends.remove(id);
+                  } else {
+                    friends[id] = FriendUser.fromFirestore(document);
+                  }
+                  emit();
+                }, onError: controller.addError);
               }
-
               emit();
             }, onError: controller.addError);
       } catch (error, stackTrace) {
@@ -132,403 +105,235 @@ class FriendService {
 
     controller.onListen = start;
     controller.onCancel = () async {
-      isClosed = true;
-      await friendshipSubscription?.cancel();
-      for (final subscription in userSubscriptions.values) {
+      closed = true;
+      await rootSubscription?.cancel();
+      for (final subscription in subscriptions.values) {
         await subscription.cancel();
       }
-      userSubscriptions.clear();
     };
-
     return controller.stream;
   }
 
   Stream<List<FriendRequest>> watchFriendRequests() {
-    final currentUserId = _currentUser.uid;
-
     return _users
-        .doc(currentUserId)
+        .doc(_currentUser.uid)
         .collection('friendRequests')
         .snapshots()
         .map((snapshot) {
           final requests = snapshot.docs
               .map(FriendRequest.fromFirestore)
               .toList(growable: false);
-
-          requests.sort((first, second) {
-            final firstDate = first.createdAt;
-            final secondDate = second.createdAt;
-
-            if (firstDate == null && secondDate == null) {
-              return 0;
-            }
-            if (firstDate == null) {
-              return 1;
-            }
-            if (secondDate == null) {
-              return -1;
-            }
-
-            return secondDate.compareTo(firstDate);
+          requests.sort((a, b) {
+            if (a.createdAt == null && b.createdAt == null) return 0;
+            if (a.createdAt == null) return 1;
+            if (b.createdAt == null) return -1;
+            return b.createdAt!.compareTo(a.createdAt!);
           });
-
           return requests;
         });
   }
 
-  Stream<int> watchPendingFriendRequestCount() {
-    return watchFriendRequests().map((requests) => requests.length).distinct();
-  }
+  Stream<int> watchPendingFriendRequestCount() =>
+      watchFriendRequests().map((items) => items.length).distinct();
 
   Future<List<FriendUser>> searchUsers(String query) async {
     final search = query.trim().toLowerCase();
-
-    if (search.length < 2) {
-      return [];
-    }
+    if (search.length < 2) return const [];
 
     final snapshot = await _users.limit(100).get();
-
-    final results = snapshot.docs
-        .map(FriendUser.fromFirestore)
-        .where((user) {
-          if (user.id == _currentUser.uid) {
-            return false;
-          }
-
-          return user.searchableDisplayName.contains(search) ||
-              user.searchableEmail.contains(search);
-        })
-        .toList(growable: false);
-
-    results.sort(
-      (first, second) => first.displayName.toLowerCase().compareTo(
-        second.displayName.toLowerCase(),
-      ),
-    );
-
+    final results =
+        snapshot.docs
+            .map(FriendUser.fromFirestore)
+            .where((user) {
+              if (user.id == _currentUser.uid) return false;
+              return user.searchableDisplayName.contains(search) ||
+                  user.searchableEmail.contains(search);
+            })
+            .toList(growable: false)
+          ..sort(
+            (a, b) => a.displayName.toLowerCase().compareTo(
+              b.displayName.toLowerCase(),
+            ),
+          );
     return results;
   }
 
   Future<FriendRelationshipStatus> getRelationshipStatus(
     String otherUserId,
   ) async {
-    final currentUserId = _currentUser.uid;
-
+    final me = _currentUser.uid;
     final results = await Future.wait([
-      _users.doc(currentUserId).collection('friends').doc(otherUserId).get(),
-      _users
-          .doc(otherUserId)
-          .collection('friendRequests')
-          .doc(currentUserId)
-          .get(),
-      _users
-          .doc(currentUserId)
-          .collection('friendRequests')
-          .doc(otherUserId)
-          .get(),
+      _users.doc(me).collection('friends').doc(otherUserId).get(),
+      _users.doc(otherUserId).collection('friendRequests').doc(me).get(),
+      _users.doc(me).collection('friendRequests').doc(otherUserId).get(),
     ]);
-
-    if (results[0].exists) {
-      return FriendRelationshipStatus.friends;
-    }
-    if (results[1].exists) {
-      return FriendRelationshipStatus.requestSent;
-    }
-    if (results[2].exists) {
-      return FriendRelationshipStatus.requestReceived;
-    }
-
+    if (results[0].exists) return FriendRelationshipStatus.friends;
+    if (results[1].exists) return FriendRelationshipStatus.requestSent;
+    if (results[2].exists) return FriendRelationshipStatus.requestReceived;
     return FriendRelationshipStatus.none;
   }
 
   Future<void> sendFriendRequest(FriendUser receiver) async {
     final sender = _currentUser;
-
-    if (receiver.id == sender.uid) {
-      throw StateError('You cannot add yourself.');
-    }
-
+    if (receiver.id == sender.uid) throw StateError('You cannot add yourself.');
     await ensureUserDocument();
 
-    final senderDocument = await _users.doc(sender.uid).get();
-    final senderData = senderDocument.data() ?? const <String, dynamic>{};
+    final senderDoc = await _users.doc(sender.uid).get();
+    final senderData = senderDoc.data() ?? const <String, dynamic>{};
     final senderEmail =
-        (senderData['email'] as String?)?.trim().isNotEmpty == true
-        ? (senderData['email'] as String).trim()
-        : sender.email?.trim() ?? '';
-    final senderName = _displayNameFromData(
-      senderData,
-      fallbackEmail: senderEmail,
-    );
-    final senderPhotoUrl =
-        _nullableString(senderData['photoUrl']) ?? sender.photoURL;
+        (senderData['email'] as String?)?.trim() ?? sender.email?.trim() ?? '';
+    final senderName = _displayName(senderData, senderEmail);
+    final senderPhoto = _nullable(senderData['photoUrl']) ?? sender.photoURL;
 
-    final myFriendReference = _users
+    final myFriend = _users
         .doc(sender.uid)
         .collection('friends')
         .doc(receiver.id);
-    final receiverFriendReference = _users
+    final theirFriend = _users
         .doc(receiver.id)
         .collection('friends')
         .doc(sender.uid);
-    final outgoingRequestReference = _users
+    final outgoing = _users
         .doc(receiver.id)
         .collection('friendRequests')
         .doc(sender.uid);
-    final reverseRequestReference = _users
+    final incoming = _users
         .doc(sender.uid)
         .collection('friendRequests')
         .doc(receiver.id);
 
-    await _firestore.runTransaction((transaction) async {
+    await _firestore.runTransaction((tx) async {
       final snapshots = await Future.wait([
-        transaction.get(myFriendReference),
-        transaction.get(outgoingRequestReference),
-        transaction.get(reverseRequestReference),
-        transaction.get(_users.doc(receiver.id)),
+        tx.get(myFriend),
+        tx.get(outgoing),
+        tx.get(incoming),
+        tx.get(_users.doc(receiver.id)),
       ]);
-
-      if (snapshots[0].exists) {
-        throw StateError('You are already friends.');
-      }
-
+      if (snapshots[0].exists) throw StateError('You are already friends.');
       if (snapshots[1].exists) {
         throw StateError('Friend request already sent.');
       }
-
-      final receiverDocument = snapshots[3];
-      if (!receiverDocument.exists || receiverDocument.data() == null) {
+      final receiverDoc = snapshots[3];
+      if (!receiverDoc.exists || receiverDoc.data() == null) {
         throw StateError('This user no longer exists.');
       }
 
       if (snapshots[2].exists) {
-        final receiverData = receiverDocument.data()!;
-        final receiverEmail =
-            (receiverData['email'] as String?)?.trim() ?? receiver.email;
-        final receiverName = _displayNameFromData(
-          receiverData,
-          fallbackEmail: receiverEmail,
-        );
-        final receiverPhotoUrl = _nullableString(receiverData['photoUrl']);
         final now = FieldValue.serverTimestamp();
-
-        transaction.set(myFriendReference, <String, dynamic>{
-          'userId': receiver.id,
-          'createdAt': now,
-        });
-        transaction.set(receiverFriendReference, <String, dynamic>{
-          'userId': sender.uid,
-          'createdAt': now,
-        });
-        transaction.delete(reverseRequestReference);
-        transaction.delete(
+        tx.set(myFriend, {'userId': receiver.id, 'createdAt': now});
+        tx.set(theirFriend, {'userId': sender.uid, 'createdAt': now});
+        tx.delete(incoming);
+        tx.delete(
           _users
               .doc(receiver.id)
               .collection('sentFriendRequests')
               .doc(sender.uid),
         );
-
-        transaction.set(
-          _users.doc(sender.uid).collection('friendCache').doc(receiver.id),
-          <String, dynamic>{
-            'displayName': receiverName,
-            'email': receiverEmail,
-            'photoUrl': receiverPhotoUrl,
-          },
-          SetOptions(merge: true),
-        );
-        transaction.set(
-          _users.doc(receiver.id).collection('friendCache').doc(sender.uid),
-          <String, dynamic>{
-            'displayName': senderName,
-            'email': senderEmail,
-            'photoUrl': senderPhotoUrl,
-          },
-          SetOptions(merge: true),
-        );
+        tx.update(_users.doc(sender.uid), {
+          'friendCount': FieldValue.increment(1),
+        });
+        tx.update(_users.doc(receiver.id), {
+          'friendCount': FieldValue.increment(1),
+        });
         return;
       }
 
-      transaction.set(outgoingRequestReference, <String, dynamic>{
+      tx.set(outgoing, {
         'senderId': sender.uid,
         'senderName': senderName,
         'senderEmail': senderEmail.toLowerCase(),
-        'senderPhotoUrl': senderPhotoUrl,
+        'senderPhotoUrl': senderPhoto,
         'createdAt': FieldValue.serverTimestamp(),
       });
-
-      transaction.set(
+      tx.set(
         _users
             .doc(sender.uid)
             .collection('sentFriendRequests')
             .doc(receiver.id),
-        <String, dynamic>{
-          'receiverId': receiver.id,
-          'createdAt': FieldValue.serverTimestamp(),
-        },
-      );
-    });
-  }
-
-  Future<void> acceptFriendRequest(FriendRequest request) async {
-    final me = _currentUser;
-
-    await ensureUserDocument();
-
-    final myDocumentReference = _users.doc(me.uid);
-    final senderDocumentReference = _users.doc(request.senderId);
-    final requestReference = myDocumentReference
-        .collection('friendRequests')
-        .doc(request.senderId);
-    final myFriendReference = myDocumentReference
-        .collection('friends')
-        .doc(request.senderId);
-    final senderFriendReference = senderDocumentReference
-        .collection('friends')
-        .doc(me.uid);
-
-    await _firestore.runTransaction((transaction) async {
-      final snapshots = await Future.wait([
-        transaction.get(requestReference),
-        transaction.get(myDocumentReference),
-        transaction.get(senderDocumentReference),
-      ]);
-
-      if (!snapshots[0].exists) {
-        throw StateError('This friend request no longer exists.');
-      }
-
-      final myData = snapshots[1].data() ?? const <String, dynamic>{};
-      final senderData = snapshots[2].data() ?? const <String, dynamic>{};
-      final myEmail =
-          (myData['email'] as String?)?.trim() ?? me.email?.trim() ?? '';
-      final myName = _displayNameFromData(myData, fallbackEmail: myEmail);
-      final myPhotoUrl = _nullableString(myData['photoUrl']) ?? me.photoURL;
-      final senderEmail =
-          (senderData['email'] as String?)?.trim().isNotEmpty == true
-          ? (senderData['email'] as String).trim()
-          : request.senderEmail;
-      final senderName = _displayNameFromData(
-        senderData,
-        fallbackEmail: senderEmail,
-        fallbackName: request.senderName,
-      );
-      final senderPhotoUrl =
-          _nullableString(senderData['photoUrl']) ?? request.senderPhotoUrl;
-      final now = FieldValue.serverTimestamp();
-
-      transaction.set(myFriendReference, <String, dynamic>{
-        'userId': request.senderId,
-        'createdAt': now,
-      });
-      transaction.set(senderFriendReference, <String, dynamic>{
-        'userId': me.uid,
-        'createdAt': now,
-      });
-      transaction.delete(requestReference);
-      transaction.delete(
-        senderDocumentReference.collection('sentFriendRequests').doc(me.uid),
-      );
-
-      transaction.set(
-        myDocumentReference.collection('friendCache').doc(request.senderId),
-        <String, dynamic>{
-          'displayName': senderName,
-          'email': senderEmail,
-          'photoUrl': senderPhotoUrl,
-        },
-        SetOptions(merge: true),
-      );
-      transaction.set(
-        senderDocumentReference.collection('friendCache').doc(me.uid),
-        <String, dynamic>{
-          'displayName': myName,
-          'email': myEmail,
-          'photoUrl': myPhotoUrl,
-        },
-        SetOptions(merge: true),
+        {'receiverId': receiver.id, 'createdAt': FieldValue.serverTimestamp()},
       );
     });
   }
 
   Future<void> cancelFriendRequest(String receiverId) async {
-    final currentUserId = _currentUser.uid;
+    final me = _currentUser.uid;
     final batch = _firestore.batch();
-
+    batch.delete(_users.doc(receiverId).collection('friendRequests').doc(me));
     batch.delete(
-      _users.doc(receiverId).collection('friendRequests').doc(currentUserId),
+      _users.doc(me).collection('sentFriendRequests').doc(receiverId),
     );
-    batch.delete(
-      _users
-          .doc(currentUserId)
-          .collection('sentFriendRequests')
-          .doc(receiverId),
-    );
-
     await batch.commit();
   }
 
+  Future<void> acceptFriendRequest(FriendRequest request) async {
+    final me = _currentUser;
+    await ensureUserDocument();
+
+    final myDoc = _users.doc(me.uid);
+    final senderDoc = _users.doc(request.senderId);
+    final requestRef = myDoc.collection('friendRequests').doc(request.senderId);
+    final myFriend = myDoc.collection('friends').doc(request.senderId);
+    final senderFriend = senderDoc.collection('friends').doc(me.uid);
+
+    await _firestore.runTransaction((tx) async {
+      final snapshots = await Future.wait([
+        tx.get(requestRef),
+        tx.get(myDoc),
+        tx.get(senderDoc),
+        tx.get(myFriend),
+      ]);
+      if (!snapshots[0].exists) {
+        throw StateError('This friend request no longer exists.');
+      }
+      if (!snapshots[3].exists) {
+        final now = FieldValue.serverTimestamp();
+        tx.set(myFriend, {'userId': request.senderId, 'createdAt': now});
+        tx.set(senderFriend, {'userId': me.uid, 'createdAt': now});
+        tx.update(myDoc, {'friendCount': FieldValue.increment(1)});
+        tx.update(senderDoc, {'friendCount': FieldValue.increment(1)});
+      }
+      tx.delete(requestRef);
+      tx.delete(senderDoc.collection('sentFriendRequests').doc(me.uid));
+    });
+  }
+
   Future<void> declineFriendRequest(String senderId) async {
-    final currentUserId = _currentUser.uid;
+    final me = _currentUser.uid;
     final batch = _firestore.batch();
-
-    batch.delete(
-      _users.doc(currentUserId).collection('friendRequests').doc(senderId),
-    );
-    batch.delete(
-      _users.doc(senderId).collection('sentFriendRequests').doc(currentUserId),
-    );
-
+    batch.delete(_users.doc(me).collection('friendRequests').doc(senderId));
+    batch.delete(_users.doc(senderId).collection('sentFriendRequests').doc(me));
     await batch.commit();
   }
 
   Future<void> removeFriend(String friendId) async {
-    final currentUserId = _currentUser.uid;
-    final batch = _firestore.batch();
+    final me = _currentUser.uid;
+    final myDoc = _users.doc(me);
+    final friendDoc = _users.doc(friendId);
+    final myFriend = myDoc.collection('friends').doc(friendId);
+    final theirFriend = friendDoc.collection('friends').doc(me);
 
-    batch.delete(_users.doc(currentUserId).collection('friends').doc(friendId));
-    batch.delete(_users.doc(friendId).collection('friends').doc(currentUserId));
-    batch.delete(
-      _users.doc(currentUserId).collection('friendCache').doc(friendId),
-    );
-    batch.delete(
-      _users.doc(friendId).collection('friendCache').doc(currentUserId),
-    );
-
-    await batch.commit();
+    await _firestore.runTransaction((tx) async {
+      final existing = await tx.get(myFriend);
+      if (!existing.exists) return;
+      tx.delete(myFriend);
+      tx.delete(theirFriend);
+      tx.update(myDoc, {'friendCount': FieldValue.increment(-1)});
+      tx.update(friendDoc, {'friendCount': FieldValue.increment(-1)});
+    });
   }
 
-  static String _displayNameFromData(
-    Map<String, dynamic> data, {
-    required String fallbackEmail,
-    String? fallbackName,
-  }) {
-    final possibleNames = <Object?>[
-      data['displayName'],
-      data['username'],
-      data['name'],
-      fallbackName,
-    ];
-
-    for (final value in possibleNames) {
-      if (value is String && value.trim().isNotEmpty) {
-        return value.trim();
-      }
+  String _displayName(Map<String, dynamic> data, String fallbackEmail) {
+    for (final key in ['displayName', 'username', 'name']) {
+      final value = data[key];
+      if (value is String && value.trim().isNotEmpty) return value.trim();
     }
-
-    if (fallbackEmail.trim().isNotEmpty) {
-      return fallbackEmail.trim().split('@').first;
-    }
-
-    return 'YoVoice user';
+    return fallbackEmail.isNotEmpty
+        ? fallbackEmail.split('@').first
+        : 'YoVoice user';
   }
 
-  static String? _nullableString(Object? value) {
-    if (value is! String || value.trim().isEmpty) {
-      return null;
-    }
-
+  String? _nullable(Object? value) {
+    if (value is! String || value.trim().isEmpty) return null;
     return value.trim();
   }
 }

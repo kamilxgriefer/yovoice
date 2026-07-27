@@ -138,6 +138,40 @@ class RoomService {
     });
   }
 
+  Stream<List<VoiceRoom>> watchMyCommunities() {
+    return _firestore
+        .collectionGroup('members')
+        .where('userId', isEqualTo: _user.uid)
+        .snapshots()
+        .asyncMap((snapshot) async {
+          final roomIds = snapshot.docs
+              .map((document) => document.reference.parent.parent?.id)
+              .whereType<String>()
+              .toSet();
+
+          if (roomIds.isEmpty) return <VoiceRoom>[];
+
+          final documents = await Future.wait(
+            roomIds.map((roomId) => _rooms.doc(roomId).get()),
+          );
+
+          final rooms = documents
+              .where((document) => document.exists)
+              .map(VoiceRoom.fromFirestore)
+              .where(
+                (room) => room.roomType == RoomType.community && room.isActive,
+              )
+              .toList();
+
+          rooms.sort(
+            (a, b) => (b.updatedAt ?? b.createdAt ?? DateTime(1970)).compareTo(
+              a.updatedAt ?? a.createdAt ?? DateTime(1970),
+            ),
+          );
+          return rooms;
+        });
+  }
+
   Stream<VoiceRoom> watchRoom(String roomId) {
     return _rooms.doc(roomId).snapshots().map((document) {
       if (!document.exists) throw StateError('The room no longer exists.');
@@ -360,6 +394,124 @@ class RoomService {
     await _deleteCollection(_rooms.doc(roomId).collection('participants'));
   }
 
+  DocumentReference<Map<String, dynamic>> clubLoungeReference(String clubId) {
+    return _rooms.doc('club_lounge_$clubId');
+  }
+
+  Stream<VoiceRoom?> watchClubLounge(String clubId) {
+    return clubLoungeReference(clubId).snapshots().map((document) {
+      if (!document.exists) return null;
+      return VoiceRoom.fromFirestore(document);
+    });
+  }
+
+  Future<VoiceRoom> ensureClubLounge({
+    required String clubId,
+    required String clubName,
+    required String clubDescription,
+    required String language,
+    required String ownerId,
+    required String ownerName,
+    String? ownerPhotoUrl,
+    String? imageUrl,
+  }) async {
+    final reference = clubLoungeReference(clubId);
+
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(reference);
+      if (snapshot.exists) return;
+
+      transaction.set(reference, {
+        'hostId': ownerId,
+        'hostName': ownerName,
+        'hostPhotoUrl': ownerPhotoUrl,
+        'name': '$clubName Lounge',
+        'description': clubDescription.trim().isEmpty
+            ? 'Private voice lounge for $clubName members.'
+            : clubDescription.trim(),
+        'category': 'club',
+        'visibility': 'private',
+        'language': language.trim().isEmpty ? 'English' : language.trim(),
+        'maxParticipants': null,
+        'participantCount': 0,
+        'memberCount': 0,
+        'isLive': false,
+        'roomType': RoomType.community.name,
+        'status': RoomStatus.active.name,
+        'imageUrl': imageUrl,
+        'approvalRequired': false,
+        'slowModeSeconds': 0,
+        'autoMuteNewUsers': false,
+        'membersCanStartVoice': true,
+        'experience': 'community',
+        'clubId': clubId,
+        'roomKind': 'clubLounge',
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+
+    return getRoom(reference.id);
+  }
+
+  Future<VoiceRoom> enterClubLounge({
+    required String clubId,
+    required String clubName,
+    required String clubDescription,
+    required String language,
+    required String ownerId,
+    required String ownerName,
+    String? ownerPhotoUrl,
+    String? imageUrl,
+  }) async {
+    final member = await _firestore
+        .collection('clubs')
+        .doc(clubId)
+        .collection('members')
+        .doc(_user.uid)
+        .get();
+    if (!member.exists) {
+      throw StateError('Only club members can enter the Club Lounge.');
+    }
+
+    final room = await ensureClubLounge(
+      clubId: clubId,
+      clubName: clubName,
+      clubDescription: clubDescription,
+      language: language,
+      ownerId: ownerId,
+      ownerName: ownerName,
+      ownerPhotoUrl: ownerPhotoUrl,
+      imageUrl: imageUrl,
+    );
+
+    if (!room.isLive) {
+      await clubLoungeReference(clubId).update({
+        'isLive': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+        'endedAt': FieldValue.delete(),
+      });
+    }
+
+    return joinRoom(room.id);
+  }
+
+  Future<void> leaveClubLounge(String clubId) async {
+    final roomId = clubLoungeReference(clubId).id;
+    await leaveRoom(roomId);
+
+    final room = await clubLoungeReference(clubId).get();
+    final count = (room.data()?['participantCount'] as num?)?.toInt() ?? 0;
+    if (count <= 0) {
+      await clubLoungeReference(clubId).update({
+        'participantCount': 0,
+        'isLive': false,
+        'endedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    }
+  }
+
   Future<void> sendRoomMessage({
     required String roomId,
     required String text,
@@ -400,6 +552,80 @@ class RoomService {
     });
   }
 
+  Future<void> moderateParticipantMute({
+    required String roomId,
+    required String participantId,
+    required bool isMuted,
+  }) async {
+    await _requireHost(roomId);
+    final room = await getRoom(roomId);
+    if (participantId == room.hostId) {
+      throw StateError('The room owner cannot be muted by moderation.');
+    }
+    await _rooms
+        .doc(roomId)
+        .collection('participants')
+        .doc(participantId)
+        .update({
+          'isMuted': isMuted,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+  }
+
+  Future<void> setParticipantSpeakerStatus({
+    required String roomId,
+    required String participantId,
+    required bool isSpeaker,
+  }) async {
+    await _requireHost(roomId);
+    final room = await getRoom(roomId);
+    if (participantId == room.hostId && !isSpeaker) {
+      throw StateError('The room owner must remain on stage.');
+    }
+    await _rooms
+        .doc(roomId)
+        .collection('participants')
+        .doc(participantId)
+        .update({
+          'role': participantId == room.hostId
+              ? 'host'
+              : (isSpeaker ? 'speaker' : 'listener'),
+          'isSpeaker': isSpeaker,
+          'isMuted': isSpeaker ? true : true,
+          'isHandRaised': false,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+  }
+
+  Future<void> removeParticipant({
+    required String roomId,
+    required String participantId,
+  }) async {
+    await _requireHost(roomId);
+    final roomReference = _rooms.doc(roomId);
+    await _firestore.runTransaction((transaction) async {
+      final roomSnapshot = await transaction.get(roomReference);
+      final data = roomSnapshot.data();
+      if (!roomSnapshot.exists || data == null) {
+        throw StateError('The room no longer exists.');
+      }
+      if (participantId == data['hostId']) {
+        throw StateError('The room owner cannot be removed.');
+      }
+      final participantReference = roomReference
+          .collection('participants')
+          .doc(participantId);
+      final participantSnapshot = await transaction.get(participantReference);
+      if (!participantSnapshot.exists) return;
+      final count = (data['participantCount'] as num?)?.toInt() ?? 0;
+      transaction.delete(participantReference);
+      transaction.update(roomReference, {
+        'participantCount': count > 0 ? count - 1 : 0,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
   Future<void> leaveRoom(String roomId) async {
     final user = _user;
     final room = _rooms.doc(roomId);
@@ -419,6 +645,12 @@ class RoomService {
         'updatedAt': FieldValue.serverTimestamp(),
       };
       if (isHost && type == RoomType.temporary) {
+        update['isLive'] = false;
+        update['endedAt'] = FieldValue.serverTimestamp();
+      }
+      final isClubLounge = data['roomKind'] == 'clubLounge';
+      if (isClubLounge && count <= 1) {
+        update['participantCount'] = 0;
         update['isLive'] = false;
         update['endedAt'] = FieldValue.serverTimestamp();
       }

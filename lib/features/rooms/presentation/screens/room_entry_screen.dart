@@ -4,7 +4,7 @@ import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_experience_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/community_room_lobby_screen.dart';
-import 'package:yovoice/features/rooms/presentation/screens/podcast_room_screen.dart';
+import 'package:yovoice/features/rooms/presentation/screens/broadcast_room_screen.dart';
 
 class RoomEntryScreen extends StatelessWidget {
   const RoomEntryScreen({required this.room, super.key});
@@ -23,8 +23,8 @@ class RoomEntryScreen extends StatelessWidget {
           );
         }
 
-        if (snapshot.data == RoomExperience.podcast) {
-          return PodcastRoomScreen(room: room);
+        if (snapshot.data == RoomExperience.broadcast) {
+          return BroadcastRoomScreen(room: room);
         }
         return CommunityRoomLobbyScreen(room: room);
       },

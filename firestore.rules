@@ -56,6 +56,45 @@ service cloud.firestore {
       );
     }
 
+
+    function clubExists(clubId) {
+      return exists(
+        /databases/$(database)/documents/clubs/$(clubId)
+      );
+    }
+
+    function isClubMember(clubId) {
+      return isSignedIn() && exists(
+        /databases/$(database)/documents/clubs/$(clubId)/members/$(request.auth.uid)
+      );
+    }
+
+    function isClubOwner(clubId) {
+      return isSignedIn() && clubExists(clubId) &&
+          get(
+            /databases/$(database)/documents/clubs/$(clubId)
+          ).data.ownerId == request.auth.uid;
+    }
+
+    function clubRole(clubId) {
+      return get(
+        /databases/$(database)/documents/clubs/$(clubId)/members/$(request.auth.uid)
+      ).data.role;
+    }
+
+    function canManageClub(clubId) {
+      return isClubMember(clubId) &&
+          clubRole(clubId) in ['owner', 'coOwner', 'admin'];
+    }
+
+    function clubRolePower(role) {
+      return role == 'owner' ? 60 :
+          role == 'coOwner' ? 50 :
+          role == 'admin' ? 40 :
+          role == 'moderator' ? 30 :
+          role == 'member' ? 20 : 10;
+    }
+
     match /users/{userId} {
       allow read: if isSignedIn();
       allow create, update: if isOwner(userId);
@@ -75,6 +114,14 @@ service cloud.firestore {
         allow read: if isOwner(userId);
         allow create, update, delete: if isOneOfUsers(userId, friendId) &&
             userId != friendId;
+      }
+
+
+      match /clubs/{clubId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId);
+        allow update: if isOwner(userId);
+        allow delete: if isOwner(userId) || canManageClub(clubId);
       }
     }
 
@@ -98,6 +145,62 @@ service cloud.firestore {
         allow create: if isConversationParticipant(conversationId) &&
             request.resource.data.senderId == request.auth.uid;
         allow update, delete: if false;
+      }
+    }
+
+    match /clubs/{clubId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+          request.resource.data.ownerId == request.auth.uid;
+      allow update: if isClubOwner(clubId) || canManageClub(clubId);
+      allow delete: if isClubOwner(clubId);
+
+      match /members/{memberId} {
+        allow read: if isClubMember(clubId);
+        allow create: if isSignedIn() &&
+            (
+              request.auth.uid == memberId ||
+              canManageClub(clubId)
+            );
+        allow update: if isSignedIn() &&
+            request.resource.data.userId == resource.data.userId &&
+            request.resource.data.joinedAt == resource.data.joinedAt &&
+            (
+              (
+                request.auth.uid == memberId &&
+                request.resource.data.role == resource.data.role
+              ) ||
+              (
+                clubRole(clubId) in ['owner', 'coOwner'] &&
+                memberId != request.auth.uid &&
+                resource.data.role != 'owner' &&
+                request.resource.data.role != 'owner' &&
+                clubRolePower(clubRole(clubId)) > clubRolePower(resource.data.role) &&
+                clubRolePower(clubRole(clubId)) > clubRolePower(request.resource.data.role)
+              )
+            );
+        allow delete: if isSignedIn() &&
+            canManageClub(clubId) &&
+            memberId != request.auth.uid &&
+            resource.data.role != 'owner' &&
+            clubRolePower(clubRole(clubId)) > clubRolePower(resource.data.role);
+      }
+
+      match /channels/{channelId} {
+        allow read: if isClubMember(clubId);
+        allow create, update, delete: if isClubOwner(clubId) || canManageClub(clubId);
+
+        match /messages/{messageId} {
+          allow read: if isClubMember(clubId);
+          allow create: if isClubMember(clubId) &&
+              request.resource.data.senderId == request.auth.uid &&
+              request.resource.data.clubId == clubId &&
+              request.resource.data.channelId == channelId;
+          allow update: if isClubMember(clubId) &&
+              resource.data.senderId == request.auth.uid &&
+              request.resource.data.senderId == resource.data.senderId;
+          allow delete: if false;
+        }
       }
     }
 

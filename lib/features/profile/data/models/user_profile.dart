@@ -1,5 +1,25 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+enum AccountType {
+  personal,
+  creator,
+  official;
+
+  static AccountType fromValue(Object? value) {
+    return switch (value) {
+      'creator' => AccountType.creator,
+      'official' => AccountType.official,
+      _ => AccountType.personal,
+    };
+  }
+
+  String get label => switch (this) {
+    AccountType.personal => 'Personal',
+    AccountType.creator => 'Creator',
+    AccountType.official => 'Official',
+  };
+}
+
 class UserProfile {
   const UserProfile({
     required this.uid,
@@ -14,6 +34,7 @@ class UserProfile {
     required this.photoUrl,
     required this.bannerUrl,
     required this.website,
+    required this.accountType,
     required this.friendCount,
     required this.followerCount,
     required this.followingCount,
@@ -42,6 +63,7 @@ class UserProfile {
   final String? photoUrl;
   final String? bannerUrl;
   final String website;
+  final AccountType accountType;
   final int friendCount;
   final int followerCount;
   final int followingCount;
@@ -85,6 +107,7 @@ class UserProfile {
       photoUrl: data['photoUrl'] as String?,
       bannerUrl: data['bannerUrl'] as String?,
       website: data['website'] as String? ?? '',
+      accountType: AccountType.fromValue(data['accountType']),
       friendCount: readInt('friendCount'),
       followerCount: readInt('followerCount'),
       followingCount: readInt('followingCount'),

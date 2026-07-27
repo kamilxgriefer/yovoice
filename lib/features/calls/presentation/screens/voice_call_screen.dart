@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../data/services/voice_call_service.dart';
+import '../../../rooms/data/services/room_service.dart';
 
 class VoiceCallScreen extends StatefulWidget {
   const VoiceCallScreen({
@@ -23,6 +24,7 @@ class VoiceCallScreen extends StatefulWidget {
 class _VoiceCallScreenState extends State<VoiceCallScreen>
     with SingleTickerProviderStateMixin {
   final _voice = VoiceCallService.instance;
+  final _rooms = RoomService();
   late final AnimationController _motion;
 
   final List<_FloatingReaction> _reactions = [];
@@ -84,6 +86,11 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
 
   Future<void> _leave() async {
     await _voice.disconnect();
+    try {
+      await _rooms.leaveRoom(widget.roomId);
+    } catch (_) {
+      // The Firestore participant may already have been removed.
+    }
     if (mounted) Navigator.of(context).pop();
   }
 

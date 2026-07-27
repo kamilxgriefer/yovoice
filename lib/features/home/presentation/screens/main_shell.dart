@@ -4,6 +4,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
+import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
+import 'package:yovoice/features/clubs/presentation/screens/clubs_screen.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
@@ -46,7 +48,9 @@ class _MainShellState extends State<MainShell> {
   static const List<Widget> _screens = [
     HomeScreen(),
     DiscoverScreen(),
+    FriendsScreen(),
     MessagesScreen(),
+    ClubsScreen(),
     ProfileScreen(),
   ];
 
@@ -162,7 +166,7 @@ class _MainShellState extends State<MainShell> {
 
     if (_hasInitialConversationSnapshot &&
         newestIncomingConversation != null &&
-        _selectedIndex != 2) {
+        _selectedIndex != 3) {
       _showIncomingMessageOverlay(newestIncomingConversation, currentUserId);
     }
 
@@ -211,7 +215,7 @@ class _MainShellState extends State<MainShell> {
 
                   if (mounted) {
                     setState(() {
-                      _selectedIndex = 2;
+                      _selectedIndex = 3;
                     });
                   }
                 },
@@ -488,6 +492,17 @@ class _BottomNavigation extends StatelessWidget {
                         },
                       ),
                     ),
+                    Expanded(
+                      child: _NavigationItem(
+                        icon: Icons.people_outline_rounded,
+                        selectedIcon: Icons.people_rounded,
+                        label: 'Friends',
+                        isSelected: selectedIndex == 2,
+                        onPressed: () {
+                          onDestinationSelected(2);
+                        },
+                      ),
+                    ),
                     const SizedBox(width: 84),
                     Expanded(
                       child: _NavigationItem(
@@ -495,9 +510,20 @@ class _BottomNavigation extends StatelessWidget {
                         selectedIcon: Icons.chat_bubble_rounded,
                         label: 'Chats',
                         badgeCount: unreadConversationCount,
-                        isSelected: selectedIndex == 2,
+                        isSelected: selectedIndex == 3,
                         onPressed: () {
-                          onDestinationSelected(2);
+                          onDestinationSelected(3);
+                        },
+                      ),
+                    ),
+                    Expanded(
+                      child: _NavigationItem(
+                        icon: Icons.groups_2_outlined,
+                        selectedIcon: Icons.groups_2_rounded,
+                        label: 'Clubs',
+                        isSelected: selectedIndex == 4,
+                        onPressed: () {
+                          onDestinationSelected(4);
                         },
                       ),
                     ),
@@ -506,9 +532,9 @@ class _BottomNavigation extends StatelessWidget {
                         icon: Icons.person_outline_rounded,
                         selectedIcon: Icons.person_rounded,
                         label: 'Profile',
-                        isSelected: selectedIndex == 3,
+                        isSelected: selectedIndex == 5,
                         onPressed: () {
-                          onDestinationSelected(3);
+                          onDestinationSelected(5);
                         },
                       ),
                     ),
