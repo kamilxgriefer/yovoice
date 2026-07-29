@@ -4,12 +4,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
-import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
-import 'package:yovoice/features/clubs/presentation/screens/clubs_screen.dart';
+import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
-import 'package:yovoice/features/moments/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -47,10 +45,7 @@ class _MainShellState extends State<MainShell> {
 
   static const List<Widget> _screens = [
     HomeScreen(),
-    DiscoverScreen(),
-    FriendsScreen(),
     MessagesScreen(),
-    ClubsScreen(),
     ProfileScreen(),
   ];
 
@@ -166,7 +161,7 @@ class _MainShellState extends State<MainShell> {
 
     if (_hasInitialConversationSnapshot &&
         newestIncomingConversation != null &&
-        _selectedIndex != 3) {
+        _selectedIndex != 1) {
       _showIncomingMessageOverlay(newestIncomingConversation, currentUserId);
     }
 
@@ -215,7 +210,7 @@ class _MainShellState extends State<MainShell> {
 
                   if (mounted) {
                     setState(() {
-                      _selectedIndex = 3;
+                      _selectedIndex = 1;
                     });
                   }
                 },
@@ -268,9 +263,31 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
+  Future<void> _openMoreMenu() async {
+    final destination = await showMoreSheet(context);
+    if (!mounted || destination == null) {
+      return;
+    }
+
+    await _openMoreDestination(destination);
+  }
+
+  Future<void> _openMoreDestination(MoreDestination destination) async {
+    final screen = moreDestinationScreen(destination);
+
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            MoreDestinationPage(destination: destination, child: screen),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    HomeScreen.openDiscoverTab = () => _onDestinationSelected(1);
+    HomeScreen.openDiscoverTab = () {
+      unawaited(_openMoreDestination(MoreDestination.discover));
+    };
 
     return Scaffold(
       backgroundColor: _background,
@@ -280,6 +297,7 @@ class _MainShellState extends State<MainShell> {
         unreadConversationCount: _unreadConversationCount,
         onDestinationSelected: _onDestinationSelected,
         onVoicePressed: _openVoiceAction,
+        onMorePressed: _openMoreMenu,
       ),
     );
   }
@@ -432,16 +450,18 @@ class _BottomNavigation extends StatelessWidget {
     required this.unreadConversationCount,
     required this.onDestinationSelected,
     required this.onVoicePressed,
+    required this.onMorePressed,
   });
 
   final int selectedIndex;
   final int unreadConversationCount;
   final ValueChanged<int> onDestinationSelected;
   final VoidCallback onVoicePressed;
+  final VoidCallback onMorePressed;
 
   @override
   Widget build(BuildContext context) {
-    final double safeBottom = MediaQuery.paddingOf(context).bottom;
+    final safeBottom = MediaQuery.paddingOf(context).bottom;
 
     return SizedBox(
       height: 104 + safeBottom,
@@ -463,8 +483,8 @@ class _BottomNavigation extends StatelessWidget {
               ),
               child: Padding(
                 padding: EdgeInsets.only(
-                  left: 8,
-                  right: 8,
+                  left: 12,
+                  right: 12,
                   top: 8,
                   bottom: safeBottom + 4,
                 ),
@@ -476,66 +496,36 @@ class _BottomNavigation extends StatelessWidget {
                         selectedIcon: Icons.home_rounded,
                         label: 'Home',
                         isSelected: selectedIndex == 0,
-                        onPressed: () {
-                          onDestinationSelected(0);
-                        },
+                        onPressed: () => onDestinationSelected(0),
                       ),
                     ),
-                    Expanded(
-                      child: _NavigationItem(
-                        icon: Icons.explore_outlined,
-                        selectedIcon: Icons.explore_rounded,
-                        label: 'Discover',
-                        isSelected: selectedIndex == 1,
-                        onPressed: () {
-                          onDestinationSelected(1);
-                        },
-                      ),
-                    ),
-                    Expanded(
-                      child: _NavigationItem(
-                        icon: Icons.people_outline_rounded,
-                        selectedIcon: Icons.people_rounded,
-                        label: 'Friends',
-                        isSelected: selectedIndex == 2,
-                        onPressed: () {
-                          onDestinationSelected(2);
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 84),
                     Expanded(
                       child: _NavigationItem(
                         icon: Icons.chat_bubble_outline_rounded,
                         selectedIcon: Icons.chat_bubble_rounded,
                         label: 'Chats',
                         badgeCount: unreadConversationCount,
-                        isSelected: selectedIndex == 3,
-                        onPressed: () {
-                          onDestinationSelected(3);
-                        },
+                        isSelected: selectedIndex == 1,
+                        onPressed: () => onDestinationSelected(1),
                       ),
                     ),
-                    Expanded(
-                      child: _NavigationItem(
-                        icon: Icons.groups_2_outlined,
-                        selectedIcon: Icons.groups_2_rounded,
-                        label: 'Clubs',
-                        isSelected: selectedIndex == 4,
-                        onPressed: () {
-                          onDestinationSelected(4);
-                        },
-                      ),
-                    ),
+                    const SizedBox(width: 88),
                     Expanded(
                       child: _NavigationItem(
                         icon: Icons.person_outline_rounded,
                         selectedIcon: Icons.person_rounded,
                         label: 'Profile',
-                        isSelected: selectedIndex == 5,
-                        onPressed: () {
-                          onDestinationSelected(5);
-                        },
+                        isSelected: selectedIndex == 2,
+                        onPressed: () => onDestinationSelected(2),
+                      ),
+                    ),
+                    Expanded(
+                      child: _NavigationItem(
+                        icon: Icons.grid_view_rounded,
+                        selectedIcon: Icons.grid_view_rounded,
+                        label: 'More',
+                        isSelected: false,
+                        onPressed: onMorePressed,
                       ),
                     ),
                   ],

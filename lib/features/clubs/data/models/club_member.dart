@@ -37,11 +37,62 @@ enum ClubRole {
     ClubRole.guest => 10,
   };
 
-  bool get canInvite => power >= ClubRole.moderator.power;
-  bool get canRemoveMembers => power >= ClubRole.moderator.power;
-  bool get canManageChannels => power >= ClubRole.admin.power;
-  bool get canManageRoles => power >= ClubRole.coOwner.power;
-  bool get canEditClub => power >= ClubRole.coOwner.power;
+  bool get canInvite => switch (this) {
+    ClubRole.owner ||
+    ClubRole.coOwner ||
+    ClubRole.admin ||
+    ClubRole.moderator => true,
+    ClubRole.member || ClubRole.guest => false,
+  };
+
+  bool get canRemoveMembers => switch (this) {
+    ClubRole.owner ||
+    ClubRole.coOwner ||
+    ClubRole.admin ||
+    ClubRole.moderator => true,
+    ClubRole.member || ClubRole.guest => false,
+  };
+
+  bool get canManageChannels => switch (this) {
+    ClubRole.owner || ClubRole.coOwner || ClubRole.admin => true,
+    ClubRole.moderator || ClubRole.member || ClubRole.guest => false,
+  };
+
+  bool get canManageRoles => switch (this) {
+    ClubRole.owner || ClubRole.coOwner => true,
+    ClubRole.admin ||
+    ClubRole.moderator ||
+    ClubRole.member ||
+    ClubRole.guest => false,
+  };
+
+  bool get canEditClub => switch (this) {
+    ClubRole.owner || ClubRole.coOwner => true,
+    ClubRole.admin ||
+    ClubRole.moderator ||
+    ClubRole.member ||
+    ClubRole.guest => false,
+  };
+
+  bool get canDeleteClub => this == ClubRole.owner;
+  bool get canWriteChat => this != ClubRole.guest;
+  bool get canJoinVoice => this != ClubRole.guest;
+  bool get canReadAnnouncements => true;
+
+  bool canManageMemberRole(ClubRole target) {
+    if (!canManageRoles || target == ClubRole.owner) return false;
+    return power > target.power;
+  }
+
+  bool canAssignRole(ClubRole role) {
+    if (!canManageRoles || role == ClubRole.owner) return false;
+    return this == ClubRole.owner || power > role.power;
+  }
+
+  bool canRemoveRole(ClubRole target) {
+    if (!canRemoveMembers || target == ClubRole.owner) return false;
+    return power > target.power;
+  }
 }
 
 class ClubMember {

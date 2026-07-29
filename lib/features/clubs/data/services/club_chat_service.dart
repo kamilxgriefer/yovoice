@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'package:yovoice/features/clubs/data/models/club_member.dart';
 import 'package:yovoice/features/clubs/data/models/club_message.dart';
 
 class ClubChatService {
@@ -73,6 +74,10 @@ class ClubChatService {
     if (!member.exists) throw StateError('You are not a member of this club.');
 
     final memberData = member.data() ?? const <String, dynamic>{};
+    final role = ClubRole.fromValue(memberData['role']);
+    if (!role.canWriteChat) {
+      throw StateError('Guests cannot send messages in club chat.');
+    }
     final displayName = (memberData['displayName'] as String?)?.trim();
     final photoUrl = memberData['photoUrl'] as String?;
     final messageRef = _messages(clubId: clubId, channelId: channelId).doc();
@@ -101,8 +106,19 @@ class ClubChatService {
     required ClubMessage message,
   }) async {
     final user = _user;
-    if (message.senderId != user.uid) {
-      throw StateError('You can only delete your own messages.');
+    final memberSnapshot = await _firestore
+        .collection('clubs')
+        .doc(clubId)
+        .collection('members')
+        .doc(user.uid)
+        .get();
+    if (!memberSnapshot.exists) {
+      throw StateError('You are not a member of this club.');
+    }
+    final role = ClubRole.fromValue(memberSnapshot.data()?['role']);
+    final canModerate = role.power >= ClubRole.moderator.power;
+    if (message.senderId != user.uid && !canModerate) {
+      throw StateError('Your role cannot remove this message.');
     }
 
     await _messages(

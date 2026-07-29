@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
+import 'package:yovoice/features/clubs/data/models/club_invite.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 import 'package:yovoice/features/clubs/presentation/screens/create_club_screen.dart';
@@ -20,14 +21,13 @@ class _ClubsScreenState extends State<ClubsScreen> {
   static const Color _muted = Color(0xFFA59BAF);
 
   final ClubService _clubService = ClubService();
+  final Set<String> _processingInvites = <String>{};
 
   Future<void> _openCreateClub() async {
     final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(builder: (_) => const CreateClubScreen()),
     );
-
     if (!mounted || created != true) return;
-
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Club created successfully.')));
@@ -41,6 +41,37 @@ class _ClubsScreenState extends State<ClubsScreen> {
     );
   }
 
+  Future<void> _respondToInvite(ClubInvite invite, bool accept) async {
+    if (_processingInvites.contains(invite.clubId)) return;
+    setState(() => _processingInvites.add(invite.clubId));
+    try {
+      if (accept) {
+        await _clubService.acceptClubInvite(invite);
+      } else {
+        await _clubService.declineClubInvite(invite);
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            accept ? 'You joined ${invite.clubName}.' : 'Invitation declined.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Bad state: ', '')),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _processingInvites.remove(invite.clubId));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -51,58 +82,197 @@ class _ClubsScreenState extends State<ClubsScreen> {
           children: [
             _Header(onCreatePressed: _openCreateClub),
             Expanded(
-              child: StreamBuilder<List<Club>>(
-                stream: _clubService.watchMyClubs(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(
-                      child: CircularProgressIndicator(color: _purple),
-                    );
-                  }
+              child: StreamBuilder<List<ClubInvite>>(
+                stream: _clubService.watchMyClubInvites(),
+                builder: (context, inviteSnapshot) {
+                  final invites = inviteSnapshot.data ?? const <ClubInvite>[];
+                  return StreamBuilder<List<Club>>(
+                    stream: _clubService.watchMyClubs(),
+                    builder: (context, clubSnapshot) {
+                      if (clubSnapshot.connectionState ==
+                              ConnectionState.waiting &&
+                          !clubSnapshot.hasData) {
+                        return const Center(
+                          child: CircularProgressIndicator(color: _purple),
+                        );
+                      }
+                      if (clubSnapshot.hasError) {
+                        return _ErrorState(
+                          message: clubSnapshot.error.toString(),
+                          onRetry: () => setState(() {}),
+                        );
+                      }
 
-                  if (snapshot.hasError) {
-                    return _ErrorState(
-                      message: snapshot.error.toString(),
-                      onRetry: () => setState(() {}),
-                    );
-                  }
+                      final clubs = clubSnapshot.data ?? const <Club>[];
+                      if (clubs.isEmpty && invites.isEmpty) {
+                        return _EmptyState(onCreatePressed: _openCreateClub);
+                      }
 
-                  final clubs = snapshot.data ?? const <Club>[];
-                  if (clubs.isEmpty) {
-                    return _EmptyState(onCreatePressed: _openCreateClub);
-                  }
-
-                  return RefreshIndicator(
-                    color: _purple,
-                    backgroundColor: _surfaceLight,
-                    onRefresh: () async => setState(() {}),
-                    child: ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(18, 10, 18, 130),
-                      children: [
-                        _SummaryCard(clubCount: clubs.length),
-                        const SizedBox(height: 18),
-                        const Text(
-                          'Your clubs',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 19,
-                            fontWeight: FontWeight.w900,
-                          ),
+                      return RefreshIndicator(
+                        color: _purple,
+                        backgroundColor: _surfaceLight,
+                        onRefresh: () async => setState(() {}),
+                        child: ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.fromLTRB(18, 10, 18, 130),
+                          children: [
+                            if (invites.isNotEmpty) ...[
+                              const Text(
+                                'Club invitations',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 19,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              for (final invite in invites) ...[
+                                _ClubInviteCard(
+                                  invite: invite,
+                                  busy: _processingInvites.contains(
+                                    invite.clubId,
+                                  ),
+                                  onAccept: () =>
+                                      _respondToInvite(invite, true),
+                                  onDecline: () =>
+                                      _respondToInvite(invite, false),
+                                ),
+                                const SizedBox(height: 12),
+                              ],
+                              const SizedBox(height: 8),
+                            ],
+                            if (clubs.isNotEmpty) ...[
+                              _SummaryCard(clubCount: clubs.length),
+                              const SizedBox(height: 18),
+                              const Text(
+                                'Your clubs',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 19,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              for (final club in clubs) ...[
+                                _ClubCard(
+                                  club: club,
+                                  onTap: () => _openClub(club),
+                                ),
+                                const SizedBox(height: 12),
+                              ],
+                            ],
+                          ],
                         ),
-                        const SizedBox(height: 12),
-                        for (final club in clubs) ...[
-                          _ClubCard(club: club, onTap: () => _openClub(club)),
-                          const SizedBox(height: 12),
-                        ],
-                      ],
-                    ),
+                      );
+                    },
                   );
                 },
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ClubInviteCard extends StatelessWidget {
+  const _ClubInviteCard({
+    required this.invite,
+    required this.busy,
+    required this.onAccept,
+    required this.onDecline,
+  });
+
+  final ClubInvite invite;
+  final bool busy;
+  final VoidCallback onAccept;
+  final VoidCallback onDecline;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasAvatar = invite.clubAvatarUrl?.isNotEmpty == true;
+    return Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: _ClubsScreenState._surface,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFF5C3477)),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 28,
+            backgroundColor: const Color(0xFF54247C),
+            backgroundImage: hasAvatar
+                ? NetworkImage(invite.clubAvatarUrl!)
+                : null,
+            child: hasAvatar
+                ? null
+                : Text(
+                    invite.clubName.isEmpty
+                        ? 'C'
+                        : invite.clubName[0].toUpperCase(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  invite.clubName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Invited by ${invite.inviterName}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: _ClubsScreenState._muted),
+                ),
+                const SizedBox(height: 11),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: busy ? null : onDecline,
+                        child: const Text('Decline'),
+                      ),
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: busy ? null : onAccept,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _ClubsScreenState._purple,
+                        ),
+                        child: busy
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('Accept'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

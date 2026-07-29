@@ -6,6 +6,11 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    function isValidClubImage() {
+      return request.resource.size < 8 * 1024 * 1024
+          && request.resource.contentType.matches('image/.*');
+    }
+
     match /users/{userId}/profile/{fileName} {
       allow read: if true;
       allow write: if isSignedIn()
@@ -20,6 +25,14 @@ service firebase.storage {
           && request.auth.uid == userId
           && request.resource.size < 8 * 1024 * 1024
           && request.resource.contentType.matches('image/.*');
+    }
+
+    match /clubs/{userId}/{clubId}/{fileName} {
+      allow read: if true;
+      allow create, update: if isSignedIn()
+          && request.auth.uid == userId
+          && isValidClubImage();
+      allow delete: if isSignedIn() && request.auth.uid == userId;
     }
   }
 }

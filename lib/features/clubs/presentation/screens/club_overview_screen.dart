@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/models/club_channel.dart';
@@ -8,6 +9,9 @@ import 'package:yovoice/features/clubs/presentation/screens/club_chat_screen.dar
 import 'package:yovoice/features/clubs/presentation/screens/club_member_management_screen.dart';
 import 'package:yovoice/features/calls/presentation/screens/voice_call_screen.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/friends/data/models/friend_user.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/clubs/presentation/screens/club_settings_screen.dart';
 
 class ClubOverviewScreen extends StatefulWidget {
   const ClubOverviewScreen({required this.clubId, super.key});
@@ -61,6 +65,53 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
     }
   }
 
+  Future<void> _showInviteFriends(Club club) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _InviteFriendsSheet(club: club),
+    );
+  }
+
+  Future<void> _showClubOptions(Club club) async {
+    final membership = await _clubService.getMyMembership(club.id);
+    if (!mounted) return;
+    final canManage = membership?.role.canEditClub ?? false;
+    final inviteLink = _clubService.createInviteLink(club.id);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => _ClubOptionsSheet(
+        canManage: canManage,
+        onSettings: canManage
+            ? () {
+                Navigator.pop(sheetContext);
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => ClubSettingsScreen(club: club),
+                  ),
+                );
+              }
+            : null,
+        onMembers: () {
+          Navigator.pop(sheetContext);
+          setState(() => _selectedTab = 1);
+        },
+        onShare: () async {
+          Navigator.pop(sheetContext);
+          await SharePlus.instance.share(
+            ShareParams(
+              text: 'Join ${club.name} on YoVoice: $inviteLink',
+              subject: 'Join ${club.name} on YoVoice',
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -92,7 +143,7 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
                 ),
                 actions: [
                   IconButton.filledTonal(
-                    onPressed: () {},
+                    onPressed: () => _showClubOptions(club),
                     tooltip: 'Club options',
                     icon: const Icon(Icons.more_horiz_rounded),
                   ),
@@ -180,7 +231,7 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
                           ),
                           const SizedBox(width: 10),
                           IconButton.outlined(
-                            onPressed: () {},
+                            onPressed: () => _showInviteFriends(club),
                             tooltip: 'Invite members',
                             style: IconButton.styleFrom(
                               minimumSize: const Size(52, 52),
@@ -709,6 +760,302 @@ class _ClubLoadError extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ClubOptionsSheet extends StatelessWidget {
+  const _ClubOptionsSheet({
+    required this.canManage,
+    required this.onSettings,
+    required this.onMembers,
+    required this.onShare,
+  });
+
+  final bool canManage;
+  final VoidCallback? onSettings;
+  final VoidCallback onMembers;
+  final VoidCallback onShare;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
+        decoration: const BoxDecoration(
+          color: Color(0xFF171120),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                color: const Color(0xFF665A70),
+                borderRadius: BorderRadius.circular(99),
+              ),
+            ),
+            const SizedBox(height: 18),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Club options',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 23,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (canManage)
+              ListTile(
+                onTap: onSettings,
+                leading: const Icon(
+                  Icons.settings_rounded,
+                  color: Color(0xFFB348FF),
+                ),
+                title: const Text(
+                  'Club settings',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                subtitle: const Text(
+                  'Name, description, privacy and language',
+                  style: TextStyle(color: Color(0xFF9D95AD)),
+                ),
+              ),
+            ListTile(
+              onTap: onMembers,
+              leading: const Icon(
+                Icons.manage_accounts_rounded,
+                color: Color(0xFFB348FF),
+              ),
+              title: const Text(
+                'Manage members',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              subtitle: const Text(
+                'View members and manage roles',
+                style: TextStyle(color: Color(0xFF9D95AD)),
+              ),
+            ),
+            ListTile(
+              onTap: onShare,
+              leading: const Icon(Icons.link_rounded, color: Color(0xFFB348FF)),
+              title: const Text(
+                'Share invite link',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              subtitle: const Text(
+                'Invite people through any app',
+                style: TextStyle(color: Color(0xFF9D95AD)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InviteFriendsSheet extends StatefulWidget {
+  const _InviteFriendsSheet({required this.club});
+  final Club club;
+
+  @override
+  State<_InviteFriendsSheet> createState() => _InviteFriendsSheetState();
+}
+
+class _InviteFriendsSheetState extends State<_InviteFriendsSheet> {
+  final FriendService _friends = FriendService();
+  final ClubService _clubs = ClubService();
+  final Set<String> _busy = <String>{};
+
+  Future<void> _sendInvite(FriendUser friend, bool alreadyInvited) async {
+    if (_busy.contains(friend.id)) return;
+    setState(() => _busy.add(friend.id));
+    try {
+      if (alreadyInvited) {
+        await _clubs.cancelClubInvite(
+          clubId: widget.club.id,
+          inviteeId: friend.id,
+        );
+      } else {
+        await _clubs.sendClubInvite(
+          clubId: widget.club.id,
+          friendId: friend.id,
+        );
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            alreadyInvited
+                ? 'Invitation cancelled.'
+                : 'Invitation sent to ${friend.displayName}.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Bad state: ', '')),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _busy.remove(friend.id));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        height: MediaQuery.sizeOf(context).height * .72,
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 20),
+        decoration: const BoxDecoration(
+          color: Color(0xFF171120),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                color: const Color(0xFF665A70),
+                borderRadius: BorderRadius.circular(99),
+              ),
+            ),
+            const SizedBox(height: 18),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Invite friends',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 23,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'They will join only after accepting your invitation.',
+                style: TextStyle(color: Color(0xFF9D95AD)),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: StreamBuilder<Set<String>>(
+                stream: _clubs.watchInvitedUserIds(widget.club.id),
+                builder: (context, inviteSnapshot) {
+                  final invitedIds = inviteSnapshot.data ?? const <String>{};
+                  return StreamBuilder<List<FriendUser>>(
+                    stream: _friends.watchFriends(),
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData) {
+                        return const Center(
+                          child: CircularProgressIndicator(
+                            color: Color(0xFF9D20FF),
+                          ),
+                        );
+                      }
+                      final items = snapshot.data!;
+                      if (items.isEmpty) {
+                        return const Center(
+                          child: Text(
+                            'Add friends first, then invite them here.',
+                            style: TextStyle(color: Color(0xFF9D95AD)),
+                          ),
+                        );
+                      }
+                      return ListView.separated(
+                        itemCount: items.length,
+                        separatorBuilder: (_, __) =>
+                            const Divider(color: Color(0xFF30263F)),
+                        itemBuilder: (context, index) {
+                          final friend = items[index];
+                          final busy = _busy.contains(friend.id);
+                          final invited = invitedIds.contains(friend.id);
+                          return ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: CircleAvatar(
+                              backgroundImage:
+                                  friend.photoUrl?.isNotEmpty == true
+                                  ? NetworkImage(friend.photoUrl!)
+                                  : null,
+                              child: friend.photoUrl?.isNotEmpty == true
+                                  ? null
+                                  : Text(friend.initial),
+                            ),
+                            title: Text(
+                              friend.displayName,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            subtitle: Text(
+                              invited
+                                  ? 'Invitation pending'
+                                  : friend.isOnline
+                                  ? 'Online'
+                                  : friend.email,
+                              style: TextStyle(
+                                color: invited
+                                    ? const Color(0xFFC982FF)
+                                    : const Color(0xFF9D95AD),
+                              ),
+                            ),
+                            trailing: FilledButton(
+                              onPressed: busy
+                                  ? null
+                                  : () => _sendInvite(friend, invited),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: invited
+                                    ? const Color(0xFF30243C)
+                                    : const Color(0xFF7D25F4),
+                              ),
+                              child: busy
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : Text(invited ? 'Cancel' : 'Invite'),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
@@ -36,16 +39,59 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
   final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _clubService = ClubService();
+  final _picker = ImagePicker();
 
   ClubPrivacy _privacy = ClubPrivacy.public;
   String _language = 'English';
   bool _busy = false;
+  bool _pickingImage = false;
+
+  XFile? _avatarFile;
+  XFile? _bannerFile;
+  Uint8List? _avatarBytes;
+  Uint8List? _bannerBytes;
 
   @override
   void dispose() {
     _nameController.dispose();
     _descriptionController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickImage({required bool avatar}) async {
+    if (_busy || _pickingImage) return;
+    setState(() => _pickingImage = true);
+
+    try {
+      final file = await _picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 88,
+        maxWidth: avatar ? 1200 : 2200,
+        maxHeight: avatar ? 1200 : 1200,
+      );
+      if (file == null) return;
+
+      final bytes = await file.readAsBytes();
+      if (bytes.length > 8 * 1024 * 1024) {
+        throw StateError('The selected image must be smaller than 8 MB.');
+      }
+
+      if (!mounted) return;
+      setState(() {
+        if (avatar) {
+          _avatarFile = file;
+          _avatarBytes = bytes;
+        } else {
+          _bannerFile = file;
+          _bannerBytes = bytes;
+        }
+      });
+    } catch (error) {
+      if (!mounted) return;
+      _showError(_readableError(error));
+    } finally {
+      if (mounted) setState(() => _pickingImage = false);
+    }
   }
 
   Future<void> _createClub() async {
@@ -58,26 +104,53 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
         description: _descriptionController.text,
         privacy: _privacy,
         defaultLanguage: _language,
+        avatarFile: _avatarFile,
+        bannerFile: _bannerFile,
       );
 
       if (!mounted) return;
-      await Navigator.of(context).pushReplacement(
+      await Navigator.of(context).pushReplacement<void, void>(
         MaterialPageRoute<void>(builder: (_) => ClubCreatedScreen(club: club)),
       );
     } catch (error) {
       if (!mounted) return;
-      setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
+      _showError(_readableError(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  String _readableError(Object error) {
+    final message = error
+        .toString()
+        .replaceFirst('Bad state: ', '')
+        .replaceFirst('Invalid argument(s): ', '');
+    if (message.contains('permission-denied')) {
+      return 'Firestore or Storage permission denied. Deploy the new rules from this stage.';
+    }
+    if (message.contains('object-not-found')) {
+      return 'The uploaded image could not be found.';
+    }
+    if (message.contains('unauthorized')) {
+      return 'Storage rejected the upload. Deploy storage.rules.';
+    }
+    return message;
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
         SnackBar(
-          content: Text(
-            error
-                .toString()
-                .replaceFirst('Bad state: ', '')
-                .replaceFirst('Invalid argument(s): ', ''),
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFF48203A),
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
           ),
         ),
       );
-    }
   }
 
   @override
@@ -108,20 +181,39 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
             Row(
               children: [
                 Expanded(
-                  child: _MediaPlaceholder(
+                  child: _MediaPickerCard(
                     icon: Icons.groups_2_rounded,
                     label: 'Club avatar',
-                    helper: 'Available next stage',
-                    onTap: _showMediaInfo,
+                    helper: _avatarBytes == null
+                        ? 'Choose image'
+                        : 'Tap to replace',
+                    bytes: _avatarBytes,
+                    circularPreview: true,
+                    onTap: () => _pickImage(avatar: true),
+                    onRemove: _avatarBytes == null
+                        ? null
+                        : () => setState(() {
+                            _avatarFile = null;
+                            _avatarBytes = null;
+                          }),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: _MediaPlaceholder(
+                  child: _MediaPickerCard(
                     icon: Icons.image_rounded,
                     label: 'Club banner',
-                    helper: 'Available next stage',
-                    onTap: _showMediaInfo,
+                    helper: _bannerBytes == null
+                        ? 'Choose image'
+                        : 'Tap to replace',
+                    bytes: _bannerBytes,
+                    onTap: () => _pickImage(avatar: false),
+                    onRemove: _bannerBytes == null
+                        ? null
+                        : () => setState(() {
+                            _bannerFile = null;
+                            _bannerBytes = null;
+                          }),
                   ),
                 ),
               ],
@@ -233,7 +325,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
           child: SizedBox(
             height: 58,
             child: FilledButton.icon(
-              onPressed: _busy ? null : _createClub,
+              onPressed: _busy || _pickingImage ? null : _createClub,
               style: FilledButton.styleFrom(
                 backgroundColor: _primary,
                 disabledBackgroundColor: _primary.withValues(alpha: .45),
@@ -264,16 +356,6 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
       ),
     );
   }
-
-  void _showMediaInfo() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Avatar and banner upload will be connected in the next Clubs stage.',
-        ),
-      ),
-    );
-  }
 }
 
 class _HeroCard extends StatelessWidget {
@@ -286,8 +368,6 @@ class _HeroCard extends StatelessWidget {
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [Color(0xFF35104F), Color(0xFF171121)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(26),
         border: Border.all(color: const Color(0xFF7130A5)),
@@ -325,70 +405,64 @@ class _HeroCard extends StatelessWidget {
 
 class _ClubMark extends StatelessWidget {
   const _ClubMark();
-
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 62,
-      height: 62,
-      decoration: BoxDecoration(
-        color: const Color(0xFFA226FF).withValues(alpha: .18),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFA226FF)),
-      ),
-      child: const Icon(
-        Icons.shield_rounded,
-        color: Color(0xFFBE63FF),
-        size: 34,
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Container(
+    width: 62,
+    height: 62,
+    decoration: BoxDecoration(
+      color: const Color(0xFFA226FF).withValues(alpha: .18),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: const Color(0xFFA226FF)),
+    ),
+    child: const Icon(Icons.shield_rounded, color: Color(0xFFBE63FF), size: 34),
+  );
 }
 
 class _SectionTitle extends StatelessWidget {
   const _SectionTitle({required this.title, required this.subtitle});
-
   final String title;
   final String subtitle;
-
   @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 19,
-            fontWeight: FontWeight.w900,
-          ),
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        title,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 19,
+          fontWeight: FontWeight.w900,
         ),
-        const SizedBox(height: 4),
-        Text(
-          subtitle,
-          style: const TextStyle(
-            color: _CreateClubScreenState._muted,
-            height: 1.35,
-          ),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        subtitle,
+        style: const TextStyle(
+          color: _CreateClubScreenState._muted,
+          height: 1.35,
         ),
-      ],
-    );
-  }
+      ),
+    ],
+  );
 }
 
-class _MediaPlaceholder extends StatelessWidget {
-  const _MediaPlaceholder({
+class _MediaPickerCard extends StatelessWidget {
+  const _MediaPickerCard({
     required this.icon,
     required this.label,
     required this.helper,
     required this.onTap,
+    this.bytes,
+    this.circularPreview = false,
+    this.onRemove,
   });
-
   final IconData icon;
   final String label;
   final String helper;
   final VoidCallback onTap;
+  final Uint8List? bytes;
+  final bool circularPreview;
+  final VoidCallback? onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -399,37 +473,113 @@ class _MediaPlaceholder extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
         child: Container(
-          height: 126,
-          padding: const EdgeInsets.all(14),
+          height: 150,
+          padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
             border: Border.all(color: const Color(0xFF3A2C49)),
           ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+          child: Stack(
             children: [
-              Icon(icon, color: const Color(0xFFA226FF), size: 30),
-              const SizedBox(height: 10),
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w800,
+              Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (bytes == null)
+                      Icon(icon, color: const Color(0xFFA226FF), size: 32)
+                    else
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(
+                          circularPreview ? 999 : 14,
+                        ),
+                        child: Image.memory(
+                          bytes!,
+                          width: circularPreview ? 64 : double.infinity,
+                          height: 64,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    const SizedBox(height: 10),
+                    Text(
+                      label,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      helper,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Color(0xFFA69CAF),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 3),
-              Text(
-                helper,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Color(0xFF81768C), fontSize: 11),
-              ),
+              if (onRemove != null)
+                Positioned(
+                  top: 0,
+                  right: 0,
+                  child: IconButton.filledTonal(
+                    tooltip: 'Remove image',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: onRemove,
+                    icon: const Icon(Icons.close_rounded, size: 17),
+                  ),
+                ),
             ],
           ),
         ),
       ),
     );
   }
+}
+
+class _Field extends StatelessWidget {
+  const _Field({
+    required this.controller,
+    required this.label,
+    required this.hint,
+    required this.maxLength,
+    this.maxLines = 1,
+    this.validator,
+  });
+  final TextEditingController controller;
+  final String label;
+  final String hint;
+  final int maxLength;
+  final int maxLines;
+  final String? Function(String?)? validator;
+  @override
+  Widget build(BuildContext context) => TextFormField(
+    controller: controller,
+    maxLength: maxLength,
+    maxLines: maxLines,
+    validator: validator,
+    style: const TextStyle(color: Colors.white),
+    decoration: InputDecoration(
+      labelText: label,
+      hintText: hint,
+      counterStyle: const TextStyle(color: Color(0xFF8F8598)),
+      labelStyle: const TextStyle(color: Color(0xFFA69CAF)),
+      hintStyle: const TextStyle(color: Color(0xFF756D82)),
+      filled: true,
+      fillColor: const Color(0xFF171121),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(18)),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: const BorderSide(color: Color(0xFF3A2C49)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: const BorderSide(color: Color(0xFFA226FF), width: 1.5),
+      ),
+    ),
+  );
 }
 
 class _PrivacyChoice extends StatelessWidget {
@@ -441,48 +591,38 @@ class _PrivacyChoice extends StatelessWidget {
     required this.selectedValue,
     required this.onChanged,
   });
-
   final String title;
   final String subtitle;
   final IconData icon;
   final ClubPrivacy value;
   final ClubPrivacy selectedValue;
   final ValueChanged<ClubPrivacy> onChanged;
-
-  bool get _selected => value == selectedValue;
-
   @override
   Widget build(BuildContext context) {
+    final selected = value == selectedValue;
     return Material(
-      color: const Color(0xFF171121),
-      borderRadius: BorderRadius.circular(20),
+      color: selected ? const Color(0xFF261438) : const Color(0xFF171121),
+      borderRadius: BorderRadius.circular(18),
       child: InkWell(
         onTap: () => onChanged(value),
-        borderRadius: BorderRadius.circular(20),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.all(15),
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(18),
             border: Border.all(
-              color: _selected
+              color: selected
                   ? const Color(0xFFA226FF)
                   : const Color(0xFF3A2C49),
-              width: _selected ? 1.6 : 1,
             ),
           ),
           child: Row(
             children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: const Color(
-                    0xFFA226FF,
-                  ).withValues(alpha: _selected ? .2 : .09),
-                  borderRadius: BorderRadius.circular(15),
-                ),
-                child: Icon(icon, color: const Color(0xFFB94DFF)),
+              Icon(
+                icon,
+                color: selected
+                    ? const Color(0xFFBE63FF)
+                    : const Color(0xFFA69CAF),
               ),
               const SizedBox(width: 13),
               Expanded(
@@ -493,29 +633,44 @@ class _PrivacyChoice extends StatelessWidget {
                       title,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontWeight: FontWeight.w900,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                     const SizedBox(height: 3),
                     Text(
                       subtitle,
                       style: const TextStyle(
-                        color: _CreateClubScreenState._muted,
+                        color: Color(0xFFA69CAF),
+                        fontSize: 12,
                         height: 1.3,
-                        fontSize: 13,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
-              Icon(
-                _selected
-                    ? Icons.radio_button_checked_rounded
-                    : Icons.radio_button_off_rounded,
-                color: _selected
-                    ? const Color(0xFFA226FF)
-                    : const Color(0xFF6F6479),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: selected
+                      ? const Color(0xFFA226FF)
+                      : Colors.transparent,
+                  border: Border.all(
+                    color: selected
+                        ? const Color(0xFFA226FF)
+                        : const Color(0xFF70657A),
+                    width: 2,
+                  ),
+                ),
+                child: selected
+                    ? const Icon(
+                        Icons.check_rounded,
+                        size: 16,
+                        color: Colors.white,
+                      )
+                    : null,
               ),
             ],
           ),
@@ -527,114 +682,53 @@ class _PrivacyChoice extends StatelessWidget {
 
 class _WhatGetsCreatedCard extends StatelessWidget {
   const _WhatGetsCreatedCard();
-
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFF15101E),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFF3A2C49)),
-      ),
-      child: const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Created automatically',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          SizedBox(height: 14),
-          _FeatureRow(icon: Icons.chat_bubble_rounded, text: '# general chat'),
-          SizedBox(height: 11),
-          _FeatureRow(icon: Icons.campaign_rounded, text: '# announcements'),
-          SizedBox(height: 11),
-          _FeatureRow(icon: Icons.mic_rounded, text: 'Club Lounge'),
-          SizedBox(height: 11),
-          _FeatureRow(
-            icon: Icons.workspace_premium_rounded,
-            text: 'You as Owner',
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _FeatureRow extends StatelessWidget {
-  const _FeatureRow({required this.icon, required this.text});
-
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(17),
+    decoration: BoxDecoration(
+      color: const Color(0xFF14101C),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: const Color(0xFF33283E)),
+    ),
+    child: const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, color: const Color(0xFFB94DFF), size: 20),
-        const SizedBox(width: 11),
         Text(
-          text,
-          style: const TextStyle(
-            color: Color(0xFFD7D0DE),
-            fontWeight: FontWeight.w700,
-          ),
+          'Created automatically',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+        ),
+        SizedBox(height: 12),
+        _CreatedItem(icon: Icons.tag_rounded, text: 'General chat'),
+        _CreatedItem(
+          icon: Icons.campaign_rounded,
+          text: 'Announcements channel',
+        ),
+        _CreatedItem(
+          icon: Icons.graphic_eq_rounded,
+          text: 'Private Club Lounge',
+        ),
+        _CreatedItem(
+          icon: Icons.admin_panel_settings_rounded,
+          text: 'Owner role and membership',
         ),
       ],
-    );
-  }
+    ),
+  );
 }
 
-class _Field extends StatelessWidget {
-  const _Field({
-    required this.controller,
-    required this.label,
-    required this.hint,
-    this.maxLength,
-    this.maxLines = 1,
-    this.validator,
-  });
-
-  final TextEditingController controller;
-  final String label;
-  final String hint;
-  final int? maxLength;
-  final int maxLines;
-  final String? Function(String?)? validator;
-
+class _CreatedItem extends StatelessWidget {
+  const _CreatedItem({required this.icon, required this.text});
+  final IconData icon;
+  final String text;
   @override
-  Widget build(BuildContext context) {
-    return TextFormField(
-      controller: controller,
-      validator: validator,
-      maxLength: maxLength,
-      maxLines: maxLines,
-      style: const TextStyle(color: Colors.white),
-      decoration: InputDecoration(
-        labelText: label,
-        hintText: hint,
-        counterText: '',
-        filled: true,
-        fillColor: const Color(0xFF171121),
-        labelStyle: const TextStyle(color: Color(0xFFB8AFC2)),
-        hintStyle: const TextStyle(color: Color(0xFF746A80)),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: const BorderSide(color: Color(0xFF3A2C49)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: const BorderSide(color: Color(0xFFA226FF), width: 1.5),
-        ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(18),
-          borderSide: const BorderSide(color: Color(0xFFFF5B86)),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 9),
+    child: Row(
+      children: [
+        Icon(icon, color: const Color(0xFFBE63FF), size: 19),
+        const SizedBox(width: 10),
+        Text(text, style: const TextStyle(color: Color(0xFFD0C7D6))),
+      ],
+    ),
+  );
 }
