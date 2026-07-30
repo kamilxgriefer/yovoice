@@ -29,6 +29,9 @@ dependencies:
   livekit_client: ^2.7.0
   permission_handler: ^12.0.1
   share_plus: ^12.0.2
+  audioplayers: ^6.8.1
+  record: ^7.1.1
+  path_provider: ^2.1.5
 
 dev_dependencies:
   flutter_test:

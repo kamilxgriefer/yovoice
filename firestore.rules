@@ -90,38 +90,9 @@ service cloud.firestore {
       ).data.role;
     }
 
-    function canEditClub(clubId) {
-      return isClubMember(clubId) &&
-          clubRole(clubId) in ['owner', 'coOwner'];
-    }
-
-    function canManageChannels(clubId) {
+    function canManageClub(clubId) {
       return isClubMember(clubId) &&
           clubRole(clubId) in ['owner', 'coOwner', 'admin'];
-    }
-
-    function canInviteToClub(clubId) {
-      return isClubMember(clubId) &&
-          clubRole(clubId) in ['owner', 'coOwner', 'admin', 'moderator'];
-    }
-
-    function canManageRoles(clubId) {
-      return isClubMember(clubId) &&
-          clubRole(clubId) in ['owner', 'coOwner'];
-    }
-
-    function canModerateMembers(clubId) {
-      return isClubMember(clubId) &&
-          clubRole(clubId) in ['owner', 'coOwner', 'admin', 'moderator'];
-    }
-
-    function canWriteClubChat(clubId) {
-      return isClubMember(clubId) && clubRole(clubId) != 'guest';
-    }
-
-    function canModerateMessages(clubId) {
-      return isClubMember(clubId) &&
-          clubRole(clubId) in ['owner', 'coOwner', 'admin', 'moderator'];
     }
 
     function clubRolePower(role) {
@@ -156,9 +127,9 @@ service cloud.firestore {
 
       match /clubs/{clubId} {
         allow read: if isOwner(userId);
-        allow create: if isOwner(userId) || canEditClub(clubId);
-        allow update: if isOwner(userId) || canEditClub(clubId);
-        allow delete: if isOwner(userId) || canEditClub(clubId);
+        allow create: if isOwner(userId) || canManageClub(clubId);
+        allow update: if isOwner(userId) || canManageClub(clubId);
+        allow delete: if isOwner(userId) || canManageClub(clubId);
       }
     }
 
@@ -190,7 +161,7 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
           request.resource.data.ownerId == request.auth.uid;
       allow update: if isClubOwner(clubId) ||
-          canEditClub(clubId) ||
+          canManageClub(clubId) ||
           (
             hasPendingClubInvite(clubId, request.auth.uid) &&
             request.resource.data.memberCount == resource.data.memberCount + 1 &&
@@ -217,7 +188,7 @@ service cloud.firestore {
                 request.resource.data.role == resource.data.role
               ) ||
               (
-                canManageRoles(clubId) &&
+                clubRole(clubId) in ['owner', 'coOwner'] &&
                 memberId != request.auth.uid &&
                 resource.data.role != 'owner' &&
                 request.resource.data.role != 'owner' &&
@@ -226,7 +197,7 @@ service cloud.firestore {
               )
             );
         allow delete: if isSignedIn() &&
-            canModerateMembers(clubId) &&
+            canManageClub(clubId) &&
             memberId != request.auth.uid &&
             resource.data.role != 'owner' &&
             clubRolePower(clubRole(clubId)) > clubRolePower(resource.data.role);
@@ -236,10 +207,10 @@ service cloud.firestore {
         allow read: if isSignedIn() &&
             (
               request.auth.uid == inviteeId ||
-              canInviteToClub(clubId)
+              canManageClub(clubId)
             );
         allow create: if isSignedIn() &&
-            canInviteToClub(clubId) &&
+            canManageClub(clubId) &&
             request.resource.data.inviteeId == inviteeId &&
             request.resource.data.inviterId == request.auth.uid &&
             request.resource.data.status == 'pending' &&
@@ -250,23 +221,23 @@ service cloud.firestore {
         allow delete: if isSignedIn() &&
             (
               request.auth.uid == inviteeId ||
-              canInviteToClub(clubId)
+              canManageClub(clubId)
             );
       }
 
       match /channels/{channelId} {
         allow read: if isClubMember(clubId);
-        allow create, update, delete: if canManageChannels(clubId);
+        allow create, update, delete: if isClubOwner(clubId) || canManageClub(clubId);
 
         match /messages/{messageId} {
           allow read: if isClubMember(clubId);
-          allow create: if canWriteClubChat(clubId) &&
+          allow create: if isClubMember(clubId) &&
               request.resource.data.senderId == request.auth.uid &&
               request.resource.data.clubId == clubId &&
               request.resource.data.channelId == channelId;
           allow update: if isClubMember(clubId) &&
-              request.resource.data.senderId == resource.data.senderId &&
-              (resource.data.senderId == request.auth.uid || canModerateMessages(clubId));
+              resource.data.senderId == request.auth.uid &&
+              request.resource.data.senderId == resource.data.senderId;
           allow delete: if false;
         }
       }
@@ -319,5 +290,22 @@ service cloud.firestore {
         allow update, delete: if false;
       }
     }
+    match /voiceMoments/{momentId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+          request.resource.data.authorId == request.auth.uid;
+      allow update: if isSignedIn() &&
+          (resource.data.authorId == request.auth.uid ||
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount']));
+      allow delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
+
+      match /likes/{userId} {
+        allow read: if isSignedIn();
+        allow create: if isOwner(userId) && request.resource.data.userId == userId;
+        allow delete: if isOwner(userId);
+        allow update: if false;
+      }
+    }
+
   }
 }
