@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
-
 import 'package:yovoice/features/clubs/presentation/screens/clubs_screen.dart';
+import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
-import 'package:yovoice/features/moments/presentation/screens/discover_screen.dart';
 
 enum MoreDestination {
   friends,
