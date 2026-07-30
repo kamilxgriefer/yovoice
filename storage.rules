@@ -30,5 +30,14 @@ service firebase.storage {
           && request.resource.contentType.matches('audio/.*');
       allow delete: if isSignedIn() && request.auth.uid == userId;
     }
+    match /voice_replies/{userId}/{momentId}/{fileName} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn()
+          && request.auth.uid == userId
+          && request.resource.size < 12 * 1024 * 1024
+          && request.resource.contentType.matches('audio/.*');
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
   }
 }

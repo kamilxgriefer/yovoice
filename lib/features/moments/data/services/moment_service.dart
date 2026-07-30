@@ -64,10 +64,7 @@ class MomentService {
       );
     }
 
-    final userDocument = await _firestore
-        .collection('users')
-        .doc(user.uid)
-        .get();
+    final userDocument = await _firestore.collection('users').doc(user.uid).get();
     final userData = userDocument.data();
     final profileName = (userData?['displayName'] as String?)?.trim();
     final profilePhoto = userData?['photoUrl'] as String?;
@@ -75,8 +72,20 @@ class MomentService {
     final authorName = profileName?.isNotEmpty == true
         ? profileName!
         : user.displayName?.trim().isNotEmpty == true
-        ? user.displayName!.trim()
-        : user.email?.split('@').first ?? 'YoVoice user';
+            ? user.displayName!.trim()
+            : user.email?.split('@').first ?? 'YoVoice user';
+
+    if (replyToMomentId != null && replyToMomentId.isNotEmpty) {
+      return _publishVoiceReply(
+        parentMomentId: replyToMomentId,
+        file: file,
+        durationSeconds: durationSeconds,
+        caption: caption,
+        authorId: user.uid,
+        authorName: authorName,
+        authorPhotoUrl: profilePhoto ?? user.photoURL,
+      );
+    }
 
     final document = _moments.doc();
     final storageReference = _storage.ref(
@@ -93,7 +102,7 @@ class MomentService {
       'durationSeconds': durationSeconds,
       'likeCount': 0,
       'commentCount': 0,
-      'replyToMomentId': replyToMomentId,
+      'replyToMomentId': null,
       'isPublished': false,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
@@ -104,32 +113,19 @@ class MomentService {
         file,
         SettableMetadata(
           contentType: 'audio/mp4',
-          customMetadata: {'authorId': user.uid, 'momentId': document.id},
+          customMetadata: {
+            'authorId': user.uid,
+            'momentId': document.id,
+          },
         ),
       );
 
       final downloadUrl = await storageReference.getDownloadURL();
-
-      await _firestore.runTransaction((transaction) async {
-        transaction.update(document, {
-          'audioUrl': downloadUrl,
-          'isPublished': true,
-          'publishedAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-
-        if (replyToMomentId != null && replyToMomentId.isNotEmpty) {
-          final parentReference = _moments.doc(replyToMomentId);
-          final parentSnapshot = await transaction.get(parentReference);
-          if (parentSnapshot.exists) {
-            final currentCount =
-                (parentSnapshot.data()?['commentCount'] as num?)?.toInt() ?? 0;
-            transaction.update(parentReference, {
-              'commentCount': currentCount + 1,
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-          }
-        }
+      await document.update({
+        'audioUrl': downloadUrl,
+        'isPublished': true,
+        'publishedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
       });
 
       return document.id;
@@ -139,4 +135,107 @@ class MomentService {
       rethrow;
     }
   }
+
+  Future<String> _publishVoiceReply({
+    required String parentMomentId,
+    required File file,
+    required int durationSeconds,
+    required String caption,
+    required String authorId,
+    required String authorName,
+    required String? authorPhotoUrl,
+  }) async {
+    final parentReference = _moments.doc(parentMomentId);
+    final commentReference = parentReference.collection('comments').doc();
+    final storageReference = _storage.ref(
+      'voice_replies/$authorId/$parentMomentId/${commentReference.id}.m4a',
+    );
+
+    try {
+      await storageReference.putFile(
+        file,
+        SettableMetadata(
+          contentType: 'audio/mp4',
+          customMetadata: {
+            'authorId': authorId,
+            'momentId': parentMomentId,
+            'commentId': commentReference.id,
+          },
+        ),
+      );
+
+      final downloadUrl = await storageReference.getDownloadURL();
+      final batch = _firestore.batch();
+      batch.set(commentReference, {
+        'type': 'voice',
+        'authorId': authorId,
+        'authorName': authorName,
+        'authorPhotoUrl': authorPhotoUrl,
+        'text': caption.trim(),
+        'audioUrl': downloadUrl,
+        'storagePath': storageReference.fullPath,
+        'durationSeconds': durationSeconds,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      batch.update(parentReference, {
+        'commentCount': FieldValue.increment(1),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      await batch.commit();
+      return commentReference.id;
+    } catch (_) {
+      await storageReference.delete().catchError((_) {});
+      rethrow;
+    }
+  
+  Future<void> deleteMoment(VoiceMoment moment) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw StateError('You must be signed in to delete a Voice Moment.');
+    }
+    if (moment.authorId != user.uid) {
+      throw StateError('You can only delete your own Voice Moments.');
+    }
+
+    final momentReference = _moments.doc(moment.id);
+
+    // Remove uploaded voice replies before deleting their Firestore records.
+    final comments = await momentReference.collection('comments').get();
+    for (final comment in comments.docs) {
+      final storagePath = (comment.data()['storagePath'] as String?)?.trim();
+      if (storagePath != null && storagePath.isNotEmpty) {
+        await _storage.ref(storagePath).delete().catchError((_) {});
+      }
+    }
+
+    await _deleteCollection(momentReference.collection('comments'));
+    await _deleteCollection(momentReference.collection('likes'));
+
+    final momentSnapshot = await momentReference.get();
+    final storagePath =
+        (momentSnapshot.data()?['storagePath'] as String?)?.trim();
+    if (storagePath != null && storagePath.isNotEmpty) {
+      await _storage.ref(storagePath).delete().catchError((_) {});
+    }
+
+    await momentReference.delete();
+  }
+
+  Future<void> _deleteCollection(
+    CollectionReference<Map<String, dynamic>> collection,
+  ) async {
+    while (true) {
+      final snapshot = await collection.limit(400).get();
+      if (snapshot.docs.isEmpty) {
+        return;
+      }
+
+      final batch = _firestore.batch();
+      for (final document in snapshot.docs) {
+        batch.delete(document.reference);
+      }
+      await batch.commit();
+    }
+  }
+
 }

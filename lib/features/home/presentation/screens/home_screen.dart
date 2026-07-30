@@ -13,16 +13,15 @@ import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
+import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({
-    this.onOpenDiscover,
-    super.key,
-  });
+  const HomeScreen({this.onOpenDiscover, super.key});
 
   final VoidCallback? onOpenDiscover;
 
@@ -43,6 +42,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final FriendService _friendService = FriendService();
   final RoomService _roomService = RoomService();
   final MessageService _messageService = MessageService();
+  final MomentService _momentService = MomentService();
 
   late final Stream<List<VoiceMoment>> _moments;
   late final Stream<List<FriendUser>> _friends;
@@ -64,6 +64,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _openComments(VoiceMoment moment) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => MomentCommentsScreen(moment: moment),
+      ),
+    );
+  }
+
   Future<void> _recordMoment({VoiceMoment? replyTo}) async {
     final published = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
@@ -78,15 +86,16 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    if (replyTo != null) {
+      await _openComments(replyTo);
+      return;
+    }
+
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        SnackBar(
-          content: Text(
-            replyTo == null
-                ? 'Voice Moment posted to your feed.'
-                : 'Voice reply posted.',
-          ),
+        const SnackBar(
+          content: Text('Voice Moment posted to your feed.'),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -126,6 +135,67 @@ class _HomeScreenState extends State<HomeScreen> {
         ..showSnackBar(
           SnackBar(
             content: Text(error.toString().replaceFirst('Bad state: ', '')),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  Future<void> _deleteMoment(VoiceMoment moment) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF171020),
+        title: const Text(
+          'Delete Voice Moment?',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'This removes the recording, likes, and all comments permanently.',
+          style: TextStyle(color: Color(0xFFB8AFC0)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFFF416C),
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    try {
+      await _momentService.deleteMoment(moment);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Voice Moment deleted.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Could not delete Voice Moment: $error'),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -203,13 +273,18 @@ class _HomeScreenState extends State<HomeScreen> {
               minimumSize: const Size(48, 48),
               side: const BorderSide(color: _border),
             ),
-            icon: const Icon(Icons.notifications_none_rounded, color: Colors.white),
+            icon: const Icon(
+              Icons.notifications_none_rounded,
+              color: Colors.white,
+            ),
           ),
           const SizedBox(width: 10),
           CircleAvatar(
             radius: 24,
             backgroundColor: const Color(0xFF64258E),
-            backgroundImage: photoUrl?.isNotEmpty == true ? NetworkImage(photoUrl!) : null,
+            backgroundImage: photoUrl?.isNotEmpty == true
+                ? NetworkImage(photoUrl!)
+                : null,
             child: photoUrl?.isNotEmpty == true
                 ? null
                 : const Icon(Icons.person_rounded, color: Colors.white),
@@ -224,7 +299,10 @@ class _HomeScreenState extends State<HomeScreen> {
       stream: _rooms,
       builder: (context, roomSnapshot) {
         final rooms = roomSnapshot.data ?? const <VoiceRoom>[];
-        final people = rooms.fold<int>(0, (sum, room) => sum + room.participantCount);
+        final people = rooms.fold<int>(
+          0,
+          (sum, room) => sum + room.participantCount,
+        );
         return StreamBuilder<List<VoiceMoment>>(
           stream: _moments,
           builder: (context, momentSnapshot) {
@@ -252,23 +330,38 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: Color(0xFFFF416C),
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(Icons.wifi_tethering_rounded, color: Colors.white),
+                        child: const Icon(
+                          Icons.wifi_tethering_rounded,
+                          color: Colors.white,
+                        ),
                       ),
                       const SizedBox(width: 13),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('LIVE PULSE', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
+                            const Text(
+                              'LIVE PULSE',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
                             const SizedBox(height: 4),
                             Text(
                               '${rooms.length} live rooms  •  $people people talking  •  ${moments.length} fresh moments',
-                              style: const TextStyle(color: Color(0xFFDCCBE4), fontSize: 12),
+                              style: const TextStyle(
+                                color: Color(0xFFDCCBE4),
+                                fontSize: 12,
+                              ),
                             ),
                           ],
                         ),
                       ),
-                      const Icon(Icons.chevron_right_rounded, color: Colors.white),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        color: Colors.white,
+                      ),
                     ],
                   ),
                 ),
@@ -307,7 +400,8 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               _StoryBubble(
                 label: 'Your Moment',
-                photoUrl: myLatestMoment?.authorPhotoUrl ??
+                photoUrl:
+                    myLatestMoment?.authorPhotoUrl ??
                     FirebaseAuth.instance.currentUser?.photoURL,
                 isAdd: myLatestMoment == null,
                 showAddBadge: myLatestMoment != null,
@@ -340,7 +434,11 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.fromLTRB(18, 15, 18, 10),
       child: Text(
         title,
-        style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900),
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 22,
+          fontWeight: FontWeight.w900,
+        ),
       ),
     );
   }
@@ -349,7 +447,8 @@ class _HomeScreenState extends State<HomeScreen> {
     return StreamBuilder<List<VoiceMoment>>(
       stream: _moments,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
           return const Padding(
             padding: EdgeInsets.all(34),
             child: Center(child: CircularProgressIndicator(color: _primary)),
@@ -358,7 +457,9 @@ class _HomeScreenState extends State<HomeScreen> {
         if (snapshot.hasError) return _empty('Could not load your feed.');
         final moments = snapshot.data ?? const <VoiceMoment>[];
         if (moments.isEmpty) {
-          return _empty('Follow people or add friends to build your voice feed.');
+          return _empty(
+            'Follow people or add friends to build your voice feed.',
+          );
         }
         return Column(
           children: moments.take(10).map((moment) {
@@ -368,8 +469,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 moment: moment,
                 feedService: _feedService,
                 onReply: () => _recordMoment(replyTo: moment),
+                onComment: () => _openComments(moment),
+                onDelete: () => _deleteMoment(moment),
                 onShare: () => SharePlus.instance.share(
-                  ShareParams(text: 'Listen to ${moment.authorName} on YoVoice: https://yovoice.app/?moment=${moment.id}'),
+                  ShareParams(
+                    text:
+                        'Listen to ${moment.authorName} on YoVoice: https://yovoice.app/?moment=${moment.id}',
+                  ),
                 ),
               ),
             );
@@ -383,32 +489,66 @@ class _HomeScreenState extends State<HomeScreen> {
     return StreamBuilder<List<FriendUser>>(
       stream: _friends,
       builder: (context, snapshot) {
-        final active = (snapshot.data ?? const <FriendUser>[]).where((friend) => friend.isOnline).take(8).toList();
+        final active = (snapshot.data ?? const <FriendUser>[])
+            .where((friend) => friend.isOnline)
+            .take(8)
+            .toList();
         if (active.isEmpty) return const SizedBox.shrink();
         return Padding(
           padding: const EdgeInsets.fromLTRB(18, 12, 18, 20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Friends active now', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900)),
+              const Text(
+                'Friends active now',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
               const SizedBox(height: 11),
               Container(
-                decoration: BoxDecoration(color: _surface, borderRadius: BorderRadius.circular(22), border: Border.all(color: _border)),
+                decoration: BoxDecoration(
+                  color: _surface,
+                  borderRadius: BorderRadius.circular(22),
+                  border: Border.all(color: _border),
+                ),
                 child: Column(
-                  children: active.map((friend) => ListTile(
-                    onTap: () => _startChat(friend),
-                    leading: CircleAvatar(
-                      backgroundImage: friend.photoUrl?.isNotEmpty == true ? NetworkImage(friend.photoUrl!) : null,
-                      child: friend.photoUrl?.isNotEmpty == true ? null : Text(friend.initial),
-                    ),
-                    title: Text(friend.displayName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-                    subtitle: const Text('Online now', style: TextStyle(color: Color(0xFF43D980))),
-                    trailing: IconButton(
-                      tooltip: 'Open chat',
-                      onPressed: () => _startChat(friend),
-                      icon: const Icon(Icons.chat_bubble_outline_rounded, color: _primary),
-                    ),
-                  )).toList(),
+                  children: active
+                      .map(
+                        (friend) => ListTile(
+                          onTap: () => _startChat(friend),
+                          leading: CircleAvatar(
+                            backgroundImage: friend.photoUrl?.isNotEmpty == true
+                                ? NetworkImage(friend.photoUrl!)
+                                : null,
+                            child: friend.photoUrl?.isNotEmpty == true
+                                ? null
+                                : Text(friend.initial),
+                          ),
+                          title: Text(
+                            friend.displayName,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          subtitle: const Text(
+                            'Online now',
+                            style: TextStyle(color: Color(0xFF43D980)),
+                          ),
+                          trailing: IconButton(
+                            tooltip: 'Open chat',
+                            onPressed: () => _startChat(friend),
+                            icon: const Icon(
+                              Icons.chat_bubble_outline_rounded,
+                              color: _primary,
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(),
                 ),
               ),
             ],
@@ -429,7 +569,14 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Discover clubs', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900)),
+              const Text(
+                'Discover clubs',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
               const SizedBox(height: 12),
               SizedBox(
                 height: 174,
@@ -443,7 +590,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     return _ClubCard(
                       club: club,
                       onTap: () => Navigator.of(context).push<void>(
-                        MaterialPageRoute<void>(builder: (_) => ClubOverviewScreen(clubId: club.id)),
+                        MaterialPageRoute<void>(
+                          builder: (_) => ClubOverviewScreen(clubId: club.id),
+                        ),
                       ),
                     );
                   },
@@ -468,18 +617,57 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Trending Voice', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900)),
+              const Text(
+                'Trending Voice',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
               const SizedBox(height: 11),
-              ...moments.take(3).map((moment) => ListTile(
-                onTap: () => _showMomentPlayer(moment),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-                tileColor: _surface,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(17), side: const BorderSide(color: _border)),
-                leading: const Icon(Icons.graphic_eq_rounded, color: _primary),
-                title: Text(moment.authorName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-                subtitle: Text(moment.caption.isEmpty ? 'Voice Moment' : moment.caption, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _muted)),
-                trailing: Text('❤ ${moment.likeCount}', style: const TextStyle(color: Color(0xFFFF6D91), fontWeight: FontWeight.w800)),
-              )),
+              ...moments
+                  .take(3)
+                  .map(
+                    (moment) => ListTile(
+                      onTap: () => _showMomentPlayer(moment),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 4,
+                      ),
+                      tileColor: _surface,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(17),
+                        side: const BorderSide(color: _border),
+                      ),
+                      leading: const Icon(
+                        Icons.graphic_eq_rounded,
+                        color: _primary,
+                      ),
+                      title: Text(
+                        moment.authorName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      subtitle: Text(
+                        moment.caption.isEmpty
+                            ? 'Voice Moment'
+                            : moment.caption,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: _muted),
+                      ),
+                      trailing: Text(
+                        '❤ ${moment.likeCount}',
+                        style: const TextStyle(
+                          color: Color(0xFFFF6D91),
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
             ],
           ),
         );
@@ -492,8 +680,16 @@ class _HomeScreenState extends State<HomeScreen> {
     child: Container(
       width: double.infinity,
       padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(color: _surface, borderRadius: BorderRadius.circular(22), border: Border.all(color: _border)),
-      child: Text(message, textAlign: TextAlign.center, style: const TextStyle(color: _muted)),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: _border),
+      ),
+      child: Text(
+        message,
+        textAlign: TextAlign.center,
+        style: const TextStyle(color: _muted),
+      ),
     ),
   );
 
@@ -560,11 +756,11 @@ class _StoryBubble extends StatelessWidget {
                             size: 30,
                           )
                         : photoUrl?.isNotEmpty == true
-                            ? null
-                            : const Icon(
-                                Icons.graphic_eq_rounded,
-                                color: Colors.white,
-                              ),
+                        ? null
+                        : const Icon(
+                            Icons.graphic_eq_rounded,
+                            color: Colors.white,
+                          ),
                   ),
                 ),
               ),
@@ -610,11 +806,20 @@ class _StoryBubble extends StatelessWidget {
 }
 
 class _VoiceMomentCard extends StatefulWidget {
-  const _VoiceMomentCard({required this.moment, required this.feedService, required this.onReply, required this.onShare});
+  const _VoiceMomentCard({
+    required this.moment,
+    required this.feedService,
+    required this.onReply,
+    required this.onComment,
+    required this.onShare,
+    required this.onDelete,
+  });
   final VoiceMoment moment;
   final HomeFeedService feedService;
   final VoidCallback onReply;
+  final VoidCallback onComment;
   final VoidCallback onShare;
+  final VoidCallback onDelete;
 
   @override
   State<_VoiceMomentCard> createState() => _VoiceMomentCardState();
@@ -643,7 +848,11 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
   Future<void> _togglePlay() async {
     final url = widget.moment.audioUrl?.trim() ?? '';
     if (url.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('This moment does not have uploaded audio yet.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This moment does not have uploaded audio yet.'),
+        ),
+      );
       return;
     }
     if (_playing) {
@@ -659,7 +868,11 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
     final time = _relative(moment.createdAt);
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: const Color(0xFF14101D), borderRadius: BorderRadius.circular(24), border: Border.all(color: const Color(0xFF352642))),
+      decoration: BoxDecoration(
+        color: const Color(0xFF14101D),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFF352642)),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -667,20 +880,118 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
             children: [
               CircleAvatar(
                 radius: 23,
-                backgroundImage: moment.authorPhotoUrl?.isNotEmpty == true ? NetworkImage(moment.authorPhotoUrl!) : null,
-                child: moment.authorPhotoUrl?.isNotEmpty == true ? null : Text(moment.authorName.isEmpty ? '?' : moment.authorName[0].toUpperCase()),
+                backgroundImage: moment.authorPhotoUrl?.isNotEmpty == true
+                    ? NetworkImage(moment.authorPhotoUrl!)
+                    : null,
+                child: moment.authorPhotoUrl?.isNotEmpty == true
+                    ? null
+                    : Text(
+                        moment.authorName.isEmpty
+                            ? '?'
+                            : moment.authorName[0].toUpperCase(),
+                      ),
               ),
               const SizedBox(width: 11),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(moment.authorName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
-                Text(time, style: const TextStyle(color: Color(0xFFA79DAF), fontSize: 11)),
-              ])),
-              const Icon(Icons.more_horiz_rounded, color: Color(0xFFA79DAF)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      moment.authorName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    Text(
+                      time,
+                      style: const TextStyle(
+                        color: Color(0xFFA79DAF),
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuButton<String>(
+                tooltip: 'Moment options',
+                color: const Color(0xFF21172B),
+                icon: const Icon(
+                  Icons.more_horiz_rounded,
+                  color: Color(0xFFA79DAF),
+                ),
+                onSelected: (value) {
+                  switch (value) {
+                    case 'comments':
+                      widget.onComment();
+                    case 'share':
+                      widget.onShare();
+                    case 'delete':
+                      widget.onDelete();
+                  }
+                },
+                itemBuilder: (context) {
+                  final isOwner =
+                      FirebaseAuth.instance.currentUser?.uid == moment.authorId;
+                  return [
+                    const PopupMenuItem<String>(
+                      value: 'comments',
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          Icons.chat_bubble_outline_rounded,
+                          color: Colors.white,
+                        ),
+                        title: Text(
+                          'View comments',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    ),
+                    const PopupMenuItem<String>(
+                      value: 'share',
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          Icons.share_outlined,
+                          color: Colors.white,
+                        ),
+                        title: Text(
+                          'Share',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    ),
+                    if (isOwner)
+                      const PopupMenuItem<String>(
+                        value: 'delete',
+                        child: ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(
+                            Icons.delete_outline_rounded,
+                            color: Color(0xFFFF6688),
+                          ),
+                          title: Text(
+                            'Delete Voice Moment',
+                            style: TextStyle(color: Color(0xFFFF6688)),
+                          ),
+                        ),
+                      ),
+                  ];
+                },
+              ),
             ],
           ),
           if (moment.caption.isNotEmpty) ...[
             const SizedBox(height: 14),
-            Text(moment.caption, style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.35)),
+            Text(
+              moment.caption,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                height: 1.35,
+              ),
+            ),
           ],
           const SizedBox(height: 14),
           InkWell(
@@ -689,7 +1000,9 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
             child: Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(colors: [Color(0xFF351447), Color(0xFF1D1228)]),
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF351447), Color(0xFF1D1228)],
+                ),
                 borderRadius: BorderRadius.circular(19),
                 border: Border.all(color: const Color(0xFF643180)),
               ),
@@ -698,13 +1011,26 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
                   Container(
                     width: 48,
                     height: 48,
-                    decoration: const BoxDecoration(color: Color(0xFFA51FFF), shape: BoxShape.circle),
-                    child: Icon(_playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 30),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFA51FFF),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                      color: Colors.white,
+                      size: 30,
+                    ),
                   ),
                   const SizedBox(width: 12),
                   const Expanded(child: _MiniWaveform()),
                   const SizedBox(width: 10),
-                  Text(moment.durationLabel, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+                  Text(
+                    moment.durationLabel,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -732,7 +1058,7 @@ class _VoiceMomentCardState extends State<_VoiceMomentCard> {
                 child: _Action(
                   icon: Icons.chat_bubble_outline_rounded,
                   label: '${moment.commentCount}',
-                  onTap: widget.onReply,
+                  onTap: widget.onComment,
                 ),
               ),
               Expanded(
@@ -778,19 +1104,30 @@ class _MiniWaveform extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
-      children: List.generate(24, (index) => Expanded(
-        child: Container(
-          height: (10 + ((index * 13) % 24)).toDouble(),
-          margin: const EdgeInsets.symmetric(horizontal: 1.5),
-          decoration: BoxDecoration(color: const Color(0xFFB94DFF), borderRadius: BorderRadius.circular(10)),
+      children: List.generate(
+        24,
+        (index) => Expanded(
+          child: Container(
+            height: (10 + ((index * 13) % 24)).toDouble(),
+            margin: const EdgeInsets.symmetric(horizontal: 1.5),
+            decoration: BoxDecoration(
+              color: const Color(0xFFB94DFF),
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
         ),
-      )),
+      ),
     );
   }
 }
 
 class _Action extends StatelessWidget {
-  const _Action({required this.icon, required this.label, required this.onTap, this.active = false});
+  const _Action({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.active = false,
+  });
   final IconData icon;
   final String label;
   final VoidCallback onTap;
@@ -801,7 +1138,11 @@ class _Action extends StatelessWidget {
       onPressed: onTap,
       icon: Icon(icon, size: 19),
       label: Text(label),
-      style: TextButton.styleFrom(foregroundColor: active ? const Color(0xFFFF5F86) : const Color(0xFFA79DAF)),
+      style: TextButton.styleFrom(
+        foregroundColor: active
+            ? const Color(0xFFFF5F86)
+            : const Color(0xFFA79DAF),
+      ),
     );
   }
 }
@@ -819,21 +1160,47 @@ class _ClubCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(22),
         child: Container(
           padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(color: const Color(0xFF14101D), borderRadius: BorderRadius.circular(22), border: Border.all(color: const Color(0xFF352642))),
+          decoration: BoxDecoration(
+            color: const Color(0xFF14101D),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: const Color(0xFF352642)),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               CircleAvatar(
                 radius: 28,
-                backgroundImage: club.avatarUrl?.isNotEmpty == true ? NetworkImage(club.avatarUrl!) : null,
-                child: club.avatarUrl?.isNotEmpty == true ? null : Text(club.initial),
+                backgroundImage: club.avatarUrl?.isNotEmpty == true
+                    ? NetworkImage(club.avatarUrl!)
+                    : null,
+                child: club.avatarUrl?.isNotEmpty == true
+                    ? null
+                    : Text(club.initial),
               ),
               const Spacer(),
-              Text(club.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
+              Text(
+                club.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
               const SizedBox(height: 4),
-              Text('${club.memberCount} members', style: const TextStyle(color: Color(0xFFA79DAF), fontSize: 11)),
+              Text(
+                '${club.memberCount} members',
+                style: const TextStyle(color: Color(0xFFA79DAF), fontSize: 11),
+              ),
               const SizedBox(height: 10),
-              const Text('View club', style: TextStyle(color: Color(0xFFC76DFF), fontWeight: FontWeight.w800, fontSize: 12)),
+              const Text(
+                'View club',
+                style: TextStyle(
+                  color: Color(0xFFC76DFF),
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
+              ),
             ],
           ),
         ),
@@ -857,6 +1224,7 @@ class _MomentPlayerSheetState extends State<_MomentPlayerSheet> {
     _player.dispose();
     super.dispose();
   }
+
   Future<void> _toggle() async {
     final url = widget.moment.audioUrl?.trim() ?? '';
     if (url.isEmpty) return;
@@ -867,26 +1235,65 @@ class _MomentPlayerSheetState extends State<_MomentPlayerSheet> {
     }
     if (mounted) setState(() => _playing = !_playing);
   }
+
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.fromLTRB(22, 12, 22, 34),
-      decoration: const BoxDecoration(color: Color(0xFF151020), borderRadius: BorderRadius.vertical(top: Radius.circular(30))),
+      decoration: const BoxDecoration(
+        color: Color(0xFF151020),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(width: 44, height: 5, decoration: BoxDecoration(color: const Color(0xFF5A5063), borderRadius: BorderRadius.circular(10))),
+          Container(
+            width: 44,
+            height: 5,
+            decoration: BoxDecoration(
+              color: const Color(0xFF5A5063),
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
           const SizedBox(height: 24),
-          CircleAvatar(radius: 42, backgroundImage: widget.moment.authorPhotoUrl?.isNotEmpty == true ? NetworkImage(widget.moment.authorPhotoUrl!) : null),
+          CircleAvatar(
+            radius: 42,
+            backgroundImage: widget.moment.authorPhotoUrl?.isNotEmpty == true
+                ? NetworkImage(widget.moment.authorPhotoUrl!)
+                : null,
+          ),
           const SizedBox(height: 14),
-          Text(widget.moment.authorName, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+          Text(
+            widget.moment.authorName,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
           const SizedBox(height: 7),
-          Text(widget.moment.caption, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFB8ADBF))),
+          Text(
+            widget.moment.caption,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Color(0xFFB8ADBF)),
+          ),
           const SizedBox(height: 24),
           InkWell(
             onTap: _toggle,
             customBorder: const CircleBorder(),
-            child: Container(width: 76, height: 76, decoration: const BoxDecoration(color: Color(0xFFA51FFF), shape: BoxShape.circle), child: Icon(_playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 42)),
+            child: Container(
+              width: 76,
+              height: 76,
+              decoration: const BoxDecoration(
+                color: Color(0xFFA51FFF),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                color: Colors.white,
+                size: 42,
+              ),
+            ),
           ),
         ],
       ),

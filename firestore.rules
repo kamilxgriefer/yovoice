@@ -296,7 +296,7 @@ service cloud.firestore {
           request.resource.data.authorId == request.auth.uid;
       allow update: if isSignedIn() &&
           (resource.data.authorId == request.auth.uid ||
-           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount']));
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount', 'commentCount', 'updatedAt']));
       allow delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
 
       match /likes/{userId} {
@@ -304,6 +304,33 @@ service cloud.firestore {
         allow create: if isOwner(userId) && request.resource.data.userId == userId;
         allow delete: if isOwner(userId);
         allow update: if false;
+      }
+
+      match /comments/{commentId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() &&
+            request.resource.data.authorId == request.auth.uid &&
+            (
+              (
+                request.resource.data.type == 'text' &&
+                request.resource.data.text is string &&
+                request.resource.data.text.size() > 0 &&
+                request.resource.data.text.size() <= 1000
+              ) ||
+              (
+                request.resource.data.type == 'voice' &&
+                request.resource.data.text is string &&
+                request.resource.data.text.size() <= 140 &&
+                request.resource.data.audioUrl is string &&
+                request.resource.data.audioUrl.size() > 0 &&
+                request.resource.data.storagePath is string &&
+                request.resource.data.durationSeconds is int &&
+                request.resource.data.durationSeconds >= 1 &&
+                request.resource.data.durationSeconds <= 60
+              )
+            );
+        allow update: if false;
+        allow delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
       }
     }
 
