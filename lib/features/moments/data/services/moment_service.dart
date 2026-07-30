@@ -64,7 +64,10 @@ class MomentService {
       );
     }
 
-    final userDocument = await _firestore.collection('users').doc(user.uid).get();
+    final userDocument = await _firestore
+        .collection('users')
+        .doc(user.uid)
+        .get();
     final userData = userDocument.data();
     final profileName = (userData?['displayName'] as String?)?.trim();
     final profilePhoto = userData?['photoUrl'] as String?;
@@ -72,8 +75,8 @@ class MomentService {
     final authorName = profileName?.isNotEmpty == true
         ? profileName!
         : user.displayName?.trim().isNotEmpty == true
-            ? user.displayName!.trim()
-            : user.email?.split('@').first ?? 'YoVoice user';
+        ? user.displayName!.trim()
+        : user.email?.split('@').first ?? 'YoVoice user';
 
     if (replyToMomentId != null && replyToMomentId.isNotEmpty) {
       return _publishVoiceReply(
@@ -113,10 +116,7 @@ class MomentService {
         file,
         SettableMetadata(
           contentType: 'audio/mp4',
-          customMetadata: {
-            'authorId': user.uid,
-            'momentId': document.id,
-          },
+          customMetadata: {'authorId': user.uid, 'momentId': document.id},
         ),
       );
 
@@ -187,7 +187,8 @@ class MomentService {
       await storageReference.delete().catchError((_) {});
       rethrow;
     }
-  
+  }
+
   Future<void> deleteMoment(VoiceMoment moment) async {
     final user = _auth.currentUser;
     if (user == null) {
@@ -212,8 +213,8 @@ class MomentService {
     await _deleteCollection(momentReference.collection('likes'));
 
     final momentSnapshot = await momentReference.get();
-    final storagePath =
-        (momentSnapshot.data()?['storagePath'] as String?)?.trim();
+    final storagePath = (momentSnapshot.data()?['storagePath'] as String?)
+        ?.trim();
     if (storagePath != null && storagePath.isNotEmpty) {
       await _storage.ref(storagePath).delete().catchError((_) {});
     }
@@ -237,5 +238,4 @@ class MomentService {
       await batch.commit();
     }
   }
-
 }
