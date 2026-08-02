@@ -1,3 +1,5 @@
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/achievements/data/achievement_catalog.dart';
@@ -30,6 +32,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _authService = AuthService();
   final _roomService = RoomService();
   final _clubService = ClubService();
+  final _firebaseAuth = FirebaseAuth.instance;
+  final _firebaseFunctions = FirebaseFunctions.instanceFor(
+    region: 'europe-west1',
+  );
+
+  bool _isActivatingSuperAdmin = false;
+  String _currentRole = 'user';
 
   @override
   void initState() {
@@ -40,6 +49,99 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _bootstrap() async {
     await _profileService.ensureProfile();
     await _achievementService.refreshUnlockedTitles();
+    await _refreshCurrentRole();
+  }
+
+  bool get _isOwnerAccount {
+    return _firebaseAuth.currentUser?.email?.trim().toLowerCase() ==
+        'grieferxgriefer@gmail.com';
+  }
+
+  Future<void> _refreshCurrentRole() async {
+    final user = _firebaseAuth.currentUser;
+    if (user == null) return;
+
+    try {
+      final tokenResult = await user.getIdTokenResult();
+      if (!mounted) return;
+
+      setState(() {
+        _currentRole = tokenResult.claims?['role']?.toString() ?? 'user';
+      });
+    } catch (_) {
+      // The profile remains usable even if the token cannot be read.
+    }
+  }
+
+  Future<void> _activateSuperAdmin() async {
+    if (_isActivatingSuperAdmin) return;
+
+    final user = _firebaseAuth.currentUser;
+    if (user == null) {
+      _showMessage('You must be signed in first.', isError: true);
+      return;
+    }
+
+    if (!_isOwnerAccount) {
+      _showMessage(
+        'Only grieferxgriefer@gmail.com can activate SuperAdmin.',
+        isError: true,
+      );
+      return;
+    }
+
+    setState(() => _isActivatingSuperAdmin = true);
+
+    try {
+      final callable = _firebaseFunctions.httpsCallable(
+        'bootstrapSuperAdmin',
+      );
+
+      await callable.call<void>();
+      await user.getIdTokenResult(true);
+
+      if (!mounted) return;
+
+      setState(() {
+        _currentRole = 'superAdmin';
+      });
+
+      _showMessage(
+        'SuperAdmin activated successfully. Your permissions are ready.',
+      );
+    } on FirebaseFunctionsException catch (error) {
+      if (!mounted) return;
+
+      _showMessage(
+        error.message ?? 'Could not activate SuperAdmin.',
+        isError: true,
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      _showMessage(
+        'Could not activate SuperAdmin: $error',
+        isError: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isActivatingSuperAdmin = false);
+      }
+    }
+  }
+
+  void _showMessage(String message, {bool isError = false}) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor:
+              isError ? const Color(0xFF9E244D) : const Color(0xFF4B1671),
+        ),
+      );
   }
 
   @override
@@ -105,6 +207,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       );
                     },
+                    showSuperAdminActivation: _isOwnerAccount,
+                    isActivatingSuperAdmin: _isActivatingSuperAdmin,
+                    currentRole: _currentRole,
+                    onActivateSuperAdmin: _activateSuperAdmin,
                     onLogout: _authService.signOut,
                   ),
                 );
@@ -127,6 +233,10 @@ class _ProfileContent extends StatelessWidget {
     required this.onAchievements,
     required this.onOpenCommunity,
     required this.onOpenClub,
+    required this.showSuperAdminActivation,
+    required this.isActivatingSuperAdmin,
+    required this.currentRole,
+    required this.onActivateSuperAdmin,
     required this.onLogout,
   });
 
@@ -138,6 +248,10 @@ class _ProfileContent extends StatelessWidget {
   final VoidCallback onAchievements;
   final ValueChanged<VoiceRoom> onOpenCommunity;
   final ValueChanged<Club> onOpenClub;
+  final bool showSuperAdminActivation;
+  final bool isActivatingSuperAdmin;
+  final String currentRole;
+  final Future<void> Function() onActivateSuperAdmin;
   final Future<void> Function() onLogout;
 
   @override
@@ -196,7 +310,14 @@ class _ProfileContent extends StatelessWidget {
                 onTap: onAchievements,
               ),
               const SizedBox(height: 14),
-              _AccountCard(onEdit: onEdit, onLogout: onLogout),
+              _AccountCard(
+                onEdit: onEdit,
+                showSuperAdminActivation: showSuperAdminActivation,
+                isActivatingSuperAdmin: isActivatingSuperAdmin,
+                currentRole: currentRole,
+                onActivateSuperAdmin: onActivateSuperAdmin,
+                onLogout: onLogout,
+              ),
             ],
           ),
         ),
@@ -724,9 +845,23 @@ class _AchievementsCard extends StatelessWidget {
 }
 
 class _AccountCard extends StatelessWidget {
-  const _AccountCard({required this.onEdit, required this.onLogout});
+  const _AccountCard({
+    required this.onEdit,
+    required this.showSuperAdminActivation,
+    required this.isActivatingSuperAdmin,
+    required this.currentRole,
+    required this.onActivateSuperAdmin,
+    required this.onLogout,
+  });
+
   final VoidCallback onEdit;
+  final bool showSuperAdminActivation;
+  final bool isActivatingSuperAdmin;
+  final String currentRole;
+  final Future<void> Function() onActivateSuperAdmin;
   final Future<void> Function() onLogout;
+
+  bool get _isSuperAdmin => currentRole == 'superAdmin';
 
   @override
   Widget build(BuildContext context) {
@@ -734,7 +869,18 @@ class _AccountCard extends StatelessWidget {
       padding: EdgeInsets.zero,
       child: Column(
         children: [
-          _Option(icon: Icons.edit_outlined, title: 'Edit profile', onTap: onEdit),
+          _Option(
+            icon: Icons.edit_outlined,
+            title: 'Edit profile',
+            onTap: onEdit,
+          ),
+          if (showSuperAdminActivation)
+            _SuperAdminOption(
+              isActivated: _isSuperAdmin,
+              isLoading: isActivatingSuperAdmin,
+              currentRole: currentRole,
+              onTap: onActivateSuperAdmin,
+            ),
           _Option(
             icon: Icons.logout_rounded,
             title: 'Log out',
@@ -745,10 +891,18 @@ class _AccountCard extends StatelessWidget {
                 context: context,
                 builder: (context) => AlertDialog(
                   title: const Text('Log out?'),
-                  content: const Text('You will need to sign in again to use YoVoice.'),
+                  content: const Text(
+                    'You will need to sign in again to use YoVoice.',
+                  ),
                   actions: [
-                    TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-                    FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Log out')),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Cancel'),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Log out'),
+                    ),
                   ],
                 ),
               );
@@ -757,6 +911,82 @@ class _AccountCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _SuperAdminOption extends StatelessWidget {
+  const _SuperAdminOption({
+    required this.isActivated,
+    required this.isLoading,
+    required this.currentRole,
+    required this.onTap,
+  });
+
+  final bool isActivated;
+  final bool isLoading;
+  final String currentRole;
+  final Future<void> Function() onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        ListTile(
+          onTap: isActivated || isLoading ? null : onTap,
+          leading: Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF7A1BFF), Color(0xFFD12CFF)],
+              ),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(
+              Icons.admin_panel_settings_rounded,
+              color: Colors.white,
+              size: 22,
+            ),
+          ),
+          title: Text(
+            isActivated ? 'SuperAdmin active' : 'Activate SuperAdmin',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          subtitle: Text(
+            isActivated
+                ? 'Role: $currentRole'
+                : 'Securely activate the owner role for this account.',
+            style: const TextStyle(
+              color: Color(0xFFA99DB3),
+              fontSize: 12,
+            ),
+          ),
+          trailing: isLoading
+              ? const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                )
+              : Icon(
+                  isActivated
+                      ? Icons.verified_rounded
+                      : Icons.chevron_right_rounded,
+                  color: isActivated
+                      ? const Color(0xFFD16CFF)
+                      : const Color(0xFF8E8298),
+                ),
+        ),
+        const Divider(
+          height: 1,
+          indent: 58,
+          endIndent: 16,
+          color: Color(0xFF33263B),
+        ),
+      ],
     );
   }
 }

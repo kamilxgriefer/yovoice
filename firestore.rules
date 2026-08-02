@@ -253,7 +253,16 @@ service cloud.firestore {
           (
             resource.data.hostId == request.auth.uid ||
             isRoomParticipant(roomId) ||
-            isRoomMember(roomId)
+            isRoomMember(roomId) ||
+            (
+              request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly(['participantCount', 'updatedAt']) &&
+              request.resource.data.participantCount ==
+                  resource.data.participantCount + 1 &&
+              getAfter(
+                /databases/$(database)/documents/rooms/$(roomId)/participants/$(request.auth.uid)
+              ).data.userId == request.auth.uid
+            )
           );
 
       allow delete: if isRoomHost(roomId);
