@@ -163,6 +163,8 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
   void _openOwnerMenu(List<RoomParticipant> participants) {
     showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: BroadcastRoomColors.surface,
       showDragHandle: true,
       builder: (_) => OwnerMenuSheet(

@@ -25,7 +25,7 @@ class OwnerMenuSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
         child: Column(
           mainAxisSize: MainAxisSize.min,
