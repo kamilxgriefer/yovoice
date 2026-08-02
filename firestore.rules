@@ -105,7 +105,39 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isSignedIn();
-      allow create, update: if isOwner(userId);
+      allow create: if isOwner(userId);
+
+      // Self-writes cover profile fields, presence, and the client-side
+      // achievement/vanity counters (achievement_service.dart) — these can
+      // still be self-inflated by a motivated user (same caveat the audit
+      // calls out: not a security hole, just not authoritative without a
+      // Cloud Function trigger doing the counting instead).
+      //
+      // Non-owner writes exist ONLY because follow_service.dart and
+      // friend_service.dart increment/decrement the OTHER person's
+      // followerCount/friendCount in the same transaction that creates the
+      // follow/friend edge — that's a real, currently-used write path, not
+      // a hypothetical one. No other field may move on someone else's doc.
+      allow update: if isSignedIn() &&
+          (
+            isOwner(userId)
+              ? request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly([
+                    'uid', 'email', 'displayName', 'username', 'photoUrl',
+                    'bannerUrl', 'bio', 'country', 'nativeLanguage',
+                    'spokenLanguages', 'learningLanguages', 'website',
+                    'accountType', 'profileUpdatedAt',
+                    'isOnline', 'lastSeen', 'presenceUpdatedAt',
+                    'messageCount', 'followerCount', 'followingCount',
+                    'roomCount', 'communityCount', 'voiceMinutes',
+                    'reactionCount', 'hostMinutes', 'activeDays',
+                    'momentCount', 'friendCount', 'unlockedTitleIds',
+                    'selectedTitleId', 'achievementsUpdatedAt',
+                  ])
+              : request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly(['friendCount', 'followerCount'])
+          );
+
       allow delete: if false;
 
       match /friendRequests/{senderId} {
@@ -118,12 +150,60 @@ service cloud.firestore {
         allow delete: if isOneOfUsers(userId, senderId);
       }
 
+      // Mirror of friendRequests, keyed from the sender's side
+      // (friend_service.dart writes both so each party can see their own
+      // pending list without a collection-group query). Missing from the
+      // rules entirely before this — every sendFriendRequest() call failed.
+      match /sentFriendRequests/{receiverId} {
+        allow read: if isOwner(userId);
+        allow create: if isSignedIn() &&
+            isOwner(userId) &&
+            receiverId != userId &&
+            request.resource.data.receiverId == receiverId;
+        allow update: if false;
+        allow delete: if isOneOfUsers(userId, receiverId);
+      }
+
       match /friends/{friendId} {
         allow read: if isOwner(userId);
-        allow create, update, delete: if isOneOfUsers(userId, friendId) &&
+        // A friendship may only come into existence where a matching
+        // friendRequests doc already existed on one side or the other —
+        // otherwise anyone could force themselves into (or delete) a
+        // friendship with a direct write, skipping the request flow
+        // entirely.
+        allow create: if isOneOfUsers(userId, friendId) &&
+            userId != friendId &&
+            (
+              exists(
+                /databases/$(database)/documents/users/$(userId)/friendRequests/$(friendId)
+              ) ||
+              exists(
+                /databases/$(database)/documents/users/$(friendId)/friendRequests/$(userId)
+              )
+            );
+        allow update, delete: if isOneOfUsers(userId, friendId) &&
             userId != friendId;
       }
 
+      // follow_service.dart — no rules existed for either subcollection
+      // before this, so follow()/unfollow() failed outright.
+      match /following/{targetUserId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() &&
+            isOwner(userId) &&
+            targetUserId != userId;
+        allow update: if false;
+        allow delete: if isOwner(userId);
+      }
+
+      match /followers/{followerId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() &&
+            request.auth.uid == followerId &&
+            followerId != userId;
+        allow update: if false;
+        allow delete: if isOneOfUsers(userId, followerId);
+      }
 
       match /clubs/{clubId} {
         allow read: if isOwner(userId);
@@ -339,7 +419,23 @@ service cloud.firestore {
       }
 
       match /messages/{messageId} {
-        allow read: if isSignedIn();
+        // Public rooms keep their chat readable without having joined yet
+        // (matches how Discover lets you preview a room before entering).
+        // Private/club-lounge rooms require an actual participant, member,
+        // or host relationship — previously any signed-in user could read
+        // any room's chat regardless of visibility.
+        allow read: if isSignedIn() &&
+            (
+              roomExists(roomId) &&
+              (
+                get(
+                  /databases/$(database)/documents/rooms/$(roomId)
+                ).data.visibility == 'public' ||
+                isRoomParticipant(roomId) ||
+                isRoomMember(roomId) ||
+                isRoomHost(roomId)
+              )
+            );
         allow create: if isSignedIn() &&
             request.resource.data.senderId == request.auth.uid &&
             (
@@ -349,14 +445,63 @@ service cloud.firestore {
             );
         allow update, delete: if false;
       }
+
+      // Broadcast Room raise-hand queue (room_experience_service.dart,
+      // used by podcast_room_screen.dart) — had no rules at all, so every
+      // hand-raise request was silently rejected.
+      match /handRequests/{requesterId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() &&
+            request.auth.uid == requesterId &&
+            roomExists(roomId) &&
+            get(
+              /databases/$(database)/documents/rooms/$(roomId)
+            ).data.experience == 'broadcast';
+        allow update: if false;
+        allow delete: if isSignedIn() &&
+            (request.auth.uid == requesterId || isRoomHost(roomId));
+      }
     }
     match /voiceMoments/{momentId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() &&
           request.resource.data.authorId == request.auth.uid;
+      // Non-author updates used to allow likeCount/commentCount to be set to
+      // any value at all — now each write must actually correspond to the
+      // caller's own like being added/removed (toggleLike() in
+      // home_feed_service.dart runs both writes in one transaction, so
+      // existsAfter() correctly reflects the like doc's post-write state),
+      // or a plain +1 for a new comment.
       allow update: if isSignedIn() &&
-          (resource.data.authorId == request.auth.uid ||
-           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount', 'commentCount', 'updatedAt']));
+          (
+            resource.data.authorId == request.auth.uid ||
+            (
+              request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly(['likeCount', 'updatedAt']) &&
+              (
+                (
+                  request.resource.data.likeCount ==
+                      resource.data.likeCount + 1 &&
+                  existsAfter(
+                    /databases/$(database)/documents/voiceMoments/$(momentId)/likes/$(request.auth.uid)
+                  )
+                ) ||
+                (
+                  request.resource.data.likeCount ==
+                      resource.data.likeCount - 1 &&
+                  !existsAfter(
+                    /databases/$(database)/documents/voiceMoments/$(momentId)/likes/$(request.auth.uid)
+                  )
+                )
+              )
+            ) ||
+            (
+              request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly(['commentCount', 'updatedAt']) &&
+              request.resource.data.commentCount ==
+                  resource.data.commentCount + 1
+            )
+          );
       allow delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
 
       match /likes/{userId} {

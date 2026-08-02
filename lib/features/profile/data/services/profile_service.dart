@@ -50,6 +50,14 @@ class ProfileService {
     final user = _auth.currentUser;
     if (user == null) return;
 
+    // Only the very first call should write the counter fields below — this
+    // runs on every Profile screen visit, and re-writing them each time was
+    // stomping real progress (friendCount, followerCount, etc.) back to 0
+    // on top of whatever friend_service/follow_service had already
+    // incremented.
+    final existing = await _document.get();
+    if (existing.exists) return;
+
     final displayName = user.displayName?.trim().isNotEmpty == true
         ? user.displayName!.trim()
         : (user.email?.split('@').first ?? 'YoVoice user');

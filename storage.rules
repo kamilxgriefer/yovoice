@@ -14,7 +14,24 @@ service firebase.storage {
           && request.resource.contentType.matches('image/.*');
     }
 
-    match /room_images/{userId}/{fileName} {
+    // room_image_service.dart uploads to room_images/{roomId}/{uid}_{ts}.ext —
+    // the segment right after room_images/ is the ROOM, not the uploader, so
+    // matching it against request.auth.uid (as this rule used to) could
+    // never succeed unless a room's ID happened to equal someone's uid.
+    // Every room image upload was rejected. Validate via the filename
+    // prefix instead, which is the uploader's uid by construction.
+    match /room_images/{roomId}/{fileName} {
+      allow read: if true;
+      allow write: if isSignedIn()
+          && fileName.matches(request.auth.uid + '_.*')
+          && request.resource.size < 8 * 1024 * 1024
+          && request.resource.contentType.matches('image/.*');
+    }
+
+    // club_service.dart uploads to clubs/{uid}/{clubId}/{kind}_{ts}.ext —
+    // there was no rule for this path at all, so every club image upload
+    // was rejected by the default deny.
+    match /clubs/{userId}/{clubId}/{fileName} {
       allow read: if true;
       allow write: if isSignedIn()
           && request.auth.uid == userId
