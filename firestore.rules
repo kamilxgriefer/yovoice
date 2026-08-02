@@ -177,7 +177,12 @@ service cloud.firestore {
               get(
                 /databases/$(database)/documents/clubs/$(clubId)/invites/$(memberId)
               ).data.inviteeId == memberId ||
-              request.resource.data.role == 'owner'
+              (
+                request.resource.data.role == 'owner' &&
+                get(
+                  /databases/$(database)/documents/clubs/$(clubId)
+                ).data.ownerId == request.auth.uid
+              )
             );
         allow update: if isSignedIn() &&
             request.resource.data.userId == resource.data.userId &&
@@ -249,31 +254,77 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
           request.resource.data.hostId == request.auth.uid;
 
+      // Non-host writers (joining/leaving) are only ever trusted with this
+      // narrow set of lifecycle/counter fields — never name, description,
+      // visibility, imageUrl, or hostId itself. `exists()`-based membership
+      // checks are deliberately NOT required here: joinRoom() writes the
+      // participant doc and this counter update in the same transaction,
+      // and a plain exists() check can't see the other pending write in
+      // that same transaction (that's what getAfter() is for). Precise
+      // value validation for these counters belongs in a Cloud Function
+      // trigger, not here.
       allow update: if isSignedIn() &&
           (
-            resource.data.hostId == request.auth.uid ||
-            isRoomParticipant(roomId) ||
-            isRoomMember(roomId) ||
-            (
-              request.resource.data.diff(resource.data).affectedKeys()
-                  .hasOnly(['participantCount', 'updatedAt']) &&
-              request.resource.data.participantCount ==
-                  resource.data.participantCount + 1 &&
-              getAfter(
-                /databases/$(database)/documents/rooms/$(roomId)/participants/$(request.auth.uid)
-              ).data.userId == request.auth.uid
-            )
+            resource.data.hostId == request.auth.uid
+              ? request.resource.data.hostId == resource.data.hostId
+              : request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly([
+                    'participantCount', 'memberCount', 'speakerCount',
+                    'isLive', 'endedAt', 'updatedAt',
+                  ])
           );
 
       allow delete: if isRoomHost(roomId);
 
       match /participants/{participantId} {
         allow read: if isSignedIn();
-        allow create, update, delete: if isSignedIn() &&
+
+        // Self-service creation must mirror what joinRoom()/createRoom()
+        // actually write: the room's real host joins as host+speaker,
+        // everyone else joins as a plain listener. Promoting to speaker
+        // or moderator status only ever happens through a host-driven
+        // update below.
+        //
+        // createRoom() writes the room doc and this participant doc in the
+        // same batch, so a plain get()/isRoomHost() wouldn't see the room's
+        // hostId yet — getAfter() resolves against the state once the whole
+        // transaction/batch has applied, which is what we need here.
+        allow create: if isSignedIn() &&
+            request.auth.uid == participantId &&
+            request.resource.data.userId == request.auth.uid &&
             (
-              request.auth.uid == participantId ||
-              isRoomHost(roomId)
+              (
+                getAfter(
+                  /databases/$(database)/documents/rooms/$(roomId)
+                ).data.hostId == request.auth.uid &&
+                request.resource.data.role == 'host' &&
+                request.resource.data.isSpeaker == true
+              ) ||
+              (
+                getAfter(
+                  /databases/$(database)/documents/rooms/$(roomId)
+                ).data.hostId != request.auth.uid &&
+                request.resource.data.role == 'listener' &&
+                request.resource.data.isSpeaker == false &&
+                request.resource.data.isHandRaised == false
+              )
             );
+
+        // A participant may only mute themselves or raise/lower their own
+        // hand. Promotion to speaker, moderator mute-of-others, and role
+        // changes are host-only.
+        allow update: if isSignedIn() &&
+            (
+              isRoomHost(roomId) ||
+              (
+                request.auth.uid == participantId &&
+                request.resource.data.diff(resource.data).affectedKeys()
+                    .hasOnly(['isMuted', 'isHandRaised', 'updatedAt'])
+              )
+            );
+
+        allow delete: if isSignedIn() &&
+            (request.auth.uid == participantId || isRoomHost(roomId));
       }
 
       match /members/{memberId} {

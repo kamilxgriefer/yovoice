@@ -84,6 +84,13 @@ exports.bootstrapSuperAdmin = onCall(
       );
     }
 
+    if (authenticatedUser.token.email_verified !== true) {
+      throw new HttpsError(
+        "permission-denied",
+        "Verify your e-mail address before becoming the application owner.",
+      );
+    }
+
     const callerRecord = await auth.getUser(authenticatedUser.uid);
 
     const existingClaims = callerRecord.customClaims ?? {};

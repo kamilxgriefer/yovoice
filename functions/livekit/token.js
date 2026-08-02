@@ -1,16 +1,23 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { defineSecret } = require("firebase-functions/params");
+const { defineSecret, defineString } = require("firebase-functions/params");
 const { AccessToken } = require("livekit-server-sdk");
 
 const { requireAuthentication } = require("../utils/auth");
 
-const { normalizeText } = require("../utils/firestore");
+const { db, normalizeText } = require("../utils/firestore");
 
 const REGION = "europe-west1";
 
 const livekitApiKey = defineSecret("LIVEKIT_API_KEY");
 
 const livekitApiSecret = defineSecret("LIVEKIT_API_SECRET");
+
+// Not a secret — this is the public WebSocket endpoint every client needs
+// to connect, the same way a hostname would be. Set via `functions/.env`
+// (LIVEKIT_URL=wss://your-project.livekit.cloud) or `firebase functions:config`.
+const livekitUrl = defineString("LIVEKIT_URL");
+
+const SPEAKING_ROLES = new Set(["host", "speaker"]);
 
 function buildParticipantName(request, authenticatedUser) {
   const requestedName = normalizeText(request.data?.participantName, 120);
@@ -34,18 +41,12 @@ function buildParticipantName(request, authenticatedUser) {
   return "YoVoice user";
 }
 
-function buildParticipantMetadata(request, authenticatedUser) {
-  const role = normalizeText(authenticatedUser.token.role, 40);
-
-  const username = normalizeText(request.data?.username, 80);
-
-  const photoUrl = normalizeText(request.data?.photoUrl, 1000);
-
+function buildParticipantMetadata(participant, authenticatedUser) {
   return JSON.stringify({
     uid: authenticatedUser.uid,
-    role: role || "user",
-    username: username || null,
-    photoUrl: photoUrl || null,
+    role: participant.role ?? "listener",
+    username: normalizeText(participant.displayName, 80) || null,
+    photoUrl: normalizeText(participant.photoUrl, 1000) || null,
   });
 }
 
@@ -58,29 +59,51 @@ const createLiveKitToken = onCall(
   async (request) => {
     const authenticatedUser = requireAuthentication(request);
 
-    const roomName = normalizeText(request.data?.roomName, 128);
+    const roomId = normalizeText(request.data?.roomId, 128);
 
-    if (!roomName) {
+    if (!roomId) {
+      throw new HttpsError("invalid-argument", "A room ID is required.");
+    }
+
+    const roomRef = db.collection("rooms").doc(roomId);
+    const roomSnapshot = await roomRef.get();
+
+    if (!roomSnapshot.exists) {
+      throw new HttpsError("not-found", "This room does not exist.");
+    }
+
+    const room = roomSnapshot.data();
+
+    const participantRef = roomRef
+      .collection("participants")
+      .doc(authenticatedUser.uid);
+    const participantSnapshot = await participantRef.get();
+
+    if (!participantSnapshot.exists) {
       throw new HttpsError(
-        "invalid-argument",
-        "A LiveKit room name is required.",
+        "permission-denied",
+        "You must join this room before requesting voice access.",
       );
     }
 
-    const canPublish = request.data?.canPublish !== false;
+    const participant = participantSnapshot.data();
 
-    const canSubscribe = request.data?.canSubscribe !== false;
+    const isHost = room.hostId === authenticatedUser.uid;
+    const isSpeaker = SPEAKING_ROLES.has(participant.role);
 
-    const canPublishData = request.data?.canPublishData !== false;
-
-    const hidden = request.data?.hidden === true;
-
-    const recorder = request.data?.recorder === true;
+    // Every permission below is computed from Firestore, never from what
+    // the client asked for — the client only ever supplies the room it
+    // wants to join.
+    const canPublish = (isHost || isSpeaker) && participant.isMuted !== true;
+    const canSubscribe = true;
+    const canPublishData = true;
+    const hidden = false;
+    const recorder = false;
 
     const participantName = buildParticipantName(request, authenticatedUser);
 
     const participantMetadata = buildParticipantMetadata(
-      request,
+      participant,
       authenticatedUser,
     );
 
@@ -97,7 +120,7 @@ const createLiveKitToken = onCall(
 
       accessToken.addGrant({
         roomJoin: true,
-        room: roomName,
+        room: roomId,
         canPublish,
         canSubscribe,
         canPublishData,
@@ -105,11 +128,13 @@ const createLiveKitToken = onCall(
         recorder,
       });
 
-      const token = await accessToken.toJwt();
+      const participantToken = await accessToken.toJwt();
 
       return {
-        token,
-        roomName,
+        serverUrl: livekitUrl.value(),
+        participantToken,
+        token: participantToken,
+        roomName: roomId,
         participantIdentity: authenticatedUser.uid,
         participantName,
         permissions: {
