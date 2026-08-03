@@ -2,6 +2,24 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Nested `match /parent/{id}/collection/{doc}` rules only ever apply to
+    // reads/writes scoped to one specific parent — they do NOT authorize a
+    // collectionGroup() query, which scans the named collection across every
+    // parent at once. Firestore requires a separate, top-level
+    // `match /{path=**}/collection/{doc}` rule for that (verified against
+    // the emulator: without it, the query is rejected as permission-denied
+    // regardless of how permissive the nested rule is). These two mirror the
+    // narrowest read case the app's actual collectionGroup() queries need —
+    // full create/update/delete authorization still lives on the nested
+    // rules below, since writes always go through a specific parent path.
+    match /{path=**}/roomMembers/{memberId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    match /{path=**}/invites/{inviteId} {
+      allow read: if isSignedIn() && resource.data.inviteeId == request.auth.uid;
+    }
+
     function isSignedIn() {
       return request.auth != null;
     }
@@ -52,7 +70,7 @@ service cloud.firestore {
 
     function isRoomMember(roomId) {
       return isSignedIn() && exists(
-        /databases/$(database)/documents/rooms/$(roomId)/members/$(request.auth.uid)
+        /databases/$(database)/documents/rooms/$(roomId)/roomMembers/$(request.auth.uid)
       );
     }
 
@@ -256,16 +274,11 @@ service cloud.firestore {
       allow delete: if isClubOwner(clubId);
 
       match /members/{memberId} {
-        // watchMyCommunities() (room_service.dart) runs a collectionGroup('members')
-        // query filtered to `userId == caller` across BOTH rooms/*/members and
-        // clubs/*/members. Firestore rejects the whole collectionGroup query
-        // unless every collection it spans has a rule it can verify from the
-        // query shape alone; isClubMember() needs an extra exists() read per
-        // candidate doc, which isn't provable that way — so the query was
-        // failing outright with permission-denied. Reading your OWN membership
-        // record is provable directly from resource.data against the query's
-        // own filter, so add that as an explicit, narrower allowance
-        // alongside (not instead of) the existing club-member browsing case.
+        // Club rosters are only ever read directly (per-club queries or
+        // single-doc gets), never via collectionGroup — see
+        // rooms/{roomId}/roomMembers below for why that distinction matters.
+        // Members can browse the roster; anyone can always read their own
+        // membership record (e.g. to check their own role).
         allow read: if isClubMember(clubId) ||
             (isSignedIn() && resource.data.userId == request.auth.uid);
         allow create: if isSignedIn() &&
@@ -424,7 +437,21 @@ service cloud.firestore {
             (request.auth.uid == participantId || isRoomHost(roomId));
       }
 
-      match /members/{memberId} {
+      match /roomMembers/{memberId} {
+        // Named distinctly from clubs/{clubId}/members on purpose:
+        // watchMyCommunities() (room_service.dart) runs a
+        // collectionGroup('roomMembers') query filtered to `userId == caller`.
+        // Firestore rejects a collectionGroup query outright unless EVERY
+        // match block sharing that collection name — anywhere in the whole
+        // ruleset — has a rule provable from the query's filter alone, with
+        // no exists()/get(). clubs/{clubId}/members legitimately needs
+        // exists() for its own (non-collectionGroup) roster-browsing reads,
+        // and combining it via `||` with a provable clause does NOT satisfy
+        // Firestore's provability check the way its docs suggest — verified
+        // against the emulator, not just assumed. Keeping room membership
+        // under its own collection name sidesteps that entirely: this rule
+        // needs no exists()/get(), so the collectionGroup query it powers
+        // stays valid regardless of what clubs/{clubId}/members does.
         allow read: if isSignedIn();
         allow create: if isSignedIn() &&
             request.auth.uid == memberId;

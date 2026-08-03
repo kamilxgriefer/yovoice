@@ -10,6 +10,9 @@ const {
   getDoc,
   getDocs,
   collection,
+  collectionGroup,
+  query,
+  where,
   setDoc,
   updateDoc,
   writeBatch,
@@ -511,6 +514,71 @@ async function main() {
     const ref = doc(db, "clubs/club3/members/attacker-uid");
     await assertSucceeds(getDoc(ref));
   });
+
+  // --- real collectionGroup() queries, not just direct doc reads ---
+  //
+  // A nested `match /parent/{id}/collection/{doc}` rule ONLY covers reads/
+  // writes scoped to one specific parent. It does NOT authorize an actual
+  // collectionGroup() query (which scans that collection name across every
+  // parent) — Firestore rejects those outright as permission-denied unless a
+  // separate top-level `match /{path=**}/collection/{doc}` rule also exists.
+  // The cases above only ever call getDoc() on a fully-specified path, so
+  // they'd stay green even if the wildcard rules were deleted — these two
+  // are what actually catch that regression.
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), "rooms/cg-room1"), {
+      hostId: "host-uid",
+      roomType: "community",
+      isActive: true,
+    });
+    await setDoc(doc(ctx.firestore(), "rooms/cg-room1/roomMembers/attacker-uid"), {
+      userId: "attacker-uid",
+    });
+    await setDoc(doc(ctx.firestore(), "clubs/cg-club1"), { ownerId: "host-uid" });
+    await setDoc(doc(ctx.firestore(), "clubs/cg-club1/invites/attacker-uid"), {
+      inviteeId: "attacker-uid",
+      inviterId: "host-uid",
+      status: "pending",
+    });
+  });
+
+  await check(
+    "regression: watchMyCommunities() collectionGroup('roomMembers') query succeeds",
+    async () => {
+      const db = attacker.firestore();
+      const q = query(
+        collectionGroup(db, "roomMembers"),
+        where("userId", "==", "attacker-uid"),
+      );
+      const snapshot = await assertSucceeds(getDocs(q));
+      if (snapshot.size < 1) throw new Error("expected at least 1 doc back");
+    },
+  );
+
+  await check(
+    "regression: watchMyClubInvites() collectionGroup('invites') query succeeds",
+    async () => {
+      const db = attacker.firestore();
+      const q = query(
+        collectionGroup(db, "invites"),
+        where("inviteeId", "==", "attacker-uid"),
+      );
+      const snapshot = await assertSucceeds(getDocs(q));
+      if (snapshot.size < 1) throw new Error("expected at least 1 doc back");
+    },
+  );
+
+  await check(
+    "SECURITY: collectionGroup('roomMembers') query cannot be filtered to someone else's userId",
+    async () => {
+      const db = attacker.firestore();
+      const q = query(
+        collectionGroup(db, "roomMembers"),
+        where("userId", "==", "host-uid"),
+      );
+      await assertFails(getDocs(q));
+    },
+  );
 
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();

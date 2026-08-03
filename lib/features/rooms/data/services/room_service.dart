@@ -68,7 +68,7 @@ class RoomService {
     });
 
     if (isCommunity) {
-      batch.set(room.collection('members').doc(user.uid), {
+      batch.set(room.collection('roomMembers').doc(user.uid), {
         'userId': user.uid,
         'displayName': hostName,
         'photoUrl': user.photoURL,
@@ -140,7 +140,7 @@ class RoomService {
 
   Stream<List<VoiceRoom>> watchMyCommunities() {
     return _firestore
-        .collectionGroup('members')
+        .collectionGroup('roomMembers')
         .where('userId', isEqualTo: _user.uid)
         .snapshots()
         .asyncMap((snapshot) async {
@@ -332,7 +332,7 @@ class RoomService {
   Future<void> joinCommunity(String roomId) async {
     final user = _user;
     final room = _rooms.doc(roomId);
-    final member = room.collection('members').doc(user.uid);
+    final member = room.collection('roomMembers').doc(user.uid);
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(room);
       final data = snapshot.data();
@@ -661,13 +661,13 @@ class RoomService {
   Future<void> deleteRoom(String roomId) async {
     await _requireHost(roomId);
     await _deleteCollection(_rooms.doc(roomId).collection('participants'));
-    await _deleteCollection(_rooms.doc(roomId).collection('members'));
+    await _deleteCollection(_rooms.doc(roomId).collection('roomMembers'));
     await _deleteCollection(_rooms.doc(roomId).collection('messages'));
     await _rooms.doc(roomId).delete();
   }
 
   Future<bool> _isMember(String roomId, String userId) async {
-    return (await _rooms.doc(roomId).collection('members').doc(userId).get())
+    return (await _rooms.doc(roomId).collection('roomMembers').doc(userId).get())
         .exists;
   }
 
