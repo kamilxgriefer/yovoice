@@ -141,7 +141,13 @@ service cloud.firestore {
       allow delete: if false;
 
       match /friendRequests/{senderId} {
-        allow read: if isOwner(userId);
+        // getRelationshipStatus() (friend_service.dart) checks whether the
+        // CALLER previously sent a request by reading
+        // users/{otherUserId}/friendRequests/{callerUid} — i.e. the sender
+        // reading a doc that lives under the *recipient's* subcollection.
+        // Recipient-only read left that permanently denied for the sender's
+        // own outgoing-request check.
+        allow read: if isOneOfUsers(userId, senderId);
         allow create: if isSignedIn() &&
             request.auth.uid == senderId &&
             senderId != userId &&
@@ -250,7 +256,18 @@ service cloud.firestore {
       allow delete: if isClubOwner(clubId);
 
       match /members/{memberId} {
-        allow read: if isClubMember(clubId);
+        // watchMyCommunities() (room_service.dart) runs a collectionGroup('members')
+        // query filtered to `userId == caller` across BOTH rooms/*/members and
+        // clubs/*/members. Firestore rejects the whole collectionGroup query
+        // unless every collection it spans has a rule it can verify from the
+        // query shape alone; isClubMember() needs an extra exists() read per
+        // candidate doc, which isn't provable that way — so the query was
+        // failing outright with permission-denied. Reading your OWN membership
+        // record is provable directly from resource.data against the query's
+        // own filter, so add that as an explicit, narrower allowance
+        // alongside (not instead of) the existing club-member browsing case.
+        allow read: if isClubMember(clubId) ||
+            (isSignedIn() && resource.data.userId == request.auth.uid);
         allow create: if isSignedIn() &&
             request.auth.uid == memberId &&
             (
