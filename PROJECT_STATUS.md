@@ -1,430 +1,479 @@
 # YoVoice — Project Status
 
-Written mid-session as a handoff document before context compaction, then
-updated once the bug that was open at that point got resolved. Covers three
-pieces of work done back-to-back: (1) a refactor of the largest file in the
-repo, (2) a full pass through `docs/SECURITY_AUDIT.md`, and (3) two more
-broken features found via live production testing while chasing down a bug
-report. **Nothing is currently broken/open** as of this update — see section 6
-for what was found and fixed, and section 9 for the actual next task (App
-Check, #12 from the audit, deliberately not started yet).
+Rewritten from scratch at the end of a long autonomous session covering three
+things back-to-back: (1) finishing Firebase App Check client integration,
+(2) finding and fixing two real, previously-unnoticed `collectionGroup()`
+query bugs, and (3) building out `yovoice-website` (the Next.js marketing
+site, separate repo at `/Users/kamiljaguszewski/yovoice-website`) into a
+working Firebase-Auth-backed site with an account section, connected to this
+Flutter app. The previous version of this file (covering an earlier security
+audit pass) is superseded — everything it described is still true and still
+deployed, just no longer the frontier of what's happening.
+
+**Nothing is currently broken.** One real blocker exists and is explicitly
+called out in section 9 — it needs a DNS change only the user can make.
 
 ---
 
-## 1. What has been completed
+## 1. What has been completed this session
 
-### A. Refactored `broadcast_room_screen.dart` (2,384 lines → ~430 + 10 files)
+### A. Firebase App Check — client integration (audit item #12)
 
-The largest file in the repo was one `StatefulWidget` plus ~25 private helper
-widgets crammed together (Dart privacy is file-scoped, so everything private had
-to live in one file). Split into a `broadcast_room/` folder grouped by
-responsibility, with the public `BroadcastRoomScreen` widget kept at its
-original path so the one external import (`room_entry_screen.dart`) needed no
-changes. Extracted widgets became normal top-level (non-underscore) classes in
-their own files — a visibility-scope change only, not a new public API (nothing
-re-exports them).
+- `firebase_app_check: ^0.4.6` added to `pubspec.yaml`; `lib/main.dart`
+  activates it with `AndroidDebugProvider`/`AppleDebugProvider` in debug
+  builds, `AndroidPlayIntegrityProvider`/`AppleAppAttestWithDeviceCheckFallbackProvider`
+  in release.
+- Fixed an iOS build blocker hit along the way: `firebase_core` (bumped to
+  4.13.0 by adding App Check) needed `firebase-ios-sdk` 12.17.0, but the
+  locked `firebase_storage` 13.4.5 needed 12.15.0. `flutter pub upgrade`
+  moved `firebase_storage` to 13.4.6, resolving both.
+- The **Firebase App Check API itself was disabled** in Google Cloud Console
+  for this project — not just unconfigured client-side. Enabled it.
+- Captured the debug token from a live simulator run
+  (`3868E14D-C821-437F-93AE-D27A8C504AA4`) via `xcrun simctl spawn ... log
+  stream`, registered it in Firebase Console → App Check → Manage debug
+  tokens, then **verified live** by relaunching the app and confirming the
+  token-exchange 403 error was gone.
+- `enforceAppCheck` on Cloud Functions is **still `false`** — deliberately.
+  This only starts attaching tokens to requests. See section 9 for what
+  flipping it actually requires.
 
-Also fixed a pre-existing bug found while testing this: `OwnerMenuSheet`'s
-`showModalBottomSheet` call was missing `isScrollControlled: true` (every
-sibling room screen already had it on their equivalent sheets) — the sheet
-overflowed by 221px and "Delete room permanently" was unreachable.
+### B. Two real `collectionGroup()` query bugs, found and fixed
 
-Merged via PR #1 (`refactor/split-broadcast-room-screen` → `main`), then the
-overflow fix went straight to `main` per the user's stated preference for this
-repo (see "Design decisions" below).
+Both `RoomService.watchMyCommunities()` and `ClubService.watchMyClubInvites()`
+have been broken since they were written — "My Communities" and club invite
+notifications never worked, for anyone, ever. Found while double-checking a
+previous session's claimed fix for the first one (it hadn't actually worked —
+see below).
 
-### B. Full pass through `docs/SECURITY_AUDIT.md`
+**Root cause** (confirmed against the Firestore emulator, not assumed): a
+nested `match /parent/{id}/collection/{doc}` rule only ever authorizes
+reads/writes scoped to one specific parent document. It does **not**
+authorize an actual `collectionGroup()` query, which scans that collection
+name across every parent at once — Firestore rejects those outright as
+`permission-denied` unless a separate, **top-level**
+`match /{path=**}/collection/{doc}` rule also exists. Neither query had one.
+This is easy to miss because direct `getDoc()`/`getDocs()` calls on a
+fully-specified path don't exercise this code path at all — a test suite that
+only ever does that (which is exactly what `firestore-tests/` did before this
+session) will stay green while the real feature is completely broken.
 
-This file was sitting **untracked** in the repo at the start of the session — a
-pre-existing, very thorough security audit (not written by me) covering
-`firestore.rules`, `storage.rules`, `functions/**`. It's now committed. Its own
-"Kolejność naprawiania" (fix order) section was followed item by item:
+This also means a previous session's fix attempt for `watchMyCommunities()`
+— adding `|| resource.data.userId == request.auth.uid` to
+`clubs/{clubId}/members`'s read rule, reasoning that Firestore's docs suggest
+an OR'd provable clause satisfies collection-group provability — **never
+actually worked**. Verified directly: combining an `exists()`-based clause
+with a provable one via `||` does not satisfy Firestore's real provability
+check, at least not as implemented by the emulator. That workaround has been
+removed/simplified; the comment explaining why is in `firestore.rules`.
 
-**Critical / High (#1, #2, #3, #4, #5, #13) — done, deployed, verified:**
-- **#13 / #1 — LiveKit voice was completely broken.** The client
-  (`voice_token_service.dart`) sent `roomId`; the Cloud Function
-  (`functions/livekit/token.js`) read `roomName` — every voice-join call threw
-  `invalid-argument`. Rewrote the function to read `roomId`, look up the
-  caller's actual room/participant role in Firestore, and compute
-  `canPublish`/`hidden`/`recorder` server-side instead of trusting whatever the
-  client sent (previously: anyone could unmute themselves, listen invisibly, or
-  rejoin instantly after being kicked). **Verified live**: created a real
-  broadcast room in the simulator, joined voice, confirmed an actual LiveKit
-  connection (listener count ticked up, mic went live).
-- **#2 — Club ownership hijack.** Anyone could create
-  `clubs/{id}/members/{selfUid}` with `role: 'owner'`. Now requires
-  `clubs/{id}.ownerId == request.auth.uid`.
-- **#3 — Room hijack.** Any participant could rewrite a room's `hostId`, name,
-  visibility, etc. Non-host writers are now restricted to a fixed field
-  allowlist (`participantCount`, `memberCount`, `speakerCount`, `isLive`,
-  `endedAt`, `updatedAt`); host can change anything except `hostId` itself.
-- **#4 — Participant self-role escalation.** A listener could write themselves
-  into `role: 'speaker'`/`isMuted: false` directly. `create` now must match
-  what `joinRoom()`/`createRoom()` actually write (host→host+speaker,
-  everyone else→listener); non-host `update` is limited to
-  `isMuted`/`isHandRaised` on their own doc.
-- **#5 — `bootstrapSuperAdmin`** now requires `email_verified == true` before
-  granting the super-admin role.
+**Fixes:**
+- Renamed `rooms/{roomId}/members` → `rooms/{roomId}/roomMembers` so it no
+  longer shares a collection-group name with `clubs/{clubId}/members` (which
+  legitimately needs `exists()` for its own non-collectionGroup roster
+  browsing, and would otherwise poison the whole group for any query).
+  Updated all 5 call sites in `room_service.dart` and the `isRoomMember()`
+  rules function accordingly. `clubs/{clubId}/members` itself was **not**
+  renamed — it's never queried via `collectionGroup()`, and one of the 6
+  `collection('members')` call sites in `room_service.dart` (the club-lounge
+  entry check, line ~470) is correctly a `clubs/{clubId}/members` read and
+  was left alone.
+- Added two top-level wildcard rules, scoped to exactly what the two real
+  queries need (read your own record, nothing more):
+  ```
+  match /{path=**}/roomMembers/{memberId} {
+    allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+  }
+  match /{path=**}/invites/{inviteId} {
+    allow read: if isSignedIn() && resource.data.inviteeId == request.auth.uid;
+  }
+  ```
+- Added `firestore.indexes.json` (**didn't exist before this session at
+  all** — no collection-group index configuration had ever been deployed)
+  with a collection-group field override for `roomMembers.userId`.
+  `firebase.json` now points `firestore.indexes` at it.
+- Added two real `collectionGroup()` regression tests (plus one attack-case
+  test) to `firestore-tests/rules.test.js` — suite is now 43 checks, up from
+  40, all passing on a freshly-started emulator.
+- Deployed to production: `firebase deploy --only firestore:rules,firestore:indexes`.
 
-**Medium (#6, #7, #8, #9, #10, #11) — done, deployed, verified:**
-- **#6 — `/users/{userId}` had zero field validation.** Split `update` into
-  owner (fixed allowlist of profile/presence/achievement-counter fields) vs.
-  non-owner (only `friendCount`/`followerCount`, because `follow_service.dart`
-  and `friend_service.dart` genuinely increment those on the OTHER person's
-  doc in the same transaction that creates the follow/friend edge).
-- **#10 — `sentFriendRequests`, `following`, `followers`, and rooms'
-  `handRequests` subcollections had NO rules at all.** This wasn't just a
-  security gap — Firestore's default-deny meant **the Friends feature and the
-  Follow feature could not function at all**: every `sendFriendRequest()`,
-  `follow()`, `unfollow()`, and Broadcast Room raise-hand call was silently
-  rejected. Added rules matching exactly what the Dart services write.
-- **#8 — Forced friendship.** `friends/{friendId}` `create` now requires a
-  matching `friendRequests` doc to have existed on one side or the other
-  (verified this doesn't break the transactional accept-flow: the check uses
-  plain `exists()` against pre-transaction state, which is correct here since
-  the request doc already existed before the transaction started — unlike the
-  participant-creation case below, which needed `getAfter()` instead).
-- **#9 — Room chat readable by anyone signed in, regardless of room
-  visibility.** Now: public rooms stay readable without joining (matches the
-  Discover preview pattern); private/club-lounge rooms require actual
-  participant/member/host status.
-- **#7 — `voiceMoments.likeCount`/`commentCount`** could be set to any value by
-  any signed-in user. Now must correspond to the caller's own like doc
-  actually existing/not-existing after the write (`existsAfter()`), or a plain
-  `+1` for comments.
-- **#11 — `storage.rules` path mismatches.** `room_images/{roomId}/{file}` was
-  being checked against `request.auth.uid == {roomId segment}`, which could
-  never match — every room image upload was rejected. Fixed to validate via
-  the uid-prefixed filename the client actually writes. `clubs/{uid}/{clubId}/…`
-  had no rule at all (default deny) — added one.
+**Known gap, explicitly not resolved:** if any real `rooms/{roomId}/members`
+documents already existed in production before this rename, they are now
+invisible to the app (the client reads/writes `roomMembers` now). No reliable
+way to check production document counts was available in this session (no
+`gcloud`, Application Default Credentials weren't set up for `firebase-admin`,
+and the Firebase Console's Firestore data browser was too unreliable via
+browser automation to check manually — see section 10). **Worth verifying
+before assuming this is a non-issue** — check the Firestore Console's
+`rooms/*/members` collections directly, or query the same via
+`firebase-admin` with a real service account key.
 
-**Independent bug found and fixed along the way (not in the audit):**
-`ProfileService.ensureProfile()` runs on every Profile screen visit and was
-unconditionally re-writing `friendCount`/`followerCount`/etc. back to `0` via
-`merge: true` — silently wiping real progress every time the tightened `#6`
-rule would otherwise have surfaced as a `permission-denied`. Fixed by checking
-whether the doc already exists before writing the initial-state payload.
+### C. `yovoice-website` — full auth + account section + SEO build-out
 
-**Deliberately NOT done:**
-- **#12 — App Check.** `enforceAppCheck: false` on every Cloud Function is
-  lower-severity per the audit itself ("not a vulnerability on its own, just
-  removes a hardening layer"). Flipping it on requires registering App Check
-  providers (DeviceCheck/AppAttest for iOS, Play Integrity for Android) in the
-  Firebase Console and wiring the App Check SDK into the Flutter client first —
-  enabling enforcement before that's live would reject every request from
-  every existing app build. Confirmed via the Console that App Check has never
-  been configured for this project at all (shows the "Get started" onboarding
-  screen, not a dashboard).
+Separate repo, `/Users/kamiljaguszewski/yovoice-website`, Next.js 16 +
+React 19 + Tailwind, deployed on Vercel (`yo-voice/yovoice-website`, linked
+via `vercel link` this session; auto-deploys on push to `main`). This repo
+had a lot of scaffolding (empty files with the right names) but almost
+nothing was actually implemented before this session.
 
-### Verification method used throughout
+**Firebase Authentication** (shares the `yovoice-ec54a` project and the
+`auth.yovoice.app` custom auth domain with this Flutter app — one account
+works everywhere):
+- `src/lib/firebase/config.ts`, `src/providers/auth-provider.tsx`,
+  `src/hooks/use-auth.ts`, `src/hooks/use-require-auth.ts` — real
+  implementations, were empty stubs before.
+- Login, Register, Forgot Password, Verify Email — all functional pages
+  backed by real Firebase Auth calls (`signInWithEmailAndPassword`,
+  `createUserWithEmailAndPassword` + `sendEmailVerification`,
+  `sendPasswordResetEmail`, `resendVerificationEmail`).
+- Security page: change password and change email, both requiring
+  re-authentication first (`reauthenticateWithCredential`).
+- `resolveAuthRedirect()` sends signed-in users to `NEXT_PUBLIC_APP_URL`
+  (defaults to `https://yovoice-ec54a.web.app`, meant to become
+  `https://app.yovoice.app` once DNS exists) by default, or to an internal
+  path via `?redirect=/some/path` — used by the download flow.
+- Header shows "Log in" for anonymous visitors, "Account" + "Open App" for
+  signed-in users — anonymous visitors otherwise see the unchanged marketing
+  site, nothing forces them anywhere.
 
-Every Firestore/Storage rule change was checked against the **Firestore
-emulator** using `@firebase/rules-unit-testing` before deploying — a
-hand-written test script covering every regression (does the legitimate write
-path still work?) and every attack scenario (is the exploit now blocked?) from
-the audit. Final tally: **34/34 checks passing**. This test harness lives only
-in the session's scratchpad directory (ephemeral, tied to this session) and was
-**never committed to the repo** — see "Remaining issues" for why that's worth
-revisiting.
+**Account section** (`/account/*`, all gated by `useRequireAuth()`):
+Profile (display name), Security (as above), Devices & Sessions (current
+session only — see limitations), Notifications (honest placeholder, no
+backend schema for it yet), Downloads (reuses the same platform selector as
+the public download center).
+
+**Download center** (`/download`, gated to signed-in users): mobile shows
+"coming soon" + a link to the GitHub repo; Windows/macOS show "installer not
+published yet" + a link to GitHub Releases; Web links straight to the app.
+Deliberately does **not** fabricate app-store/installer URLs that don't
+exist.
+
+**SEO/metadata**: `robots.ts`, `sitemap.ts` (only lists genuinely public,
+non-gated routes), `manifest.ts` + real PNG icons generated from the brand
+logo via `sips`, a dynamically-generated OpenGraph image
+(`opengraph-image.tsx`, via `next/og`), Twitter card metadata. Fixed a
+pre-existing duplicate `id="community"` between the hero section and the
+product-details section that broke the "Community" nav anchor link.
+
+Full details, env var docs, and known limitations are in
+`yovoice-website/README.md` — kept up to date, don't duplicate it here.
+
+**Verified live** end-to-end: registered a real test account through the
+running dev server, confirmed the Firebase Auth network calls, confirmed the
+redirect landed on the actual Flutter web app
+(`https://yovoice-ec54a.web.app`) and that app initialized Firebase
+correctly. Logged back in with `?redirect=/account/profile`, confirmed the
+internal-path redirect stayed on-site, confirmed the profile page showed the
+right data, confirmed the verify-email banner appeared (email genuinely
+wasn't verified). Test account (`claude-website-test@yovoice.app`) is
+**still in the production Firebase Auth user list** — attempted to delete it
+via the Console UI but hit repeated script-injection timeouts on that
+specific page; low priority (one obviously-fake test account), but worth a
+5-second manual delete next time someone's in Authentication → Users.
+
+### D. `app.yovoice.app` — everything possible without DNS access
+
+- Added `app.yovoice.app` as a custom domain on the `yovoice-ec54a` Firebase
+  Hosting site. Firebase's setup flow gave the exact DNS record needed:
+  ```
+  CNAME  app.yovoice.app  →  yovoice-ec54a.web.app
+  ```
+  (Same pattern already working for `auth.yovoice.app`.) This is now
+  registered on the Firebase side and waiting on that DNS record — see
+  section 9.
+- The website's `NEXT_PUBLIC_APP_URL` env var is exactly the toggle for this:
+  currently `https://yovoice-ec54a.web.app`, flip to `https://app.yovoice.app`
+  once the DNS record is live and Firebase finishes domain verification (can
+  take a while after the record propagates — check the same "Edit domain"
+  panel in Firebase Console → Hosting).
+- Confirmed via `dig` that `yovoice.app`'s DNS is managed on **Cloudflare**
+  (nameservers `louis.ns.cloudflare.com` / `heidi.ns.cloudflare.com`), and
+  that the root domain + `www` currently point at Vercel's IPs. No Cloudflare
+  access exists in this session — this is genuinely something only the user
+  (or whoever has Cloudflare access) can do.
+- Also discovered: Firebase Hosting's domain list shows `yovoice.app` itself
+  as a "Connected" custom domain, left over from — presumably — before the
+  marketing site moved to Vercel. DNS no longer points there (confirmed via
+  `dig`), so this is just stale metadata on Firebase's side, not receiving
+  real traffic. Harmless, but worth knowing about if it's ever confusing in
+  the Console.
 
 ---
 
-## 2. Files created
+## 2. Files created (this session, both repos)
 
 ```
-lib/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart
-lib/features/rooms/presentation/screens/broadcast_room/broadcast_background.dart
-lib/features/rooms/presentation/screens/broadcast_room/broadcast_stage.dart
-lib/features/rooms/presentation/screens/broadcast_room/broadcast_owner_controls.dart
-lib/features/rooms/presentation/screens/broadcast_room/broadcast_roster.dart
-lib/features/rooms/presentation/screens/broadcast_room/broadcast_bottom_controls.dart
-lib/features/rooms/presentation/screens/broadcast_room/sheets/owner_menu_sheet.dart
-lib/features/rooms/presentation/screens/broadcast_room/sheets/share_room_sheet.dart
-lib/features/rooms/presentation/screens/broadcast_room/sheets/settings_sheet.dart
-lib/features/rooms/presentation/screens/broadcast_room/sheets/participants_sheet.dart
-functions/.env                          # LIVEKIT_URL — not a secret, see below
+# yovoice (Flutter)
+firestore.indexes.json
+
+# yovoice-website
+.env.example
+src/app/(auth)/layout.tsx
+src/app/(auth)/register/page.tsx
+src/app/(auth)/forgot-password/page.tsx
+src/app/(auth)/verify-email/page.tsx
+src/app/(account)/account/layout.tsx
+src/app/(account)/account/profile/page.tsx
+src/app/(account)/account/security/page.tsx
+src/app/(account)/account/devices/page.tsx
+src/app/(account)/account/notifications/page.tsx
+src/app/(account)/account/downloads/page.tsx
+src/app/(marketing)/download/page.tsx
+src/app/manifest.ts
+src/app/robots.ts
+src/app/sitemap.ts
+src/app/opengraph-image.tsx
+src/app/icon.png
+src/app/apple-icon.png
+src/lib/firebase/config.ts
+src/lib/auth/auth-errors.ts
+src/components/auth/forgot-password-form.tsx
+src/components/auth/verify-email-banner.tsx
+src/components/download/platform-selector.tsx
+src/hooks/use-require-auth.ts
+public/icons/icon-192.png
+public/icons/icon-512.png
 ```
 
-## 3. Files modified
+## 3. Files modified (this session, both repos)
 
 ```
-lib/features/rooms/presentation/screens/broadcast_room_screen.dart   # slimmed to ~430 lines
-lib/features/profile/data/services/profile_service.dart              # ensureProfile() fix
-firestore.rules                                                      # multiple passes, see above
-storage.rules                                                        # room_images/ + clubs/ paths
-functions/livekit/token.js                                           # full rewrite
-functions/admin/users.js                                             # email_verified check
-docs/SECURITY_AUDIT.md                                                # was untracked, now committed
+# yovoice (Flutter)
+lib/main.dart                                        # App Check activation
+pubspec.yaml, pubspec.lock                            # firebase_app_check + storage bump
+ios/Podfile.lock, ios/Runner.xcodeproj/**, ios/Runner.xcworkspace/**  # SPM resolution
+macos/Flutter/GeneratedPluginRegistrant.swift
+windows/flutter/generated_plugin_registrant.cc, generated_plugins.cmake
+firestore.rules                                       # roomMembers rename + wildcard rules
+firebase.json                                          # points to firestore.indexes.json
+lib/features/rooms/data/services/room_service.dart     # 5 collection('members') -> 'roomMembers'
+firestore-tests/rules.test.js                           # +3 collectionGroup tests
+README.md                                               # +Development Setup, +App Check, +rules testing
+PROJECT_STATUS.md                                       # this file
+
+# yovoice-website
+src/app/layout.tsx                                      # AuthProvider, OG/Twitter/icons metadata
+src/hooks/use-auth.ts
+src/providers/auth-provider.tsx
+src/lib/auth/auth-redirect.ts
+src/components/auth/login-form.tsx
+src/components/auth/register-form.tsx
+src/components/layout/site-header.tsx                   # auth-aware Log in/Account/Open App
+src/components/layout/site-footer.tsx                    # sizes= fix
+src/components/hero/hero-section.tsx                      # id="community" collision fix, sizes= fix
+src/components/sections/download-section.tsx              # auth-aware routing
+src/types/user.ts
+.gitignore                                                # !.env.example exception
+README.md                                                 # +Getting Started, +env vars, +deployment
 ```
 
-## 4. Git history (chronological, all on `main`, all pushed)
+## 4. Git history (this session, chronological)
 
+**`yovoice`** (`kamilxgriefer/yovoice`, all on `main`, all pushed):
 ```
-0473eb5  Fix two more broken features found via live production testing
-cea73d1  Fix remaining SECURITY_AUDIT.md items (#6-11)
-a38474e  Add LIVEKIT_URL function param
-55e8627  Fix critical/high security issues from SECURITY_AUDIT.md (#1-5, #13)
-3f4d936  Fix owner menu sheet overflow in broadcast room
-721bbcd  Revise README.md with detailed project overview        (not mine — landed via rebase)
-66b64f4  Merge pull request #1 from .../refactor/split-broadcast-room-screen
-75b64e0  Split broadcast_room_screen.dart into focused files
+e620582  Fix two broken collectionGroup() queries: watchMyCommunities and watchMyClubInvites
+0e18d24  Integrate Firebase App Check (client side, not yet enforced)
 ```
+(plus this doc's commit, made after — check `git log --oneline -5` to
+reconfirm hashes, don't trust anything transcribed here blindly)
 
-Run `git log --oneline -12` to reconfirm — don't trust hashes transcribed
-elsewhere without checking.
+**`yovoice-website`** (`kamilxgriefer/yovoice-website`, all on `main`, all
+pushed):
+```
+b016577  Wire Firebase Authentication and complete SEO foundation
+```
+(plus a follow-up commit for the account section / README updates — check
+`git log --oneline -5` in that repo too)
 
-**Working tree is otherwise clean** except one pre-existing untracked file:
-`prod-firestore.rules` (empty placeholder at repo root, present before this
-session started, not part of any commit here — leave it alone unless the user
-says otherwise).
+Both repos' working trees should be clean after this session's final commits
+— reconfirm with `git status` before starting new work.
 
 ---
 
-## 5. Current architecture (as touched by this session)
+## 5. Current architecture
 
-- **App**: Flutter, package `com.example.yoVoice` — a Clubhouse/Discord-style
-  voice social app ("YoVoice").
-- **Backend**: Firebase project `yovoice-ec54a`.
-  - Firestore: single `(default)` database, `europe-west4`, Native mode.
-  - Cloud Functions: `europe-west1`, Node 22, `firebase-functions` v6.
-  - Storage: rules at repo root `storage.rules`.
-  - Voice: LiveKit Cloud, project URL `wss://yovoice-3f7j9fb7.livekit.cloud`
-    (now in `functions/.env` as `LIVEKIT_URL`). API key/secret remain in
-    Secret Manager (`defineSecret`), untouched this session.
-- **CI/CD (checked — resolved, was a false alarm):** `.github/workflows/firebase-hosting-merge.yml`
-  runs on every push to `main` and deploys **Firebase Hosting only**
-  (`flutter build web --release` → `FirebaseExtended/action-hosting-deploy@v0`).
-  It does not touch Firestore rules, Storage rules, or Cloud Functions. The
-  `github-action-1300846400@yovoice-ec54a.iam.gserviceaccount.com` actor seen
-  earlier in the Firebase Console was this workflow's Hosting deploy, not a
-  Firestore rules deploy as first assumed (misread — it was under the
-  Console's Hosting widget, not the Firestore one). No CI/CD race risk with
-  manual `firebase deploy` calls for rules/functions.
-- **Room model**: `rooms/{roomId}` with subcollections `participants`,
-  `members`, `messages`, `handRequests`. Two room "experiences" — `broadcast`
-  and `community` — set via `experience` field (written by
-  `RoomExperienceService.configureRoom()` right after creation).
-- **⚠️ Two parallel hand-raise implementations exist** — not a bug, but a
-  consistency smell worth a future look:
-  1. `RoomService.setHandRaised()` — a simple `isHandRaised` boolean field on
-     the `participants` doc. Used by `broadcast_room_screen.dart` (the screen
-     refactored in part A).
-  2. `RoomExperienceService.setHandRaised()` — a separate `handRequests`
-     subcollection with its own docs. Used by `podcast_room_screen.dart`.
-  Both now have correct Firestore rules; they just duplicate the same feature
-  differently in two places.
+### `yovoice` (Flutter)
+Unchanged from the previous version of this doc except: App Check is now
+integrated client-side (not enforced), and `rooms/{roomId}/members` is now
+`rooms/{roomId}/roomMembers`. Firebase project `yovoice-ec54a`, Firestore
+`europe-west4`, Functions `europe-west1`. LiveKit at
+`wss://yovoice-3f7j9fb7.livekit.cloud`. CI/CD
+(`.github/workflows/firebase-hosting-merge.yml`) deploys **Hosting only** on
+push to `main` — confirmed again this session, still true, still no race
+risk with manual rules/functions deploys.
+
+**The two parallel hand-raise implementations noted in the previous version
+of this doc still both exist**, unconsolidated — not touched this session.
+
+### `yovoice-website` (Next.js, new territory this session)
+```
+yovoice.app          → Vercel (this repo) — marketing site, public
+auth.yovoice.app      → Firebase Hosting (yovoice-ec54a) — shared Auth domain, already live
+app.yovoice.app        → Firebase Hosting (yovoice-ec54a) — the actual Flutter web app,
+                          custom domain added in Firebase, DNS not yet pointed (section 9)
+```
+One Firebase project (`yovoice-ec54a`) backs both apps. The website is a
+*separate* deployable from the Flutter web build — it doesn't embed or
+replace it, it's the marketing/auth/account layer in front of it, matching
+the Discord (`discord.com` + `discord.com/app`) pattern the user described.
 
 ---
 
 ## 6. Remaining issues
 
-### ✅ RESOLVED — the "searchUsers permission-denied" report was actually two different, unrelated bugs
-
-The user-reported symptom (Friends → Add friend → search → "Could not search
-users — Firestore permission denied") sent this investigation down the wrong
-path for a while. What was ruled out first, with evidence, before finding the
-real cause:
-1. My rule changes — a standalone emulator script running the exact same
-   `collection('users').limit(100).get()` succeeded.
-2. Stale/wrong deployed rules — read the live rule text directly in the
-   Firebase Console; byte-for-byte identical to the local file.
-3. App Check enforcement — confirmed never configured for this project.
-4. Multiple Firestore databases — confirmed only one `(default)` exists.
-
-**Root cause, found by adding a temporary `print()` in
-`add_friend_screen.dart`'s catch block and reading the raw error +
-stack trace from `flutter run --debug`:** `searchUsers()` itself was never
-the problem — it succeeds. The error actually came from
-`FriendService.getRelationshipStatus()`, called via `Future.wait()`
-immediately after the search, for every result. That function reads
-`users/{otherUserId}/friendRequests/{me}` to check "did I already send this
-person a request" — i.e. the **sender** reading a doc that lives under the
-**recipient's** subcollection. The `friendRequests` read rule was
-recipient-only (`allow read: if isOwner(userId)`), so that specific check was
-permanently denied for anyone except the recipient checking their own list.
-**Fix:** `allow read: if isOneOfUsers(userId, senderId);` — both the
-recipient and the actual sender (identified by the subcollection doc's own
-key) can read it.
-
-**A second, unrelated bug was found in the same investigation** (noticed via
-`xcrun simctl spawn ... log stream`, which kept showing a repeating
-`Listen for query at |cg:members|f:userId==...| failed: Missing or
-insufficient permissions.`): `RoomService.watchMyCommunities()` runs a
-`collectionGroup('members')` query filtered to `userId == caller`, spanning
-both `rooms/*/members` (rule: `isSignedIn()`) and `clubs/*/members` (rule:
-`isClubMember(clubId)`, which needs an extra `exists()` read per candidate
-doc). Firestore rejects an entire collectionGroup query unless every
-collection it spans has a rule it can verify from the query shape alone —
-`isClubMember()` doesn't qualify, so **the whole query failed outright**,
-breaking the "My Communities" list. **Fix:** added
-`resource.data.userId == request.auth.uid` as an explicit alternative on
-`clubs/{clubId}/members` read, since that condition IS provable directly from
-the query's own filter (no extra read needed) — added alongside, not instead
-of, the existing `isClubMember()` browsing case.
-
-Both fixes verified with 6 new emulator checks (40/40 total passing) and then
-**confirmed live**: friend search now returns results with working
-Add/Cancel buttons, and a real friend request was sent successfully in the
-simulator. Commit `0473eb5`, deployed to production the same way as
-everything else this session (`firebase deploy --only firestore:rules`).
-
-The temporary debug `print()` was removed from `add_friend_screen.dart`
-before committing — that file has no net diff from before this investigation
-started.
+### 🔴 Blocking (needs the user / DNS access — see section 9)
+- `app.yovoice.app` DNS record not added yet. Everything else for this is
+  ready and waiting.
 
 ### 🟡 Deliberately deferred
-
-- **App Check (#12)** — see above. Needs Console provider setup + Flutter SDK
-  integration + careful staged rollout; not something to flip on blind.
-
-### 🟡 Accepted trade-offs (documented in code comments at each site)
-
-- Non-host room `participantCount`/`memberCount`/`speakerCount` writes are now
-  field-restricted but **not value-validated** — someone could still write an
-  arbitrary number (not just ±1). Durable fix: a Cloud Function
-  `onDocumentWritten` trigger computing these authoritatively, same pattern
-  the audit suggests for `voiceMoments.likeCount` (#7, which — for likes
-  specifically — I did give tighter value validation via `existsAfter()`,
-  since that transaction is self-contained).
-- Achievement/vanity counters on `/users/{userId}` (`messageCount`,
-  `friendCount`, etc.) remain self-inflatable by the doc owner. Audit's own
-  words: "not a real security hole… just not authoritative." True before this
-  session too; unchanged.
-
-### 🟢 Test coverage gap
-
-The 34-check rules-unit-testing suite that verified every change in this
-session lives **only** in
-`/private/tmp/.../scratchpad/rules-test/` (session-local, gone once the
-session ends) and was **never committed**. The audit itself noted this
-project has essentially zero test coverage. Worth promoting a trimmed version
-of that suite into the repo proper (e.g. a `firestore-tests/` folder with its
-own `package.json`) so future rule edits have regression coverage instead of
-relying on someone re-deriving all of this from scratch again.
+- **App Check enforcement** (`enforceAppCheck: true`) — client integration
+  is done and verified, but flipping enforcement needs a monitoring period
+  first (see section 9 for the reasoning).
+- **Value-level validation for room/club counters** via a Cloud Function
+  trigger — unchanged from the previous version of this doc, still not
+  started, still flagged as bigger/riskier than it looks (touches many call
+  sites in `room_service.dart`).
+- **Consolidate the two hand-raise implementations** — unchanged, still not
+  started.
+- **`rooms/{roomId}/members` → `roomMembers` migration** — see section 1B's
+  "known gap." Not started because production document counts couldn't be
+  checked this session.
+- **Website: Notifications page, multi-device session management, mobile
+  store links** — all explicitly placeholder/honest-about-limitations
+  rather than built out, since none have real backend support yet. Full
+  reasoning in `yovoice-website/README.md`'s "Known Limitations" section.
+- **Website: `npm audit`** reports 3 high-severity advisories, all
+  transitive (bundled inside `next`'s own dependencies). `npm audit fix` not
+  run — should be verified against a full rebuild before applying.
+- **One leftover test account** in production Firebase Auth
+  (`claude-website-test@yovoice.app`) — harmless, just needs a manual
+  delete via Console → Authentication → Users.
 
 ---
 
 ## 7. Important design decisions
 
-- **`broadcast_room_screen.dart` kept at its original path.** Extracted pieces
-  went into a new `broadcast_room/` sibling folder instead of moving the
-  screen itself, specifically so `room_entry_screen.dart`'s import needed zero
-  changes.
-- **Extracted widgets are public but not exported anywhere.** Dart privacy is
-  file-scoped; splitting one file into many forces underscore-prefixed classes
-  to become plain top-level classes. This is a visibility-scope change only —
-  nothing re-exports them, so there's no new public API surface in practice.
-- **Firestore rule fixes favor "narrow field allowlist" over "precise value
-  validation"** almost everywhere, matching the audit's own suggested patch
-  style and what's realistically verifiable with confidence in a single
-  session. The two exceptions where value-level (`getAfter()`/`existsAfter()`)
-  checks were used: (a) room `participants` creation, because
-  `createRoom()`'s host-participant write happens in the **same batch** as
-  the room doc itself, so a plain `get()`/`isRoomHost()` can't see the room's
-  `hostId` yet — `getAfter()` resolves against post-batch state; (b)
-  `voiceMoments` like-count, because `toggleLike()`'s counter update and its
-  like-doc write happen in one self-contained transaction, making
-  `existsAfter()` both safe and meaningful there.
-- **Git workflow**: push straight to `main`, no PRs, per the user's explicit
-  standing preference for this repo (saved in Claude's cross-session memory,
-  not in this repo's files). The one PR in this session's history (#1) predates
-  that preference being stated.
-- **Rules changes are always emulator-tested before deploy**, never pushed to
-  production on faith — every fix in section 1 above was verified this way.
+- **`rooms/{roomId}/members` renamed to `roomMembers` rather than trying to
+  make the existing name work with a smarter rule.** The alternative (a
+  single top-level wildcard rule covering both `rooms/*/members` and
+  `clubs/*/members` under the same collection name) isn't possible without
+  either making `clubs/*/members` less permissive than its real
+  roster-browsing use case needs, or accepting the original bug. Distinct
+  names cleanly separate two collections that only ever happened to share a
+  name by coincidence, not by design — `watchMyCommunities()` never
+  actually needed club data, it only ever used `roomIds` derived from the
+  parent path.
+- **Top-level wildcard rules are read-only and scoped to "read your own
+  record."** Writes to both `roomMembers` and `invites` still only ever go
+  through their nested, parent-scoped rules — the wildcard rules exist
+  purely to unblock the two specific `collectionGroup()` queries the app
+  actually runs, not as a general-purpose access widening.
+- **Website account pages are scoped to what Firebase Auth's client SDK
+  actually supports**, deliberately not extended into Firestore-backed
+  preferences/session-registry features that would need new schema design
+  and — given this project's Firestore rules are already intricate and
+  shared with the Flutter app — real care to get right rather than bolt on
+  quickly. Better to ship an honest "coming soon" than a UI that doesn't
+  persist anything.
+- **`NEXT_PUBLIC_APP_URL` as an env var, not a hardcoded domain**,
+  specifically so the `app.yovoice.app` DNS blocker doesn't block shipping
+  everything else — flipping it later is a one-line env var change, not a
+  code change.
+- **Git workflow**: push straight to `main`, no PRs, in both repos now —
+  same standing preference as before, now applied consistently to
+  `yovoice-website` too.
+- **Rules changes are always emulator-tested before deploy.** This session
+  specifically: don't trust a passing test suite's claim of "collectionGroup
+  compatibility" without a real `collectionGroup()` query in the test, not
+  just a `getDoc()` on a known path — that distinction is exactly what let
+  the original bug ship silently.
 
 ---
 
 ## 8. Commands needed to continue
 
 ```bash
-# Run the app in the simulator used throughout this session
+# yovoice (Flutter)
 cd /Users/kamiljaguszewski/Documents/GitHub/yovoice
-flutter run -d 69E45220-7B76-44C8-B369-1EB4DCC04F1E --debug
-# (device id may differ if the simulator was recreated — check `xcrun simctl list devices`)
-
-# Static analysis
 flutter analyze
-
-# Firestore emulator (Java was NOT symlinked system-wide — always export PATH first)
-export PATH="/usr/local/opt/openjdk/bin:$PATH"
+export PATH="/usr/local/opt/openjdk/bin:$PATH"   # needed before any firebase emulators command
 firebase emulators:start --only firestore --project yovoice-ec54a
+cd firestore-tests && npm test                    # 43 checks, all should pass
 
-# Validate rules compile without deploying
-firebase deploy --only firestore:rules --dry-run --project yovoice-ec54a
-
-# Actually deploy (expect Claude Code's auto-mode safety classifier to
-# sometimes block this and require explicit user approval — behavior was
-# inconsistent across calls this session)
-firebase deploy --only firestore:rules,storage --project yovoice-ec54a
-firebase deploy --only functions:createLiveKitToken,functions:bootstrapSuperAdmin --project yovoice-ec54a
+# yovoice-website
+cd /Users/kamiljaguszewski/yovoice-website
+npm run lint && npm run build
+vercel env ls                                       # confirm the 8 NEXT_PUBLIC_* vars are still set
+                                                      # across production/preview/development
 ```
 
-Firebase CLI is already logged in as `kamil.piotr.jaguszewski@gmail.com`. Git
-push authentication works via the macOS `osxkeychain` credential helper
-(populated earlier by a VS Code GitHub login) — should still be valid unless
-the user has since logged out somewhere.
+Firebase CLI logged in as `kamil.piotr.jaguszewski@gmail.com`. Vercel CLI
+authenticated as `kamilxgriefer` (confirmed working this session via
+`vercel whoami`, despite no prior local `.vercel` link existing at session
+start). Git push works via `osxkeychain` for both repos.
 
 ---
 
 ## 9. Exact next task
 
-Nothing is currently on fire. Two backlog items got done autonomously after
-this doc was first written (see section 4 for the commit):
-- ~~Investigate the GitHub Actions CI/CD pipeline~~ — done, false alarm, see
-  section 5's CI/CD note.
-- ~~Promote the emulator test suite into the repo~~ — done, now
-  `firestore-tests/` (40 checks, `npm test`).
+**The only real blocker: add this DNS record on whatever manages
+`yovoice.app`'s DNS (Cloudflare, confirmed via `dig`):**
 
-Remaining, roughly in priority order:
+```
+Type:  CNAME
+Name:  app.yovoice.app
+Value: yovoice-ec54a.web.app
+```
 
-1. **App Check (#12 from the audit)** — the last unaddressed item from
-   `docs/SECURITY_AUDIT.md`. Needs: register the app with App Check providers
-   in the Firebase Console (DeviceCheck/AppAttest for iOS, Play Integrity for
-   Android), integrate the App Check SDK into the Flutter client, ship that,
-   THEN flip `enforceAppCheck: true` in the Cloud Functions — in that order,
-   or every existing installed app build gets rejected the moment enforcement
-   turns on. Needs the user for the Console provider registration step at
-   minimum (ties to their Apple/Google developer accounts).
-2. **Value-level validation for room/club counters** via a Cloud Function
-   trigger (`onDocumentWritten`) — closes the residual gap noted in section 6
-   where `participantCount`/`memberCount`/`speakerCount` are field-restricted
-   but not value-validated. **Bigger and riskier than it looks**: doing this
-   properly means removing the client's direct writes to these fields from
-   `room_service.dart` (`joinRoom`, `leaveRoom`, `joinCommunity`,
-   `removeParticipant`, `ensureClubLounge`/`enterClubLounge`/`leaveClubLounge`
-   all currently set these counters inline as part of larger transactions) —
-   touching that many call sites in one pass is exactly the kind of change
-   that broke Friends/Follow/hand-raise earlier this session. Go one method
-   at a time, with a live simulator check after each, not all at once.
-3. **Consolidate the two hand-raise implementations** (section 5) — not
-   urgent, but `RoomService.setHandRaised()` and
-   `RoomExperienceService.setHandRaised()` doing the same job two different
-   ways is worth resolving before it causes a real divergence bug.
+Once that's live and Firebase finishes verifying it (check Firebase Console
+→ Hosting → the `app.yovoice.app` row, or re-open "Edit domain" from the
+custom domains list):
+1. Flip `NEXT_PUBLIC_APP_URL` to `https://app.yovoice.app` in
+   `yovoice-website/.env.local` and in all three Vercel environments
+   (`vercel env rm NEXT_PUBLIC_APP_URL production` then
+   `vercel env add ...` again with the new value, same for preview/dev).
+2. Redeploy the website (push to `main`, or `vercel --prod`).
 
-If the user asks for something else entirely, that obviously takes priority
-over this list — it's a backlog, not a queue.
+**After that, in rough priority order:**
+1. Verify whether any pre-existing `rooms/{roomId}/members` documents exist
+   in production that the `roomMembers` rename orphaned (section 1B). If any
+   do, write and run a one-time copy migration — the rules/code changes are
+   already deployed and correct, this is purely a data-migration concern.
+2. App Check enforcement (`enforceAppCheck: true`) — monitor real token
+   delivery for a while first (Firebase Console → App Check has request
+   metrics), then flip it function-by-function or all at once depending on
+   how confident that data makes you.
+3. Delete the leftover `claude-website-test@yovoice.app` test account from
+   Firebase Authentication.
+4. Value-level counter validation, hand-raise consolidation — unchanged
+   from before, still lower priority, still bigger than they look.
+
+If the user asks for something else entirely, that takes priority over this
+list — it's a backlog, not a queue.
 
 ---
 
 ## 10. Anything else the next session should know
 
-- **Test accounts**: primary account used throughout is `CeoGriefer`
-  (`@ceogriefer`, email `grieferxgriefer@gmail.com` — **never store or type
-  this password**; the user provided it once directly in-session for
-  simulator login and it was not persisted anywhere). A second account,
-  `testGriefer`, also exists and was seen hosting a room ("super test") in
-  Discover — useful for genuine two-account testing (e.g. the friend-request
-  accept flow has only been exercised from one side so far).
-- **No Secret Manager access.** Attempting to read `LIVEKIT_API_KEY` /
-  `LIVEKIT_API_SECRET` via `firebase functions:secrets:access` was correctly
-  blocked by Claude Code's safety classifier this session — don't try to work
-  around that; ask the user if a secret value is ever genuinely needed.
-- **Firebase Console access** is only available through the user's own
-  logged-in Chrome via the `claude-in-chrome` MCP tools, and only when the
-  user explicitly opens it up in a given session — there's no standing
-  access.
-- `docs/SECURITY_AUDIT.md` is the authoritative reference for all the
-  security work described here. Re-read it before starting any further
-  security-related work — it has full code excerpts and suggested patches for
-  every item, including the ones already fixed (useful for understanding
-  *why*, not just *what*).
+- **No `gcloud` CLI, no Application Default Credentials set up.**
+  `firebase-admin`'s `initializeApp({projectId: ...})` fails without
+  explicit credentials in this environment — needed a real service account
+  key or `gcloud auth application-default login` (interactive, needs the
+  user) to do direct Admin SDK reads/writes against production. Anything
+  requiring that this session (checking production doc counts, deleting the
+  test Auth user cleanly) had to be worked around or deferred.
+- **Firebase Console via `claude-in-chrome` was flaky this session**,
+  specifically the Hosting "Manage site" and Authentication "Users" pages —
+  repeated `Script injection timed out` errors on clicks/scrolls that
+  otherwise worked fine elsewhere in the Console. Opening a fresh tab
+  (`tabs_create_mcp`) instead of reusing one that had just timed out
+  reliably fixed it. If this recurs, try that first before assuming
+  something's actually broken.
+- **Vercel CLI works without an explicit login this session** — `vercel
+  whoami` succeeded immediately as `kamilxgriefer` despite no local
+  `.vercel` config existing at session start, meaning a global Vercel CLI
+  session was already authenticated on this Mac from prior use.
+- `docs/SECURITY_AUDIT.md` (in the `yovoice` repo) is still the
+  authoritative reference for the security work described in the *previous*
+  version of this doc — still true, still worth reading before further
+  security work, just not the frontier of what's currently happening.
