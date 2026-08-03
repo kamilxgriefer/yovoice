@@ -368,7 +368,14 @@ the user has since logged out somewhere.
 
 ## 9. Exact next task
 
-Nothing is currently on fire. Pick one, roughly in priority order:
+Nothing is currently on fire. Two backlog items got done autonomously after
+this doc was first written (see section 4 for the commit):
+- ~~Investigate the GitHub Actions CI/CD pipeline~~ — done, false alarm, see
+  section 5's CI/CD note.
+- ~~Promote the emulator test suite into the repo~~ — done, now
+  `firestore-tests/` (40 checks, `npm test`).
+
+Remaining, roughly in priority order:
 
 1. **App Check (#12 from the audit)** — the last unaddressed item from
    `docs/SECURITY_AUDIT.md`. Needs: register the app with App Check providers
@@ -376,21 +383,20 @@ Nothing is currently on fire. Pick one, roughly in priority order:
    Android), integrate the App Check SDK into the Flutter client, ship that,
    THEN flip `enforceAppCheck: true` in the Cloud Functions — in that order,
    or every existing installed app build gets rejected the moment enforcement
-   turns on.
-2. **Investigate the GitHub Actions CI/CD pipeline** (section 5) — confirm
-   what `.github/workflows/*.yml` deploys and on what trigger, so a future
-   manual `firebase deploy` and the automated one don't race or diverge. Low
-   effort, pure information-gathering.
-3. **Promote the emulator test suite into the repo** (see section 6, test
-   coverage gap) — currently 40 checks living only in this session's
-   scratchpad. Recreating it from scratch in a fresh session would be wasted
-   effort; worth committing a trimmed version under something like
-   `firestore-tests/`.
-4. **Value-level validation for room/club counters** via a Cloud Function
+   turns on. Needs the user for the Console provider registration step at
+   minimum (ties to their Apple/Google developer accounts).
+2. **Value-level validation for room/club counters** via a Cloud Function
    trigger (`onDocumentWritten`) — closes the residual gap noted in section 6
    where `participantCount`/`memberCount`/`speakerCount` are field-restricted
-   but not value-validated.
-5. **Consolidate the two hand-raise implementations** (section 5) — not
+   but not value-validated. **Bigger and riskier than it looks**: doing this
+   properly means removing the client's direct writes to these fields from
+   `room_service.dart` (`joinRoom`, `leaveRoom`, `joinCommunity`,
+   `removeParticipant`, `ensureClubLounge`/`enterClubLounge`/`leaveClubLounge`
+   all currently set these counters inline as part of larger transactions) —
+   touching that many call sites in one pass is exactly the kind of change
+   that broke Friends/Follow/hand-raise earlier this session. Go one method
+   at a time, with a live simulator check after each, not all at once.
+3. **Consolidate the two hand-raise implementations** (section 5) — not
    urgent, but `RoomService.setHandRaised()` and
    `RoomExperienceService.setHandRaised()` doing the same job two different
    ways is worth resolving before it causes a real divergence bug.
