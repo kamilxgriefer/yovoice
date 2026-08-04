@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
 import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
@@ -29,7 +31,12 @@ class _MainShellState extends State<MainShell> {
 
   final MessageService _messageService = MessageService();
   final RoomService _roomService = RoomService();
+  final AuthService _authService = AuthService();
   bool _handledInitialRoomLink = false;
+
+  Timer? _verificationCheckTimer;
+  bool _showVerificationBanner =
+      FirebaseAuth.instance.currentUser?.emailVerified == false;
 
   late final Stream<List<Conversation>> _conversationsStream;
   StreamSubscription<List<Conversation>>? _conversationSubscription;
@@ -69,6 +76,31 @@ class _MainShellState extends State<MainShell> {
         // The Chats screen displays Firestore errors directly.
       },
     );
+
+    if (_showVerificationBanner) {
+      // Soft reminder, not the active "waiting room" VerifyEmailScreen is —
+      // a slower interval is enough here since this just needs to notice
+      // "verified elsewhere" eventually, not drive a live countdown.
+      _verificationCheckTimer = Timer.periodic(
+        const Duration(seconds: 30),
+        (_) => _checkVerification(),
+      );
+    }
+  }
+
+  Future<void> _checkVerification() async {
+    final verified = await _authService.reloadCurrentUser();
+    if (verified && mounted) {
+      _verificationCheckTimer?.cancel();
+      setState(() => _showVerificationBanner = false);
+    }
+  }
+
+  Future<void> _openVerifyEmail() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const VerifyEmailScreen()),
+    );
+    if (mounted) unawaited(_checkVerification());
   }
 
   Future<void> _openInitialRoomLink() async {
@@ -109,6 +141,7 @@ class _MainShellState extends State<MainShell> {
   @override
   void dispose() {
     _conversationSubscription?.cancel();
+    _verificationCheckTimer?.cancel();
     _removeMessageOverlay();
     super.dispose();
   }
@@ -291,13 +324,77 @@ class _MainShellState extends State<MainShell> {
 
     return Scaffold(
       backgroundColor: _background,
-      body: IndexedStack(index: _selectedIndex, children: _screens),
+      body: Column(
+        children: [
+          if (_showVerificationBanner)
+            _VerificationBanner(onTap: _openVerifyEmail),
+          Expanded(
+            child: IndexedStack(index: _selectedIndex, children: _screens),
+          ),
+        ],
+      ),
       bottomNavigationBar: _BottomNavigation(
         selectedIndex: _selectedIndex,
         unreadConversationCount: _unreadConversationCount,
         onDestinationSelected: _onDestinationSelected,
         onVoicePressed: _openVoiceAction,
         onMorePressed: _openMoreMenu,
+      ),
+    );
+  }
+}
+
+class _VerificationBanner extends StatelessWidget {
+  const _VerificationBanner({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFF2E2410),
+      child: InkWell(
+        onTap: onTap,
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.mark_email_unread_outlined,
+                  color: Color(0xFFFFC94D),
+                  size: 18,
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    "Your email isn't verified yet.",
+                    style: TextStyle(
+                      color: Color(0xFFFFE1A6),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const Text(
+                  'Verify now',
+                  style: TextStyle(
+                    color: Color(0xFFFFC94D),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFFFFC94D),
+                  size: 18,
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

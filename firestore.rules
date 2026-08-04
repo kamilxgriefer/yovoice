@@ -24,6 +24,18 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // request.auth.token.email_verified mirrors the ID token's claim —
+    // Firebase Auth sets it automatically and it refreshes the next time
+    // the client gets a new token after verifying, so this can't be
+    // spoofed from the client the way a Firestore-stored flag could be.
+    // Gates outbound/spam-prone actions (sending messages, starting
+    // conversations, friend requests, club/room/moment creation, club
+    // invites) — NOT passive actions (reading, joining, reacting,
+    // blocking), which stay available to a freshly-registered account.
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
     function isBlockedPair(userA, userB) {
       return exists(
         /databases/$(database)/documents/users/$(userA)/blocked/$(userB)
@@ -192,7 +204,7 @@ service cloud.firestore {
         // it isn't gated by their own read rule, so this works without
         // granting either user visibility into the other's block list
         // (blocked/{doc} stays owner-read-only below).
-        allow create: if isSignedIn() &&
+        allow create: if isVerified() &&
             request.auth.uid == senderId &&
             senderId != userId &&
             request.resource.data.senderId == senderId &&
@@ -218,7 +230,7 @@ service cloud.firestore {
       // rules entirely before this — every sendFriendRequest() call failed.
       match /sentFriendRequests/{receiverId} {
         allow read: if isOwner(userId);
-        allow create: if isSignedIn() &&
+        allow create: if isVerified() &&
             isOwner(userId) &&
             receiverId != userId &&
             request.resource.data.receiverId == receiverId;
@@ -322,7 +334,7 @@ service cloud.firestore {
       allow read: if isSignedIn() &&
           request.auth.uid in resource.data.participantIds;
 
-      allow create: if isSignedIn() &&
+      allow create: if isVerified() &&
           request.resource.data.participantIds is list &&
           request.resource.data.participantIds.size() == 2 &&
           request.auth.uid in request.resource.data.participantIds &&
@@ -339,7 +351,8 @@ service cloud.firestore {
 
       match /messages/{messageId} {
         allow read: if isConversationParticipant(conversationId);
-        allow create: if isConversationParticipant(conversationId) &&
+        allow create: if isVerified() &&
+            isConversationParticipant(conversationId) &&
             request.resource.data.senderId == request.auth.uid &&
             !conversationBlocked(conversationId);
 
@@ -385,7 +398,7 @@ service cloud.firestore {
 
     match /clubs/{clubId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() &&
+      allow create: if isVerified() &&
           request.resource.data.ownerId == request.auth.uid;
       allow update: if isClubOwner(clubId) ||
           canManageClub(clubId) ||
@@ -447,7 +460,7 @@ service cloud.firestore {
               request.auth.uid == inviteeId ||
               canManageClub(clubId)
             );
-        allow create: if isSignedIn() &&
+        allow create: if isVerified() &&
             canManageClub(clubId) &&
             request.resource.data.inviteeId == inviteeId &&
             request.resource.data.inviterId == request.auth.uid &&
@@ -469,7 +482,8 @@ service cloud.firestore {
 
         match /messages/{messageId} {
           allow read: if isClubMember(clubId);
-          allow create: if isClubMember(clubId) &&
+          allow create: if isVerified() &&
+              isClubMember(clubId) &&
               request.resource.data.senderId == request.auth.uid &&
               request.resource.data.clubId == clubId &&
               request.resource.data.channelId == channelId;
@@ -484,7 +498,7 @@ service cloud.firestore {
     match /rooms/{roomId} {
       allow read: if isSignedIn();
 
-      allow create: if isSignedIn() &&
+      allow create: if isVerified() &&
           request.resource.data.hostId == request.auth.uid;
 
       // Non-host writers (joining/leaving) are only ever trusted with this
@@ -603,7 +617,7 @@ service cloud.firestore {
                 isRoomHost(roomId)
               )
             );
-        allow create: if isSignedIn() &&
+        allow create: if isVerified() &&
             request.resource.data.senderId == request.auth.uid &&
             (
               isRoomParticipant(roomId) ||
@@ -631,7 +645,7 @@ service cloud.firestore {
     }
     match /voiceMoments/{momentId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() &&
+      allow create: if isVerified() &&
           request.resource.data.authorId == request.auth.uid;
       // Non-author updates used to allow likeCount/commentCount to be set to
       // any value at all — now each write must actually correspond to the
@@ -680,7 +694,7 @@ service cloud.firestore {
 
       match /comments/{commentId} {
         allow read: if isSignedIn();
-        allow create: if isSignedIn() &&
+        allow create: if isVerified() &&
             request.resource.data.authorId == request.auth.uid &&
             (
               (

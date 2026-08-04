@@ -46,9 +46,23 @@ async function main() {
     },
   });
 
-  const host = testEnv.authenticatedContext("host-uid");
-  const attacker = testEnv.authenticatedContext("attacker-uid");
-  const invitee = testEnv.authenticatedContext("invitee-uid");
+  // email_verified: true on every regular test context — isVerified()
+  // gates most create rules now, and these contexts stand in for normal,
+  // already-onboarded users throughout the rest of this file. The
+  // dedicated `unverified` context further down is what actually
+  // exercises the gate itself.
+  const host = testEnv.authenticatedContext("host-uid", {
+    email_verified: true,
+  });
+  const attacker = testEnv.authenticatedContext("attacker-uid", {
+    email_verified: true,
+  });
+  const invitee = testEnv.authenticatedContext("invitee-uid", {
+    email_verified: true,
+  });
+  const unverified = testEnv.authenticatedContext("unverified-uid", {
+    email_verified: false,
+  });
 
   // --- Room creation + host's own participant doc (batch/getAfter path) ---
   await check(
@@ -594,9 +608,15 @@ async function main() {
     });
   });
 
-  const blocker = testEnv.authenticatedContext("blocker-uid");
-  const blockee = testEnv.authenticatedContext("blockee-uid");
-  const stranger = testEnv.authenticatedContext("stranger-uid");
+  const blocker = testEnv.authenticatedContext("blocker-uid", {
+    email_verified: true,
+  });
+  const blockee = testEnv.authenticatedContext("blockee-uid", {
+    email_verified: true,
+  });
+  const stranger = testEnv.authenticatedContext("stranger-uid", {
+    email_verified: true,
+  });
 
   await check(
     "SECURITY: a blocked user cannot send a friend request to their blocker",
@@ -989,6 +1009,141 @@ async function main() {
       const ref = doc(db, "users/host-uid");
       await assertFails(
         updateDoc(ref, { "notificationPreferences.friendRequest": true }),
+      );
+    },
+  );
+
+  // --- isVerified() gate on sensitive/outbound actions ---
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), "users/unverified-uid"), {
+      displayName: "Unverified",
+    });
+  });
+
+  await check(
+    "SECURITY: an unverified user cannot send a friend request",
+    async () => {
+      const db = unverified.firestore();
+      const ref = doc(db, "users/host-uid/friendRequests/unverified-uid");
+      await assertFails(
+        setDoc(ref, {
+          senderId: "unverified-uid",
+          senderName: "Unverified",
+          senderEmail: "unverified@example.com",
+          senderPhotoUrl: null,
+          createdAt: new Date(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: an unverified user cannot start a conversation",
+    async () => {
+      const db = unverified.firestore();
+      const ref = doc(db, "conversations/unverified-convo");
+      await assertFails(
+        setDoc(ref, {
+          participantIds: ["unverified-uid", "host-uid"],
+          createdAt: new Date(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: an unverified user cannot send a message in an existing conversation",
+    async () => {
+      // host-uid + unverified-uid conversation, created with security rules
+      // disabled so this test isolates the *message* create rule rather
+      // than depending on the (separately tested) conversation create rule.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "conversations/convo-unverified"), {
+          participantIds: ["unverified-uid", "host-uid"],
+        });
+      });
+      const db = unverified.firestore();
+      const ref = doc(db, "conversations/convo-unverified/messages/msg-1");
+      await assertFails(
+        setDoc(ref, {
+          senderId: "unverified-uid",
+          content: "hello",
+          sentAt: new Date(),
+          readBy: ["unverified-uid"],
+          reactions: {},
+          isDeleted: false,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "regression: a verified user can still send a message",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "conversations/convo-verified"), {
+          participantIds: ["host-uid", "invitee-uid"],
+        });
+      });
+      const db = host.firestore();
+      const ref = doc(db, "conversations/convo-verified/messages/msg-1");
+      await assertSucceeds(
+        setDoc(ref, {
+          senderId: "host-uid",
+          content: "hello",
+          sentAt: new Date(),
+          readBy: ["host-uid"],
+          reactions: {},
+          isDeleted: false,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: an unverified user cannot create a club",
+    async () => {
+      const db = unverified.firestore();
+      const ref = doc(db, "clubs/unverified-club");
+      await assertFails(
+        setDoc(ref, {
+          ownerId: "unverified-uid",
+          name: "Spam club",
+          memberCount: 1,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: an unverified user cannot create a room",
+    async () => {
+      const db = unverified.firestore();
+      const ref = doc(db, "rooms/unverified-room");
+      await assertFails(
+        setDoc(ref, {
+          hostId: "unverified-uid",
+          hostName: "Unverified",
+          name: "Spam room",
+          category: "talk",
+          visibility: "public",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: an unverified user cannot post a voice moment",
+    async () => {
+      const db = unverified.firestore();
+      const ref = doc(db, "voiceMoments/unverified-moment");
+      await assertFails(
+        setDoc(ref, {
+          authorId: "unverified-uid",
+          likeCount: 0,
+          commentCount: 0,
+        }),
       );
     },
   );

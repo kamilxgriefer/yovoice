@@ -6,6 +6,14 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    // Mirrors firestore.rules' isVerified() — gates uploads tied to
+    // content that gets shown to other users (room/club images, voice
+    // moments/replies). Profile photos are deliberately left out: setting
+    // one up during onboarding, before verification completes, is normal.
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
     match /users/{userId}/profile/{fileName} {
       allow read: if true;
       allow write: if isSignedIn()
@@ -22,7 +30,7 @@ service firebase.storage {
     // prefix instead, which is the uploader's uid by construction.
     match /room_images/{roomId}/{fileName} {
       allow read: if true;
-      allow write: if isSignedIn()
+      allow write: if isVerified()
           && fileName.matches(request.auth.uid + '_.*')
           && request.resource.size < 8 * 1024 * 1024
           && request.resource.contentType.matches('image/.*');
@@ -33,7 +41,7 @@ service firebase.storage {
     // was rejected by the default deny.
     match /clubs/{userId}/{clubId}/{fileName} {
       allow read: if true;
-      allow write: if isSignedIn()
+      allow write: if isVerified()
           && request.auth.uid == userId
           && request.resource.size < 8 * 1024 * 1024
           && request.resource.contentType.matches('image/.*');
@@ -41,7 +49,7 @@ service firebase.storage {
 
     match /voice_moments/{userId}/{fileName} {
       allow read: if isSignedIn();
-      allow create, update: if isSignedIn()
+      allow create, update: if isVerified()
           && request.auth.uid == userId
           && request.resource.size < 12 * 1024 * 1024
           && request.resource.contentType.matches('audio/.*');
@@ -49,7 +57,7 @@ service firebase.storage {
     }
     match /voice_replies/{userId}/{momentId}/{fileName} {
       allow read: if isSignedIn();
-      allow create, update: if isSignedIn()
+      allow create, update: if isVerified()
           && request.auth.uid == userId
           && request.resource.size < 12 * 1024 * 1024
           && request.resource.contentType.matches('audio/.*');
