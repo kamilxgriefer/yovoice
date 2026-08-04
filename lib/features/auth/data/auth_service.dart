@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
+import 'package:yovoice/features/auth/data/action_code_settings.dart';
 import 'package:yovoice/shared/models/app_user.dart';
 import 'package:yovoice/services/firestore_service.dart';
 
@@ -152,6 +153,14 @@ class AuthService {
 
       await _firestoreService.createUserProfile(appUser);
 
+      try {
+        await user.sendEmailVerification(verifyEmailActionCodeSettings());
+      } catch (_) {
+        // The account and profile already exist at this point — a failed
+        // verification send shouldn't undo registration. The verify-email
+        // screen's resend button covers this case.
+      }
+
       return credential;
     } on FirebaseAuthException {
       rethrow;
@@ -170,6 +179,34 @@ class AuthService {
 
       throw const AuthServiceException('Unable to create the user profile.');
     }
+  }
+
+  Future<void> resendVerificationEmail() async {
+    final user = _firebaseAuth.currentUser;
+    if (user == null) {
+      throw const AuthServiceException('You must be signed in to do that.');
+    }
+
+    try {
+      await user.sendEmailVerification(verifyEmailActionCodeSettings());
+    } on FirebaseAuthException {
+      rethrow;
+    } catch (_) {
+      throw const AuthServiceException(
+        'Unable to send the verification email.',
+      );
+    }
+  }
+
+  /// Forces a fresh emailVerified read from Firebase. The cached [User]
+  /// object never updates emailVerified on its own — reload() is the only
+  /// way to learn a link opened elsewhere (another tab, another device)
+  /// was actually applied.
+  Future<bool> reloadCurrentUser() async {
+    final user = _firebaseAuth.currentUser;
+    if (user == null) return false;
+    await user.reload();
+    return _firebaseAuth.currentUser?.emailVerified ?? false;
   }
 
   Future<void> sendPasswordResetEmail(String email) async {

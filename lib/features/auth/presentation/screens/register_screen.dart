@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
 import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -60,7 +61,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       TextInput.finishAutofillContext();
 
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(builder: (_) => const VerifyEmailScreen()),
+      );
     } catch (error) {
       if (!mounted) return;
 
