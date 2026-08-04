@@ -54,6 +54,14 @@ const { createLiveKitToken } = require("./livekit/token");
 
 /*
 |--------------------------------------------------------------------------
+| Friends
+|--------------------------------------------------------------------------
+*/
+
+const { getMutualFriends, getFriendSuggestions } = require("./friends/social_graph");
+
+/*
+|--------------------------------------------------------------------------
 | User Management
 |--------------------------------------------------------------------------
 */
@@ -117,3 +125,12 @@ exports.getAuditLogFilters = getAuditLogFilters;
 */
 
 exports.createLiveKitToken = createLiveKitToken;
+
+/*
+|--------------------------------------------------------------------------
+| Friends
+|--------------------------------------------------------------------------
+*/
+
+exports.getMutualFriends = getMutualFriends;
+exports.getFriendSuggestions = getFriendSuggestions;

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
@@ -28,10 +29,22 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   final _messageService = MessageService();
   final _profileService = ProfileService();
   final _followService = FollowService();
+  final _socialGraphService = SocialGraphService();
+
+  late final Future<MutualFriendsSummary> _mutualFriendsFuture;
 
   bool _openingChat = false;
   bool _removingFriend = false;
   bool _changingFollow = false;
+  bool _blocking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _mutualFriendsFuture = _socialGraphService
+        .getMutualFriends(widget.friend.id)
+        .catchError((_) => MutualFriendsSummary.empty);
+  }
 
   Future<void> _openChat() async {
     if (_openingChat || _removingFriend) return;
@@ -121,6 +134,47 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     }
   }
 
+  Future<void> _confirmBlock() async {
+    if (_blocking || _removingFriend) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF171320),
+        title: const Text('Block user?', style: TextStyle(color: Colors.white)),
+        content: Text(
+          '${widget.friend.displayName} will be removed as a friend and '
+          "won't be able to message, follow, or send you requests. You can "
+          'unblock them anytime from Blocked users.',
+          style: const TextStyle(color: _muted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFB3264E),
+            ),
+            child: const Text('Block'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _blocking = true);
+    try {
+      await _friendService.blockUser(widget.friend.id);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    } catch (error) {
+      if (mounted) _showError(error.toString());
+    } finally {
+      if (mounted) setState(() => _blocking = false);
+    }
+  }
+
   void _showError(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -207,6 +261,8 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                             ],
                             const SizedBox(height: 22),
                             _socialStats(profile),
+                            const SizedBox(height: 14),
+                            _mutualFriends(),
                             const SizedBox(height: 18),
                             Row(
                               children: [
@@ -238,6 +294,22 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                               ),
                               style: TextButton.styleFrom(
                                 foregroundColor: const Color(0xFFFF6F8E),
+                              ),
+                            ),
+                            TextButton.icon(
+                              onPressed: _blocking ? null : _confirmBlock,
+                              icon: _blocking
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.block_rounded),
+                              label: Text(_blocking ? 'Blocking...' : 'Block user'),
+                              style: TextButton.styleFrom(
+                                foregroundColor: const Color(0xFF8F8799),
                               ),
                             ),
                           ],
@@ -373,6 +445,57 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     ),
   );
 
+  Widget _mutualFriends() {
+    return FutureBuilder<MutualFriendsSummary>(
+      future: _mutualFriendsFuture,
+      builder: (context, snapshot) {
+        final summary = snapshot.data;
+        if (summary == null || summary.count == 0) {
+          return const SizedBox.shrink();
+        }
+
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: _surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _border),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 20 + (summary.sample.length.clamp(0, 4) * 14),
+                height: 28,
+                child: Stack(
+                  children: [
+                    for (var i = 0; i < summary.sample.length.clamp(0, 4); i++)
+                      Positioned(
+                        left: i * 14.0,
+                        child: _MutualFriendAvatar(friend: summary.sample[i]),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  summary.count == 1
+                      ? '1 mutual friend'
+                      : '${summary.count} mutual friends',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _followButton(bool isFollowing) => SizedBox(
     height: 52,
     child: FilledButton.icon(
@@ -462,6 +585,43 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _MutualFriendAvatar extends StatelessWidget {
+  const _MutualFriendAvatar({required this.friend});
+
+  final SuggestedFriend friend;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasPhoto = friend.photoUrl?.trim().isNotEmpty == true;
+    return Container(
+      width: 28,
+      height: 28,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: const Color(0xFF2A173C),
+        border: Border.all(color: _FriendProfileScreenState._surface, width: 2),
+        image: hasPhoto
+            ? DecorationImage(
+                image: NetworkImage(friend.photoUrl!),
+                fit: BoxFit.cover,
+              )
+            : null,
+      ),
+      alignment: Alignment.center,
+      child: hasPhoto
+          ? null
+          : Text(
+              friend.initial,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
     );
   }
 }

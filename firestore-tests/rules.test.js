@@ -580,6 +580,192 @@ async function main() {
     },
   );
 
+  // --- blocking ---
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), "users/blocker-uid"), {
+      displayName: "Blocker",
+    });
+    await setDoc(doc(ctx.firestore(), "users/blockee-uid"), {
+      displayName: "Blockee",
+    });
+    await setDoc(doc(ctx.firestore(), "users/blocker-uid/blocked/blockee-uid"), {
+      userId: "blockee-uid",
+    });
+  });
+
+  const blocker = testEnv.authenticatedContext("blocker-uid");
+  const blockee = testEnv.authenticatedContext("blockee-uid");
+  const stranger = testEnv.authenticatedContext("stranger-uid");
+
+  await check(
+    "SECURITY: a blocked user cannot send a friend request to their blocker",
+    async () => {
+      const db = blockee.firestore();
+      const ref = doc(db, "users/blocker-uid/friendRequests/blockee-uid");
+      await assertFails(
+        setDoc(ref, { senderId: "blockee-uid", createdAt: new Date() }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a blocker cannot send a friend request to someone they blocked",
+    async () => {
+      const db = blocker.firestore();
+      const ref = doc(db, "users/blockee-uid/friendRequests/blocker-uid");
+      await assertFails(
+        setDoc(ref, { senderId: "blocker-uid", createdAt: new Date() }),
+      );
+    },
+  );
+
+  await check(
+    "regression: an unrelated user can still send a friend request normally",
+    async () => {
+      const db = stranger.firestore();
+      const ref = doc(db, "users/blocker-uid/friendRequests/stranger-uid");
+      await assertSucceeds(
+        setDoc(ref, { senderId: "stranger-uid", createdAt: new Date() }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a blocked user cannot follow their blocker",
+    async () => {
+      const db = blockee.firestore();
+      const ref = doc(db, "users/blockee-uid/following/blocker-uid");
+      await assertFails(setDoc(ref, { uid: "blocker-uid" }));
+    },
+  );
+
+  await check(
+    "SECURITY: nobody but the owner can read a user's blocked list",
+    async () => {
+      const db = stranger.firestore();
+      const ref = doc(db, "users/blocker-uid/blocked/blockee-uid");
+      await assertFails(getDoc(ref));
+    },
+  );
+
+  await check(
+    "SECURITY: a blocked user cannot start a new conversation with their blocker",
+    async () => {
+      const db = blockee.firestore();
+      const ref = doc(db, "conversations/blocked-convo-1");
+      await assertFails(
+        setDoc(ref, { participantIds: ["blocker-uid", "blockee-uid"] }),
+      );
+    },
+  );
+
+  // --- messages: edit / delete / reactions / read receipts ---
+  //
+  // conversations/{id}/messages/{id} update was `if false` before this
+  // session — editMessage/deleteMessage/toggleReaction/markConversationRead
+  // in message_service.dart all call update() on this exact path, so all
+  // four were silently broken in production despite correct Dart logic.
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), "conversations/convo-1"), {
+      participantIds: ["host-uid", "invitee-uid"],
+    });
+    await setDoc(doc(ctx.firestore(), "conversations/convo-1/messages/msg-1"), {
+      senderId: "host-uid",
+      content: "hello",
+      readBy: ["host-uid"],
+      reactions: {},
+      isDeleted: false,
+      editedAt: null,
+    });
+  });
+
+  await check("regression: sender can edit their own message", async () => {
+    const db = host.firestore();
+    const ref = doc(db, "conversations/convo-1/messages/msg-1");
+    await assertSucceeds(
+      updateDoc(ref, { content: "edited", editedAt: new Date() }),
+    );
+  });
+
+  await check(
+    "SECURITY: a non-sender cannot edit someone else's message",
+    async () => {
+      const db = invitee.firestore();
+      const ref = doc(db, "conversations/convo-1/messages/msg-1");
+      await assertFails(
+        updateDoc(ref, { content: "hijacked", editedAt: new Date() }),
+      );
+    },
+  );
+
+  await check(
+    "regression: sender can soft-delete their own message (deleteMessage's update shape)",
+    async () => {
+      const db = host.firestore();
+      const ref = doc(db, "conversations/convo-1/messages/msg-1");
+      await assertSucceeds(
+        updateDoc(ref, {
+          content: "",
+          mediaUrl: null,
+          isDeleted: true,
+          editedAt: new Date(),
+          reactions: {},
+        }),
+      );
+    },
+  );
+
+  await check(
+    "regression: any participant can toggle their OWN reaction",
+    async () => {
+      const db = invitee.firestore();
+      const ref = doc(db, "conversations/convo-1/messages/msg-1");
+      await assertSucceeds(
+        updateDoc(ref, { "reactions.invitee-uid": "🔥" }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a participant cannot set a reaction under someone else's key",
+    async () => {
+      const db = invitee.firestore();
+      const ref = doc(db, "conversations/convo-1/messages/msg-1");
+      await assertFails(updateDoc(ref, { "reactions.host-uid": "😡" }));
+    },
+  );
+
+  await check(
+    "regression: a participant can mark a message read by adding themselves to readBy",
+    async () => {
+      const db = invitee.firestore();
+      const ref = doc(db, "conversations/convo-1/messages/msg-1");
+      await assertSucceeds(
+        updateDoc(ref, { readBy: ["host-uid", "invitee-uid"] }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: readBy cannot be used to remove an existing reader",
+    async () => {
+      const db = invitee.firestore();
+      const ref = doc(db, "conversations/convo-1/messages/msg-1");
+      await assertFails(updateDoc(ref, { readBy: ["invitee-uid"] }));
+    },
+  );
+
+  await check(
+    "SECURITY: readBy cannot be used to add someone else's uid on their behalf",
+    async () => {
+      const db = invitee.firestore();
+      const ref = doc(db, "conversations/convo-1/messages/msg-1");
+      await assertFails(
+        updateDoc(ref, { readBy: ["host-uid", "invitee-uid", "attacker-uid"] }),
+      );
+    },
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();
   process.exit(failed > 0 ? 1 : 0);

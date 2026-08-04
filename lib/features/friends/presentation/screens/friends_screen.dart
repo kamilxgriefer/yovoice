@@ -4,6 +4,7 @@ import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/add_friend_screen.dart';
+import 'package:yovoice/features/friends/presentation/screens/blocked_users_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
@@ -60,6 +61,12 @@ class _FriendsScreenState extends State<FriendsScreen> {
   Future<void> _openAddFriend() async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(builder: (_) => const AddFriendScreen()),
+    );
+  }
+
+  Future<void> _openBlockedUsers() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const BlockedUsersScreen()),
     );
   }
 
@@ -231,6 +238,12 @@ class _FriendsScreenState extends State<FriendsScreen> {
                 onTap: () => setState(() => _filter = _FriendsFilter.requests),
               );
             },
+          ),
+          const SizedBox(width: 9),
+          _HeaderButton(
+            tooltip: 'Blocked users',
+            icon: Icons.block_rounded,
+            onTap: _openBlockedUsers,
           ),
           const SizedBox(width: 9),
           _HeaderButton(

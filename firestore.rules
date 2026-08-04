@@ -57,6 +57,13 @@ service cloud.firestore {
           ).data.participantIds;
     }
 
+    function conversationBlocked(conversationId) {
+      let participants = get(
+        /databases/$(database)/documents/conversations/$(conversationId)
+      ).data.participantIds;
+      return isBlockedPair(participants[0], participants[1]);
+    }
+
     function roomExists(roomId) {
       return exists(
         /databases/$(database)/documents/rooms/$(roomId)
@@ -144,7 +151,11 @@ service cloud.firestore {
       // friend_service.dart increment/decrement the OTHER person's
       // followerCount/friendCount in the same transaction that creates the
       // follow/friend edge — that's a real, currently-used write path, not
-      // a hypothetical one. No other field may move on someone else's doc.
+      // a hypothetical one. followingCount joined this list for the same
+      // reason: blockUser() severs a following-edge THEY created (they
+      // follow me, I block them) and must be able to correct their own
+      // followingCount down by one in that same transaction. No other
+      // field may move on someone else's doc.
       allow update: if isSignedIn() &&
           (
             isOwner(userId)
@@ -162,7 +173,7 @@ service cloud.firestore {
                     'selectedTitleId', 'achievementsUpdatedAt',
                   ])
               : request.resource.data.diff(resource.data).affectedKeys()
-                  .hasOnly(['friendCount', 'followerCount'])
+                  .hasOnly(['friendCount', 'followerCount', 'followingCount'])
           );
 
       allow delete: if false;
@@ -271,7 +282,11 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
           request.resource.data.participantIds is list &&
           request.resource.data.participantIds.size() == 2 &&
-          request.auth.uid in request.resource.data.participantIds;
+          request.auth.uid in request.resource.data.participantIds &&
+          !isBlockedPair(
+            request.resource.data.participantIds[0],
+            request.resource.data.participantIds[1]
+          );
 
       allow update: if isSignedIn() &&
           request.auth.uid in resource.data.participantIds &&

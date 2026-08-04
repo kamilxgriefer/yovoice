@@ -6,7 +6,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../models/friend_request.dart';
 import '../models/friend_user.dart';
 
-enum FriendRelationshipStatus { none, friends, requestSent, requestReceived }
+enum FriendRelationshipStatus {
+  none,
+  friends,
+  requestSent,
+  requestReceived,
+  blocked,
+}
 
 class FriendService {
   FriendService({FirebaseFirestore? firestore, FirebaseAuth? auth})
@@ -141,11 +147,19 @@ class FriendService {
     if (search.length < 2) return const [];
 
     final snapshot = await _users.limit(100).get();
+    final blockedIds = (await _users
+            .doc(_currentUser.uid)
+            .collection('blocked')
+            .get())
+        .docs
+        .map((doc) => doc.id)
+        .toSet();
     final results =
         snapshot.docs
             .map(FriendUser.fromFirestore)
             .where((user) {
               if (user.id == _currentUser.uid) return false;
+              if (blockedIds.contains(user.id)) return false;
               return user.searchableDisplayName.contains(search) ||
                   user.searchableEmail.contains(search);
             })
@@ -166,7 +180,9 @@ class FriendService {
       _users.doc(me).collection('friends').doc(otherUserId).get(),
       _users.doc(otherUserId).collection('friendRequests').doc(me).get(),
       _users.doc(me).collection('friendRequests').doc(otherUserId).get(),
+      _users.doc(me).collection('blocked').doc(otherUserId).get(),
     ]);
+    if (results[3].exists) return FriendRelationshipStatus.blocked;
     if (results[0].exists) return FriendRelationshipStatus.friends;
     if (results[1].exists) return FriendRelationshipStatus.requestSent;
     if (results[2].exists) return FriendRelationshipStatus.requestReceived;
@@ -176,6 +192,9 @@ class FriendService {
   Future<void> sendFriendRequest(FriendUser receiver) async {
     final sender = _currentUser;
     if (receiver.id == sender.uid) throw StateError('You cannot add yourself.');
+    if (await isBlocked(receiver.id)) {
+      throw StateError('You have blocked this user.');
+    }
     await ensureUserDocument();
 
     final senderDoc = await _users.doc(sender.uid).get();
@@ -320,6 +339,107 @@ class FriendService {
       tx.update(myDoc, {'friendCount': FieldValue.increment(-1)});
       tx.update(friendDoc, {'friendCount': FieldValue.increment(-1)});
     });
+  }
+
+  Stream<List<FriendUser>> watchBlockedUsers() {
+    return _users
+        .doc(_currentUser.uid)
+        .collection('blocked')
+        .snapshots()
+        .asyncMap((snapshot) async {
+          if (snapshot.docs.isEmpty) return const <FriendUser>[];
+          final documents = await Future.wait(
+            snapshot.docs.map((doc) => _users.doc(doc.id).get()),
+          );
+          return documents
+              .where((doc) => doc.exists && doc.data() != null)
+              .map(FriendUser.fromFirestore)
+              .toList(growable: false)
+            ..sort(
+              (a, b) => a.displayName.toLowerCase().compareTo(
+                b.displayName.toLowerCase(),
+              ),
+            );
+        });
+  }
+
+  Future<bool> isBlocked(String userId) async {
+    final doc = await _users
+        .doc(_currentUser.uid)
+        .collection('blocked')
+        .doc(userId)
+        .get();
+    return doc.exists;
+  }
+
+  /// Blocks [targetUserId]: severs any friendship, pending friend request
+  /// (either direction), and follow relationship (either direction) with
+  /// them, then records the block. Firestore rules use the resulting
+  /// `blocked` doc to reject any new friend request/follow/conversation
+  /// between the two users in either direction going forward.
+  Future<void> blockUser(String targetUserId) async {
+    final me = _currentUser.uid;
+    if (targetUserId == me) throw StateError('You cannot block yourself.');
+
+    final myDoc = _users.doc(me);
+    final targetDoc = _users.doc(targetUserId);
+    final myFriend = myDoc.collection('friends').doc(targetUserId);
+    final theirFriend = targetDoc.collection('friends').doc(me);
+    final myFollowing = myDoc.collection('following').doc(targetUserId);
+    final theirFollower = targetDoc.collection('followers').doc(me);
+    final theirFollowing = targetDoc.collection('following').doc(me);
+    final myFollower = myDoc.collection('followers').doc(targetUserId);
+
+    await _firestore.runTransaction((tx) async {
+      final snapshots = await Future.wait([
+        tx.get(myFriend),
+        tx.get(myFollowing),
+        tx.get(theirFollowing),
+      ]);
+      final wasFriend = snapshots[0].exists;
+      final iWasFollowingThem = snapshots[1].exists;
+      final theyWereFollowingMe = snapshots[2].exists;
+
+      if (wasFriend) {
+        tx.delete(myFriend);
+        tx.delete(theirFriend);
+        tx.update(myDoc, {'friendCount': FieldValue.increment(-1)});
+        tx.update(targetDoc, {'friendCount': FieldValue.increment(-1)});
+      }
+
+      // Pending requests in either direction — deleting a doc that doesn't
+      // exist is a harmless no-op, so no existence check needed first.
+      tx.delete(targetDoc.collection('friendRequests').doc(me));
+      tx.delete(myDoc.collection('friendRequests').doc(targetUserId));
+      tx.delete(myDoc.collection('sentFriendRequests').doc(targetUserId));
+      tx.delete(targetDoc.collection('sentFriendRequests').doc(me));
+
+      if (iWasFollowingThem) {
+        tx.delete(myFollowing);
+        tx.delete(theirFollower);
+        tx.update(myDoc, {'followingCount': FieldValue.increment(-1)});
+        tx.update(targetDoc, {'followerCount': FieldValue.increment(-1)});
+      }
+      if (theyWereFollowingMe) {
+        tx.delete(theirFollowing);
+        tx.delete(myFollower);
+        tx.update(targetDoc, {'followingCount': FieldValue.increment(-1)});
+        tx.update(myDoc, {'followerCount': FieldValue.increment(-1)});
+      }
+
+      tx.set(myDoc.collection('blocked').doc(targetUserId), {
+        'userId': targetUserId,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  Future<void> unblockUser(String targetUserId) async {
+    await _users
+        .doc(_currentUser.uid)
+        .collection('blocked')
+        .doc(targetUserId)
+        .delete();
   }
 
   String _displayName(Map<String, dynamic> data, String fallbackEmail) {

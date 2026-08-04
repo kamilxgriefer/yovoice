@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 
 class AddFriendScreen extends StatefulWidget {
   const AddFriendScreen({super.key});
@@ -20,21 +21,56 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
   static const Color _primary = Color(0xFFB348FF);
 
   final FriendService _friendService = FriendService();
+  final SocialGraphService _socialGraphService = SocialGraphService();
   final TextEditingController _searchController = TextEditingController();
 
   Timer? _searchDebounce;
   List<FriendUser> _results = const [];
   final Map<String, FriendRelationshipStatus> _relationshipStatuses = {};
   final Set<String> _processingIds = <String>{};
+  final Set<String> _sentSuggestionIds = <String>{};
 
   bool _isSearching = false;
   String? _errorMessage;
+  late final Future<List<SuggestedFriend>> _suggestionsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _suggestionsFuture = _socialGraphService
+        .getFriendSuggestions()
+        .catchError((_) => const <SuggestedFriend>[]);
+  }
 
   @override
   void dispose() {
     _searchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _addSuggestion(SuggestedFriend suggestion) async {
+    if (_processingIds.contains(suggestion.uid)) return;
+    setState(() => _processingIds.add(suggestion.uid));
+    try {
+      await _friendService.sendFriendRequest(
+        FriendUser(
+          id: suggestion.uid,
+          displayName: suggestion.displayName,
+          email: '',
+          photoUrl: suggestion.photoUrl,
+          isOnline: false,
+          lastSeen: null,
+        ),
+      );
+      if (!mounted) return;
+      setState(() => _sentSuggestionIds.add(suggestion.uid));
+      _showMessage('Friend request sent to ${suggestion.displayName}.');
+    } catch (error) {
+      if (mounted) _showError(_readableError(error));
+    } finally {
+      if (mounted) setState(() => _processingIds.remove(suggestion.uid));
+    }
   }
 
   void _onSearchChanged(String value) {
@@ -363,12 +399,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     }
 
     if (query.length < 2) {
-      return const _SearchState(
-        icon: Icons.person_search_rounded,
-        title: 'Find someone you know',
-        subtitle:
-            'Enter at least 2 characters from their username or email address.',
-      );
+      return _buildSuggestions();
     }
 
     if (_results.isEmpty) {
@@ -393,6 +424,176 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
           onPressed: () => _handlePrimaryAction(user),
         );
       },
+    );
+  }
+
+  Widget _buildSuggestions() {
+    return FutureBuilder<List<SuggestedFriend>>(
+      future: _suggestionsFuture,
+      builder: (context, snapshot) {
+        final suggestions = snapshot.data ?? const <SuggestedFriend>[];
+        if (snapshot.connectionState != ConnectionState.done ||
+            suggestions.isEmpty) {
+          return const _SearchState(
+            icon: Icons.person_search_rounded,
+            title: 'Find someone you know',
+            subtitle:
+                'Enter at least 2 characters from their username or email address.',
+          );
+        }
+
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(18, 6, 18, 28),
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(bottom: 10, left: 2),
+              child: Text(
+                'Suggested for you',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            ...suggestions.map(
+              (suggestion) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _SuggestionCard(
+                  suggestion: suggestion,
+                  isProcessing: _processingIds.contains(suggestion.uid),
+                  sent: _sentSuggestionIds.contains(suggestion.uid),
+                  onPressed: () => _addSuggestion(suggestion),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _SuggestionCard extends StatelessWidget {
+  const _SuggestionCard({
+    required this.suggestion,
+    required this.isProcessing,
+    required this.sent,
+    required this.onPressed,
+  });
+
+  final SuggestedFriend suggestion;
+  final bool isProcessing;
+  final bool sent;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasPhoto = suggestion.photoUrl?.trim().isNotEmpty == true;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _AddFriendScreenState._surface,
+        borderRadius: BorderRadius.circular(19),
+        border: Border.all(color: _AddFriendScreenState._border),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            padding: const EdgeInsets.all(2),
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                colors: [Color(0xFFC32BFF), Color(0xFF6D25FF)],
+              ),
+            ),
+            child: ClipOval(
+              child: Container(
+                color: const Color(0xFF2A173C),
+                alignment: Alignment.center,
+                child: hasPhoto
+                    ? Image.network(
+                        suggestion.photoUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            _AvatarInitial(initial: suggestion.initial),
+                      )
+                    : _AvatarInitial(initial: suggestion.initial),
+              ),
+            ),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  suggestion.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (suggestion.mutualCount > 0) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    suggestion.mutualCount == 1
+                        ? '1 mutual friend'
+                        : '${suggestion.mutualCount} mutual friends',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _AddFriendScreenState._secondaryText,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          SizedBox(
+            height: 40,
+            child: FilledButton.icon(
+              onPressed: isProcessing || sent ? null : onPressed,
+              style: FilledButton.styleFrom(
+                backgroundColor: sent
+                    ? const Color(0xFF3A2F1D)
+                    : const Color(0xFF8A2BE2),
+                disabledBackgroundColor: const Color(0xFF2A2533),
+                foregroundColor: sent ? const Color(0xFFFFC66D) : Colors.white,
+                disabledForegroundColor: sent
+                    ? const Color(0xFFFFC66D)
+                    : const Color(0xFF8F8799),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(13),
+                ),
+              ),
+              icon: isProcessing
+                  ? const SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Icon(sent ? Icons.check_rounded : Icons.person_add_alt_1_rounded, size: 18),
+              label: Text(
+                sent ? 'Sent' : 'Add',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -460,7 +661,8 @@ class _UserResultCard extends StatelessWidget {
             child: FilledButton(
               onPressed:
                   isProcessing ||
-                      relationshipStatus == FriendRelationshipStatus.friends
+                      relationshipStatus == FriendRelationshipStatus.friends ||
+                      relationshipStatus == FriendRelationshipStatus.blocked
                   ? null
                   : onPressed,
               style: FilledButton.styleFrom(
@@ -542,6 +744,15 @@ class _UserResultCard extends StatelessWidget {
           disabledBackgroundColor: Color(0xFF2A2533),
           foregroundColor: Colors.white,
           disabledForegroundColor: Color(0xFF8F8799),
+        );
+      case FriendRelationshipStatus.blocked:
+        return const _FriendButtonPresentation(
+          label: 'Blocked',
+          icon: Icons.block_rounded,
+          backgroundColor: Color(0xFF3A2020),
+          disabledBackgroundColor: Color(0xFF3A2020),
+          foregroundColor: Color(0xFFE38B8B),
+          disabledForegroundColor: Color(0xFFE38B8B),
         );
     }
   }
