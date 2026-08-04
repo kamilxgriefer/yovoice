@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/features/clubs/presentation/screens/clubs_screen.dart';
 import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
+import 'package:yovoice/features/notifications/presentation/screens/notification_preferences_screen.dart';
 
 enum MoreDestination {
   friends,
@@ -29,16 +30,7 @@ Widget moreDestinationScreen(MoreDestination destination) {
     MoreDestination.friends => const FriendsScreen(),
     MoreDestination.discover => const DiscoverScreen(),
     MoreDestination.clubs => const ClubsScreen(),
-    MoreDestination.notifications => const _MoreFeatureScreen(
-      icon: Icons.notifications_rounded,
-      title: 'Alerts',
-      subtitle: 'Your friend requests, room invitations and app updates.',
-      items: [
-        'Friend requests and social activity',
-        'Invitations to live rooms and clubs',
-        'Important YoVoice announcements',
-      ],
-    ),
+    MoreDestination.notifications => const NotificationPreferencesScreen(),
     MoreDestination.achievements => const _MoreFeatureScreen(
       icon: Icons.emoji_events_rounded,
       title: 'Awards',
