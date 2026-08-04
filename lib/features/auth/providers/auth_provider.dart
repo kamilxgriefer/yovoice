@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 
 final authServiceProvider = Provider<AuthService>((ref) {
   return AuthService();
@@ -91,6 +92,7 @@ class AuthController {
     ref.read(authErrorProvider.notifier).state = null;
 
     try {
+      await PushNotificationService.instance.unregisterCurrentDevice();
       await _service.signOut();
     } catch (error) {
       ref.read(authErrorProvider.notifier).state = error.toString();

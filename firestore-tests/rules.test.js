@@ -9,6 +9,7 @@ const {
   doc,
   getDoc,
   getDocs,
+  deleteDoc,
   collection,
   collectionGroup,
   query,
@@ -762,6 +763,232 @@ async function main() {
       const ref = doc(db, "conversations/convo-1/messages/msg-1");
       await assertFails(
         updateDoc(ref, { readBy: ["host-uid", "invitee-uid", "attacker-uid"] }),
+      );
+    },
+  );
+
+  // --- Notifications (users/{userId}/notifications/{notificationId}) ---
+
+  await check(
+    "regression: an actor can write a notification into someone else's inbox",
+    async () => {
+      const db = host.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-1");
+      await assertSucceeds(
+        setDoc(ref, {
+          type: "friendRequest",
+          actorId: "host-uid",
+          actorName: "Host",
+          actorPhotoUrl: null,
+          targetId: null,
+          targetLabel: null,
+          isRead: false,
+          createdAt: new Date(),
+          dedupeKey: null,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: cannot forge a notification claiming to be sent by someone else",
+    async () => {
+      const db = attacker.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-forged");
+      await assertFails(
+        setDoc(ref, {
+          type: "friendRequest",
+          actorId: "host-uid",
+          actorName: "Host",
+          actorPhotoUrl: null,
+          targetId: null,
+          targetLabel: null,
+          isRead: false,
+          createdAt: new Date(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: cannot notify yourself",
+    async () => {
+      const db = host.firestore();
+      const ref = doc(db, "users/host-uid/notifications/notif-self");
+      await assertFails(
+        setDoc(ref, {
+          type: "friendRequest",
+          actorId: "host-uid",
+          actorName: "Host",
+          actorPhotoUrl: null,
+          targetId: null,
+          targetLabel: null,
+          isRead: false,
+          createdAt: new Date(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a client cannot forge a trusted 'system' or 'moderation' notification",
+    async () => {
+      const db = host.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-system");
+      await assertFails(
+        setDoc(ref, {
+          type: "system",
+          actorId: "host-uid",
+          actorName: "Host",
+          actorPhotoUrl: null,
+          targetId: null,
+          targetLabel: "You win",
+          isRead: false,
+          createdAt: new Date(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a notification cannot carry an unlisted field",
+    async () => {
+      const db = host.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-extra");
+      await assertFails(
+        setDoc(ref, {
+          type: "friendRequest",
+          actorId: "host-uid",
+          actorName: "Host",
+          actorPhotoUrl: null,
+          targetId: null,
+          targetLabel: null,
+          isRead: false,
+          createdAt: new Date(),
+          body: "click here",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "regression: the recipient can read their own notifications",
+    async () => {
+      const db = invitee.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-1");
+      await assertSucceeds(getDoc(ref));
+    },
+  );
+
+  await check(
+    "SECURITY: nobody else can read a user's notifications",
+    async () => {
+      const db = attacker.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-1");
+      await assertFails(getDoc(ref));
+    },
+  );
+
+  await check(
+    "regression: the recipient can mark their own notification read",
+    async () => {
+      const db = invitee.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-1");
+      await assertSucceeds(
+        updateDoc(ref, { isRead: true, readAt: new Date() }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: the recipient cannot rewrite who a notification claims is from",
+    async () => {
+      const db = invitee.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-1");
+      await assertFails(updateDoc(ref, { actorId: "invitee-uid" }));
+    },
+  );
+
+  await check(
+    "SECURITY: nobody else can update a user's notification",
+    async () => {
+      const db = attacker.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-1");
+      await assertFails(updateDoc(ref, { isRead: true }));
+    },
+  );
+
+  await check(
+    "regression: the recipient can delete their own notification",
+    async () => {
+      const db = invitee.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-1");
+      await assertSucceeds(deleteDoc(ref));
+    },
+  );
+
+  // --- FCM tokens (users/{userId}/fcmTokens/{token}) ---
+
+  await check(
+    "regression: a user can register their own FCM token",
+    async () => {
+      const db = host.firestore();
+      const ref = doc(db, "users/host-uid/fcmTokens/token-abc");
+      await assertSucceeds(
+        setDoc(ref, { platform: "ios", updatedAt: new Date() }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a user cannot register an FCM token under someone else's account",
+    async () => {
+      const db = attacker.firestore();
+      const ref = doc(db, "users/host-uid/fcmTokens/token-hijack");
+      await assertFails(
+        setDoc(ref, { platform: "ios", updatedAt: new Date() }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: nobody else can read a user's FCM tokens",
+    async () => {
+      const db = attacker.firestore();
+      const ref = doc(db, "users/host-uid/fcmTokens/token-abc");
+      await assertFails(getDoc(ref));
+    },
+  );
+
+  await check(
+    "regression: a user can unregister their own FCM token",
+    async () => {
+      const db = host.firestore();
+      const ref = doc(db, "users/host-uid/fcmTokens/token-abc");
+      await assertSucceeds(deleteDoc(ref));
+    },
+  );
+
+  // --- notificationPreferences (users/{userId} field) ---
+
+  await check(
+    "regression: a user can update their own notification preferences",
+    async () => {
+      const db = host.firestore();
+      const ref = doc(db, "users/host-uid");
+      await assertSucceeds(
+        updateDoc(ref, { "notificationPreferences.friendRequest": false }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a user cannot update someone else's notification preferences",
+    async () => {
+      const db = attacker.firestore();
+      const ref = doc(db, "users/host-uid");
+      await assertFails(
+        updateDoc(ref, { "notificationPreferences.friendRequest": true }),
       );
     },
   );

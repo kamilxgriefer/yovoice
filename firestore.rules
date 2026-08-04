@@ -171,6 +171,7 @@ service cloud.firestore {
                     'reactionCount', 'hostMinutes', 'activeDays',
                     'momentCount', 'friendCount', 'unlockedTitleIds',
                     'selectedTitleId', 'achievementsUpdatedAt',
+                    'notificationPreferences',
                   ])
               : request.resource.data.diff(resource.data).affectedKeys()
                   .hasOnly(['friendCount', 'followerCount', 'followingCount'])
@@ -272,6 +273,48 @@ service cloud.firestore {
         allow create: if isOwner(userId) || canManageClub(clubId);
         allow update: if isOwner(userId) || canManageClub(clubId);
         allow delete: if isOwner(userId) || canManageClub(clubId);
+      }
+
+      // notification_service.dart writes directly into the recipient's
+      // subcollection (no Cloud Function in the loop for the common cases),
+      // so create is authorized purely on "the caller is the actor and
+      // isn't notifying themselves." 'system' and 'moderation' are
+      // deliberately left OUT of the client-creatable type list — those can
+      // only be written by the Admin SDK (Cloud Functions bypass rules
+      // entirely), which is what stops a client from forging a trusted
+      // system notification. Client updates are limited to the read-state
+      // fields; nothing else about a notification is editable after it's
+      // created.
+      match /notifications/{notificationId} {
+        allow read: if isOwner(userId);
+        allow create: if isSignedIn() &&
+            request.auth.uid == request.resource.data.actorId &&
+            request.resource.data.actorId != userId &&
+            request.resource.data.type in [
+              'friendRequest', 'friendAccepted', 'follow',
+              'clubInvite', 'clubInviteAccepted',
+              'roomInvite', 'broadcastInvite',
+              'directMessage', 'mention', 'reply',
+            ] &&
+            request.resource.data.isRead == false &&
+            request.resource.data.keys().hasOnly([
+              'type', 'actorId', 'actorName', 'actorPhotoUrl',
+              'targetId', 'targetLabel', 'isRead', 'createdAt', 'dedupeKey',
+            ]);
+        allow update: if isOwner(userId) &&
+            request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['isRead', 'readAt']);
+        allow delete: if isOwner(userId);
+      }
+
+      // One doc per registered device. Only the Admin SDK (push-send Cloud
+      // Function) ever reads across users' tokens; clients only manage
+      // their own.
+      match /fcmTokens/{token} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) &&
+            request.resource.data.keys().hasOnly(['platform', 'updatedAt']);
+        allow delete: if isOwner(userId);
       }
     }
 

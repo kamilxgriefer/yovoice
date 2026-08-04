@@ -11,6 +11,7 @@
         android:name="android.permission.BLUETOOTH_ADMIN"
         android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-feature
         android:name="android.hardware.microphone"
@@ -41,6 +42,14 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Channel id referenced by PushNotificationService's
+             AndroidNotificationDetails; without a matching declared
+             channel, foreground-shown local notifications fall back to
+             default (low, silent) importance on some OEM skins. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="yovoice_default" />
     </application>
 
     <queries>

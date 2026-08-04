@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:yovoice/features/auth/presentation/screens/login_screen.dart';
 import 'package:yovoice/features/auth/providers/auth_provider.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
+import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 
 class AuthGate extends ConsumerWidget {
   const AuthGate({super.key});
@@ -49,6 +50,10 @@ class _AuthenticatedEntryState extends State<_AuthenticatedEntry> {
   @override
   void initState() {
     super.initState();
+
+    // Fire-and-forget: push is a nice-to-have, never something the welcome
+    // animation or main shell should wait on.
+    unawaited(PushNotificationService.instance.initialize());
 
     _welcomeTimer = Timer(const Duration(seconds: 4), () {
       if (!mounted) {
