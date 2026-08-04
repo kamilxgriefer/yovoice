@@ -24,6 +24,15 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isBlockedPair(userA, userB) {
+      return exists(
+        /databases/$(database)/documents/users/$(userA)/blocked/$(userB)
+      ) ||
+      exists(
+        /databases/$(database)/documents/users/$(userB)/blocked/$(userA)
+      );
+    }
+
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
@@ -166,12 +175,29 @@ service cloud.firestore {
         // Recipient-only read left that permanently denied for the sender's
         // own outgoing-request check.
         allow read: if isOneOfUsers(userId, senderId);
+        // Neither party may create a request while either has blocked the
+        // other. isBlockedPair() reads the target subcollections directly —
+        // it isn't gated by their own read rule, so this works without
+        // granting either user visibility into the other's block list
+        // (blocked/{doc} stays owner-read-only below).
         allow create: if isSignedIn() &&
             request.auth.uid == senderId &&
             senderId != userId &&
-            request.resource.data.senderId == senderId;
+            request.resource.data.senderId == senderId &&
+            !isBlockedPair(userId, senderId);
         allow update: if false;
         allow delete: if isOneOfUsers(userId, senderId);
+      }
+
+      match /blocked/{blockedUserId} {
+        // Deliberately owner-only in both directions — nobody, including
+        // the blocked user, can read who's on this list. The friendRequests
+        // create rule above enforces the block via exists() checks, which
+        // don't require this rule to grant any read access.
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && blockedUserId != userId;
+        allow update: if false;
+        allow delete: if isOwner(userId);
       }
 
       // Mirror of friendRequests, keyed from the sender's side
@@ -215,7 +241,8 @@ service cloud.firestore {
         allow read: if isSignedIn();
         allow create: if isSignedIn() &&
             isOwner(userId) &&
-            targetUserId != userId;
+            targetUserId != userId &&
+            !isBlockedPair(userId, targetUserId);
         allow update: if false;
         allow delete: if isOwner(userId);
       }
@@ -255,8 +282,46 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read: if isConversationParticipant(conversationId);
         allow create: if isConversationParticipant(conversationId) &&
-            request.resource.data.senderId == request.auth.uid;
-        allow update, delete: if false;
+            request.resource.data.senderId == request.auth.uid &&
+            !conversationBlocked(conversationId);
+
+        // message_service.dart's editMessage/deleteMessage/toggleReaction/
+        // markConversationRead all call update() on this path — this was
+        // `if false` before, meaning all four were silently broken in
+        // production despite the Dart implementation being correct. Three
+        // distinct, narrowly-scoped update shapes, matching exactly what
+        // those four methods actually write:
+        allow update: if isConversationParticipant(conversationId) &&
+            (
+              // sender edits or soft-deletes (deleteMessage clears content/
+              // mediaUrl/reactions and sets isDeleted, rather than an
+              // actual delete, hence this being an update not a delete).
+              (
+                resource.data.senderId == request.auth.uid &&
+                request.resource.data.diff(resource.data).affectedKeys()
+                    .hasOnly(['content', 'editedAt', 'mediaUrl', 'isDeleted', 'reactions'])
+              ) ||
+              // any participant toggles only their OWN reaction key.
+              (
+                request.resource.data.diff(resource.data).affectedKeys()
+                    .hasOnly(['reactions']) &&
+                request.resource.data.reactions.diff(resource.data.reactions)
+                    .affectedKeys().hasOnly([request.auth.uid])
+              ) ||
+              // any participant marks the message read by adding only
+              // themselves to readBy — never removing entries, never
+              // adding on someone else's behalf.
+              (
+                request.resource.data.diff(resource.data).affectedKeys()
+                    .hasOnly(['readBy']) &&
+                request.resource.data.readBy.hasAll(resource.data.readBy) &&
+                request.resource.data.readBy.hasOnly(
+                  resource.data.readBy.concat([request.auth.uid])
+                )
+              )
+            );
+
+        allow delete: if false;
       }
     }
 
