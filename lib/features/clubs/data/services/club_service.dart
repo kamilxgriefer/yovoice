@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
@@ -13,13 +14,16 @@ class ClubService {
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
     FirebaseStorage? storage,
+    FirebaseFunctions? functions,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
-       _storage = storage ?? FirebaseStorage.instance;
+       _storage = storage ?? FirebaseStorage.instance,
+       _functions = functions ?? FirebaseFunctions.instance;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final FirebaseStorage _storage;
+  final FirebaseFunctions _functions;
 
   CollectionReference<Map<String, dynamic>> get _clubs =>
       _firestore.collection('clubs');
@@ -366,7 +370,7 @@ class ClubService {
       );
     }
     if (role == ClubRole.owner) {
-      throw StateError('Club ownership transfer is not available yet.');
+      throw StateError('Use transferOwnership() to hand off club ownership.');
     }
     if (!actor.role.canAssignRole(role)) {
       throw StateError('You cannot assign this role.');
@@ -376,6 +380,26 @@ class ClubService {
       'role': role.name,
       'roleUpdatedAt': FieldValue.serverTimestamp(),
       'roleUpdatedBy': _user.uid,
+    });
+  }
+
+  /// Hands the club to another existing member, demoting the current owner
+  /// to co-owner. firestore.rules deliberately blocks role:'owner'
+  /// transitions from the normal updateMemberRole() write path, so this
+  /// goes through the transferClubOwnershipSelf Cloud Function instead
+  /// (Admin SDK, authorized by checking the caller IS the club's current
+  /// owner — see functions/clubs/ownership.js).
+  Future<void> transferOwnership({
+    required String clubId,
+    required String newOwnerId,
+  }) async {
+    if (newOwnerId == _user.uid) {
+      throw StateError('You are already the owner of this club.');
+    }
+    final callable = _functions.httpsCallable('transferClubOwnershipSelf');
+    await callable.call<Map<Object?, Object?>>({
+      'clubId': clubId,
+      'newOwnerId': newOwnerId,
     });
   }
 

@@ -62,6 +62,14 @@ const { getMutualFriends, getFriendSuggestions } = require("./friends/social_gra
 
 /*
 |--------------------------------------------------------------------------
+| Clubs (self-service)
+|--------------------------------------------------------------------------
+*/
+
+const { transferClubOwnershipSelf } = require("./clubs/ownership");
+
+/*
+|--------------------------------------------------------------------------
 | User Management
 |--------------------------------------------------------------------------
 */
@@ -134,3 +142,11 @@ exports.createLiveKitToken = createLiveKitToken;
 
 exports.getMutualFriends = getMutualFriends;
 exports.getFriendSuggestions = getFriendSuggestions;
+
+/*
+|--------------------------------------------------------------------------
+| Clubs (self-service)
+|--------------------------------------------------------------------------
+*/
+
+exports.transferClubOwnershipSelf = transferClubOwnershipSelf;

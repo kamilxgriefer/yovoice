@@ -51,6 +51,59 @@ class _ClubMemberManagementScreenState
     }
   }
 
+  Future<void> _transferOwnership() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: _surface,
+        title: const Text(
+          'Transfer ownership?',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: Text(
+          '${widget.member.displayName} will become the club owner. You will '
+          'be demoted to Co-owner. This cannot be undone by you alone.',
+          style: const TextStyle(color: Color(0xFFB8AFBD)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFB72D55),
+            ),
+            child: const Text('Transfer'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || _saving) return;
+    setState(() => _saving = true);
+    try {
+      await _service.transferOwnership(
+        clubId: widget.clubId,
+        newOwnerId: widget.member.userId,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${widget.member.displayName} is now the club owner.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_message(error))));
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   Future<void> _removeMember() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -125,6 +178,11 @@ class _ClubMemberManagementScreenState
               actor.userId != widget.member.userId &&
               actor.role.power > widget.member.role.power &&
               widget.member.role != ClubRole.owner;
+          final canTransferOwnership =
+              actor != null &&
+              actor.role == ClubRole.owner &&
+              actor.userId != widget.member.userId &&
+              widget.member.role != ClubRole.owner;
 
           return ListView(
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 36),
@@ -162,6 +220,19 @@ class _ClubMemberManagementScreenState
                     fontSize: 12,
                     height: 1.4,
                   ),
+                ),
+              ],
+              if (canTransferOwnership) ...[
+                const SizedBox(height: 26),
+                OutlinedButton.icon(
+                  onPressed: _saving ? null : _transferOwnership,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFD19CFF),
+                    side: const BorderSide(color: Color(0xFF5A3A73)),
+                    minimumSize: const Size.fromHeight(52),
+                  ),
+                  icon: const Icon(Icons.workspace_premium_rounded),
+                  label: const Text('TRANSFER OWNERSHIP'),
                 ),
               ],
               if (canRemove) ...[
