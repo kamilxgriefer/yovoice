@@ -16,6 +16,7 @@ import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
+import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -43,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final RoomService _roomService = RoomService();
   final MessageService _messageService = MessageService();
   final MomentService _momentService = MomentService();
+  final NotificationService _notificationService = NotificationService();
 
   late final Stream<List<VoiceMoment>> _moments;
   late final Stream<List<FriendUser>> _friends;
@@ -267,16 +269,53 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
-          IconButton.outlined(
-            onPressed: _openNotifications,
-            style: IconButton.styleFrom(
-              minimumSize: const Size(48, 48),
-              side: const BorderSide(color: _border),
-            ),
-            icon: const Icon(
-              Icons.notifications_none_rounded,
-              color: Colors.white,
-            ),
+          StreamBuilder<int>(
+            stream: _notificationService.watchUnreadCount(),
+            builder: (context, snapshot) {
+              final unreadCount = snapshot.data ?? 0;
+              return Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  IconButton.outlined(
+                    onPressed: _openNotifications,
+                    style: IconButton.styleFrom(
+                      minimumSize: const Size(48, 48),
+                      side: const BorderSide(color: _border),
+                    ),
+                    icon: const Icon(
+                      Icons.notifications_none_rounded,
+                      color: Colors.white,
+                    ),
+                  ),
+                  if (unreadCount > 0)
+                    Positioned(
+                      right: -2,
+                      top: -2,
+                      child: Container(
+                        constraints: const BoxConstraints(
+                          minWidth: 18,
+                          minHeight: 18,
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFF426F),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: _background, width: 2),
+                        ),
+                        child: Text(
+                          unreadCount > 99 ? '99+' : '$unreadCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
           const SizedBox(width: 10),
           CircleAvatar(

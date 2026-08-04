@@ -45,9 +45,11 @@ class PushNotificationService {
   bool _initialized = false;
 
   /// Set by the widget layer once a navigator is available. Called with the
-  /// notification's type + targetId whenever a push is tapped, whether the
-  /// app was foregrounded, backgrounded, or launched cold from it.
-  void Function(NotificationType type, String? targetId)? onNotificationTap;
+  /// notification's type, targetId, and actorId whenever a push is tapped,
+  /// whether the app was foregrounded, backgrounded, or launched cold from
+  /// it.
+  void Function(NotificationType type, String? targetId, String? actorId)?
+  onNotificationTap;
 
   /// Call once, after the user is signed in — token registration needs a
   /// uid to write `users/{uid}/fcmTokens/{token}` under, and requesting
@@ -174,7 +176,10 @@ class PushNotificationService {
         final targetId = parts.length > 1 && parts[1].isNotEmpty
             ? parts[1]
             : null;
-        onNotificationTap?.call(type, targetId);
+        final actorId = parts.length > 2 && parts[2].isNotEmpty
+            ? parts[2]
+            : null;
+        onNotificationTap?.call(type, targetId, actorId);
       },
     );
   }
@@ -198,7 +203,8 @@ class PushNotificationService {
           iOS: DarwinNotificationDetails(),
         ),
         payload:
-            '${message.data['type'] ?? ''}|${message.data['targetId'] ?? ''}',
+            '${message.data['type'] ?? ''}|${message.data['targetId'] ?? ''}'
+            '|${message.data['actorId'] ?? ''}',
       );
     } catch (_) {}
   }
@@ -206,6 +212,7 @@ class PushNotificationService {
   void _routeFromMessage(RemoteMessage message) {
     final type = NotificationType.fromName(message.data['type'] as String?);
     final targetId = message.data['targetId'] as String?;
-    onNotificationTap?.call(type, targetId);
+    final actorId = message.data['actorId'] as String?;
+    onNotificationTap?.call(type, targetId, actorId);
   }
 }

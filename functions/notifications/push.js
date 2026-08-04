@@ -84,6 +84,7 @@ exports.onNotificationCreated = onDocumentCreated(
         data: {
           type: String(type),
           targetId: notification.targetId ? String(notification.targetId) : "",
+          actorId: notification.actorId ? String(notification.actorId) : "",
           notificationId,
         },
         android: { priority: "high" },

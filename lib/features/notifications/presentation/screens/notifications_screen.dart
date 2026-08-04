@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -6,6 +8,9 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
+import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+import 'package:yovoice/features/notifications/presentation/notification_router.dart';
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
@@ -23,11 +28,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   final FriendService _friendService = FriendService();
   final MessageService _messageService = MessageService();
+  final NotificationService _notificationService = NotificationService();
 
   late final Stream<List<FriendRequest>> _friendRequestsStream;
   late final Stream<List<Conversation>> _conversationsStream;
 
   final Set<String> _processingRequestIds = <String>{};
+  int _notificationsLimit = 50;
 
   String get _currentUserId => FirebaseAuth.instance.currentUser?.uid ?? '';
 
@@ -101,6 +108,35 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _openNotification(AppNotification notification) async {
+    if (!notification.isRead) {
+      unawaited(_notificationService.markAsRead(notification.id));
+    }
+    await NotificationRouter.route(
+      type: notification.type,
+      targetId: notification.targetId,
+      actorId: notification.actorId,
+    );
+  }
+
+  Future<void> _deleteNotification(AppNotification notification) async {
+    try {
+      await _notificationService.deleteNotification(notification.id);
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(_readableError(error), isError: true);
+    }
+  }
+
+  Future<void> _markAllNotificationsRead() async {
+    try {
+      await _notificationService.markAllAsRead();
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(_readableError(error), isError: true);
+    }
   }
 
   void _showMessage(String message, {bool isError = false}) {
@@ -188,7 +224,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 ),
                 SizedBox(height: 3),
                 Text(
-                  'Friend requests and unread messages',
+                  'Friend requests, messages and activity',
                   style: TextStyle(
                     color: _secondaryText,
                     fontSize: 13,
@@ -210,95 +246,218 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         return StreamBuilder<List<Conversation>>(
           stream: _conversationsStream,
           builder: (context, conversationSnapshot) {
-            final isLoading =
-                (friendSnapshot.connectionState == ConnectionState.waiting &&
-                    !friendSnapshot.hasData) ||
-                (conversationSnapshot.connectionState ==
-                        ConnectionState.waiting &&
-                    !conversationSnapshot.hasData);
+            return StreamBuilder<List<AppNotification>>(
+              key: ValueKey(_notificationsLimit),
+              stream: _notificationService.watchNotifications(
+                limit: _notificationsLimit,
+              ),
+              builder: (context, notificationSnapshot) {
+                final isLoading =
+                    (friendSnapshot.connectionState ==
+                            ConnectionState.waiting &&
+                        !friendSnapshot.hasData) ||
+                    (conversationSnapshot.connectionState ==
+                            ConnectionState.waiting &&
+                        !conversationSnapshot.hasData) ||
+                    (notificationSnapshot.connectionState ==
+                            ConnectionState.waiting &&
+                        !notificationSnapshot.hasData);
 
-            if (isLoading) {
-              return const Center(
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.5,
-                  color: _primary,
-                ),
-              );
-            }
+                if (isLoading) {
+                  return const Center(
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      color: _primary,
+                    ),
+                  );
+                }
 
-            if (friendSnapshot.hasError || conversationSnapshot.hasError) {
-              return const _EmptyState(
-                icon: Icons.error_outline_rounded,
-                title: 'Could not load notifications',
-                subtitle: 'Check your connection and Firestore permissions.',
-              );
-            }
+                if (friendSnapshot.hasError ||
+                    conversationSnapshot.hasError ||
+                    notificationSnapshot.hasError) {
+                  return const _EmptyState(
+                    icon: Icons.error_outline_rounded,
+                    title: 'Could not load notifications',
+                    subtitle:
+                        'Check your connection and Firestore permissions.',
+                  );
+                }
 
-            final requests = friendSnapshot.data ?? const <FriendRequest>[];
-            final conversations =
-                conversationSnapshot.data ?? const <Conversation>[];
-            final unreadConversations = conversations
-                .where(
-                  (conversation) =>
-                      conversation.unreadCountFor(_currentUserId) > 0,
-                )
-                .toList(growable: false);
+                final requests =
+                    friendSnapshot.data ?? const <FriendRequest>[];
+                final conversations =
+                    conversationSnapshot.data ?? const <Conversation>[];
+                final notifications =
+                    notificationSnapshot.data ?? const <AppNotification>[];
+                final unreadConversations = conversations
+                    .where(
+                      (conversation) =>
+                          conversation.unreadCountFor(_currentUserId) > 0,
+                    )
+                    .toList(growable: false);
+                final unreadNotificationCount = notifications
+                    .where((notification) => !notification.isRead)
+                    .length;
+                final groupedNotifications = _groupByDay(notifications);
 
-            if (requests.isEmpty && unreadConversations.isEmpty) {
-              return const _EmptyState(
-                icon: Icons.notifications_none_rounded,
-                title: 'You are all caught up',
-                subtitle: 'New friend requests and messages will appear here.',
-              );
-            }
+                if (requests.isEmpty &&
+                    unreadConversations.isEmpty &&
+                    notifications.isEmpty) {
+                  return const _EmptyState(
+                    icon: Icons.notifications_none_rounded,
+                    title: 'You are all caught up',
+                    subtitle:
+                        'New friend requests, messages and activity will '
+                        'appear here.',
+                  );
+                }
 
-            return ListView(
-              padding: const EdgeInsets.fromLTRB(18, 10, 18, 32),
-              children: [
-                if (requests.isNotEmpty) ...[
-                  _SectionHeader(
-                    title: 'Friend requests',
-                    count: requests.length,
-                  ),
-                  const SizedBox(height: 10),
-                  for (final request in requests) ...[
-                    _FriendRequestCard(
-                      request: request,
-                      isProcessing: _processingRequestIds.contains(
-                        request.senderId,
+                return ListView(
+                  padding: const EdgeInsets.fromLTRB(18, 10, 18, 32),
+                  children: [
+                    if (requests.isNotEmpty) ...[
+                      _SectionHeader(
+                        title: 'Friend requests',
+                        count: requests.length,
                       ),
-                      onAccept: () => _acceptRequest(request),
-                      onDecline: () => _declineRequest(request),
-                    ),
-                    const SizedBox(height: 10),
+                      const SizedBox(height: 10),
+                      for (final request in requests) ...[
+                        _FriendRequestCard(
+                          request: request,
+                          isProcessing: _processingRequestIds.contains(
+                            request.senderId,
+                          ),
+                          onAccept: () => _acceptRequest(request),
+                          onDecline: () => _declineRequest(request),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                    ],
+                    if (unreadConversations.isNotEmpty) ...[
+                      if (requests.isNotEmpty) const SizedBox(height: 14),
+                      _SectionHeader(
+                        title: 'Unread messages',
+                        count: unreadConversations.fold<int>(
+                          0,
+                          (sum, conversation) =>
+                              sum +
+                              conversation.unreadCountFor(_currentUserId),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      for (final conversation in unreadConversations) ...[
+                        _UnreadMessageCard(
+                          conversation: conversation,
+                          currentUserId: _currentUserId,
+                          onTap: () => _openConversation(conversation),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                    ],
+                    if (notifications.isNotEmpty) ...[
+                      if (requests.isNotEmpty || unreadConversations.isNotEmpty)
+                        const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _SectionHeader(
+                              title: 'Activity',
+                              count: unreadNotificationCount,
+                            ),
+                          ),
+                          if (unreadNotificationCount > 0)
+                            TextButton(
+                              onPressed: _markAllNotificationsRead,
+                              child: const Text(
+                                'Mark all read',
+                                style: TextStyle(
+                                  color: _primary,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      for (final entry in groupedNotifications.entries) ...[
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(2, 6, 2, 8),
+                          child: Text(
+                            entry.key,
+                            style: const TextStyle(
+                              color: _secondaryText,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.4,
+                            ),
+                          ),
+                        ),
+                        for (final notification in entry.value) ...[
+                          _NotificationCard(
+                            notification: notification,
+                            onTap: () => _openNotification(notification),
+                            onDismissed: () =>
+                                _deleteNotification(notification),
+                          ),
+                          const SizedBox(height: 10),
+                        ],
+                      ],
+                      if (notifications.length >= _notificationsLimit)
+                        Center(
+                          child: TextButton(
+                            onPressed: () => setState(
+                              () => _notificationsLimit += 50,
+                            ),
+                            child: const Text(
+                              'Load more',
+                              style: TextStyle(
+                                color: _secondaryText,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ],
-                ],
-                if (unreadConversations.isNotEmpty) ...[
-                  if (requests.isNotEmpty) const SizedBox(height: 14),
-                  _SectionHeader(
-                    title: 'Unread messages',
-                    count: unreadConversations.fold<int>(
-                      0,
-                      (sum, conversation) =>
-                          sum + conversation.unreadCountFor(_currentUserId),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  for (final conversation in unreadConversations) ...[
-                    _UnreadMessageCard(
-                      conversation: conversation,
-                      currentUserId: _currentUserId,
-                      onTap: () => _openConversation(conversation),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-                ],
-              ],
+                );
+              },
             );
           },
         );
       },
     );
+  }
+
+  Map<String, List<AppNotification>> _groupByDay(
+    List<AppNotification> notifications,
+  ) {
+    final grouped = <String, List<AppNotification>>{};
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+
+    for (final notification in notifications) {
+      final createdAt = notification.createdAt;
+      final String label;
+      if (createdAt == null) {
+        label = 'Earlier';
+      } else {
+        final day = DateTime(createdAt.year, createdAt.month, createdAt.day);
+        if (day == today) {
+          label = 'Today';
+        } else if (day == yesterday) {
+          label = 'Yesterday';
+        } else {
+          label =
+              '${day.day.toString().padLeft(2, '0')}/'
+              '${day.month.toString().padLeft(2, '0')}/${day.year}';
+        }
+      }
+      grouped.putIfAbsent(label, () => []).add(notification);
+    }
+    return grouped;
   }
 }
 
@@ -512,6 +671,151 @@ class _UnreadMessageCard extends StatelessWidget {
               const SizedBox(width: 4),
               const Icon(Icons.chevron_right_rounded, color: Color(0xFF766D82)),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NotificationCard extends StatelessWidget {
+  const _NotificationCard({
+    required this.notification,
+    required this.onTap,
+    required this.onDismissed,
+  });
+
+  final AppNotification notification;
+  final VoidCallback onTap;
+  final VoidCallback onDismissed;
+
+  static const Map<NotificationType, IconData> _icons = {
+    NotificationType.friendRequest: Icons.person_add_alt_1_rounded,
+    NotificationType.friendAccepted: Icons.people_alt_rounded,
+    NotificationType.follow: Icons.favorite_rounded,
+    NotificationType.clubInvite: Icons.groups_rounded,
+    NotificationType.clubInviteAccepted: Icons.groups_rounded,
+    NotificationType.roomInvite: Icons.mic_rounded,
+    NotificationType.broadcastInvite: Icons.campaign_rounded,
+    NotificationType.directMessage: Icons.chat_bubble_rounded,
+    NotificationType.mention: Icons.alternate_email_rounded,
+    NotificationType.reply: Icons.reply_rounded,
+    NotificationType.achievementUnlocked: Icons.emoji_events_rounded,
+    NotificationType.moderation: Icons.shield_rounded,
+    NotificationType.system: Icons.info_rounded,
+  };
+
+  String _relativeTime(DateTime? time) {
+    if (time == null) return '';
+    final diff = DateTime.now().difference(time);
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${time.day.toString().padLeft(2, '0')}/'
+        '${time.month.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dismissible(
+      key: ValueKey(notification.id),
+      direction: DismissDirection.endToStart,
+      onDismissed: (_) => onDismissed(),
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        decoration: BoxDecoration(
+          color: const Color(0xFF481C30),
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: const Icon(Icons.delete_outline_rounded, color: Colors.white),
+      ),
+      child: Material(
+        color: _NotificationsScreenState._surface,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: notification.isRead
+                    ? _NotificationsScreenState._border
+                    : _NotificationsScreenState._primary.withValues(
+                        alpha: 0.45,
+                      ),
+              ),
+            ),
+            child: Row(
+              children: [
+                Stack(
+                  children: [
+                    _Avatar(
+                      name: notification.actorName,
+                      photoUrl: notification.actorPhotoUrl ?? '',
+                    ),
+                    Positioned(
+                      right: -2,
+                      bottom: -2,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF1B1730),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          _icons[notification.type] ??
+                              Icons.notifications_rounded,
+                          color: _NotificationsScreenState._primary,
+                          size: 13,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        notification.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                          height: 1.3,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _relativeTime(notification.createdAt),
+                        style: const TextStyle(
+                          color: _NotificationsScreenState._secondaryText,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (!notification.isRead) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    width: 9,
+                    height: 9,
+                    decoration: const BoxDecoration(
+                      color: _NotificationsScreenState._primary,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       ),
