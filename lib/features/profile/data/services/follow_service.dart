@@ -1,15 +1,23 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+
 import '../models/follow_user.dart';
 
 class FollowService {
-  FollowService({FirebaseFirestore? firestore, FirebaseAuth? auth})
-    : _firestore = firestore ?? FirebaseFirestore.instance,
-      _auth = auth ?? FirebaseAuth.instance;
+  FollowService({
+    FirebaseFirestore? firestore,
+    FirebaseAuth? auth,
+    NotificationService? notificationService,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _auth = auth ?? FirebaseAuth.instance,
+       _notifications = notificationService ?? NotificationService();
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
+  final NotificationService _notifications;
 
   String get _uid {
     final user = _auth.currentUser;
@@ -93,6 +101,16 @@ class FollowService {
       });
       transaction.update(targetRef, {'followerCount': FieldValue.increment(1)});
     });
+
+    try {
+      await _notifications.notify(
+        recipientId: targetUserId,
+        type: NotificationType.follow,
+        dedupeKey: 'follow:$currentUserId',
+      );
+    } catch (_) {
+      // Best-effort — the follow edge itself already succeeded above.
+    }
   }
 
   Future<void> unfollow(String targetUserId) async {

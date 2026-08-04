@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+
 import '../models/friend_request.dart';
 import '../models/friend_user.dart';
 
@@ -15,12 +18,17 @@ enum FriendRelationshipStatus {
 }
 
 class FriendService {
-  FriendService({FirebaseFirestore? firestore, FirebaseAuth? auth})
-    : _firestore = firestore ?? FirebaseFirestore.instance,
-      _auth = auth ?? FirebaseAuth.instance;
+  FriendService({
+    FirebaseFirestore? firestore,
+    FirebaseAuth? auth,
+    NotificationService? notificationService,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _auth = auth ?? FirebaseAuth.instance,
+       _notifications = notificationService ?? NotificationService();
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
+  final NotificationService _notifications;
 
   CollectionReference<Map<String, dynamic>> get _users =>
       _firestore.collection('users');
@@ -221,7 +229,7 @@ class FriendService {
         .collection('friendRequests')
         .doc(receiver.id);
 
-    await _firestore.runTransaction((tx) async {
+    final mutualAccept = await _firestore.runTransaction<bool>((tx) async {
       final snapshots = await Future.wait([
         tx.get(myFriend),
         tx.get(outgoing),
@@ -254,7 +262,7 @@ class FriendService {
         tx.update(_users.doc(receiver.id), {
           'friendCount': FieldValue.increment(1),
         });
-        return;
+        return true;
       }
 
       tx.set(outgoing, {
@@ -271,7 +279,21 @@ class FriendService {
             .doc(receiver.id),
         {'receiverId': receiver.id, 'createdAt': FieldValue.serverTimestamp()},
       );
+      return false;
     });
+
+    try {
+      await _notifications.notify(
+        recipientId: receiver.id,
+        type: mutualAccept
+            ? NotificationType.friendAccepted
+            : NotificationType.friendRequest,
+        dedupeKey: mutualAccept ? null : 'friendRequest:${sender.uid}',
+      );
+    } catch (_) {
+      // Best-effort: the friend request/friendship itself already
+      // succeeded above, a notification failure shouldn't undo that.
+    }
   }
 
   Future<void> cancelFriendRequest(String receiverId) async {
@@ -314,6 +336,13 @@ class FriendService {
       tx.delete(requestRef);
       tx.delete(senderDoc.collection('sentFriendRequests').doc(me.uid));
     });
+
+    try {
+      await _notifications.notify(
+        recipientId: request.senderId,
+        type: NotificationType.friendAccepted,
+      );
+    } catch (_) {}
   }
 
   Future<void> declineFriendRequest(String senderId) async {

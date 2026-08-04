@@ -3,6 +3,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 
 class ChatPresence {
   const ChatPresence({required this.isOnline, required this.lastSeen});
@@ -12,12 +14,17 @@ class ChatPresence {
 }
 
 class MessageService {
-  MessageService({FirebaseFirestore? firestore, FirebaseAuth? auth})
-    : _firestore = firestore ?? FirebaseFirestore.instance,
-      _auth = auth ?? FirebaseAuth.instance;
+  MessageService({
+    FirebaseFirestore? firestore,
+    FirebaseAuth? auth,
+    NotificationService? notificationService,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _auth = auth ?? FirebaseAuth.instance,
+       _notifications = notificationService ?? NotificationService();
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
+  final NotificationService _notifications;
 
   CollectionReference<Map<String, dynamic>> get _conversations =>
       _firestore.collection('conversations');
@@ -233,6 +240,20 @@ class MessageService {
     });
 
     await batch.commit();
+
+    final isReplyToRecipient =
+        replyTo != null && replyTo.senderId == recipientId;
+    try {
+      await _notifications.notify(
+        recipientId: recipientId,
+        type: isReplyToRecipient
+            ? NotificationType.reply
+            : NotificationType.directMessage,
+        targetId: conversationId,
+      );
+    } catch (_) {
+      // Best-effort — the message itself already sent above.
+    }
   }
 
   Future<void> editMessage({

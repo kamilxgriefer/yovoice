@@ -8,6 +8,8 @@ import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/models/club_channel.dart';
 import 'package:yovoice/features/clubs/data/models/club_invite.dart';
 import 'package:yovoice/features/clubs/data/models/club_member.dart';
+import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 
 class ClubService {
   ClubService({
@@ -15,15 +17,18 @@ class ClubService {
     FirebaseAuth? auth,
     FirebaseStorage? storage,
     FirebaseFunctions? functions,
+    NotificationService? notificationService,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _storage = storage ?? FirebaseStorage.instance,
-       _functions = functions ?? FirebaseFunctions.instance;
+       _functions = functions ?? FirebaseFunctions.instance,
+       _notifications = notificationService ?? NotificationService();
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final FirebaseStorage _storage;
   final FirebaseFunctions _functions;
+  final NotificationService _notifications;
 
   CollectionReference<Map<String, dynamic>> get _clubs =>
       _firestore.collection('clubs');
@@ -505,6 +510,7 @@ class ClubService {
     final inviterName = (inviterSnapshot.data()?['displayName'] as String?)
         ?.trim();
 
+    String? clubName;
     await _firestore.runTransaction((transaction) async {
       final clubSnapshot = await transaction.get(clubRef);
       final memberSnapshot = await transaction.get(memberRef);
@@ -521,6 +527,7 @@ class ClubService {
       }
 
       final club = Club.fromFirestore(clubSnapshot);
+      clubName = club.name;
       transaction.set(inviteRef, {
         'clubId': clubId,
         'clubName': club.name,
@@ -534,6 +541,18 @@ class ClubService {
         'createdAt': FieldValue.serverTimestamp(),
       });
     });
+
+    try {
+      await _notifications.notify(
+        recipientId: friendId,
+        type: NotificationType.clubInvite,
+        targetId: clubId,
+        targetLabel: clubName,
+        dedupeKey: 'clubInvite:$clubId:${_user.uid}',
+      );
+    } catch (_) {
+      // Best-effort — the invite doc itself already succeeded above.
+    }
   }
 
   Future<void> cancelClubInvite({
@@ -610,6 +629,17 @@ class ClubService {
       });
       transaction.delete(inviteRef);
     });
+
+    try {
+      await _notifications.notify(
+        recipientId: invite.inviterId,
+        type: NotificationType.clubInviteAccepted,
+        targetId: invite.clubId,
+        targetLabel: invite.clubName,
+      );
+    } catch (_) {
+      // Best-effort — membership itself already succeeded above.
+    }
   }
 
   Future<void> declineClubInvite(ClubInvite invite) async {

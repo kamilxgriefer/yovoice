@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 
 class BroadcastHandRequest {
@@ -31,12 +33,17 @@ class BroadcastHandRequest {
 }
 
 class RoomExperienceService {
-  RoomExperienceService({FirebaseFirestore? firestore, FirebaseAuth? auth})
-    : _firestore = firestore ?? FirebaseFirestore.instance,
-      _auth = auth ?? FirebaseAuth.instance;
+  RoomExperienceService({
+    FirebaseFirestore? firestore,
+    FirebaseAuth? auth,
+    NotificationService? notificationService,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _auth = auth ?? FirebaseAuth.instance,
+       _notifications = notificationService ?? NotificationService();
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
+  final NotificationService _notifications;
 
   DocumentReference<Map<String, dynamic>> _room(String roomId) =>
       _firestore.collection('rooms').doc(roomId);
@@ -161,6 +168,22 @@ class RoomExperienceService {
     }, SetOptions(merge: true));
     batch.delete(roomRef.collection('handRequests').doc(request.userId));
     await batch.commit();
+
+    try {
+      final isBroadcast = RoomExperience.fromValue(
+        data['experience'],
+      ).isBroadcast;
+      await _notifications.notify(
+        recipientId: request.userId,
+        type: isBroadcast
+            ? NotificationType.broadcastInvite
+            : NotificationType.roomInvite,
+        targetId: roomId,
+        targetLabel: data['name'] as String?,
+      );
+    } catch (_) {
+      // Best-effort — the stage invite itself already succeeded above.
+    }
   }
 
   Future<void> moveToAudience({

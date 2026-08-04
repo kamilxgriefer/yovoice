@@ -70,6 +70,14 @@ const { transferClubOwnershipSelf } = require("./clubs/ownership");
 
 /*
 |--------------------------------------------------------------------------
+| Notifications
+|--------------------------------------------------------------------------
+*/
+
+const { onNotificationCreated } = require("./notifications/push");
+
+/*
+|--------------------------------------------------------------------------
 | User Management
 |--------------------------------------------------------------------------
 */
@@ -150,3 +158,11 @@ exports.getFriendSuggestions = getFriendSuggestions;
 */
 
 exports.transferClubOwnershipSelf = transferClubOwnershipSelf;
+
+/*
+|--------------------------------------------------------------------------
+| Notifications
+|--------------------------------------------------------------------------
+*/
+
+exports.onNotificationCreated = onNotificationCreated;
