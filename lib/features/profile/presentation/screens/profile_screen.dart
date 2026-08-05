@@ -2,6 +2,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/features/achievements/data/achievement_catalog.dart';
 import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
 import 'package:yovoice/features/achievements/data/services/achievement_service.dart';
@@ -150,7 +151,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       stream: _profileService.watchCurrentProfile(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return _ErrorView(message: snapshot.error.toString());
+          return _ErrorView(message: friendlyErrorMessage(snapshot.error!));
         }
         final profile = snapshot.data;
         if (profile == null) {

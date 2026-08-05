@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -343,7 +344,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
           return _EmptyState(
             icon: Icons.cloud_off_rounded,
             title: 'Could not load friends',
-            subtitle: snapshot.error.toString(),
+            subtitle: friendlyErrorMessage(snapshot.error!),
           );
         }
 
