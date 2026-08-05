@@ -61,11 +61,19 @@ class AchievementService {
           .toList(growable: false);
       final best = AchievementCatalog.bestUnlocked(stats);
 
+      final unlockTimestamps = <String, dynamic>{
+        ...(data['unlockedTitleTimestamps'] as Map<String, dynamic>? ??
+            const <String, dynamic>{}),
+        for (final achievement in newlyUnlocked)
+          achievement.id: FieldValue.serverTimestamp(),
+      };
+
       transaction.set(_user, {
         fieldName: next,
         'unlockedTitleIds': unlocked
             .map((item) => item.id)
             .toList(growable: false),
+        'unlockedTitleTimestamps': unlockTimestamps,
         if (best != null && (data['selectedTitleId'] as String?) == null)
           'selectedTitleId': best.id,
         'achievementsUpdatedAt': FieldValue.serverTimestamp(),
@@ -97,10 +105,25 @@ class AchievementService {
     final unlocked = AchievementCatalog.unlockedBy(stats);
     final best = AchievementCatalog.bestUnlocked(stats);
 
+    final previouslyUnlocked =
+        (data['unlockedTitleIds'] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<String>()
+            .toSet();
+    final newlyUnlocked = unlocked.where(
+      (achievement) => !previouslyUnlocked.contains(achievement.id),
+    );
+    final unlockTimestamps = <String, dynamic>{
+      ...(data['unlockedTitleTimestamps'] as Map<String, dynamic>? ??
+          const <String, dynamic>{}),
+      for (final achievement in newlyUnlocked)
+        achievement.id: FieldValue.serverTimestamp(),
+    };
+
     await _user.set({
       'unlockedTitleIds': unlocked
           .map((item) => item.id)
           .toList(growable: false),
+      'unlockedTitleTimestamps': unlockTimestamps,
       if (best != null && (data['selectedTitleId'] as String?) == null)
         'selectedTitleId': best.id,
       'achievementsUpdatedAt': FieldValue.serverTimestamp(),

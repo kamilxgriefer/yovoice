@@ -40,6 +40,27 @@ class MomentService {
         });
   }
 
+  /// The signed-in user's own Voice Moments, published and unpublished
+  /// (drafts still uploading or that failed to finish publishing).
+  Stream<List<VoiceMoment>> watchMyMoments() {
+    final user = _auth.currentUser;
+    if (user == null) return Stream.value(const <VoiceMoment>[]);
+
+    return _moments.where('authorId', isEqualTo: user.uid).snapshots().map((
+      snapshot,
+    ) {
+      final moments = snapshot.docs
+          .map(VoiceMoment.fromFirestore)
+          .toList(growable: false);
+      moments.sort((a, b) {
+        final aDate = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final bDate = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return bDate.compareTo(aDate);
+      });
+      return moments;
+    });
+  }
+
   Future<String> publishRecordedMoment({
     required String localFilePath,
     required int durationSeconds,

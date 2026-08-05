@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:yovoice/features/achievements/presentation/screens/achievements_screen.dart';
 import 'package:yovoice/features/clubs/presentation/screens/clubs_screen.dart';
+import 'package:yovoice/features/creator/presentation/screens/creator_studio_screen.dart';
 import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notification_preferences_screen.dart';
+import 'package:yovoice/features/settings/presentation/screens/settings_screen.dart';
 
 enum MoreDestination {
   friends,
@@ -31,36 +34,9 @@ Widget moreDestinationScreen(MoreDestination destination) {
     MoreDestination.discover => const DiscoverScreen(),
     MoreDestination.clubs => const ClubsScreen(),
     MoreDestination.notifications => const NotificationPreferencesScreen(),
-    MoreDestination.achievements => const _MoreFeatureScreen(
-      icon: Icons.emoji_events_rounded,
-      title: 'Awards',
-      subtitle: 'Track achievements and your progress across YoVoice.',
-      items: [
-        'Unlocked achievements',
-        'Voice and community milestones',
-        'Upcoming rewards and challenges',
-      ],
-    ),
-    MoreDestination.creatorStudio => const _MoreFeatureScreen(
-      icon: Icons.auto_graph_rounded,
-      title: 'Creator Studio',
-      subtitle: 'Tools for creators, broadcasts and audience growth.',
-      items: [
-        'Broadcast and Voice Moment overview',
-        'Followers and audience insights',
-        'Creator profile tools',
-      ],
-    ),
-    MoreDestination.settings => const _MoreFeatureScreen(
-      icon: Icons.settings_rounded,
-      title: 'Settings',
-      subtitle: 'Manage your account, privacy and application preferences.',
-      items: [
-        'Account and profile preferences',
-        'Privacy and notification controls',
-        'Appearance and app behaviour',
-      ],
-    ),
+    MoreDestination.achievements => const AwardsHubScreen(),
+    MoreDestination.creatorStudio => const CreatorStudioScreen(),
+    MoreDestination.settings => const SettingsScreen(),
   };
 }
 
@@ -115,111 +91,6 @@ class MoreDestinationPage extends StatelessWidget {
         context: context,
         removeTop: true,
         child: child,
-      ),
-    );
-  }
-}
-
-class _MoreFeatureScreen extends StatelessWidget {
-  const _MoreFeatureScreen({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.items,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final List<String> items;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF080711),
-      body: Container(
-        width: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment(-.85, -.95),
-            radius: 1.25,
-            colors: [Color(0xFF25103A), Color(0xFF100B1B), Color(0xFF080711)],
-            stops: [0, .4, 1],
-          ),
-        ),
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 30, 20, 40),
-          children: [
-            Container(
-              width: 72,
-              height: 72,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: const Color(0xFF9D20FF).withValues(alpha: .18),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: const Color(0xFF5A2A75)),
-              ),
-              child: Icon(icon, color: const Color(0xFFD28AFF), size: 35),
-            ),
-            const SizedBox(height: 22),
-            Text(
-              title,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 30,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              subtitle,
-              style: const TextStyle(
-                color: Color(0xFFA69CB2),
-                fontSize: 15,
-                height: 1.4,
-              ),
-            ),
-            const SizedBox(height: 28),
-            ...items.map(
-              (item) => Container(
-                margin: const EdgeInsets.only(bottom: 11),
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF181120),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: const Color(0xFF382A46)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.check_circle_outline_rounded,
-                      color: Color(0xFFB348FF),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        item,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'This section is now part of the navigation and is ready for its full feature implementation in the next development stage.',
-              style: TextStyle(
-                color: Color(0xFF8F849B),
-                fontSize: 12,
-                height: 1.45,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

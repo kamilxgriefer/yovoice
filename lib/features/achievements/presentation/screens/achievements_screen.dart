@@ -1,9 +1,130 @@
 import 'package:flutter/material.dart';
 
 import '../../../profile/data/models/user_profile.dart';
+import '../../../profile/data/services/profile_service.dart';
 import '../../data/achievement_catalog.dart';
 import '../../data/models/achievement_definition.dart';
 import '../../data/services/achievement_service.dart';
+
+/// Self-contained entry point for the Awards / achievements hub reached
+/// from the More sheet — streams the current profile itself so callers
+/// (like [MoreDestination.achievements]) don't need to thread one through.
+class AwardsHubScreen extends StatelessWidget {
+  const AwardsHubScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<UserProfile>(
+      stream: ProfileService().watchCurrentProfile(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Scaffold(
+            backgroundColor: const Color(0xFF09050F),
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  '${snapshot.error}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ),
+          );
+        }
+        final profile = snapshot.data;
+        if (profile == null) {
+          return const Scaffold(
+            backgroundColor: Color(0xFF09050F),
+            body: Center(child: CircularProgressIndicator(color: Color(0xFFB348FF))),
+          );
+        }
+        return AchievementsScreen(profile: profile);
+      },
+    );
+  }
+}
+
+enum AchievementCategory { creator, community, voice, friends }
+
+const Map<AchievementCategory, Set<String>> _categoryMetrics = {
+  AchievementCategory.creator: {'rooms', 'hostMinutes', 'moments'},
+  AchievementCategory.community: {'communities', 'messages', 'reactions'},
+  AchievementCategory.voice: {'voiceMinutes', 'activeDays'},
+  AchievementCategory.friends: {'friends', 'followers'},
+};
+
+String _categoryLabel(AchievementCategory category) => switch (category) {
+  AchievementCategory.creator => 'Creator',
+  AchievementCategory.community => 'Community',
+  AchievementCategory.voice => 'Voice',
+  AchievementCategory.friends => 'Friends',
+};
+
+IconData _categoryIcon(AchievementCategory category) => switch (category) {
+  AchievementCategory.creator => Icons.auto_awesome_rounded,
+  AchievementCategory.community => Icons.hub_rounded,
+  AchievementCategory.voice => Icons.graphic_eq_rounded,
+  AchievementCategory.friends => Icons.people_alt_rounded,
+};
+
+int _xpForRarity(AchievementRarity rarity) => switch (rarity) {
+  AchievementRarity.common => 10,
+  AchievementRarity.uncommon => 25,
+  AchievementRarity.rare => 60,
+  AchievementRarity.epic => 150,
+  AchievementRarity.legendary => 400,
+  AchievementRarity.mythic => 1000,
+};
+
+const int _xpPerLevel = 300;
+
+/// Derived from real unlocked-achievement rarity — never a fabricated number.
+class AwardsProgress {
+  AwardsProgress(UserProfile profile)
+    : unlocked = profile.unlockedTitleIds
+          .map(AchievementCatalog.byId)
+          .whereType<AchievementDefinition>()
+          .toList(growable: false),
+      totalXp = profile.unlockedTitleIds
+          .map(AchievementCatalog.byId)
+          .whereType<AchievementDefinition>()
+          .fold<int>(0, (sum, item) => sum + _xpForRarity(item.rarity)),
+      recentUnlocks = (profile.unlockedTitleTimestamps.entries
+              .map(
+                (entry) => (
+                  achievement: AchievementCatalog.byId(entry.key),
+                  unlockedAt: entry.value,
+                ),
+              )
+              .where((item) => item.achievement != null)
+              .toList()
+            ..sort((a, b) => b.unlockedAt.compareTo(a.unlockedAt)))
+          .map((item) => (item.achievement!, item.unlockedAt))
+          .toList(growable: false);
+
+  final List<AchievementDefinition> unlocked;
+  final int totalXp;
+
+  /// Only achievements with a real recorded unlock timestamp, newest first.
+  /// Achievements unlocked before this tracking existed simply won't appear
+  /// here — never backfilled with a guessed date.
+  final List<(AchievementDefinition, DateTime)> recentUnlocks;
+
+  int get level => 1 + (totalXp ~/ _xpPerLevel);
+  int get xpIntoLevel => totalXp % _xpPerLevel;
+  double get levelProgress => xpIntoLevel / _xpPerLevel;
+  int get totalCount => AchievementCatalog.all.length;
+  int get unlockedCount => unlocked.length;
+  int get lockedCount => totalCount - unlockedCount;
+  double get completionRatio =>
+      totalCount == 0 ? 0 : unlockedCount / totalCount;
+
+  int countForCategory(AchievementCategory category) {
+    final metrics = _categoryMetrics[category] ?? const <String>{};
+    return unlocked.where((item) => metrics.contains(item.metric)).length;
+  }
+}
 
 class AchievementsScreen extends StatefulWidget {
   const AchievementsScreen({required this.profile, super.key});
@@ -17,10 +138,22 @@ class AchievementsScreen extends StatefulWidget {
 class _AchievementsScreenState extends State<AchievementsScreen> {
   final _service = AchievementService();
   bool _saving = false;
+  AchievementCategory? _selectedCategory;
 
   @override
   Widget build(BuildContext context) {
     final unlockedIds = widget.profile.unlockedTitleIds.toSet();
+    final awardsProgress = AwardsProgress(widget.profile);
+    final category = _selectedCategory;
+    final visibleAchievements = category == null
+        ? AchievementCatalog.all
+        : AchievementCatalog.all
+              .where(
+                (item) =>
+                    (_categoryMetrics[category] ?? const <String>{})
+                        .contains(item.metric),
+              )
+              .toList(growable: false);
 
     return Scaffold(
       backgroundColor: const Color(0xFF09050F),
@@ -38,7 +171,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
             ),
             const SizedBox(height: 2),
             const Text(
-              'Choose the title shown on your profile',
+              'Your progress across YoVoice',
               style: TextStyle(
                 color: Color(0xFFA79CAD),
                 fontSize: 12,
@@ -52,56 +185,446 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
         builder: (context, constraints) {
           final isWide = constraints.maxWidth >= 900;
 
-          return GridView.builder(
-            padding: EdgeInsets.fromLTRB(
-              isWide ? 24 : 16,
-              14,
-              isWide ? 24 : 16,
-              40,
-            ),
-            gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: isWide ? 560 : 520,
-              mainAxisExtent: 250,
-              crossAxisSpacing: 16,
-              mainAxisSpacing: 16,
-            ),
-            itemCount: AchievementCatalog.all.length,
-            itemBuilder: (context, index) {
-              final achievement = AchievementCatalog.all[index];
-              final isUnlocked = unlockedIds.contains(achievement.id);
-              final progress =
-                  widget.profile.achievementStats[achievement.metric] ?? 0;
-              final isSelected =
-                  widget.profile.selectedTitleId == achievement.id;
+          return CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(
+                child: _AwardsHeader(
+                  progress: awardsProgress,
+                  selectedCategory: _selectedCategory,
+                  onSelectCategory: (value) =>
+                      setState(() => _selectedCategory = value),
+                  isWide: isWide,
+                ),
+              ),
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(
+                  isWide ? 24 : 16,
+                  4,
+                  isWide ? 24 : 16,
+                  40,
+                ),
+                sliver: SliverGrid(
+                  gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: isWide ? 560 : 520,
+                    mainAxisExtent: 250,
+                    crossAxisSpacing: 16,
+                    mainAxisSpacing: 16,
+                  ),
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final achievement = visibleAchievements[index];
+                      final isUnlocked = unlockedIds.contains(achievement.id);
+                      final progress =
+                          widget.profile.achievementStats[achievement.metric] ??
+                          0;
+                      final isSelected =
+                          widget.profile.selectedTitleId == achievement.id;
 
-              return _AchievementCard(
-                achievement: achievement,
-                progress: progress,
-                unlocked: isUnlocked,
-                selected: isSelected,
-                saving: _saving,
-                onSelect: isUnlocked
-                    ? () async {
-                        final navigator = Navigator.of(context);
+                      return _AchievementCard(
+                        achievement: achievement,
+                        progress: progress,
+                        unlocked: isUnlocked,
+                        selected: isSelected,
+                        saving: _saving,
+                        onSelect: isUnlocked
+                            ? () async {
+                                final navigator = Navigator.of(context);
 
-                        setState(() => _saving = true);
-                        try {
-                          await _service.selectTitle(achievement.id);
+                                setState(() => _saving = true);
+                                try {
+                                  await _service.selectTitle(achievement.id);
 
-                          if (!mounted) return;
-                          navigator.pop();
-                        } finally {
-                          if (mounted) {
-                            setState(() => _saving = false);
-                          }
-                        }
-                      }
-                    : null,
-              );
-            },
+                                  if (!mounted) return;
+                                  navigator.pop();
+                                } finally {
+                                  if (mounted) {
+                                    setState(() => _saving = false);
+                                  }
+                                }
+                              }
+                            : null,
+                      );
+                    },
+                    childCount: visibleAchievements.length,
+                  ),
+                ),
+              ),
+            ],
           );
         },
       ),
+    );
+  }
+}
+
+class _AwardsHeader extends StatelessWidget {
+  const _AwardsHeader({
+    required this.progress,
+    required this.selectedCategory,
+    required this.onSelectCategory,
+    required this.isWide,
+  });
+
+  final AwardsProgress progress;
+  final AchievementCategory? selectedCategory;
+  final ValueChanged<AchievementCategory?> onSelectCategory;
+  final bool isWide;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(isWide ? 24 : 16, 10, isWide ? 24 : 16, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _LevelCard(progress: progress),
+          const SizedBox(height: 14),
+          _StatsRow(progress: progress),
+          const SizedBox(height: 18),
+          const Text(
+            'Categories',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 40,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                _CategoryChip(
+                  label: 'All',
+                  icon: Icons.grid_view_rounded,
+                  count: progress.unlockedCount,
+                  selected: selectedCategory == null,
+                  onTap: () => onSelectCategory(null),
+                ),
+                for (final category in AchievementCategory.values) ...[
+                  const SizedBox(width: 8),
+                  _CategoryChip(
+                    label: _categoryLabel(category),
+                    icon: _categoryIcon(category),
+                    count: progress.countForCategory(category),
+                    selected: selectedCategory == category,
+                    onTap: () => onSelectCategory(category),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          _RecentUnlocks(progress: progress),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+class _LevelCard extends StatelessWidget {
+  const _LevelCard({required this.progress});
+  final AwardsProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF3A1160), Color(0xFF190B29)],
+        ),
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(color: const Color(0xFF4B2C63)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 62,
+            height: 62,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: const LinearGradient(
+                colors: [Color(0xFFC466FF), Color(0xFF7A1BFF)],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFB348FF).withValues(alpha: .4),
+                  blurRadius: 18,
+                ),
+              ],
+            ),
+            child: Text(
+              '${progress.level}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Level ${progress.level}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(99),
+                  child: LinearProgressIndicator(
+                    value: progress.levelProgress,
+                    minHeight: 8,
+                    backgroundColor: const Color(0xFF2C2033),
+                    color: const Color(0xFFD28AFF),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '${progress.xpIntoLevel} / $_xpPerLevel XP to level ${progress.level + 1}',
+                  style: const TextStyle(color: Color(0xFFC7BBD1), fontSize: 11.5),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatsRow extends StatelessWidget {
+  const _StatsRow({required this.progress});
+  final AwardsProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final tiles = [
+      _StatTile(
+        icon: Icons.lock_open_rounded,
+        value: '${progress.unlockedCount}',
+        label: 'Unlocked',
+        color: const Color(0xFF4DE09E),
+      ),
+      _StatTile(
+        icon: Icons.lock_rounded,
+        value: '${progress.lockedCount}',
+        label: 'Locked',
+        color: const Color(0xFF9F95A6),
+      ),
+      _StatTile(
+        icon: Icons.donut_large_rounded,
+        value: '${(progress.completionRatio * 100).round()}%',
+        label: 'Complete',
+        color: const Color(0xFFD28AFF),
+      ),
+      _StatTile(
+        icon: Icons.bolt_rounded,
+        value: '${progress.totalXp}',
+        label: 'Total XP',
+        color: const Color(0xFFFFA52B),
+      ),
+    ];
+
+    return Row(
+      children: [
+        for (var index = 0; index < tiles.length; index++) ...[
+          if (index > 0) const SizedBox(width: 10),
+          Expanded(child: tiles[index]),
+        ],
+      ],
+    );
+  }
+}
+
+class _StatTile extends StatelessWidget {
+  const _StatTile({
+    required this.icon,
+    required this.value,
+    required this.label,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String value;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF150C1D),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF382741)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 18),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+              fontSize: 15,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: const TextStyle(color: Color(0xFFA99DB3), fontSize: 10.5),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CategoryChip extends StatelessWidget {
+  const _CategoryChip({
+    required this.label,
+    required this.icon,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? const Color(0xFFB348FF) : const Color(0xFF17101F),
+      borderRadius: BorderRadius.circular(99),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(99),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(99),
+            border: Border.all(
+              color: selected ? Colors.transparent : const Color(0xFF382741),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 15, color: selected ? Colors.white : const Color(0xFFB8ADBF)),
+              const SizedBox(width: 6),
+              Text(
+                '$label · $count',
+                style: TextStyle(
+                  color: selected ? Colors.white : const Color(0xFFC7BBD1),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecentUnlocks extends StatelessWidget {
+  const _RecentUnlocks({required this.progress});
+  final AwardsProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final dated = progress.recentUnlocks;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Recent unlocks',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 10),
+        if (dated.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: const Color(0xFF150C1D),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: const Color(0xFF382741)),
+            ),
+            child: const Text(
+              'No achievements unlocked yet. Chat, host rooms and connect with '
+              'friends to earn your first title.',
+              style: TextStyle(color: Color(0xFFA99DB3), fontSize: 12.5, height: 1.4),
+            ),
+          )
+        else
+          SizedBox(
+            height: 88,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: dated.length > 8 ? 8 : dated.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final (achievement, unlockedAt) = dated[index];
+                final palette = _RarityPalette.forRarity(achievement.rarity);
+                return Container(
+                  width: 150,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: palette.surfaceStart,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: palette.border),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(_iconForMetric(achievement.metric), color: palette.accent, size: 18),
+                      const Spacer(),
+                      Text(
+                        achievement.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                      Text(
+                        _relativeTime(unlockedAt),
+                        style: TextStyle(color: palette.accent, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
     );
   }
 }
@@ -587,6 +1110,16 @@ class _RarityPalette {
       ),
     };
   }
+}
+
+String _relativeTime(DateTime date) {
+  final diff = DateTime.now().difference(date);
+  if (diff.inMinutes < 1) return 'Just now';
+  if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+  if (diff.inDays < 1) return '${diff.inHours}h ago';
+  if (diff.inDays < 30) return '${diff.inDays}d ago';
+  final months = diff.inDays ~/ 30;
+  return '${months}mo ago';
 }
 
 IconData _iconForMetric(String metric) {
