@@ -30,7 +30,8 @@ caller's actual participant role — never trusted from the client.
 **Legacy note**: room documents may still contain `experience: 'podcast'`
 from before the room-type rename; the client maps that to `broadcast` for
 backward compatibility. Do not remove that mapping until production data
-is confirmed migrated — see [Decisions.md](Decisions.md).
+is confirmed migrated — see
+[ADR-001](Decisions.md#adr-001-legacy-podcast-room-experience-stays-supported).
 
 ## Clubs
 
@@ -77,9 +78,10 @@ adds:
 - **Category filters**: Creator, Community, Voice, Friends.
 - A genuine **"recent unlocks" feed**, backed by a real
   `unlockedTitleTimestamps` map on the user document (see
-  [Firebase.md](Firebase.md)) — achievements unlocked before that field
-  existed simply don't appear there, rather than being backfilled with a
-  guessed date.
+  [Firebase.md](Firebase.md) and
+  [ADR-010](Decisions.md#adr-010-real-per-achievement-unlock-timestamps))
+  — achievements unlocked before that field existed simply don't appear
+  there, rather than being backfilled with a guessed date.
 
 ## Creator Studio
 

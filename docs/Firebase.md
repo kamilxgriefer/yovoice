@@ -2,7 +2,12 @@
 
 The platform/data layer: Auth, Firestore, Storage, Hosting, App Check,
 email delivery. For the compute layer (Cloud Functions code), see
-[Backend.md](Backend.md).
+[Backend.md](Backend.md); for the reasoning behind the overall
+client-direct-writes model this schema is designed around, see
+[Architecture.md](Architecture.md#the-core-architectural-choice) and
+[ADR-013](Decisions.md#adr-013-clients-write-firestore-directly-cloud-functions-are-reserved-for-privileged-work);
+for the security principles this schema and its rules are held to, see
+[SECURITY.md](SECURITY.md).
 
 ## Project
 
@@ -23,9 +28,15 @@ this Flutter app and `yovoice-website` via the custom Auth domain
 Cloud Functions check `request.auth.token.email_verified` (or the
 equivalent server-side claim) before allowing content-creation/outbound
 actions (posting, creating rooms/clubs/moments, `bootstrapSuperAdmin`).
-See [Decisions.md](Decisions.md) for why registration/login through email
-still routes to Firebase's own hosted action page rather than a custom
-`handleCodeInApp` deep link.
+See [Architecture.md](Architecture.md#authentication-flow) for the full
+sign-up → verify → claim sequence, and
+[ADR-008](Decisions.md#adr-008-resend-smtp-instead-of-firebases-default-email-sender)
+for why registration/login through email still routes to Firebase's own
+hosted action page rather than a custom `handleCodeInApp` deep link.
+Roles (`superAdmin` and friends) live in the same custom-claims mechanism,
+never in a Firestore field — see
+[SECURITY.md](SECURITY.md#identity-and-roles) for why that specific
+choice matters.
 
 ### Email delivery
 
@@ -52,19 +63,22 @@ Notable fields:
 - **`unlockedTitleTimestamps`** on `users/{userId}` — a map of achievement
   id → server timestamp, written by `AchievementService` whenever a title
   is newly unlocked. Exists specifically so the Awards screen's "recent
-  unlocks" feed is real data, not inferred — see `Decisions.md`.
+  unlocks" feed is real data, not inferred — see
+  [ADR-010](Decisions.md#adr-010-real-per-achievement-unlock-timestamps).
 - **`experience`** on `rooms/{roomId}` — `'community'` or `'broadcast'`.
   Legacy documents may still contain `'podcast'`; the client maps that to
   `broadcast` for backward compatibility. **Do not remove that mapping**
   until every production room document has been migrated — see
-  `Decisions.md`.
+  [ADR-001](Decisions.md#adr-001-legacy-podcast-room-experience-stays-supported).
 
 ### Why `rooms/{roomId}/roomMembers` and not `members`
 
 `rooms/{roomId}/members` was renamed to `roomMembers` specifically so it no
 longer collides, as a `collectionGroup()` name, with `clubs/{clubId}/members`
-— see `Decisions.md` for the full story (it was a real, confirmed
-production bug, not a style choice).
+— see
+[ADR-005](Decisions.md#adr-005-roomsroomidmembers-renamed-to-roommembers)
+for the full story (it was a real, confirmed production bug, not a style
+choice).
 
 ### `collectionGroup()` queries need a top-level rule
 
@@ -83,9 +97,13 @@ match /{path=**}/invites/{inviteId} {
 }
 ```
 
-See `firestore-tests/README.md` for the emulator-testing workflow this
-depends on, and [Bugs.md](Bugs.md) / [Decisions.md](Decisions.md) for the
-production incident that made this rule necessary.
+See [TESTING.md](TESTING.md) for the emulator-testing workflow this
+depends on, and [Bugs.md](Bugs.md) /
+[ADR-005](Decisions.md#adr-005-roomsroomidmembers-renamed-to-roommembers)
+for the production incident that made this rule necessary. The design
+principles behind rules like this — check a claim against a real
+document, never trust the request — are collected in
+[SECURITY.md](SECURITY.md#firestore-security-rules--design-principles).
 
 ## Storage
 
@@ -109,7 +127,9 @@ Integrated client-side in the Flutter app
 `AndroidPlayIntegrityProvider`/`AppleAppAttestWithDeviceCheckFallbackProvider`
 in release, `lib/main.dart`). **`enforceAppCheck` is `false` on every Cloud
 Function** — deliberately, pending a token-delivery monitoring period. See
-[Decisions.md](Decisions.md) and [Bugs.md](Bugs.md).
+[ADR-004](Decisions.md#adr-004-firebase-app-check-integrated-client-side-enforcement-deliberately-off),
+[SECURITY.md](SECURITY.md#firebase-app-check), and [Bugs.md](Bugs.md) for
+current status and what this gap does and doesn't expose.
 
 Debug builds print a debug token to the device log on first launch — must
 be registered in **Firebase Console → App Check → Apps → Manage debug
@@ -125,12 +145,13 @@ cd firestore-tests && npm install && npm test
 ```
 
 Full details in [`firestore-tests/README.md`](../firestore-tests/README.md)
-— 43 checks, regression + attack-scenario coverage. Always run against a
-freshly-started emulator before trusting a "green" result; see
-`Decisions.md` for why that distinction matters.
+and [TESTING.md](TESTING.md) — 43 checks, regression + attack-scenario
+coverage. Always run against a freshly-started emulator before trusting a
+"green" result; see
+[ADR-007](Decisions.md#adr-007-firestore-rules-changes-are-always-emulator-tested-against-a-real-collectiongroup-query)
+for why that distinction matters.
 
-Deploy rules/indexes with:
-
-```bash
-firebase deploy --only firestore:rules,firestore:indexes --project yovoice-ec54a
-```
+Deploying rules/indexes and Cloud Functions is manual, on purpose — see
+[DEPLOYMENT.md](DEPLOYMENT.md) for the full reasoning and every deploy
+command in one place, including a non-obvious gotcha in
+`functions/package.json`'s `deploy` script.

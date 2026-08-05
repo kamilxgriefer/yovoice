@@ -1,5 +1,15 @@
 # Documentation Audit
 
+> **Historical record.** This is a snapshot of one specific pass: the
+> initial reorganization into `docs/`. A follow-up pass evolved this into
+> a fuller engineering knowledge base — ADR-format `Decisions.md`,
+> structured `Roadmap.md` entries, an expanded `Architecture.md`, and new
+> docs (`PROJECT_STRUCTURE.md`, `DEVELOPMENT_WORKFLOW.md`, `TESTING.md`,
+> `DEPLOYMENT.md`, `DEPENDENCIES.md`, `SECURITY.md`, `CONTRIBUTING.md`) —
+> see [Sessions/2026-08-06-documentation-evolution.md](Sessions/2026-08-06-documentation-evolution.md)
+> for that pass. The file-by-file audit below is still accurate for what
+> it covers; it just isn't the full current picture of `docs/` anymore.
+
 Full audit of every Markdown file in the repository, performed
 autonomously. Every `.md` file found is listed below with the action
 taken, why, and its new location if it moved.

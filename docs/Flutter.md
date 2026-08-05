@@ -5,7 +5,8 @@
 Dart, Flutter, Material 3. Firebase Authentication, Cloud Firestore,
 Firebase Storage, Cloud Functions, Firebase Cloud Messaging, Firebase App
 Check, Google Sign-In, LiveKit (`livekit_client`), `permission_handler`,
-`url_launcher`, `package_info_plus`.
+`url_launcher`, `package_info_plus`. See [DEPENDENCIES.md](DEPENDENCIES.md)
+for why each of these was chosen over the obvious alternative.
 
 ## State management
 
@@ -14,7 +15,10 @@ existing screens use plain `StatefulWidget` + `StreamBuilder` directly over
 Firestore streams rather than Riverpod providers. Riverpod is available,
 not yet the dominant pattern — don't assume a new screen should use it just
 because it's in `pubspec.yaml`; match what similar existing screens do
-unless there's a specific reason to introduce a provider.
+unless there's a specific reason to introduce a provider. See
+[DEPENDENCIES.md](DEPENDENCIES.md#state-management) for why this isn't
+considered an abandoned migration — Firestore's own `Stream` API already
+covers most of what a state management library would otherwise be for.
 
 ## Structure
 
@@ -35,7 +39,12 @@ Current feature modules: `achievements`, `auth`, `calls`, `chats`, `clubs`,
 `notifications`, `profile`, `rooms`, `settings`.
 
 Shared, cross-feature code lives in `lib/core/` (theme, helpers) and
-`lib/shared/` (widgets) — see [UI.md](UI.md).
+`lib/shared/` (widgets) — see [UI.md](UI.md). For *why* this is
+feature-based rather than layer-based (one global `models/`, `services/`,
+`screens/`), see
+[ADR-015](Decisions.md#adr-015-feature-based-folder-structure-over-layer-based).
+For where this fits in the repo as a whole, see
+[PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md).
 
 ## Navigation
 
@@ -80,14 +89,12 @@ error.
 
 ### Firestore rules
 
-See [Firebase.md](Firebase.md#firestore-rules-testing) for the emulator
-test workflow.
+See [Firebase.md](Firebase.md#firestore-rules-testing) and
+[TESTING.md](TESTING.md) for the emulator test workflow.
 
-## Verification checklist before calling Dart work done
+## Verification before calling Dart work done
 
-1. `flutter analyze` — zero issues.
-2. For UI-facing changes, run it — in the iOS Simulator when possible,
-   verifying the actual golden path plus loading/empty/error states, not
-   just that it compiles.
-3. If a screen can't be visually verified (e.g. no test credentials
-   available), say so explicitly rather than claiming it was checked.
+Short version: `flutter analyze` clean, plus an actual look at UI changes
+rather than trusting that it compiles. Full checklist, and how this fits
+into adding a feature end-to-end, in
+[DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md#verification-checklist-before-calling-something-done).

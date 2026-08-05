@@ -30,12 +30,14 @@ A feature is not done when it compiles. It's done when:
 2. It has real loading, empty, and error states — never a blank screen.
 3. Anything genuinely not built yet is visible and labeled **"Coming soon"**
    rather than hidden or faked. Honesty about what's missing beats a
-   convincing-looking fake.
+   convincing-looking fake — see
+   [ADR-012](Decisions.md#adr-012-coming-soon-instead-of-fabricated-data-or-dead-buttons)
+   for why this is treated as a hard rule, not a style preference.
 4. It matches the app's existing dark, glassy, purple-accented Material 3
-   visual language — see `Architecture.md` for the concrete palette/theme
+   visual language — see [UI.md](UI.md) for the concrete palette/theme
    files, though most existing screens still use consistent inline hex
-   values rather than the shared theme (a known, tracked gap — see
-   `Roadmap.md`).
+   values rather than the shared theme (a known, tracked migration — see
+   [Roadmap.md](Roadmap.md)).
 
 ## Product pillars (what's actually built, not aspirational)
 
@@ -47,6 +49,8 @@ real vs. "Coming soon," and which files/Cloud Functions back it.
 ## What YO Voice is explicitly not (yet)
 
 Not a general text-first chat app, not app-store-distributed today (see
-`Roadmap.md` for distribution status), not monetized. These aren't
-long-term "never" — they're just not where the product is right now, and
-this file should be updated the day that changes.
+[Roadmap.md](Roadmap.md#13-app-store-distribution) for distribution
+status), not monetized (see
+[Roadmap.md](Roadmap.md#4-monetization)). These aren't long-term "never"
+— they're just not where the product is right now, and this file should
+be updated the day that changes.

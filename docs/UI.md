@@ -50,7 +50,11 @@ When a screen needs a feature with no real backend support yet:
 - Never fabricate the data it would show, and never leave a button that
   does nothing with no explanation.
 
-See [Bugs.md](Bugs.md) and [Roadmap.md](Roadmap.md) for the current list of
+This is a product-quality rule, not just a visual convention — see
+[ADR-012](Decisions.md#adr-012-coming-soon-instead-of-fabricated-data-or-dead-buttons)
+for the full reasoning (a convincing fake erodes trust in every *other*
+number on the screen, real ones included, the moment it's noticed). See
+[Bugs.md](Bugs.md) and [Roadmap.md](Roadmap.md) for the current list of
 what's shown this way (2FA, profile visibility, multi-device sessions, app
 language, Creator Studio analytics/monetization, self-serve account
 deletion).
@@ -66,4 +70,4 @@ introducing a third pattern into one file.
 
 For UI changes, start the dev server / simulator and actually look at the
 golden path and edge cases before calling a change done — see
-[Flutter.md](Flutter.md#verification-checklist-before-calling-dart-work-done).
+[DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md#verification-checklist-before-calling-something-done).

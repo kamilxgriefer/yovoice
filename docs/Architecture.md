@@ -1,12 +1,32 @@
 # Architecture
 
-High-level map of how the system fits together. For detail, follow the
-links — this file stays deliberately short so it doesn't drift as fast as
-the specifics do.
+High-level map of how the system fits together, plus the actual flows a
+new engineer needs to hold in their head: how sign-in works, how a write
+gets from a tap to Firestore, when a Cloud Function gets involved, and how
+a voice connection gets established. For per-layer depth, follow the
+links — this file stays a map, not the full reference, so it doesn't drift
+as fast as the specifics do.
 
-Ground truth as of the "Turn Settings, Awards and Creator Studio into real
-screens" milestone (commit `6cfd208`). If this drifts from the code, trust
-the code and fix this file.
+Ground truth as of the documentation-evolution pass following commit
+`26d11a2`. If this drifts from the code, trust the code and fix this file.
+
+## The core architectural choice
+
+This app is built the way Firebase's platform is designed to be used:
+**clients read and write Firestore directly**, and **Firestore Security
+Rules are the authorization layer** — not a REST API sitting in front of
+the database. Cloud Functions exist, but they're the exception path, used
+only where rules structurally can't do the job (a secret the client can
+never hold, a privilege rules can't safely grant, a side effect the writer
+shouldn't have to orchestrate). This single choice explains most of what
+otherwise looks unusual about the codebase — why `firestore.rules` is
+hundreds of lines of real authorization logic instead of a thin
+allow-if-signed-in policy, why `functions/` is comparatively small, and
+why a new feature's first design question should be "can Security Rules
+express this correctly" before reaching for a Cloud Function. See
+[ADR-013](Decisions.md#adr-013-clients-write-firestore-directly-cloud-functions-are-reserved-for-privileged-work)
+for the full reasoning and the four conditions that *do* justify a Cloud
+Function.
 
 ## Two repos, one Firebase project
 
@@ -28,9 +48,11 @@ auth.yovoice.app        → Firebase Hosting — shared Auth domain
 app.yovoice.app          → Firebase Hosting — the Flutter web build
 ```
 
-`yovoice-website`'s `NEXT_PUBLIC_APP_URL` env var is the toggle between the
-Flutter web app's current URL and `app.yovoice.app` once DNS for that
-subdomain is live — see that repo's own docs for current status.
+This split — two independent deployables sharing one backend — is itself
+a deliberate decision, not just how things happened to end up; see
+[ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project) for
+why a single Flutter-web-as-marketing-site or a single Next.js-as-app
+approach was rejected.
 
 ## Layers, and where to read about each one
 
@@ -41,15 +63,19 @@ subdomain is live — see that repo's own docs for current status.
 │   see Flutter.md, UI.md      │   │   see that repo's own docs   │
 └───────────────┬───────────────┘   └───────────────┬───────────────┘
                 │                                     │
+                │        both write Firestore          │
+                │        directly, both authenticate    │
+                │        against the same Firebase Auth │
                 └───────────────┬─────────────────────┘
                                  ▼
                   ┌───────────────────────────────┐
                   │   Firebase (yovoice-ec54a)     │
                   │   Auth, Firestore, Storage,     │
                   │   Hosting, App Check, FCM       │
-                  │   see Firebase.md                │
+                  │   see Firebase.md, SECURITY.md    │
                   └───────────────┬───────────────┘
-                                 │
+                                 │  only for privileged/secret/
+                                 │  fan-out work — see ADR-013
                                  ▼
                   ┌───────────────────────────────┐
                   │   Cloud Functions (Node)         │
@@ -73,29 +99,210 @@ subdomain is live — see that repo's own docs for current status.
   function does, LiveKit token minting, notification triggers.
 - **[Features.md](Features.md)** — what's actually built, feature by
   feature.
-- **[Decisions.md](Decisions.md)** — why things are the way they are.
+- **[PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)** — the physical repo
+  layout, directory by directory.
+- **[SECURITY.md](SECURITY.md)** — the security model as a whole: auth,
+  rules design principles, secrets, current posture.
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** — what deploys automatically, what's
+  manual, and how.
+- **[TESTING.md](TESTING.md)** — what test coverage exists and what
+  doesn't.
+- **[DEPENDENCIES.md](DEPENDENCIES.md)** — why the key third-party
+  packages were chosen.
+- **[Decisions.md](Decisions.md)** — the full ADR log: why things are the
+  way they are.
 - **[Bugs.md](Bugs.md)** — current known issues.
+
+## Authentication flow
+
+Firebase Authentication (email/password + Google Sign-In) is the single
+identity provider for both deployables, via the shared `auth.yovoice.app`
+domain — a user who registers in the Flutter app can log into the website
+with the same credentials and vice versa, with no account-linking step
+required, because there was only ever one account.
+
+```
+ Flutter app  or  website
+       │
+       │ 1. signUp() / signIn()
+       ▼
+ Firebase Authentication  (auth.yovoice.app)
+       │
+       │ 2. on register: sendEmailVerification()
+       │    (via Resend SMTP — ADR-008, not Firebase's default sender)
+       ▼
+ User clicks the emailed link
+       │
+       ▼
+ Firebase's own hosted action page confirms the email
+ (deliberately NOT a custom handleCodeInApp deep link — see ADR-008)
+       │
+       │ 3. client calls reload() to pick up the fresh emailVerified flag
+       │    (the cached User object never updates this on its own)
+       ▼
+ request.auth.token.email_verified == true
+       │
+       ├─→ Firestore rules gate content-creation writes on this claim
+       └─→ Cloud Functions gate privileged calls on this claim
+           (e.g. bootstrapSuperAdmin — see ADR-003)
+```
+
+Role/permission state (`superAdmin`, moderator roles used by the admin
+Cloud Functions) rides on **Firebase Auth custom claims**, never on a
+Firestore field — see [SECURITY.md](SECURITY.md#roles-live-in-custom-claims-not-firestore)
+for why that specific choice closes off the most common privilege-
+escalation path in a Firebase app (a user can always write their own
+`users/{uid}` document; a user can never write their own auth token).
+
+## Data flow: a concrete example (joining a Broadcast Room)
+
+Rather than describe Firestore/Cloud-Functions/LiveKit interaction in the
+abstract, here's one real flow that touches all three, in the order it
+actually happens:
+
+```
+1. User taps "Join" on a live Broadcast Room
+        │
+        ▼
+2. RoomService.joinRoom(roomId) — CLIENT-DIRECT FIRESTORE WRITE
+   Runs a Firestore transaction that:
+     - reads the room doc (checks it's active and live)
+     - reads the caller's own participant doc (no-ops if already joined)
+     - writes a new rooms/{roomId}/participants/{uid} doc:
+       role='listener' (or 'host' if this is the room's own host),
+       isSpeaker=false, isMuted=<room's autoMuteNewUsers setting>
+     - increments the room's participantCount
+   No Cloud Function involved — Firestore Security Rules alone authorize
+   this write (see Firebase.md's participants rule).
+        │
+        ▼
+3. VoiceTokenService calls the createLiveKitToken CLOUD FUNCTION
+   This is a case where a Cloud Function is required, not optional:
+   minting a valid LiveKit token needs LIVEKIT_API_SECRET, which no
+   client can ever hold (condition 1 of ADR-013).
+        │
+        ▼
+4. createLiveKitToken (functions/livekit/token.js), server-side:
+     - looks up the room and the caller's OWN participant doc just
+       written in step 2 — 404s if either is missing
+     - computes canPublish = (isHost || isSpeaker) && !isMuted from
+       that real, just-read data — never from anything the client's
+       token request claims
+     - mints a LiveKit AccessToken scoped to that room, with those
+       real permissions
+        │
+        ▼
+5. Client connects to LiveKit Cloud with the returned token
+   Voice starts flowing. If the user is later muted by a moderator,
+   that's a Firestore write to their participant doc (step 2's shape)
+   PLUS a LiveKit Server API call to revoke already-issued permissions
+   — the token itself doesn't expire just because Firestore changed.
+```
+
+The pattern to notice: **step 2 is a plain client-direct write** (the
+default per ADR-013), while **step 3–4 is a Cloud Function** specifically
+because it needs a secret — not because "voice stuff" is inherently
+special. A different room-related write (changing the room's title,
+raising a hand, sending a chat message) follows step 2's pattern all the
+way through, no Cloud Function involved at all. See
+[Backend.md](Backend.md#livekit-token-minting) for the full token-minting
+logic and [Firebase.md](Firebase.md#firestore-schema) for the schema this
+flow reads and writes.
+
+## Firestore interaction
+
+Almost every read in the app is a `Stream` from a Firestore query,
+consumed directly by a `StreamBuilder` in the UI — there is no API layer
+translating between "what the screen needs" and "what's in the database."
+This is fast to build against and keeps data reactive for free (a
+moderator's mute shows up on the muted user's screen the moment Firestore
+propagates it, no polling), but it also means:
+
+- **The schema is part of the public contract.** Every screen that reads
+  a collection is coupled to its exact field names and shapes — there's no
+  API version to insulate a schema change behind. See the "never break the
+  schema" rule in [CLAUDE.md](../CLAUDE.md) and
+  [Firebase.md](Firebase.md#firestore-schema) for what's actually in it.
+- **Security rules are the only thing standing between a signed-in user
+  and the raw database.** A bug in a rule is not a bug in one feature —
+  it's a bug in the authorization system itself. See
+  [SECURITY.md](SECURITY.md) for the design principles this project has
+  learned (often the hard way — [ADR-003](Decisions.md#adr-003-security-fixes-move-permission-authority-to-the-server))
+  to hold rules to.
+- **Query shape is constrained by what rules can prove.** The
+  `collectionGroup()` incidents behind
+  [ADR-005](Decisions.md#adr-005-roomsroomidmembers-renamed-to-roommembers)
+  through [ADR-007](Decisions.md#adr-007-firestore-rules-changes-are-always-emulator-tested-against-a-real-collectiongroup-query)
+  exist because this constraint is easy to violate without realizing it
+  until the query fails in production.
+
+## Cloud Functions interaction
+
+Cloud Functions are called two ways in this app: `httpsCallable()` for
+client-initiated calls (LiveKit tokens, admin actions, self-service club
+ownership transfer), and Firestore triggers for server-initiated reactions
+to a write (`onNotificationCreated` turning a notification document into a
+push). Neither path mediates the *ordinary* Firestore writes described
+above — see [ADR-013](Decisions.md#adr-013-clients-write-firestore-directly-cloud-functions-are-reserved-for-privileged-work)
+for exactly which four situations justify reaching for a function instead
+of a direct write, and [Backend.md](Backend.md) for the full inventory of
+what exists today.
+
+## LiveKit interaction
+
+Summarized in the data-flow example above; full detail — token structure,
+secrets handling, what happens on mute/remove — lives in
+[Backend.md](Backend.md#livekit-token-minting). The one thing worth
+repeating here because it's easy to get backwards: **the Flutter client
+never has access to `LIVEKIT_API_SECRET` and never computes its own
+publish permissions.** Every voice permission a client ends up with was
+computed server-side, from real Firestore state, by `createLiveKitToken`.
+
+## Website integration
+
+`yovoice-website` is a fully separate Next.js codebase — no shared UI
+components, no shared Dart/TypeScript code — that integrates with this
+project at exactly two points:
+
+1. **Shared Firebase project.** Same Auth users, same Firestore database,
+   same Cloud Functions. The website's own Firebase client config points
+   at `yovoice-ec54a`, same as this app's `lib/firebase_options.dart`.
+2. **Shared Auth domain** (`auth.yovoice.app`), which is what makes "one
+   account, works everywhere" true without any account-linking code on
+   either side — Firebase Auth sessions issued under that domain are valid
+   for both.
+
+Anything the website needs to *show* — a user's profile, their rooms,
+their settings — it queries directly from Firestore itself, subject to
+the exact same Security Rules as the Flutter app (rules don't know or
+care which client is asking). This means a Firestore schema change is a
+**two-codebase change** in practice, even though only one of those
+codebases lives in this repo — see
+[ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project) for
+the tradeoff this represents and `yovoice-website`'s own docs for its
+internals.
+
+## Deployment overview
+
+Summary only — full detail, including the CI workflow's exact steps and a
+non-obvious `npm run deploy` gotcha inside `functions/`, is in
+[DEPLOYMENT.md](DEPLOYMENT.md).
+
+- **This repo's Flutter web build** deploys automatically to Firebase
+  Hosting on every push to `main`, via GitHub Actions — and only after
+  `flutter analyze` passes in that same workflow run.
+- **Firestore rules/indexes and Cloud Functions** deploy manually, on
+  purpose — see [DEPLOYMENT.md](DEPLOYMENT.md#why-rulesfunctions-are-not-in-ci)
+  for why that's a deliberate choice, not a gap.
+- **`yovoice-website`** deploys automatically to Vercel on push to `main`
+  in that separate repo.
 
 ## Third-party services
 
-- **LiveKit Cloud** — voice room infrastructure. See `Backend.md` for how
-  tokens are minted.
+- **LiveKit Cloud** — voice room infrastructure.
 - **Resend** — transactional email (verification, password reset), via
-  Firebase Auth's custom SMTP settings. See `Firebase.md`.
+  Firebase Auth's custom SMTP settings ([ADR-008](Decisions.md#adr-008-resend-smtp-instead-of-firebases-default-email-sender)).
 - **Vercel** — hosts `yovoice-website`.
 
-## CI/CD
-
-`.github/workflows/firebase-hosting-merge.yml` deploys **Hosting only** on
-push to `main`. Firestore rules/indexes and Cloud Functions are deployed
-manually (`firebase deploy --only firestore:rules,firestore:indexes` /
-`--only functions`) — no automatic race between the two deploy paths.
-
-## Testing
-
-- `firestore-tests/` — a Node test suite against the Firestore emulator,
-  covering security rules. Always run against a real, freshly-started
-  emulator before trusting it — see `Decisions.md` for why a passing suite
-  once still shipped a broken `collectionGroup()` query.
-- `flutter analyze` — the baseline gate for all Dart changes. Should be
-  zero issues before calling Flutter work done.
+See [DEPENDENCIES.md](DEPENDENCIES.md) for why these specific services and
+packages were chosen over the obvious alternatives.

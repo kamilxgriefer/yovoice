@@ -8,15 +8,30 @@ achievement system, and creator tools — designed around live conversation
 rather than a text feed.
 
 Full documentation lives in [`docs/`](docs/Architecture.md) — start there
-for anything beyond a quick clone-and-run:
+for anything beyond a quick clone-and-run. [docs/Architecture.md](docs/Architecture.md)
+is the map that links to everything else; the short list:
 
 - [docs/Vision.md](docs/Vision.md) — what this product is for
 - [docs/Features.md](docs/Features.md) — what's actually built today
-- [docs/Architecture.md](docs/Architecture.md) — how it all fits together
-  (with links to Flutter.md, UI.md, Firebase.md, Backend.md)
-- [docs/Roadmap.md](docs/Roadmap.md) — done / in progress / planned
-- [docs/Decisions.md](docs/Decisions.md) — why things are the way they are
+- [docs/Architecture.md](docs/Architecture.md) — how it all fits together:
+  auth flow, data flow, Firestore/Functions/LiveKit interaction, website
+  integration
+- [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) — the repo tree,
+  directory by directory
+- [docs/Roadmap.md](docs/Roadmap.md) — done / in progress / planned, with
+  status, dependencies, and priority per item
+- [docs/Decisions.md](docs/Decisions.md) — the ADR log: why things are the
+  way they are
+- [docs/SECURITY.md](docs/SECURITY.md) — the security model and current
+  posture
 - [docs/Bugs.md](docs/Bugs.md) — current known issues
+- [docs/DEVELOPMENT_WORKFLOW.md](docs/DEVELOPMENT_WORKFLOW.md) — how to
+  actually work on this repo
+- [docs/TESTING.md](docs/TESTING.md), [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md),
+  [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) — what's tested, how it
+  ships, and why each dependency is there
+- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) — code style, commit
+  conventions, current solo-project reality
 - [CLAUDE.md](CLAUDE.md) — working conventions for this repo
 
 ---
@@ -25,7 +40,8 @@ for anything beyond a quick clone-and-run:
 
 Flutter, Dart, Material 3, Firebase (Auth, Firestore, Storage, Cloud
 Functions, Cloud Messaging, App Check), Google Sign-In, LiveKit. Full
-breakdown in [docs/Architecture.md](docs/Architecture.md).
+breakdown in [docs/Architecture.md](docs/Architecture.md); why each piece
+was chosen in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
 
 ---
 

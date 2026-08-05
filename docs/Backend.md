@@ -2,14 +2,28 @@
 
 The compute layer: `functions/` (Node, Firebase Functions v2), region
 `europe-west1` for every function. For the data layer these functions read
-and write, see [Firebase.md](Firebase.md).
+and write, see [Firebase.md](Firebase.md); for *why* this comparatively
+small set of functions exists at all rather than mediating every write
+(most of the app doesn't go through here), see
+[ADR-013](Decisions.md#adr-013-clients-write-firestore-directly-cloud-functions-are-reserved-for-privileged-work) —
+every function below exists because it needs a secret the client can
+never hold, grants a privilege rules can't safely compute, fans out a side
+effect, or coordinates an atomic cross-document operation. If you're
+adding a new function and it doesn't clearly need one of those four
+things, it probably shouldn't be a function.
 
 ## LiveKit token minting
 
 `createLiveKitToken` (`functions/livekit/token.js`) is the **only** way a
-client gets a LiveKit token — never minted client-side. Since the
-[security audit](Archive/SECURITY_AUDIT.md) fix, permissions are computed
-server-side, not trusted from the request:
+client gets a LiveKit token — never minted client-side. This is the
+reference example for
+[ADR-013](Decisions.md#adr-013-clients-write-firestore-directly-cloud-functions-are-reserved-for-privileged-work)'s
+"needs a secret the client can never hold" condition. Since the
+[security audit](Archive/SECURITY_AUDIT.md) fix
+([ADR-003](Decisions.md#adr-003-security-fixes-move-permission-authority-to-the-server)),
+permissions are computed server-side, not trusted from the request. See
+[Architecture.md](Architecture.md#data-flow-a-concrete-example-joining-a-broadcast-room)
+for how this fits into the full join-a-room flow, start to finish:
 
 1. Looks up the room (`rooms/{roomId}`) and the caller's own participant
    doc (`rooms/{roomId}/participants/{uid}`) — 404s if either is missing.
@@ -71,8 +85,9 @@ address was enough to claim the role.
 ## App Check
 
 Every function currently sets `enforceAppCheck: false` — see
-[Firebase.md](Firebase.md#firebase-app-check) and
-[Bugs.md](Bugs.md) for current status and why it's not flipped yet.
+[SECURITY.md](SECURITY.md#firebase-app-check),
+[ADR-004](Decisions.md#adr-004-firebase-app-check-integrated-client-side-enforcement-deliberately-off),
+and [Bugs.md](Bugs.md) for current status and why it's not flipped yet.
 
 ## Deploying
 
@@ -80,5 +95,7 @@ Every function currently sets `enforceAppCheck: false` — see
 firebase deploy --only functions --project yovoice-ec54a
 ```
 
-No CI/CD path deploys functions automatically — see
-[Architecture.md](Architecture.md#cicd).
+No CI/CD path deploys functions automatically, and
+`functions/package.json`'s own `npm run deploy` only deploys one function,
+not all of them — see [DEPLOYMENT.md](DEPLOYMENT.md#deploying-functions-manual)
+before assuming otherwise.
