@@ -7,6 +7,60 @@ short: what was decided, why, what it rules out. Newest first.
 
 ---
 
+### Security audit remediation: server-side permission checks over client-trusted flags
+
+**Decision**: Every critical/high finding from
+[Archive/SECURITY_AUDIT.md](Archive/SECURITY_AUDIT.md) (room takeover via
+`hostId` self-assignment, club ownership takeover, LiveKit publish
+permissions trusted from the client, self-assigned participant roles,
+`bootstrapSuperAdmin` missing an `email_verified` check, and more) was
+fixed by moving the authority for "what am I allowed to do" onto the
+server — a Firestore rule that reads the *real* stored role/relationship,
+or a Cloud Function that looks up the participant document itself — rather
+than trusting any field the client sends in the request.
+
+**Why**: The common thread across nearly every finding was the same shape:
+a write or a token request that carried its own claimed permission
+(`role: 'owner'`, `canPublish: true`, `hostId: <my uid>`) with nothing on
+the server actually checking it against reality. Firestore's `hasOnly()`
+field-allowlisting stops the *wrong fields* from changing, but says nothing
+about whether the *values* being written are true — that needed either an
+`exists()`/`get()` check against the real relationship, or moving the
+write into a Cloud Function that can enforce it properly.
+
+**Rules out**: Accepting a permission/role/ownership claim from
+`request.resource.data` (Firestore rules) or `request.data` (Cloud
+Functions) without checking it against a document the writer doesn't
+control. If a new write path needs to grant a role or a capability,
+default to computing it server-side from an existing relationship, the way
+`createLiveKitToken` now derives `canPublish` from the caller's real
+participant document (see [Backend.md](Backend.md)).
+
+**Status**: all findings fixed except App Check enforcement (audit #12,
+tracked separately below) — see [Bugs.md](Bugs.md) for current status.
+
+---
+
+### `experience: 'podcast'` stays supported until production data is migrated
+
+**Decision**: `room_experience.dart` maps the legacy Firestore value
+`'podcast'` to `RoomExperience.broadcast` for backward compatibility. New
+and updated rooms only ever write `'community'` or `'broadcast'` — but
+reading `'podcast'` must keep working.
+
+**Why**: Rooms were renamed/restructured from a three-type model
+(`community`/`broadcast`/`podcast`) down to two, but no migration of
+existing production documents was ever run. Removing the mapping before
+confirming that migration would make any pre-existing `podcast` room
+unreadable or mis-rendered.
+
+**Rules out**: Deleting the `'podcast'` branch in `room_experience.dart`
+without first confirming (Firestore Console or an admin query) that zero
+production documents still contain that value. See
+[Bugs.md](Bugs.md#data-integrity).
+
+---
+
 ### "Coming soon" instead of fabricated data or dead buttons
 
 **Decision**: When a screen needs a feature with no real backend support

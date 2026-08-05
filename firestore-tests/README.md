@@ -3,7 +3,7 @@
 Regression + attack-scenario coverage for `../firestore.rules`, run against
 the Firestore emulator via `@firebase/rules-unit-testing`. Each check either
 asserts a legitimate write/read from the app's own services still succeeds
-("regression"), or that an exploit described in `../docs/SECURITY_AUDIT.md`
+("regression"), or that an exploit described in `../docs/Archive/SECURITY_AUDIT.md`
 is blocked ("SECURITY").
 
 There is no other automated test coverage for this project's Firestore rules

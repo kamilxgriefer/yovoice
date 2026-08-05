@@ -1,3 +1,12 @@
+> **Session log — dated 2026-08-04, kept for historical context.** Written
+> in the moment as a handoff doc; treat every "current status" claim below
+> as true *as of that date*, not now. A lot has shipped since (email
+> verification, the notification system, the Settings/Awards/Creator
+> Studio rebuild, most of the security-audit fixes). For current state, use
+> [docs/Architecture.md](../Architecture.md), [docs/Roadmap.md](../Roadmap.md),
+> and [docs/Bugs.md](../Bugs.md) instead — moved here during the
+> documentation audit, content otherwise unchanged.
+
 # YoVoice — Project Status
 
 Rewritten from scratch at the end of a long autonomous session covering three

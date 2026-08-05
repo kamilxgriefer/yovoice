@@ -1,97 +1,31 @@
 # YO Voice 🎙️
 
-> **Be You. Connect. Speak.**
+> **Speak. Connect. Be you.**
 
-YO Voice is a modern cross-platform voice communication platform built with **Flutter** and **Firebase**, designed to create engaging communities where conversations feel natural, immersive, and interactive.
+YO Voice is a voice-first social platform built with **Flutter** and
+**Firebase**: live voice rooms, Clubs, friends, Voice Moments, a real
+achievement system, and creator tools — designed around live conversation
+rather than a text feed.
 
-Unlike traditional voice chat applications, YO Voice focuses on creating unique social experiences through beautiful UI, real-time communication, and community-driven features.
+Full documentation lives in [`docs/`](docs/Architecture.md) — start there
+for anything beyond a quick clone-and-run:
 
----
-
-## ✨ Features
-
-### 🎤 Voice Rooms
-- Community Voice Rooms
-- Broadcast Rooms
-- Real-time voice communication
-- Live participant management
-- Speaker & listener roles
-
-### 👥 Communities & Clubs
-- Create and manage Clubs
-- Private community chats
-- Member roles and permissions
-- Club-exclusive voice rooms
-
-### 💬 Social
-- Friends system
-- Follow creators
-- Private messaging
-- User profiles
-- Search users and rooms
-
-### 🏆 Gamification
-- Achievements
-- Titles
-- XP progression
-- Community milestones
-- Activity rewards
-
-### 🎨 Modern Experience
-- Beautiful dark UI
-- Smooth animations
-- Responsive layouts
-- Custom branding
-- Premium visual design
+- [docs/Vision.md](docs/Vision.md) — what this product is for
+- [docs/Features.md](docs/Features.md) — what's actually built today
+- [docs/Architecture.md](docs/Architecture.md) — how it all fits together
+  (with links to Flutter.md, UI.md, Firebase.md, Backend.md)
+- [docs/Roadmap.md](docs/Roadmap.md) — done / in progress / planned
+- [docs/Decisions.md](docs/Decisions.md) — why things are the way they are
+- [docs/Bugs.md](docs/Bugs.md) — current known issues
+- [CLAUDE.md](CLAUDE.md) — working conventions for this repo
 
 ---
 
 ## 🛠️ Tech Stack
 
-- Flutter
-- Dart
-- Firebase Authentication
-- Cloud Firestore
-- Firebase Storage
-- Firebase Cloud Messaging
-- Google Sign-In
-- Material 3
-
----
-
-## 🚀 Vision
-
-YO Voice isn't just another voice chat application.
-
-The goal is to build a platform where people can:
-
-- create communities,
-- discover new creators,
-- join live conversations,
-- build clubs,
-- make friends,
-- and simply **be themselves**.
-
-Everything is designed around one simple idea:
-
-> **Be You.**
-
----
-
-## 📱 Current Development
-
-The project is actively under development.
-
-Planned features include:
-
-- Voice effects
-- Room moderation tools
-- Creator profiles
-- Live events
-- Push notifications
-- Rich user achievements
-- Premium subscriptions
-- Cross-platform optimization
+Flutter, Dart, Material 3, Firebase (Auth, Firestore, Storage, Cloud
+Functions, Cloud Messaging, App Check), Google Sign-In, LiveKit. Full
+breakdown in [docs/Architecture.md](docs/Architecture.md).
 
 ---
 
@@ -107,41 +41,11 @@ Firebase config is generated into `lib/firebase_options.dart` via
 `flutterfire configure` — already committed, no per-developer setup needed
 beyond having access to the `yovoice-ec54a` Firebase project.
 
-### Firebase App Check
-
-Debug builds activate `AndroidDebugProvider`/`AppleDebugProvider`, which
-print a debug token to the device log on first launch (see
-`lib/main.dart`). That token must be registered once in **Firebase
-Console → App Check → Apps → Manage debug tokens** before Firestore/Auth
-calls will succeed from a simulator/emulator — otherwise every request
-fails with a 403 App Check error. `enforceAppCheck` on Cloud Functions is
-still `false`; flipping it to `true` is a deliberate, separate step that
-needs token-delivery monitoring first, not something to do casually.
-
-### Firestore rules
-
-```bash
-brew install openjdk           # one-time, needed for the emulator's JVM
-export PATH="/usr/local/opt/openjdk/bin:$PATH"
-firebase emulators:start --only firestore --project yovoice-ec54a
-cd firestore-tests && npm install && npm test
-```
-
-See [`firestore-tests/README.md`](firestore-tests/README.md) for what the
-suite actually covers and two non-obvious rules-semantics gotchas it
-leans on. One worth calling out here too: a nested
-`match /parent/{id}/collection/{doc}` rule does **not** authorize a
-`collectionGroup()` query — that needs a separate, top-level
-`match /{path=**}/collection/{doc}` rule. Direct `getDoc()`/`getDocs()`
-calls on a fully-specified path don't exercise this at all, so it's easy
-to ship a broken collection-group query with a fully green test suite —
-`watchMyCommunities()` and `watchMyClubInvites()` both did, for a while.
-
-Deploy with:
-
-```bash
-firebase deploy --only firestore:rules,firestore:indexes --project yovoice-ec54a
-```
+For Firebase App Check debug-token setup and the Firestore rules
+emulator/test workflow, see
+[docs/Flutter.md](docs/Flutter.md#dev-setup) and
+[docs/Firebase.md](docs/Firebase.md#firestore-rules-testing) —
+kept there instead of duplicated here so there's one source of truth.
 
 ---
 

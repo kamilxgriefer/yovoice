@@ -1,3 +1,16 @@
+> **Archived — historical security audit, mostly resolved.** This is a
+> point-in-time audit (against commit `34144d3`). Items **#1–#11 and #13
+> below have since been fixed** — verified directly against the current
+> `firestore.rules`, `storage.rules`, and `functions/` during the
+> documentation audit (commit `55e8627` did the first pass, later commits
+> finished the rest). **Only #12 (`enforceAppCheck: false`) is still
+> genuinely open**, and that's a deliberate, tracked decision — see
+> [Bugs.md](../Bugs.md) for current status and
+> [Decisions.md](../Decisions.md) for why. Kept here in full because the
+> reasoning and the fix snippets are still a useful reference for how these
+> classes of Firestore-rules bugs get found and closed. Written in Polish
+> in the original.
+
 # YoVoice — audyt bezpieczeństwa
 
 Zakres: `firestore.rules`, `storage.rules`, `functions/**`, warstwa danych w `lib/**/data`.

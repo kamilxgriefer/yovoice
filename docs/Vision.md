@@ -39,32 +39,10 @@ A feature is not done when it compiles. It's done when:
 
 ## Product pillars (what's actually built, not aspirational)
 
-- **Voice Rooms** — broadcast rooms, podcast rooms, and community voice
-  rooms, each with host/speaker/listener roles, live participant
-  management, hand-raise, moderation.
-- **Clubs** — persistent communities with channels (chat + voice),
-  member roles, invites, ownership transfer.
-- **Friends & Social** — friend requests, following/followers, blocking,
-  mutual-friend and friend-suggestion logic (`getMutualFriends`,
-  `getFriendSuggestions` Cloud Functions).
-- **Messages** — direct messages and club channel chat.
-- **Voice Moments** — short (≤60s) recorded audio posts with likes,
-  comments (including voice replies), a public feed.
-- **Achievements / Awards** — a 100-title achievement catalog across 10
-  metrics (messages, followers, voice minutes, rooms, communities, friends,
-  reactions, host minutes, active days, moments), with a derived Level/XP
-  system and genuine per-achievement unlock timestamps (not fabricated
-  "recent activity").
-- **Creator Studio** — a real dashboard over owned rooms, clubs, and Voice
-  Moments, with quick actions into the existing create flows. Analytics,
-  monetization, and audience-growth charts are intentionally **not**
-  built yet — marked "Coming soon" rather than faked.
-- **Settings** — account, privacy, security, notifications, permissions,
-  storage, legal, and a danger zone, each backed by what the platform can
-  actually do today (see `Architecture.md` for the current gaps: no 2FA, no
-  multi-device session registry, no self-serve account deletion yet).
-- **Notifications** — an in-app notification center plus push (FCM),
-  triggered from real events (friend/follow/club/room/message activity).
+Voice Rooms, Clubs, Friends & Social, Messages, Voice Moments,
+Achievements/Awards, Creator Studio, Settings, and Notifications — see
+[Features.md](Features.md) for what each one actually does today, what's
+real vs. "Coming soon," and which files/Cloud Functions back it.
 
 ## What YO Voice is explicitly not (yet)
 

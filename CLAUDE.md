@@ -5,10 +5,12 @@ rules below are not suggestions — follow them exactly.
 
 ## Before making significant changes
 
-Read [Vision.md](Vision.md), [Architecture.md](Architecture.md) and
-[Roadmap.md](Roadmap.md) first. They answer, respectively: what this
-product is for, how it's actually built right now, and what's done vs.
-planned. Don't assume — verify against current code when a doc and the
+Read [docs/Vision.md](docs/Vision.md), [docs/Architecture.md](docs/Architecture.md)
+and [docs/Roadmap.md](docs/Roadmap.md) first. They answer, respectively:
+what this product is for, how it's actually built right now, and what's
+done vs. planned. For deeper detail see docs/Features.md, docs/Firebase.md,
+docs/Backend.md, docs/Flutter.md, and docs/UI.md — Architecture.md links to
+all of them. Don't assume — verify against current code when a doc and the
 codebase disagree; docs can drift, code is ground truth.
 
 ## Hard rules
@@ -23,8 +25,8 @@ codebase disagree; docs can drift, code is ground truth.
   (the website, Cloud Functions, existing app installs) read them. Additive
   changes (new optional fields) are fine; renames/removals need a real
   migration plan, not a silent break. See
-  [Decisions.md](Decisions.md) for the `roomMembers` rename as an example
-  of how a schema change was actually handled.
+  [docs/Decisions.md](docs/Decisions.md) for the `roomMembers` rename as an
+  example of how a schema change was actually handled.
 - **Preserve backward compatibility** unless the user explicitly asks for a
   breaking change.
 - **Write production-ready code.** No TODOs left as the final state, no
@@ -35,24 +37,30 @@ codebase disagree; docs can drift, code is ground truth.
 
 ## After finishing a feature
 
-- **Update [Roadmap.md](Roadmap.md)** — move it from Planned/In Progress to
-  Done, with the commit or PR it landed in.
-- **Update [Decisions.md](Decisions.md)** whenever you make or change an
-  architectural decision (schema change, new dependency, new pattern that
-  future code should follow, a workaround and why it was necessary). Short
-  entries are fine — the point is capturing the *why*, not writing an essay.
+- **Update [docs/Roadmap.md](docs/Roadmap.md)** — move it from
+  Planned/In Progress to Done, with the commit or PR it landed in.
+- **Update [docs/Decisions.md](docs/Decisions.md)** whenever you make or
+  change an architectural decision (schema change, new dependency, new
+  pattern that future code should follow, a workaround and why it was
+  necessary). Short entries are fine — the point is capturing the *why*,
+  not writing an essay.
+- **Update [docs/Bugs.md](docs/Bugs.md)** whenever you find or fix a bug —
+  it's a living list, not a changelog.
+- For a substantial multi-step session, consider adding a dated entry under
+  `docs/Sessions/` the way past sessions have — see the existing files
+  there for the format. Not required for small changes.
 
 ## Project-specific conventions already established
 
 - **Git workflow**: push straight to `main`, no feature branches or PRs, in
   both this repo and `yovoice-website`. Back up first (a local tag/branch
-  snapshot) before a bigger change — see `Decisions.md`.
+  snapshot) before a bigger change — see `docs/Decisions.md`.
 - **Verification gate**: `flutter analyze` must be clean before considering
   Dart work done. For UI changes, verify in the iOS Simulator when possible.
 - **Firestore rules changes**: always emulator-tested before deploy — see
   `firestore-tests/README.md`. A passing test suite that never exercises a
   real `collectionGroup()` query does not prove a `collectionGroup()` query
-  works; this has bitten the project before (Decisions.md).
+  works; this has bitten the project before (`docs/Decisions.md`).
 
 ## Repo map
 
@@ -60,6 +68,9 @@ codebase disagree; docs can drift, code is ground truth.
 - `functions/` — Firebase Cloud Functions (Node, region `europe-west1`).
 - `firestore.rules`, `firestore.indexes.json`, `storage.rules` — backend
   security/schema, shared by the app, the website, and Cloud Functions.
+- `docs/` — project documentation (see `docs/Architecture.md` for the full
+  index); `docs/Sessions/` holds dated session logs, `docs/Archive/` holds
+  superseded/historical documents kept for reference.
 - `/Users/kamiljaguszewski/yovoice-website` — the separate Next.js marketing
   + auth + account site, sharing the same Firebase project. Its own
   `README.md` is authoritative for that repo.
