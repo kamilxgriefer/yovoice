@@ -49,6 +49,16 @@ permission flags).
   until production room documents are confirmed migrated to `broadcast`.
   See [ADR-001](Decisions.md#adr-001-legacy-podcast-room-experience-stays-supported).
 
+## UI
+
+- **Fixed: white panel flashing behind sheet transitions (e.g. New Chat)
+  on devices with the OS set to Light mode.** Root cause was native
+  Android/iOS window chrome following the *system* light/dark setting
+  instead of the app's own dark-only theme — not a bug in the Dart-side
+  sheet code. See
+  [ADR-016](Decisions.md#adr-016-native-android-and-ios-window-chrome-is-pinned-dark-not-os-controlled)
+  for the full root cause and fix.
+
 ## Code quality / consolidation
 
 - **Two parallel hand-raise implementations exist**, unconsolidated. Not

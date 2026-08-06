@@ -20,6 +20,7 @@ import 'package:yovoice/features/notifications/data/services/notification_servic
 import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({this.onOpenDiscover, super.key});
@@ -143,6 +144,35 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _openRoom(VoiceRoom room) async {
+    try {
+      final joinedRoom = await _roomService.joinRoom(room.id);
+
+      if (!mounted) {
+        return;
+      }
+
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => RoomEntryScreen(room: joinedRoom),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(error.toString().replaceFirst('Bad state: ', '')),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
   Future<void> _deleteMoment(VoiceMoment moment) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -229,10 +259,11 @@ class _HomeScreenState extends State<HomeScreen> {
             slivers: [
               SliverToBoxAdapter(child: _header(name, user?.photoURL)),
               SliverToBoxAdapter(child: _livePulse()),
+              SliverToBoxAdapter(child: _liveRooms()),
               SliverToBoxAdapter(child: _voiceStories()),
+              SliverToBoxAdapter(child: _activeFriends()),
               SliverToBoxAdapter(child: _sectionTitle('Your feed')),
               SliverToBoxAdapter(child: _feed()),
-              SliverToBoxAdapter(child: _activeFriends()),
               SliverToBoxAdapter(child: _suggestedClubs()),
               SliverToBoxAdapter(child: _trending()),
               const SliverToBoxAdapter(child: SizedBox(height: 120)),
@@ -407,6 +438,72 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             );
           },
+        );
+      },
+    );
+  }
+
+  // The one thing that makes YO Voice YO Voice: real, currently-live rooms
+  // you can join in one tap. Previously only surfaced as a count inside the
+  // Live Pulse banner (tap-through to Discover); that made rooms feel like
+  // a statistic instead of a place. Reuses the same _rooms stream the
+  // banner already subscribes to and the same join-then-enter flow
+  // Discover uses (RoomService.joinRoom -> RoomEntryScreen) — no new data
+  // source, no fabricated activity.
+  Widget _liveRooms() {
+    return StreamBuilder<List<VoiceRoom>>(
+      stream: _rooms,
+      builder: (context, snapshot) {
+        final rooms = snapshot.data ?? const <VoiceRoom>[];
+        if (rooms.isEmpty) return const SizedBox.shrink();
+        final visible = rooms.take(10).toList(growable: false);
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(18, 4, 0, 22),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  const Text(
+                    'Live right now',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFFF416C),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 174,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.only(right: 18),
+                  itemCount: visible.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 11),
+                  itemBuilder: (context, index) {
+                    final room = visible[index];
+                    return _LiveRoomCard(
+                      room: room,
+                      onTap: () => _openRoom(room),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -648,8 +745,19 @@ class _HomeScreenState extends State<HomeScreen> {
     return StreamBuilder<List<VoiceMoment>>(
       stream: _moments,
       builder: (context, snapshot) {
-        final moments = [...(snapshot.data ?? const <VoiceMoment>[])]
-          ..sort((a, b) => b.likeCount.compareTo(a.likeCount));
+        final allMoments = snapshot.data ?? const <VoiceMoment>[];
+        // Excludes whatever "Your feed" above already rendered (its first
+        // 10, same stream) so this surfaces genuinely different content
+        // instead of the same handful of cards re-sorted by like count.
+        final alreadyShown = allMoments
+            .take(10)
+            .map((moment) => moment.id)
+            .toSet();
+        final moments =
+            allMoments
+                .where((moment) => !alreadyShown.contains(moment.id))
+                .toList()
+              ..sort((a, b) => b.likeCount.compareTo(a.likeCount));
         if (moments.isEmpty) return const SizedBox.shrink();
         return Padding(
           padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
@@ -1239,6 +1347,119 @@ class _ClubCard extends StatelessWidget {
                   fontWeight: FontWeight.w800,
                   fontSize: 12,
                 ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LiveRoomCard extends StatelessWidget {
+  const _LiveRoomCard({required this.room, required this.onTap});
+
+  final VoiceRoom room;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 168,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF33144A), Color(0xFF14101D)],
+            ),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: const Color(0xFF432D5A)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 22,
+                    backgroundColor: const Color(0xFF64258E),
+                    backgroundImage: room.imageUrl?.isNotEmpty == true
+                        ? NetworkImage(room.imageUrl!)
+                        : null,
+                    child: room.imageUrl?.isNotEmpty == true
+                        ? null
+                        : Text(
+                            room.name.isEmpty
+                                ? '?'
+                                : room.name[0].toUpperCase(),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF416C),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      'LIVE',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: .4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const Spacer(),
+              Text(
+                room.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                'Hosted by ${room.hostName}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Color(0xFFA79DAF), fontSize: 11),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(
+                    Icons.headset_rounded,
+                    color: Color(0xFFC76DFF),
+                    size: 14,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${room.participantCount} listening',
+                    style: const TextStyle(
+                      color: Color(0xFFC76DFF),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

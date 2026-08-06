@@ -33,23 +33,24 @@ given a false-precision date.
 
 ## Index
 
-| ADR | Title | Status | Date |
-|---|---|---|---|
-| [001](#adr-001-legacy-podcast-room-experience-stays-supported) | Legacy `podcast` room experience stays supported | Accepted | 2026-07-28 |
-| [002](#adr-002-git-workflow-push-straight-to-main-no-prs) | Git workflow: push straight to `main`, no PRs | Accepted | 2026-08-02 |
-| [003](#adr-003-security-fixes-move-permission-authority-to-the-server) | Security fixes move permission authority to the server | Accepted | 2026-08-02 |
-| [004](#adr-004-firebase-app-check-integrated-client-side-enforcement-deliberately-off) | Firebase App Check integrated client-side, enforcement deliberately off | Accepted | 2026-08-04 |
-| [005](#adr-005-roomsroomidmembers-renamed-to-roommembers) | `rooms/{roomId}/members` renamed to `roomMembers` | Accepted | 2026-08-04 |
-| [006](#adr-006-top-level-collectiongroup-wildcard-rules-stay-read-only-and-narrow) | Top-level `collectionGroup` wildcard rules stay read-only and narrow | Accepted | 2026-08-04 |
-| [007](#adr-007-firestore-rules-changes-are-always-emulator-tested-against-a-real-collectiongroup-query) | Firestore rules changes are always emulator-tested against a real `collectionGroup()` query | Accepted | 2026-08-04 |
-| [008](#adr-008-resend-smtp-instead-of-firebases-default-email-sender) | Resend SMTP instead of Firebase's default email sender | Accepted | 2026-08-04 (approximate) |
-| [009](#adr-009-next_public_app_url-as-an-env-var-website-repo) | `NEXT_PUBLIC_APP_URL` as an env var (website repo) | Accepted | 2026-08-04 (approximate) |
-| [010](#adr-010-real-per-achievement-unlock-timestamps) | Real per-achievement unlock timestamps | Accepted | 2026-08-06 |
-| [011](#adr-011-permission_handler-for-real-device-permission-status) | `permission_handler` for real device-permission status | Accepted | 2026-08-06 |
-| [012](#adr-012-coming-soon-instead-of-fabricated-data-or-dead-buttons) | "Coming soon" instead of fabricated data or dead buttons | Accepted | 2026-08-06 |
-| [013](#adr-013-clients-write-firestore-directly-cloud-functions-are-reserved-for-privileged-work) | Clients write Firestore directly; Cloud Functions are reserved for privileged work | Accepted | Foundational — documented 2026-08-06 |
-| [014](#adr-014-two-deployables-one-firebase-project) | Two deployables, one Firebase project | Accepted | Foundational — documented 2026-08-06 |
-| [015](#adr-015-feature-based-folder-structure-over-layer-based) | Feature-based folder structure over layer-based | Accepted | Foundational — documented 2026-08-06 |
+| ADR                                                                                                     | Title                                                                                       | Status   | Date                                 |
+| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------- | ------------------------------------ |
+| [001](#adr-001-legacy-podcast-room-experience-stays-supported)                                          | Legacy `podcast` room experience stays supported                                            | Accepted | 2026-07-28                           |
+| [002](#adr-002-git-workflow-push-straight-to-main-no-prs)                                               | Git workflow: push straight to `main`, no PRs                                               | Accepted | 2026-08-02                           |
+| [003](#adr-003-security-fixes-move-permission-authority-to-the-server)                                  | Security fixes move permission authority to the server                                      | Accepted | 2026-08-02                           |
+| [004](#adr-004-firebase-app-check-integrated-client-side-enforcement-deliberately-off)                  | Firebase App Check integrated client-side, enforcement deliberately off                     | Accepted | 2026-08-04                           |
+| [005](#adr-005-roomsroomidmembers-renamed-to-roommembers)                                               | `rooms/{roomId}/members` renamed to `roomMembers`                                           | Accepted | 2026-08-04                           |
+| [006](#adr-006-top-level-collectiongroup-wildcard-rules-stay-read-only-and-narrow)                      | Top-level `collectionGroup` wildcard rules stay read-only and narrow                        | Accepted | 2026-08-04                           |
+| [007](#adr-007-firestore-rules-changes-are-always-emulator-tested-against-a-real-collectiongroup-query) | Firestore rules changes are always emulator-tested against a real `collectionGroup()` query | Accepted | 2026-08-04                           |
+| [008](#adr-008-resend-smtp-instead-of-firebases-default-email-sender)                                   | Resend SMTP instead of Firebase's default email sender                                      | Accepted | 2026-08-04 (approximate)             |
+| [009](#adr-009-next_public_app_url-as-an-env-var-website-repo)                                          | `NEXT_PUBLIC_APP_URL` as an env var (website repo)                                          | Accepted | 2026-08-04 (approximate)             |
+| [010](#adr-010-real-per-achievement-unlock-timestamps)                                                  | Real per-achievement unlock timestamps                                                      | Accepted | 2026-08-06                           |
+| [011](#adr-011-permission_handler-for-real-device-permission-status)                                    | `permission_handler` for real device-permission status                                      | Accepted | 2026-08-06                           |
+| [012](#adr-012-coming-soon-instead-of-fabricated-data-or-dead-buttons)                                  | "Coming soon" instead of fabricated data or dead buttons                                    | Accepted | 2026-08-06                           |
+| [013](#adr-013-clients-write-firestore-directly-cloud-functions-are-reserved-for-privileged-work)       | Clients write Firestore directly; Cloud Functions are reserved for privileged work          | Accepted | Foundational — documented 2026-08-06 |
+| [014](#adr-014-two-deployables-one-firebase-project)                                                    | Two deployables, one Firebase project                                                       | Accepted | Foundational — documented 2026-08-06 |
+| [015](#adr-015-feature-based-folder-structure-over-layer-based)                                         | Feature-based folder structure over layer-based                                             | Accepted | Foundational — documented 2026-08-06 |
+| [016](#adr-016-native-android-and-ios-window-chrome-is-pinned-dark-not-os-controlled)                   | Native Android and iOS window chrome is pinned dark, not OS-controlled                      | Accepted | 2026-08-06                           |
 
 ---
 
@@ -754,3 +755,81 @@ slightly differently (a known, accepted cost — see
 repeated per-screen rather than centralized). That's judged an acceptable
 trade for the alternative of premature sharing that couples features that
 should be free to evolve independently.
+
+---
+
+## ADR-016: Native Android and iOS window chrome is pinned dark, not OS-controlled
+
+**Status**: Accepted
+**Date**: 2026-08-06
+
+### Context
+
+Users reported a large white panel flashing in from the bottom of the
+screen when opening New Chat. The Dart-side implementation
+(`_NewMessageSheet` in `messages_screen.dart`, a `DraggableScrollableSheet`
+inside `showModalBottomSheet`) was already fully dark-themed — the bug
+wasn't there. The actual cause was one level down, in the native shell:
+
+- **Android**: `android/app/src/main/res/drawable/launch_background.xml`
+  hardcoded `@android:color/white` (an untouched Flutter template
+  default), and both `values/styles.xml` and `values-night/styles.xml`
+  set `NormalTheme`'s `android:windowBackground` to
+  `?android:colorBackground` — a reference Android docs describe as
+  determining "the color of the Android Window ... behind your Flutter UI
+  while it's running." That reference resolves against the **phone's own
+  OS-level light/dark setting**, not the Flutter app's theme.
+- **iOS**: `LaunchScreen.storyboard`'s root view had a hardcoded white
+  `backgroundColor` (also an untouched template default), and
+  `Info.plist` had no `UIUserInterfaceStyle`, so native chrome again
+  followed the **system** appearance.
+
+YO Voice's Flutter theme (`lib/core/theme/app_theme.dart`) is dark-only —
+`Brightness.dark` unconditionally, no light variant. So on any device with
+the system set to Light mode (the common default), the native layer
+sitting behind Flutter's compositor was white while the Flutter layer on
+top was dark. That native layer is what showed through during route/sheet
+transition compositing — most visibly on the New Chat sheet because
+`DraggableScrollableSheet`'s transition is the heaviest one in the app,
+giving the white layer the most opportunity to be seen. It was never
+specific to New Chat; that sheet just made an app-wide condition visible.
+
+### Decision
+
+Pin every native-chrome color source to the app's actual dark background
+(`#0D0618`, matching `AppColors.background`) instead of an OS-relative
+reference, on both platforms:
+
+- Android: hardcoded `#FF0D0618` in both `launch_background.xml` variants
+  (`drawable/`, `drawable-v21/`) and both `styles.xml` variants
+  (`values/`, `values-night/`) for `NormalTheme.windowBackground`; also
+  switched `values/styles.xml`'s `LaunchTheme`/`NormalTheme` parent from
+  `Theme.Light.NoTitleBar` to `Theme.Black.NoTitleBar` so the two
+  variants are now identical regardless of the OS setting.
+- iOS: recolored `LaunchScreen.storyboard`'s background to the same
+  `#0D0618`, and added `UIUserInterfaceStyle: Dark` to `Info.plist`.
+
+### Reasoning
+
+The app has no light theme, so its native shell has no legitimate reason
+to vary with the OS's light/dark setting — doing so wasn't a feature, it
+was an unhandled case. Fixing it per-screen (e.g. giving
+`_NewMessageSheet` an opaque backdrop) would have hidden the symptom on
+that one sheet while leaving the same native-layer mismatch behind every
+other transition in the app. Pinning the native layer once, at the
+source, fixes it everywhere at once and can't regress by a future screen
+forgetting to set a background color.
+
+### Consequences
+
+Native chrome (status bar style, window background, launch screen) no
+longer respects the system's light/dark setting on either platform — this
+is correct today because the app has no light theme, but if a light theme
+is ever added, this decision needs to be revisited alongside it (the
+native layer would need to switch dynamically instead of staying pinned).
+Required an unrelated fix to get iOS building at all in this session: the
+Podfile had no explicit `platform`, so CocoaPods defaulted a subset of pod
+targets below the 15.0 minimum Firebase's Swift Package Manager
+dependencies already require, producing an Xcode Target Integrity error.
+Set `platform :ios, '15.0'` in `ios/Podfile` to match `Runner.xcodeproj`'s
+existing deployment target.

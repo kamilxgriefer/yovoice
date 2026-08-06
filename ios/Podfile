@@ -1,5 +1,8 @@
-# Uncomment this line to define a global platform for your project
-# platform :ios, '13.0'
+# Matches Runner's IPHONEOS_DEPLOYMENT_TARGET (Runner.xcodeproj) — Firebase's
+# Swift Package Manager dependencies already require iOS 15.0, so leaving
+# this unset let CocoaPods default some pod targets to an older minimum,
+# producing a target-integrity mismatch against the SPM packages.
+platform :ios, '15.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
