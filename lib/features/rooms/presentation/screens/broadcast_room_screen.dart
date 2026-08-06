@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -31,6 +33,15 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
   final RoomService _rooms = RoomService();
   late final AnimationController _pulse;
 
+  // Created once instead of inline in build() -- StreamBuilder resubscribes
+  // whenever its `stream` argument is a new instance, and every setState()
+  // in this screen (joining, hand-raise, dialogs, host actions) used to
+  // hand it a fresh Stream each rebuild, tearing down and re-establishing
+  // a live Firestore listener on every single one of them.
+  late final Stream<List<RoomParticipant>> _participants;
+  StreamSubscription<List<RoomParticipant>>? _participantsWatch;
+  bool _wasSeenAsParticipant = false;
+
   bool _joining = false;
   bool _ending = false;
 
@@ -45,12 +56,42 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1250),
     )..repeat(reverse: true);
+    _participants = _rooms.watchParticipants(widget.room.id);
+    _participantsWatch = _participants.listen(_handleParticipantsUpdate);
   }
 
   @override
   void dispose() {
     _pulse.dispose();
+    unawaited(_participantsWatch?.cancel());
     super.dispose();
+  }
+
+  // Ending or deleting a broadcast room deletes every participant doc,
+  // including every listener's own -- but until now nothing told a
+  // listener the room was gone; they'd just see the stage go empty and
+  // have to notice and back out manually. The host doesn't need this:
+  // _endBroadcast/_confirmDeleteRoom already navigate them out directly.
+  void _handleParticipantsUpdate(List<RoomParticipant> participants) {
+    final stillIn = participants.any(
+      (participant) => participant.userId == _uid,
+    );
+
+    if (stillIn) {
+      _wasSeenAsParticipant = true;
+      return;
+    }
+
+    if (!_wasSeenAsParticipant || _isHost || _ending) {
+      return;
+    }
+
+    _ending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _showMessage('This room has ended.');
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    });
   }
 
   Future<void> _joinVoice() async {
@@ -150,10 +191,8 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: BroadcastRoomColors.surface,
-      builder: (_) => BroadcastSettingsSheet(
-        room: widget.room,
-        service: _rooms,
-      ),
+      builder: (_) =>
+          BroadcastSettingsSheet(room: widget.room, service: _rooms),
     );
 
     if (!mounted || saved != true) return;
@@ -402,7 +441,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
       backgroundColor: BroadcastRoomColors.background,
       body: SafeArea(
         child: StreamBuilder<List<RoomParticipant>>(
-          stream: _rooms.watchParticipants(widget.room.id),
+          stream: _participants,
           builder: (context, snapshot) {
             final participants = snapshot.data ?? const <RoomParticipant>[];
             final host = participants.where((p) => p.isHost).firstOrNull;
@@ -522,8 +561,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
                       joining: _joining,
                       ending: _ending,
                       handRaised: me?.isHandRaised ?? false,
-                      canRaiseHand:
-                          me != null && !me.isSpeaker && !me.isHost,
+                      canRaiseHand: me != null && !me.isSpeaker && !me.isHost,
                       onJoin: _joinVoice,
                       onRaiseHand: () => _toggleHand(me),
                       onShare: _openShareSheet,

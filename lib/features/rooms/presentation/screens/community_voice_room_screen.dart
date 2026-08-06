@@ -26,6 +26,15 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
   final _voice = VoiceCallService.instance;
   final _rooms = RoomService();
   late final AnimationController _motion;
+  // Single shared stream instance -- both the manual subscription below and
+  // the StreamBuilder in build() listen to this same Stream, instead of
+  // each calling watchParticipants() independently. Firestore's snapshots()
+  // streams are broadcast, so this is safe, and it means only one live
+  // listener is registered instead of two (and previously, since the
+  // StreamBuilder called watchParticipants() inline in build(), every
+  // setState() in this screen was tearing down and re-registering its
+  // listener on every rebuild).
+  late final Stream<List<RoomParticipant>> _participants;
   StreamSubscription<List<RoomParticipant>>? _participantSubscription;
   bool _joinedDocumentSeen = false;
   bool _leaving = false;
@@ -41,9 +50,8 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
       duration: const Duration(seconds: 28),
     )..repeat();
     _voice.addListener(_refresh);
-    _participantSubscription = _rooms
-        .watchParticipants(widget.room.id)
-        .listen(_handleParticipantState);
+    _participants = _rooms.watchParticipants(widget.room.id);
+    _participantSubscription = _participants.listen(_handleParticipantState);
     unawaited(_connect());
   }
 
@@ -157,7 +165,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<RoomParticipant>>(
-      stream: _rooms.watchParticipants(widget.room.id),
+      stream: _participants,
       builder: (context, snapshot) {
         final roomParticipants = snapshot.data ?? const <RoomParticipant>[];
         final speaking = roomParticipants
@@ -176,14 +184,10 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
                   speaking: speaking,
                   listeners: listeners,
                   onBack: () => Navigator.of(context).pop(),
-                  onSpeakingTap: () => _openParticipants(
-                    roomParticipants,
-                    speakersOnly: true,
-                  ),
-                  onListenersTap: () => _openParticipants(
-                    roomParticipants,
-                    speakersOnly: false,
-                  ),
+                  onSpeakingTap: () =>
+                      _openParticipants(roomParticipants, speakersOnly: true),
+                  onListenersTap: () =>
+                      _openParticipants(roomParticipants, speakersOnly: false),
                 ),
                 Expanded(
                   child: AnimatedBuilder(
@@ -268,21 +272,29 @@ class _TopBar extends StatelessWidget {
               ],
             ),
           ),
-          _CounterPill(label: 'Speaking', value: speaking, onTap: onSpeakingTap),
+          _CounterPill(
+            label: 'Speaking',
+            value: speaking,
+            onTap: onSpeakingTap,
+          ),
           const SizedBox(width: 8),
-          _CounterPill(label: 'Listeners', value: listeners, onTap: onListenersTap),
+          _CounterPill(
+            label: 'Listeners',
+            value: listeners,
+            onTap: onListenersTap,
+          ),
         ],
       ),
     );
   }
 
   static String _statusText(VoiceCallStatus status) => switch (status) {
-        VoiceCallStatus.connected => 'COMMUNITY LIVE',
-        VoiceCallStatus.connecting => 'CONNECTING…',
-        VoiceCallStatus.reconnecting => 'RECONNECTING…',
-        VoiceCallStatus.failed => 'CONNECTION FAILED',
-        VoiceCallStatus.disconnected => 'OFFLINE',
-      };
+    VoiceCallStatus.connected => 'COMMUNITY LIVE',
+    VoiceCallStatus.connecting => 'CONNECTING…',
+    VoiceCallStatus.reconnecting => 'RECONNECTING…',
+    VoiceCallStatus.failed => 'CONNECTION FAILED',
+    VoiceCallStatus.disconnected => 'OFFLINE',
+  };
 }
 
 class _CounterPill extends StatelessWidget {
@@ -383,11 +395,7 @@ class _CosmicStage extends StatelessWidget {
     );
   }
 
-  List<Widget> _buildOrbitingPeople(
-    Size size,
-    Offset center,
-    double coreSize,
-  ) {
+  List<Widget> _buildOrbitingPeople(Size size, Offset center, double coreSize) {
     if (participants.isEmpty) return const [];
     final avatarSize = size.width < 600 ? 70.0 : 82.0;
     final availableRadius = math.min(size.width, size.height) / 2;
@@ -495,10 +503,10 @@ class _CommunityHeart extends StatelessWidget {
             Text(
               connected
                   ? energy > .55
-                      ? 'The room is alive'
-                      : energy > .16
-                          ? 'Voices are connecting'
-                          : 'Listening for voices'
+                        ? 'The room is alive'
+                        : energy > .16
+                        ? 'Voices are connecting'
+                        : 'Listening for voices'
                   : 'Connecting…',
               textAlign: TextAlign.center,
               style: const TextStyle(
@@ -527,12 +535,8 @@ class _CosmicAvatar extends StatelessWidget {
     final aura = participant.isLocal
         ? const Color(0xFF5BE7FF)
         : speaking
-            ? Color.lerp(
-                const Color(0xFF8F42FF),
-                const Color(0xFFFF64EF),
-                level,
-              )!
-            : const Color(0xFF7D39B5);
+        ? Color.lerp(const Color(0xFF8F42FF), const Color(0xFFFF64EF), level)!
+        : const Color(0xFF7D39B5);
     final initial = participant.displayName.trim().isEmpty
         ? '?'
         : participant.displayName.trim()[0].toUpperCase();
@@ -555,7 +559,11 @@ class _CosmicAvatar extends StatelessWidget {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               gradient: RadialGradient(
-                colors: [aura, const Color(0xFF351048), const Color(0xFF08040E)],
+                colors: [
+                  aura,
+                  const Color(0xFF351048),
+                  const Color(0xFF08040E),
+                ],
               ),
               border: Border.all(
                 color: aura,
@@ -602,7 +610,9 @@ class _CosmicAvatar extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            participant.isLocal ? '${participant.displayName} (you)' : participant.displayName,
+            participant.isLocal
+                ? '${participant.displayName} (you)'
+                : participant.displayName,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -658,9 +668,9 @@ class _SpacePainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.3 + energy * 2
-        ..color = const Color(0xFFE15AFF).withValues(
-          alpha: (.18 + energy * .25) * (1 - ((progress * 2) % 1)),
-        ),
+        ..color = const Color(
+          0xFFE15AFF,
+        ).withValues(alpha: (.18 + energy * .25) * (1 - ((progress * 2) % 1))),
     );
 
     final starPaint = Paint();
@@ -669,7 +679,8 @@ class _SpacePainter extends CustomPainter {
       final x = (math.sin(seed) * .5 + .5) * size.width;
       final baseY = (math.cos(seed * 1.71) * .5 + .5) * size.height;
       final y = (baseY + progress * (8 + i % 7)) % size.height;
-      final twinkle = .25 + .55 * (math.sin(progress * math.pi * 2 + seed).abs());
+      final twinkle =
+          .25 + .55 * (math.sin(progress * math.pi * 2 + seed).abs());
       starPaint.color = Colors.white.withValues(alpha: twinkle);
       canvas.drawCircle(Offset(x, y), i % 13 == 0 ? 1.35 : .65, starPaint);
     }
@@ -749,8 +760,8 @@ class _RoundControl extends StatelessWidget {
     final color = danger
         ? const Color(0xFFFF3C68)
         : highlighted
-            ? const Color(0xFFB62CFF)
-            : const Color(0xFF21152A);
+        ? const Color(0xFFB62CFF)
+        : const Color(0xFF21152A);
     return Opacity(
       opacity: enabled ? 1 : .45,
       child: InkWell(
@@ -876,10 +887,8 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                     shrinkWrap: true,
                     padding: const EdgeInsets.fromLTRB(14, 4, 14, 26),
                     itemCount: widget.participants.length,
-                    separatorBuilder: (_, __) => const Divider(
-                      color: Color(0xFF2E2037),
-                      height: 1,
-                    ),
+                    separatorBuilder: (_, __) =>
+                        const Divider(color: Color(0xFF2E2037), height: 1),
                     itemBuilder: (context, index) {
                       final participant = widget.participants[index];
                       final host = participant.userId == widget.hostId;
@@ -905,7 +914,9 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                           ),
                         ),
                         title: Text(
-                          self ? '${participant.displayName} (you)' : participant.displayName,
+                          self
+                              ? '${participant.displayName} (you)'
+                              : participant.displayName,
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w800,
@@ -915,10 +926,10 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                           host
                               ? 'Community owner'
                               : participant.isMuted
-                                  ? 'Muted'
-                                  : participant.isSpeaker
-                                      ? 'Speaking'
-                                      : 'Listening',
+                              ? 'Muted'
+                              : participant.isSpeaker
+                              ? 'Speaking'
+                              : 'Listening',
                           style: const TextStyle(color: Color(0xFFB6A9C2)),
                         ),
                         trailing: canAct
@@ -957,14 +968,18 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                                   PopupMenuItem(
                                     value: 'mute',
                                     child: Text(
-                                      participant.isMuted ? 'Allow microphone' : 'Mute participant',
+                                      participant.isMuted
+                                          ? 'Allow microphone'
+                                          : 'Mute participant',
                                     ),
                                   ),
                                   const PopupMenuItem(
                                     value: 'remove',
                                     child: Text(
                                       'Remove from room',
-                                      style: TextStyle(color: Color(0xFFFF6688)),
+                                      style: TextStyle(
+                                        color: Color(0xFFFF6688),
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -973,8 +988,8 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                                 participant.isMuted
                                     ? Icons.mic_off_rounded
                                     : participant.isSpeaker
-                                        ? Icons.graphic_eq_rounded
-                                        : Icons.headphones_rounded,
+                                    ? Icons.graphic_eq_rounded
+                                    : Icons.headphones_rounded,
                                 color: const Color(0xFFC277FF),
                               ),
                       );

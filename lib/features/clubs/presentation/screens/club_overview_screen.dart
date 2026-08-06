@@ -32,6 +32,24 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
   int _selectedTab = 0;
   bool _openingLounge = false;
 
+  // Hoisted out of build() -- these previously lived inside the outer
+  // StreamBuilder<Club>'s builder callback, so a fresh Stream (and a fresh
+  // Firestore listener) was created every time the club document changed
+  // at all (member joins, online-count ticks, etc.) or the user switched
+  // tabs and triggered setState, not just when members/channels actually
+  // needed to reload.
+  late final Stream<Club> _club;
+  late final Stream<List<ClubMember>> _members;
+  late final Stream<List<ClubChannel>> _channels;
+
+  @override
+  void initState() {
+    super.initState();
+    _club = _clubService.watchClub(widget.clubId);
+    _members = _clubService.watchMembers(widget.clubId);
+    _channels = _clubService.watchChannels(widget.clubId);
+  }
+
   Future<void> _openClubLounge(Club club) async {
     if (_openingLounge) return;
     setState(() => _openingLounge = true);
@@ -117,7 +135,7 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
     return Scaffold(
       backgroundColor: _background,
       body: StreamBuilder<Club>(
-        stream: _clubService.watchClub(widget.clubId),
+        stream: _club,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(
@@ -263,11 +281,11 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
                   child: switch (_selectedTab) {
                     1 => _MembersPreview(
                       clubId: widget.clubId,
-                      stream: _clubService.watchMembers(widget.clubId),
+                      stream: _members,
                     ),
                     _ => _ChannelsPreview(
                       clubName: club.name,
-                      stream: _clubService.watchChannels(widget.clubId),
+                      stream: _channels,
                       onOpenVoice: () => _openClubLounge(club),
                     ),
                   },

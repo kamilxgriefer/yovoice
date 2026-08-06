@@ -51,6 +51,8 @@ given a false-precision date.
 | [014](#adr-014-two-deployables-one-firebase-project)                                                    | Two deployables, one Firebase project                                                       | Accepted | Foundational — documented 2026-08-06 |
 | [015](#adr-015-feature-based-folder-structure-over-layer-based)                                         | Feature-based folder structure over layer-based                                             | Accepted | Foundational — documented 2026-08-06 |
 | [016](#adr-016-native-android-and-ios-window-chrome-is-pinned-dark-not-os-controlled)                   | Native Android and iOS window chrome is pinned dark, not OS-controlled                      | Accepted | 2026-08-06                           |
+| [017](#adr-017-android-build-fixes-core-library-desugaring-and-drawable-resource-references)            | Android build fixes: core library desugaring and drawable resource references               | Accepted | 2026-08-07                           |
+| [018](#adr-018-per-screen-firestore-streams-are-created-once-in-initstate-never-inline-in-build)         | Per-screen Firestore streams are created once in `initState`, never inline in `build()`      | Accepted | 2026-08-07                           |
 
 ---
 
@@ -833,3 +835,136 @@ targets below the 15.0 minimum Firebase's Swift Package Manager
 dependencies already require, producing an Xcode Target Integrity error.
 Set `platform :ios, '15.0'` in `ios/Podfile` to match `Runner.xcodeproj`'s
 existing deployment target.
+
+---
+
+## ADR-017: Android build fixes: core library desugaring and drawable resource references
+
+**Status**: Accepted
+**Date**: 2026-08-07
+
+### Context
+
+Verifying ADR-016's Android fix required an actual Android build, which
+this project apparently had never had attempted end-to-end recently —
+CI only builds the Flutter *web* target (see
+[DEPLOYMENT.md](DEPLOYMENT.md)), so an Android-specific build regression
+had no way to surface on its own. Two genuine, unrelated build blockers
+turned up:
+
+1. `flutter_local_notifications` requires Java 8+ core library
+   desugoring to be enabled for `:app` — not configured in
+   `android/app/build.gradle.kts`. `flutter build apk --debug` failed
+   outright with `AAR metadata` errors before compiling a single Dart
+   line.
+2. After fixing (1), the build failed again — AAPT2 rejected
+   `<item android:drawable="#FF0D0618" />` inside
+   `drawable/launch_background.xml` and `drawable-v21/launch_background.xml`
+   (ADR-016's own fix) with "incompatible with attribute drawable (attr)
+   reference." A `<style>` item's `android:windowBackground` accepts a
+   literal color directly; a `<layer-list>` `<item>`'s `android:drawable`
+   attribute does not — it needs an actual drawable/color *resource*
+   reference. `xmllint` (used to validate ADR-016's changes) only checks
+   XML well-formedness, not AAPT2 resource-compiler semantics, so this
+   passed that check and only surfaced once a real Android build ran.
+
+### Decision
+
+- Added `isCoreLibraryDesugaringEnabled = true` to `compileOptions` and
+  `coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")` to
+  `dependencies` in `android/app/build.gradle.kts`.
+- Changed both `launch_background.xml` variants' `android:drawable` to
+  reference the existing `@color/ic_launcher_background` resource
+  (`android/app/src/main/res/values/colors.xml`) instead of a literal hex
+  string.
+
+### Reasoning
+
+Both are the standard, documented fixes for their respective errors —
+no workaround or version pin was needed. Reusing the existing
+`ic_launcher_background` color resource (rather than adding a new one)
+keeps a single source of truth for the app's Android launch-surface
+color, matching ADR-016's intent.
+
+### Consequences
+
+`flutter build apk` (and, by extension, `flutter run` on Android) now
+succeeds; verified with two full builds in this session, plus
+`flutter analyze`/`flutter test` passing unrelated to this change. No
+Android emulator or physical device was available in the session that
+made this fix, so it's build-verified but not runtime-verified — see the
+session's own report for exactly what that does and doesn't cover. Since
+nothing in CI builds Android, a similar regression could resurface
+silently again; worth considering whether an Android build step belongs
+in CI (currently out of scope — see [DEPLOYMENT.md](DEPLOYMENT.md) for
+why CI is deliberately narrow today).
+
+---
+
+## ADR-018: Per-screen Firestore streams are created once in `initState`, never inline in `build()`
+
+**Status**: Accepted
+**Date**: 2026-08-07
+
+### Context
+
+Auditing the Rooms and Clubs screens for the same class of bug behind
+ADR-016 turned up a different, unrelated one: several
+`StreamBuilder<T>(stream: _service.watchX(id), ...)` calls had the
+stream expression written directly inline as the `stream:` argument,
+inside the State's `build()` method — e.g.
+`broadcast_room_screen.dart`, `community_voice_room_screen.dart`,
+`podcast_room_screen.dart`, and `club_overview_screen.dart`. Since
+`_service.watchX(id)` returns a **new** `Stream` object every time it's
+called, and `StreamBuilder` tears down and re-subscribes whenever its
+`stream` argument is a different instance (Dart streams don't have value
+equality), every `setState()` in that screen — joining, muting,
+hand-raising, switching a tab, opening a dialog — was silently tearing
+down and re-registering a live Firestore listener on the participants/
+members/channels/room subcollection. In `club_overview_screen.dart`
+specifically this was provably wasteful: the members/channels listeners
+lived *inside* the outer `watchClub()` StreamBuilder's own builder
+callback, so they were also re-created on every unrelated field change
+on the club document itself (an online-count tick, e.g.), not just on
+user interaction.
+
+### Decision
+
+Stream instances a screen depends on for its whole lifetime are created
+exactly once, stored in a `late final Stream<T>` field set in
+`initState()`, and referenced by that field everywhere — never called
+fresh inside `build()`. Fixed in the four files above; documented here so
+new room/club screens follow the same pattern from the start.
+
+### Reasoning
+
+This is a plain Flutter/Dart identity-vs-value semantics issue, not a
+design tradeoff — there's no version of "call the stream method inline"
+that's actually correct once a screen has more than one `setState()`
+trigger, which every non-trivial screen does. The fix costs nothing
+(one field, one line in `initState`) and removes an entire class of
+avoidable Firestore listener churn.
+
+### Consequences
+
+Two related, more invasive findings from the same audit were
+**deliberately not fixed** in this pass, to keep it scoped:
+`room_screen.dart` and `podcast_room_screen.dart`'s screen classes
+(`RoomScreen`, `PodcastRoomScreen`) are confirmed **dead code** — no
+navigation path in the app reaches either of them any more
+(`RoomEntryScreen` only routes to `BroadcastRoomScreen` or
+`CommunityRoomLobbyScreen`; legacy `experience: podcast` Firestore values
+are mapped to `broadcast` before that routing happens, per
+[ADR-001](Decisions.md#adr-001-legacy-podcast-room-experience-stays-supported)).
+`podcast_room_screen.dart` got this same stream fix anyway since it was
+already being edited and the fix is harmless either way; `room_screen.dart`
+was left untouched entirely. Per this project's rule against removing
+existing functionality without being asked (see
+[CLAUDE.md](../CLAUDE.md)), neither file was deleted — that's a decision
+for whoever owns the product to make deliberately, not a side effect of
+an audit pass. The same inline-stream pattern also exists in a handful of
+lower-traffic spots (`friends_screen.dart`, `friend_profile_screen.dart`,
+a `club_overview_screen.dart` invite sheet) that weren't fixed this pass
+because they don't sit behind a frequently-rebuilding `build()` the way
+the four fixed screens did — lower severity, not zero, worth a future
+pass.

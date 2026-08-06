@@ -31,6 +31,12 @@ class _PodcastRoomScreenState extends State<PodcastRoomScreen>
   final TextEditingController _message = TextEditingController();
 
   late final AnimationController _handPulse;
+  // Hoisted out of build() -- StreamBuilder resubscribes (tearing down and
+  // re-registering its Firestore listener) whenever its `stream` argument
+  // is a new instance, and these were previously created fresh on every
+  // rebuild of this screen (joining, closing, any setState).
+  late final Stream<List<RoomParticipant>> _participants;
+  late final Stream<bool> _myHandRaised;
   bool _joining = false;
   bool _closing = false;
 
@@ -44,6 +50,8 @@ class _PodcastRoomScreenState extends State<PodcastRoomScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1050),
     )..repeat(reverse: true);
+    _participants = _rooms.watchParticipants(widget.room.id);
+    _myHandRaised = _experience.watchMyHandRaised(widget.room.id);
   }
 
   @override
@@ -353,7 +361,7 @@ class _PodcastRoomScreenState extends State<PodcastRoomScreen>
         ],
       ),
       body: StreamBuilder<List<RoomParticipant>>(
-        stream: _rooms.watchParticipants(widget.room.id),
+        stream: _participants,
         builder: (context, snapshot) {
           final people = snapshot.data ?? const <RoomParticipant>[];
           final stage = people.where((person) => person.isSpeaker).toList();
@@ -427,7 +435,7 @@ class _PodcastRoomScreenState extends State<PodcastRoomScreen>
         },
       ),
       bottomNavigationBar: StreamBuilder<bool>(
-        stream: _experience.watchMyHandRaised(widget.room.id),
+        stream: _myHandRaised,
         initialData: false,
         builder: (context, snapshot) {
           final raised = snapshot.data ?? false;
