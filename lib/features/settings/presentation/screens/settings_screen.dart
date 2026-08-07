@@ -771,8 +771,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   String _formatBytes(int bytes) {
     if (bytes <= 0) return 'Nothing cached';
-    if (bytes < 1024 * 1024)
+    if (bytes < 1024 * 1024) {
       return '${(bytes / 1024).toStringAsFixed(0)} KB cached';
+    }
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB cached';
   }
 }
