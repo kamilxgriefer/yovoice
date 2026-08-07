@@ -69,6 +69,19 @@ permission flags).
   `community_voice_room_screen.dart` already had equivalent handling
   (`_handleParticipantState`) before this pass; `podcast_room_screen.dart`
   didn't get this fix — see the dead-code note below.
+- **Fixed: "Sign up" / "Log in" cross-links on the auth screens had a
+  near-zero tap target.** Both `login_screen.dart` and
+  `register_screen.dart` explicitly shrank the `TextButton`'s hit box to
+  the bare text glyphs (`padding: EdgeInsets.zero` +
+  `minimumSize: Size.zero` + `tapTargetSize: MaterialTapTargetSize.shrinkWrap`),
+  well under Apple/Material's 44/48pt minimum touch target — a tap that
+  looked like it landed on the text would frequently miss. Removed the
+  override so the theme's default `TextButton` sizing applies (the shared
+  `textButtonTheme` doesn't set its own padding/minimumSize, so this falls
+  through to Flutter's own default, already comfortably tappable).
+  Regression-guarded by `test/auth_link_tap_target_test.dart`, which taps
+  each link via `find.text(...)` (real hit-testing, not a coordinate
+  guess) and asserts the resulting navigation.
 - **Fixed: every "More" menu destination had doubled or broken chrome.**
   Reported as "Settings is broken — white background, content missing";
   the actual cause was every one of the seven More destinations being

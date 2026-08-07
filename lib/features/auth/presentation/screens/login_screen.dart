@@ -360,11 +360,13 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ? null
                                   : _openRegisterScreen,
                               style: ButtonStyle(
-                                padding: WidgetStateProperty.all(
-                                  EdgeInsets.zero,
-                                ),
-                                minimumSize: WidgetStateProperty.all(Size.zero),
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                // Was shrunk to the bare text glyphs
+                                // (EdgeInsets.zero + Size.zero + shrinkWrap),
+                                // well under Apple/Material's 44/48pt minimum
+                                // touch target -- genuinely hard to hit
+                                // reliably. Let TextButton's own comfortable
+                                // default sizing apply instead, same as
+                                // "Forgot password?" right below it.
                                 mouseCursor:
                                     WidgetStateProperty.resolveWith<
                                       MouseCursor
@@ -419,17 +421,11 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                                 ),
                               ),
-                              child: const Padding(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 3,
-                                  vertical: 2,
-                                ),
-                                child: Text(
-                                  'Sign up',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                              child: const Text(
+                                'Sign up',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
                             ),

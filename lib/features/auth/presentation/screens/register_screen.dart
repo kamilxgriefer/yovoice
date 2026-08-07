@@ -367,14 +367,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               TextButton(
                                 onPressed: _isLoading ? null : _goBack,
                                 style: ButtonStyle(
-                                  padding: WidgetStateProperty.all(
-                                    EdgeInsets.zero,
-                                  ),
-                                  minimumSize: WidgetStateProperty.all(
-                                    Size.zero,
-                                  ),
-                                  tapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
+                                  // Was shrunk to the bare text glyphs
+                                  // (EdgeInsets.zero + Size.zero +
+                                  // shrinkWrap), well under Apple/Material's
+                                  // 44/48pt minimum touch target -- let
+                                  // TextButton's own comfortable default
+                                  // sizing apply instead.
                                   foregroundColor:
                                       WidgetStateProperty.resolveWith<Color?>((
                                         states,
@@ -412,17 +410,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                         return Colors.transparent;
                                       }),
                                 ),
-                                child: const Padding(
-                                  padding: EdgeInsets.symmetric(
-                                    horizontal: 3,
-                                    vertical: 2,
-                                  ),
-                                  child: Text(
-                                    'Log in',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w700,
-                                    ),
+                                child: const Text(
+                                  'Log in',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
                                   ),
                                 ),
                               ),
