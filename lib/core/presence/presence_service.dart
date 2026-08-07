@@ -16,15 +16,17 @@ class PresenceService {
     final user = _auth.currentUser;
     if (user == null) return;
 
-    final fallbackName = user.email?.split('@').first ?? 'YoVoice user';
-    final displayName = user.displayName?.trim().isNotEmpty == true
-        ? user.displayName!.trim()
-        : fallbackName;
-
+    // Presence must only ever touch presence fields. This used to also
+    // seed displayName/email/photoUrl from FirebaseAuth's `user` object --
+    // but that object is a separate, sometimes-stale source of truth from
+    // the Firestore profile doc (ProfileService is authoritative there).
+    // Since this heartbeat runs unconditionally every 45s and on every app
+    // resume, writing those fields here silently overwrote real profile
+    // edits (e.g. a freshly-uploaded avatar) with whatever FirebaseAuth's
+    // cached user.photoURL happened to be. The profile doc's initial
+    // identity fields are seeded once by ProfileService.ensureProfile()
+    // instead (called from AuthGate on sign-in), not on every heartbeat.
     await _firestore.collection('users').doc(user.uid).set({
-      'displayName': displayName,
-      'email': user.email?.trim().toLowerCase(),
-      'photoUrl': user.photoURL,
       'isOnline': true,
       'lastSeen': FieldValue.serverTimestamp(),
       'presenceUpdatedAt': FieldValue.serverTimestamp(),

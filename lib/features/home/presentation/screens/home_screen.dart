@@ -18,6 +18,8 @@ import 'package:yovoice/features/moments/presentation/screens/record_voice_momen
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
+import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
@@ -46,11 +48,13 @@ class _HomeScreenState extends State<HomeScreen> {
   final MessageService _messageService = MessageService();
   final MomentService _momentService = MomentService();
   final NotificationService _notificationService = NotificationService();
+  final ProfileService _profileService = ProfileService();
 
   late final Stream<List<VoiceMoment>> _moments;
   late final Stream<List<FriendUser>> _friends;
   late final Stream<List<VoiceRoom>> _rooms;
   late final Stream<List<Club>> _clubs;
+  late final Stream<UserProfile> _profile;
 
   @override
   void initState() {
@@ -59,6 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _friends = _friendService.watchFriends();
     _rooms = _roomService.watchLivePublicRooms();
     _clubs = _feedService.watchSuggestedClubs();
+    _profile = _profileService.watchCurrentProfile();
   }
 
   Future<void> _openNotifications() async {
@@ -237,9 +242,9 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
-    final fullName = user?.displayName?.trim();
-    final name = fullName?.isNotEmpty == true
-        ? fullName!.split(' ').first
+    final fallbackFullName = user?.displayName?.trim();
+    final fallbackName = fallbackFullName?.isNotEmpty == true
+        ? fallbackFullName!.split(' ').first
         : user?.email?.split('@').first ?? 'there';
 
     return Scaffold(
@@ -257,7 +262,29 @@ class _HomeScreenState extends State<HomeScreen> {
           bottom: false,
           child: CustomScrollView(
             slivers: [
-              SliverToBoxAdapter(child: _header(name, user?.photoURL)),
+              SliverToBoxAdapter(
+                child: StreamBuilder<UserProfile>(
+                  stream: _profile,
+                  builder: (context, snapshot) {
+                    final profile = snapshot.data;
+                    // Firestore's profile doc is the single source of truth
+                    // other screens (Settings, Creator Studio) already read
+                    // from -- FirebaseAuth's own currentUser.photoURL/
+                    // displayName are a non-reactive snapshot that only
+                    // updates on full sign-in, so a freshly-uploaded avatar
+                    // never appeared here until the next cold start. Fall
+                    // back to the Auth snapshot only for the first frame,
+                    // before the stream has emitted.
+                    final name = profile != null
+                        ? (profile.displayName.trim().isNotEmpty
+                              ? profile.displayName.trim().split(' ').first
+                              : fallbackName)
+                        : fallbackName;
+                    final photoUrl = profile?.photoUrl ?? user?.photoURL;
+                    return _header(name, photoUrl);
+                  },
+                ),
+              ),
               SliverToBoxAdapter(child: _livePulse()),
               SliverToBoxAdapter(child: _liveRooms()),
               SliverToBoxAdapter(child: _voiceStories()),

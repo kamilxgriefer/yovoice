@@ -1,5 +1,6 @@
-import 'dart:io';
+import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -761,6 +762,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   String _deviceLabel() {
+    if (kIsWeb) return 'Web browser';
     if (Platform.isIOS) return 'iOS device';
     if (Platform.isAndroid) return 'Android device';
     if (Platform.isMacOS) return 'macOS device';

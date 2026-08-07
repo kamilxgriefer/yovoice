@@ -7,6 +7,7 @@ import 'package:yovoice/features/auth/presentation/screens/login_screen.dart';
 import 'package:yovoice/features/auth/providers/auth_provider.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
+import 'package:yovoice/features/profile/data/services/profile_service.dart';
 
 class AuthGate extends ConsumerWidget {
   const AuthGate({super.key});
@@ -54,6 +55,11 @@ class _AuthenticatedEntryState extends State<_AuthenticatedEntry> {
     // Fire-and-forget: push is a nice-to-have, never something the welcome
     // animation or main shell should wait on.
     unawaited(PushNotificationService.instance.initialize());
+
+    // Seeds the Firestore profile doc once per sign-in if it doesn't
+    // exist yet (ensureProfile() is a no-op for existing docs). Must run
+    // before PresenceService's heartbeat has any reason to touch the doc.
+    unawaited(ProfileService().ensureProfile());
 
     _welcomeTimer = Timer(const Duration(seconds: 4), () {
       if (!mounted) {

@@ -51,6 +51,80 @@ permission flags).
 
 ## UI
 
+- **Fixed: Settings screen was a blank grey panel on Flutter Web.**
+  `settings_screen.dart` imported `dart:io`'s `Platform` and called
+  `Platform.isIOS` unconditionally inside `_deviceLabel()`, which is
+  called directly from `build()`. On web, `dart:io`'s `Platform` is a
+  stub that throws `Unsupported operation: Platform._operatingSystem` on
+  any access — crashing the whole screen's build and leaving Flutter's
+  default grey `ErrorWidget` background with no visible error text (the
+  "large white/grey empty area" report). Fixed by returning a `kIsWeb`
+  branch before ever touching `Platform`. Verified server-side: the
+  deployed `main.dart.js` was confirmed via direct `curl` (bypassing any
+  browser cache) to contain the fix and no longer reference the crashing
+  path. **Not re-verified as a live screenshot** — every standard
+  cache-bypass technique (`Cache-Control: no-cache`, `Clear-Site-Data`,
+  full browser-process restart, brand-new tabs, query-string busting on
+  both `main.dart.js` and `flutter_bootstrap.js`, an isolated iframe
+  loaded entirely from `no-store` fetches) still rendered stale,
+  pre-fix content in this session's sandboxed browser tool — strong
+  evidence of a caching layer in that tool's own network path, not an
+  app defect, but it means the fix is server-verified, not yet
+  eyes-verified. Needs a real end-user browser (or a future session with
+  working tooling) to close the loop.
+- **Fixed (root cause): Firebase Hosting served `main.dart.js` (and other
+  build output) with `Cache-Control: max-age=3600`, and Flutter's default
+  web build doesn't content-hash that filename.** This meant any browser
+  that had visited before a deploy could keep running the *previous*
+  build's JS for up to an hour after a fix shipped — exactly the kind of
+  gap that made the Settings fix above hard to verify live. Added
+  explicit `Cache-Control: no-cache` header rules for `**/*.@(js|json|wasm)`
+  and `/index.html` in `firebase.json`, forcing browsers to revalidate
+  (via ETag) on every load instead of trusting a stale copy.
+- **Fixed: profile avatar (and, incidentally, display name) silently
+  reverted to blank/placeholder minutes after being set correctly.**
+  `PresenceService.setOnline()` (`lib/core/presence/presence_service.dart`)
+  runs unconditionally every 45 seconds and on every app foreground, and
+  was writing `photoUrl: user.photoURL` (FirebaseAuth's own, separate,
+  often-null `currentUser.photoURL`) into the *same* Firestore
+  `users/{uid}.photoUrl` field that `ProfileService` treats as the
+  authoritative profile photo. Any time those two diverged, the next
+  heartbeat clobbered the real value. Reproduced directly: set
+  `photoUrl` via the Storage/Firestore REST API on the shared diagnostic
+  account, confirmed it read back correctly, then watched it revert to
+  `null` on its own within one heartbeat interval while a session was
+  open. Fixed by stripping `displayName`/`email`/`photoUrl` out of the
+  presence write entirely — presence now only ever touches
+  `isOnline`/`lastSeen`/`presenceUpdatedAt`. The one legitimate reason
+  those fields were being seeded there (bootstrapping a brand-new user's
+  profile doc before they ever open Profile) is now handled once, at
+  sign-in, by `ProfileService.ensureProfile()` called from
+  `AuthGate`'s `_AuthenticatedEntryState.initState()` — already
+  idempotent (no-ops if the doc exists), so this is a straight move, not
+  new behavior. Also fixed the *display* side of the same class of bug in
+  `home_screen.dart`: its header read `FirebaseAuth.instance.currentUser`
+  directly (a non-reactive snapshot, and the same wrong source of truth)
+  instead of the Firestore profile stream every other screen
+  (Settings, Creator Studio) already uses correctly — now wired to
+  `ProfileService.watchCurrentProfile()` like the rest. **Verified**:
+  root cause reproduced live via REST before the fix; the fix itself is
+  a small, mechanical, `flutter analyze`-clean change reviewed against
+  the same reactive pattern already proven correct elsewhere in the
+  app. **Not yet re-confirmed with a live client running the patched
+  build** — blocked by the same Web caching-tool issue above, and by the
+  iOS Simulator being unresponsive to input in this session (reboot,
+  relaunch, and home+relaunch recovery attempts were all tried and all
+  failed identically).
+- **Not a bug, confirmed by direct check: profile banner (`bannerUrl`)
+  was never affected by the avatar issue above.** `PresenceService`
+  never touched `bannerUrl`, and `profile_screen.dart` already reads
+  `profile.bannerUrl` correctly from the same reactive stream. Confirmed
+  directly: set both `photoUrl` and `bannerUrl` via REST on the
+  diagnostic account at the same time — after the same wait,
+  `bannerUrl` was untouched while `photoUrl` had been wiped again (by a
+  still-open browser tab running the *old*, pre-fix code) — a clean,
+  direct confirmation that the two fields' behavior genuinely differs
+  for the reason described above, not a shared/systemic Firestore issue.
 - **Fixed: white panel flashing behind sheet transitions (e.g. New Chat)
   on devices with the OS set to Light mode.** Root cause was native
   Android/iOS window chrome following the *system* light/dark setting
