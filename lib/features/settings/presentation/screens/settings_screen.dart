@@ -6,6 +6,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/blocked_users_screen.dart';
@@ -78,7 +79,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         SnackBar(
           content: Text(message),
           behavior: SnackBarBehavior.floating,
-          backgroundColor: isError ? const Color(0xFF5C1B33) : const Color(0xFF3A1958),
+          backgroundColor: isError
+              ? const Color(0xFF5C1B33)
+              : const Color(0xFF3A1958),
         ),
       );
   }
@@ -225,7 +228,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 16),
             const Text(
               'Delete your account',
-              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900),
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+              ),
             ),
             const SizedBox(height: 8),
             const Text(
@@ -264,12 +271,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(10, 10, 18, 6),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(6, 10, 18, 6),
               child: Row(
                 children: [
-                  SizedBox(width: 4),
-                  Text(
+                  YoIconButton(
+                    icon: Icons.arrow_back_ios_new_rounded,
+                    iconSize: 18,
+                    size: 40,
+                    backgroundColor: _surface,
+                    borderColor: _border,
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                  const SizedBox(width: 6),
+                  const Text(
                     'Settings',
                     style: TextStyle(
                       color: Colors.white,
@@ -286,7 +301,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 stream: _profileService.watchCurrentProfile(),
                 builder: (context, snapshot) {
                   if (snapshot.hasError) {
-                    return _ErrorBody(message: friendlyErrorMessage(snapshot.error!));
+                    return _ErrorBody(
+                      message: friendlyErrorMessage(snapshot.error!),
+                    );
                   }
                   final profile = snapshot.data;
                   if (profile == null) {
@@ -326,9 +343,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _SettingsTile(
               icon: Icons.alternate_email_rounded,
               title: 'Username',
-              subtitle: profile.username.isEmpty ? 'Not set' : '@${profile.username}',
+              subtitle: profile.username.isEmpty
+                  ? 'Not set'
+                  : '@${profile.username}',
               onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => EditProfileScreen(profile: profile)),
+                MaterialPageRoute<void>(
+                  builder: (_) => EditProfileScreen(profile: profile),
+                ),
               ),
             ),
             _SettingsTile(
@@ -342,7 +363,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: 'Account type',
               subtitle: profile.accountType.label,
               onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => EditProfileScreen(profile: profile)),
+                MaterialPageRoute<void>(
+                  builder: (_) => EditProfileScreen(profile: profile),
+                ),
               ),
             ),
             _SettingsTile(
@@ -367,10 +390,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   subtitle: count == null
                       ? 'People you\'ve blocked'
                       : count == 0
-                          ? 'No one blocked'
-                          : '$count blocked',
+                      ? 'No one blocked'
+                      : '$count blocked',
                   onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(builder: (_) => const BlockedUsersScreen()),
+                    MaterialPageRoute<void>(
+                      builder: (_) => const BlockedUsersScreen(),
+                    ),
                   ),
                 );
               },
@@ -401,10 +426,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               trailing: _sendingReset
                   ? const _MiniSpinner()
                   : const Icon(Icons.chevron_right_rounded, color: _muted),
-              onTap: _sendingReset ? null : () => _sendPasswordReset(profile.email),
+              onTap: _sendingReset
+                  ? null
+                  : () => _sendPasswordReset(profile.email),
             ),
             _SettingsTile(
-              icon: emailVerified ? Icons.verified_user_rounded : Icons.gpp_maybe_rounded,
+              icon: emailVerified
+                  ? Icons.verified_user_rounded
+                  : Icons.gpp_maybe_rounded,
               title: 'Email verification',
               subtitle: emailVerified
                   ? 'Your email is verified'
@@ -412,8 +441,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               trailing: emailVerified
                   ? const Icon(Icons.check_circle_rounded, color: _success)
                   : (_resendingVerification || _refreshingVerification)
-                      ? const _MiniSpinner()
-                      : const Icon(Icons.chevron_right_rounded, color: _muted),
+                  ? const _MiniSpinner()
+                  : const Icon(Icons.chevron_right_rounded, color: _muted),
               onTap: emailVerified
                   ? null
                   : () => _showVerificationSheet(context),
@@ -436,7 +465,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: 'Notification preferences',
               subtitle: 'Choose what sends you a push notification',
               onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => const NotificationPreferencesScreen()),
+                MaterialPageRoute<void>(
+                  builder: (_) => const NotificationPreferencesScreen(),
+                ),
               ),
             ),
             _PermissionTile(
@@ -506,7 +537,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _SettingsTile(
               icon: Icons.cleaning_services_outlined,
               title: 'Clear image cache',
-              subtitle: _formatBytes(PaintingBinding.instance.imageCache.currentSizeBytes),
+              subtitle: _formatBytes(
+                PaintingBinding.instance.imageCache.currentSizeBytes,
+              ),
               trailing: _clearingCache
                   ? const _MiniSpinner()
                   : const Icon(Icons.chevron_right_rounded, color: _muted),
@@ -642,12 +675,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   color: _primary.withValues(alpha: .16),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: const Icon(Icons.mark_email_unread_rounded, color: _primary),
+                child: const Icon(
+                  Icons.mark_email_unread_rounded,
+                  color: _primary,
+                ),
               ),
               const SizedBox(height: 16),
               const Text(
                 'Verify your email',
-                style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
               ),
               const SizedBox(height: 8),
               const Text(
@@ -704,8 +744,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _formatJoinDate(DateTime? date) {
     if (date == null) return 'Unknown';
     const months = [
-      'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December',
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
     ];
     return '${months[date.month - 1]} ${date.year}';
   }
@@ -721,7 +771,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   String _formatBytes(int bytes) {
     if (bytes <= 0) return 'Nothing cached';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(0)} KB cached';
+    if (bytes < 1024 * 1024)
+      return '${(bytes / 1024).toStringAsFixed(0)} KB cached';
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB cached';
   }
 }
@@ -753,17 +804,27 @@ class _ProfileHeroCard extends StatelessWidget {
                 padding: const EdgeInsets.all(3),
                 decoration: const BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: LinearGradient(colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)]),
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
+                  ),
                 ),
                 child: CircleAvatar(
                   radius: 30,
                   backgroundColor: const Color(0xFF281133),
-                  backgroundImage: avatar?.isNotEmpty == true ? NetworkImage(avatar!) : null,
+                  backgroundImage: avatar?.isNotEmpty == true
+                      ? NetworkImage(avatar!)
+                      : null,
                   child: avatar?.isNotEmpty == true
                       ? null
                       : Text(
-                          profile.displayName.isEmpty ? '?' : profile.displayName[0].toUpperCase(),
-                          style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900),
+                          profile.displayName.isEmpty
+                              ? '?'
+                              : profile.displayName[0].toUpperCase(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
                 ),
               ),
@@ -776,7 +837,11 @@ class _ProfileHeroCard extends StatelessWidget {
                       profile.displayName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
                     const SizedBox(height: 3),
                     Text(
@@ -828,13 +893,20 @@ class _SettingsGroup extends StatelessWidget {
       decoration: BoxDecoration(
         color: _surfaceSoft,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: danger ? _danger.withValues(alpha: .25) : _border),
+        border: Border.all(
+          color: danger ? _danger.withValues(alpha: .25) : _border,
+        ),
       ),
       child: Column(
         children: [
           for (var index = 0; index < children.length; index++) ...[
             if (index > 0)
-              const Divider(height: 1, indent: 56, endIndent: 16, color: _border),
+              const Divider(
+                height: 1,
+                indent: 56,
+                endIndent: 16,
+                color: _border,
+              ),
             children[index],
           ],
         ],
@@ -884,7 +956,11 @@ class _SettingsTile extends StatelessWidget {
         ),
         title: Text(
           title,
-          style: TextStyle(color: titleColor, fontWeight: FontWeight.w700, fontSize: 14.5),
+          style: TextStyle(
+            color: titleColor,
+            fontWeight: FontWeight.w700,
+            fontSize: 14.5,
+          ),
         ),
         subtitle: subtitle == null
             ? null
@@ -896,7 +972,10 @@ class _SettingsTile extends StatelessWidget {
               ),
         trailing: comingSoon
             ? const _ComingSoonBadge()
-            : (trailing ?? (onTap != null ? const Icon(Icons.chevron_right_rounded, color: _muted) : null)),
+            : (trailing ??
+                  (onTap != null
+                      ? const Icon(Icons.chevron_right_rounded, color: _muted)
+                      : null)),
       ),
     );
   }
@@ -916,7 +995,12 @@ class _ComingSoonBadge extends StatelessWidget {
       ),
       child: const Text(
         'COMING SOON',
-        style: TextStyle(color: _muted, fontSize: 9.5, fontWeight: FontWeight.w900, letterSpacing: .4),
+        style: TextStyle(
+          color: _muted,
+          fontSize: 9.5,
+          fontWeight: FontWeight.w900,
+          letterSpacing: .4,
+        ),
       ),
     );
   }
@@ -938,7 +1022,12 @@ class _VerifiedChip extends StatelessWidget {
       ),
       child: Text(
         verified ? 'VERIFIED' : 'UNVERIFIED',
-        style: TextStyle(color: color, fontSize: 9.5, fontWeight: FontWeight.w900, letterSpacing: .4),
+        style: TextStyle(
+          color: color,
+          fontSize: 9.5,
+          fontWeight: FontWeight.w900,
+          letterSpacing: .4,
+        ),
       ),
     );
   }
@@ -967,7 +1056,9 @@ class _PermissionTile extends StatelessWidget {
       PermissionStatus.restricted => 'Restricted',
       PermissionStatus.provisional => 'Provisional',
     };
-    final granted = status == PermissionStatus.granted || status == PermissionStatus.limited;
+    final granted =
+        status == PermissionStatus.granted ||
+        status == PermissionStatus.limited;
 
     return _SettingsTile(
       icon: icon,
@@ -1003,7 +1094,11 @@ class _ErrorBody extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Text(message, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white)),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white),
+        ),
       ),
     );
   }

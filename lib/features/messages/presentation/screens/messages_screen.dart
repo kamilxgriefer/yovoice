@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -133,9 +134,15 @@ class _MessagesScreenState extends State<MessagesScreen> {
       builder: (sheetContext) {
         return _NewMessageSheet(
           friendsStream: _friendsStream,
+          conversationsStream: _conversationsStream,
+          currentUserId: FirebaseAuth.instance.currentUser?.uid ?? '',
           onFriendSelected: (friend) {
             Navigator.pop(sheetContext);
             unawaited(_startChat(friend));
+          },
+          onConversationSelected: (conversation) {
+            Navigator.pop(sheetContext);
+            unawaited(_openConversation(conversation));
           },
         );
       },
@@ -942,11 +949,17 @@ class _ConversationActionsSheet extends StatelessWidget {
 class _NewMessageSheet extends StatefulWidget {
   const _NewMessageSheet({
     required this.friendsStream,
+    required this.conversationsStream,
+    required this.currentUserId,
     required this.onFriendSelected,
+    required this.onConversationSelected,
   });
 
   final Stream<List<FriendUser>> friendsStream;
+  final Stream<List<Conversation>> conversationsStream;
+  final String currentUserId;
   final ValueChanged<FriendUser> onFriendSelected;
+  final ValueChanged<Conversation> onConversationSelected;
 
   @override
   State<_NewMessageSheet> createState() => _NewMessageSheetState();
@@ -1017,109 +1030,121 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
                 padding: const EdgeInsets.symmetric(horizontal: 18),
                 child: _SearchField(controller: _controller),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
               Expanded(
-                child: StreamBuilder<List<FriendUser>>(
-                  stream: widget.friendsStream,
-                  builder: (context, snapshot) {
-                    final friends = snapshot.data ?? const <FriendUser>[];
-                    final filtered = friends
-                        .where((friend) {
-                          if (_query.isEmpty) {
-                            return true;
-                          }
+                child: StreamBuilder<List<Conversation>>(
+                  stream: widget.conversationsStream,
+                  builder: (context, conversationSnapshot) {
+                    final conversations =
+                        conversationSnapshot.data ?? const <Conversation>[];
 
-                          return friend.displayName.toLowerCase().contains(
-                                _query,
-                              ) ||
-                              friend.email.toLowerCase().contains(_query);
-                        })
-                        .toList(growable: false);
+                    return StreamBuilder<List<FriendUser>>(
+                      stream: widget.friendsStream,
+                      builder: (context, friendSnapshot) {
+                        final friends =
+                            friendSnapshot.data ?? const <FriendUser>[];
+                        final loading =
+                            conversationSnapshot.connectionState ==
+                                ConnectionState.waiting &&
+                            friendSnapshot.connectionState ==
+                                ConnectionState.waiting &&
+                            conversations.isEmpty &&
+                            friends.isEmpty;
 
-                    if (snapshot.connectionState == ConnectionState.waiting &&
-                        friends.isEmpty) {
-                      return const Center(
-                        child: CircularProgressIndicator(
-                          color: _MessagesScreenState._primary,
-                        ),
-                      );
-                    }
+                        if (loading) {
+                          return const Center(
+                            child: CircularProgressIndicator(
+                              color: _MessagesScreenState._primary,
+                            ),
+                          );
+                        }
 
-                    if (filtered.isEmpty) {
-                      return const Center(
-                        child: Text(
-                          'No friends found.',
-                          style: TextStyle(color: _MessagesScreenState._muted),
-                        ),
-                      );
-                    }
+                        final recent =
+                            conversations
+                                .where(
+                                  (c) =>
+                                      !c.isArchivedFor(widget.currentUserId) &&
+                                      c.lastMessage.isNotEmpty,
+                                )
+                                .toList(growable: false)
+                              ..sort(
+                                (a, b) => b.updatedAt.compareTo(a.updatedAt),
+                              );
+                        final recentIds = recent
+                            .map((c) => c.otherUserId(widget.currentUserId))
+                            .toSet();
 
-                    return ListView.builder(
-                      controller: scrollController,
-                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
-                      itemCount: filtered.length,
-                      itemBuilder: (context, index) {
-                        final friend = filtered[index];
+                        bool matchesQuery(String name, String email) {
+                          if (_query.isEmpty) return true;
+                          return name.toLowerCase().contains(_query) ||
+                              email.toLowerCase().contains(_query);
+                        }
 
-                        return ListTile(
-                          onTap: () => widget.onFriendSelected(friend),
-                          leading: Stack(
-                            clipBehavior: Clip.none,
-                            children: [
-                              CircleAvatar(
-                                radius: 25,
-                                backgroundColor: const Color(0xFF67259A),
-                                backgroundImage:
-                                    friend.photoUrl?.trim().isNotEmpty == true
-                                    ? NetworkImage(friend.photoUrl!)
-                                    : null,
-                                child:
-                                    friend.photoUrl?.trim().isNotEmpty == true
-                                    ? null
-                                    : Text(
-                                        friend.initial,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w900,
-                                        ),
-                                      ),
-                              ),
-                              if (friend.isOnline)
-                                Positioned(
-                                  right: 0,
-                                  bottom: 0,
-                                  child: Container(
-                                    width: 14,
-                                    height: 14,
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF20D66B),
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                        color: const Color(0xFF120D1A),
-                                        width: 3,
-                                      ),
-                                    ),
+                        final filteredRecent = recent
+                            .take(6)
+                            .where((c) {
+                              final otherId = c.otherUserId(
+                                widget.currentUserId,
+                              );
+                              return matchesQuery(
+                                c.displayNameFor(otherId),
+                                c.emailFor(otherId),
+                              );
+                            })
+                            .toList(growable: false);
+
+                        final filteredFriends = friends
+                            .where(
+                              (friend) =>
+                                  !recentIds.contains(friend.id) &&
+                                  matchesQuery(
+                                    friend.displayName,
+                                    friend.email,
+                                  ),
+                            )
+                            .toList(growable: false);
+
+                        if (filteredRecent.isEmpty && filteredFriends.isEmpty) {
+                          return _NewMessageEmptyState(
+                            hasSearch: _query.isNotEmpty,
+                            hasNoFriendsAtAll: friends.isEmpty,
+                          );
+                        }
+
+                        return ListView(
+                          controller: scrollController,
+                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 28),
+                          children: [
+                            if (filteredRecent.isNotEmpty) ...[
+                              const _NewMessageSectionLabel('Recent'),
+                              for (final conversation in filteredRecent)
+                                _RecentChatTile(
+                                  conversation: conversation,
+                                  currentUserId: widget.currentUserId,
+                                  onTap: () => widget.onConversationSelected(
+                                    conversation,
                                   ),
                                 ),
+                              const SizedBox(height: 6),
                             ],
-                          ),
-                          title: Text(
-                            friend.displayName,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
+                            if (filteredFriends.isNotEmpty) ...[
+                              const _NewMessageSectionLabel('Friends'),
+                              for (final friend in filteredFriends)
+                                _FriendTile(
+                                  friend: friend,
+                                  onTap: () => widget.onFriendSelected(friend),
+                                ),
+                            ],
+                            const SizedBox(height: 10),
+                            _InviteFriendsTile(
+                              onTap: () => SharePlus.instance.share(
+                                ShareParams(
+                                  text:
+                                      'Join me on YoVoice — the app for live voice rooms and communities: https://yovoice.app/download',
+                                ),
+                              ),
                             ),
-                          ),
-                          subtitle: Text(
-                            friend.isOnline ? 'Active now' : friend.email,
-                            style: const TextStyle(
-                              color: _MessagesScreenState._muted,
-                            ),
-                          ),
-                          trailing: const Icon(
-                            Icons.chevron_right_rounded,
-                            color: _MessagesScreenState._muted,
-                          ),
+                          ],
                         );
                       },
                     );
@@ -1130,6 +1155,282 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
           ),
         );
       },
+    );
+  }
+}
+
+class _NewMessageSectionLabel extends StatelessWidget {
+  const _NewMessageSectionLabel(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 14, 10, 6),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: _MessagesScreenState._muted,
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+          letterSpacing: .3,
+        ),
+      ),
+    );
+  }
+}
+
+class _RecentChatTile extends StatelessWidget {
+  const _RecentChatTile({
+    required this.conversation,
+    required this.currentUserId,
+    required this.onTap,
+  });
+
+  final Conversation conversation;
+  final String currentUserId;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final otherId = conversation.otherUserId(currentUserId);
+    final name = conversation.displayNameFor(otherId);
+    final photoUrl = conversation.photoUrlFor(otherId);
+
+    return ListTile(
+      onTap: onTap,
+      leading: CircleAvatar(
+        radius: 25,
+        backgroundColor: const Color(0xFF67259A),
+        backgroundImage: photoUrl.trim().isNotEmpty
+            ? NetworkImage(photoUrl)
+            : null,
+        child: photoUrl.trim().isNotEmpty
+            ? null
+            : Text(
+                name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+      ),
+      title: Text(
+        name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      subtitle: Text(
+        conversation.previewFor(currentUserId),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(color: _MessagesScreenState._muted),
+      ),
+      trailing: const Icon(
+        Icons.chevron_right_rounded,
+        color: _MessagesScreenState._muted,
+      ),
+    );
+  }
+}
+
+class _FriendTile extends StatelessWidget {
+  const _FriendTile({required this.friend, required this.onTap});
+
+  final FriendUser friend;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      onTap: onTap,
+      leading: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          CircleAvatar(
+            radius: 25,
+            backgroundColor: const Color(0xFF67259A),
+            backgroundImage: friend.photoUrl?.trim().isNotEmpty == true
+                ? NetworkImage(friend.photoUrl!)
+                : null,
+            child: friend.photoUrl?.trim().isNotEmpty == true
+                ? null
+                : Text(
+                    friend.initial,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+          ),
+          if (friend.isOnline)
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF20D66B),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFF120D1A), width: 3),
+                ),
+              ),
+            ),
+        ],
+      ),
+      title: Text(
+        friend.displayName,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      subtitle: Text(
+        friend.isOnline ? 'Active now' : friend.email,
+        style: const TextStyle(color: _MessagesScreenState._muted),
+      ),
+      trailing: const Icon(
+        Icons.chevron_right_rounded,
+        color: _MessagesScreenState._muted,
+      ),
+    );
+  }
+}
+
+class _InviteFriendsTile extends StatelessWidget {
+  const _InviteFriendsTile({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: _MessagesScreenState._primary.withValues(alpha: .35),
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _MessagesScreenState._primary.withValues(alpha: .16),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.person_add_alt_1_rounded,
+                  color: _MessagesScreenState._primary,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Invite friends',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13.5,
+                      ),
+                    ),
+                    Text(
+                      'Not on YoVoice yet? Send them an invite.',
+                      style: TextStyle(
+                        color: _MessagesScreenState._muted,
+                        fontSize: 11.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NewMessageEmptyState extends StatelessWidget {
+  const _NewMessageEmptyState({
+    required this.hasSearch,
+    required this.hasNoFriendsAtAll,
+  });
+
+  final bool hasSearch;
+  final bool hasNoFriendsAtAll;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = hasSearch ? 'No matches' : "You're all caught up";
+    final subtitle = hasSearch
+        ? 'Try another name or email.'
+        : hasNoFriendsAtAll
+        ? 'Add friends to start messaging them here.'
+        : "You've already started every conversation you can.";
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _MessagesScreenState._surface,
+                shape: BoxShape.circle,
+                border: Border.all(color: _MessagesScreenState._border),
+              ),
+              child: Icon(
+                hasSearch
+                    ? Icons.search_off_rounded
+                    : Icons.chat_bubble_outline_rounded,
+                color: _MessagesScreenState._muted,
+                size: 28,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 16,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: _MessagesScreenState._muted,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

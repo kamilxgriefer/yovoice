@@ -69,6 +69,13 @@ permission flags).
   `community_voice_room_screen.dart` already had equivalent handling
   (`_handleParticipantState`) before this pass; `podcast_room_screen.dart`
   didn't get this fix — see the dead-code note below.
+- **Fixed: every "More" menu destination had doubled or broken chrome.**
+  Reported as "Settings is broken — white background, content missing";
+  the actual cause was every one of the seven More destinations being
+  wrapped in a second, redundant `Scaffold`+`AppBar` on top of each
+  screen's own. Settings only doubled its title text; Achievements showed
+  two full stacked Material app bars. See
+  [ADR-019](Decisions.md#adr-019-more-menu-destinations-own-their-full-chrome-no-wrapper-scaffold).
 
 ## Code quality / consolidation
 

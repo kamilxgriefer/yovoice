@@ -6,6 +6,7 @@ import 'package:yovoice/features/discover/presentation/widgets/hero_live_room.da
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 
 class DiscoverScreen extends StatefulWidget {
   const DiscoverScreen({super.key});
@@ -573,6 +574,15 @@ class _DiscoverHeader extends StatelessWidget {
       children: [
         Row(
           children: [
+            YoIconButton(
+              icon: Icons.arrow_back_ios_new_rounded,
+              iconSize: 18,
+              size: 40,
+              backgroundColor: _DiscoverScreenState._surface,
+              borderColor: _DiscoverScreenState._border,
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            const SizedBox(width: 10),
             const Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

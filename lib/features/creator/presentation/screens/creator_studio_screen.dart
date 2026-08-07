@@ -15,6 +15,7 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_screen.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 
 const _background = Color(0xFF09050F);
 const _surface = Color(0xFF17101F);
@@ -35,13 +36,30 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
   final _clubService = ClubService();
   final _momentService = MomentService();
 
+  // Created once instead of inline in build() -- see ADR-018 for why a
+  // fresh watchX() call inside a StreamBuilder's `stream:` argument tears
+  // down and re-registers a live Firestore listener on every rebuild.
+  late final Stream<UserProfile> _profile;
+  late final Stream<List<VoiceRoom>> _rooms;
+  late final Stream<List<Club>> _clubs;
+  late final Stream<List<VoiceMoment>> _moments;
+
+  @override
+  void initState() {
+    super.initState();
+    _profile = _profileService.watchCurrentProfile();
+    _rooms = _roomService.watchOwnedRooms();
+    _clubs = _clubService.watchMyClubs();
+    _moments = _momentService.watchMyMoments();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _background,
       body: SafeArea(
         child: StreamBuilder<UserProfile>(
-          stream: _profileService.watchCurrentProfile(),
+          stream: _profile,
           builder: (context, profileSnapshot) {
             final profile = profileSnapshot.data;
             if (profileSnapshot.hasError) {
@@ -53,15 +71,15 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
               );
             }
             return StreamBuilder<List<VoiceRoom>>(
-              stream: _roomService.watchOwnedRooms(),
+              stream: _rooms,
               builder: (context, roomsSnapshot) {
                 final rooms = roomsSnapshot.data ?? const <VoiceRoom>[];
                 return StreamBuilder<List<Club>>(
-                  stream: _clubService.watchMyClubs(),
+                  stream: _clubs,
                   builder: (context, clubsSnapshot) {
                     final clubs = clubsSnapshot.data ?? const <Club>[];
                     return StreamBuilder<List<VoiceMoment>>(
-                      stream: _momentService.watchMyMoments(),
+                      stream: _moments,
                       builder: (context, momentsSnapshot) {
                         final moments =
                             momentsSnapshot.data ?? const <VoiceMoment>[];
@@ -99,41 +117,67 @@ class _CreatorStudioContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final publishedMoments =
-        moments.where((item) => item.isPublished).toList(growable: false);
-    final draftMoments =
-        moments.where((item) => !item.isPublished).toList(growable: false);
+    final publishedMoments = moments
+        .where((item) => item.isPublished)
+        .toList(growable: false);
+    final draftMoments = moments
+        .where((item) => !item.isPublished)
+        .toList(growable: false);
     final liveRoomCount = rooms.where((item) => item.isLive).length;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(18, 6, 18, 48),
       children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(2, 4, 0, 16),
-          child: Text(
-            'Creator Studio',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 26,
-              fontWeight: FontWeight.w900,
-              letterSpacing: -0.5,
-            ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
+          child: Row(
+            children: [
+              YoIconButton(
+                icon: Icons.arrow_back_ios_new_rounded,
+                iconSize: 18,
+                size: 40,
+                backgroundColor: _surface,
+                borderColor: _border,
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Creator Studio',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                    Text(
+                      'Your tools, your growth, your community.',
+                      style: TextStyle(color: _muted, fontSize: 12.5),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
-        _ProfileOverviewCard(profile: profile),
+        _ProfileOverviewCard(profile: profile, liveRoomCount: liveRoomCount),
         const SizedBox(height: 14),
         if (profile.accountType == AccountType.personal) ...[
           _PersonalAccountBanner(profile: profile),
           const SizedBox(height: 14),
         ],
         _QuickActionsRow(),
-        const SizedBox(height: 18),
+        const SizedBox(height: 24),
 
-        const _SectionLabel('Audience'),
-        _StatGrid(
-          tiles: [
-            _StatTileData(
-              icon: Icons.groups_rounded,
+        // A slim, glanceable strip rather than a grid of tiles -- these
+        // numbers matter, but they're context, not the main event.
+        _StatStrip(
+          items: [
+            _StatStripItem(
               value: '${profile.followerCount}',
               label: 'Followers',
               onTap: () => Navigator.of(context).push<void>(
@@ -145,8 +189,7 @@ class _CreatorStudioContent extends StatelessWidget {
                 ),
               ),
             ),
-            _StatTileData(
-              icon: Icons.person_add_alt_1_rounded,
+            _StatStripItem(
               value: '${profile.followingCount}',
               label: 'Following',
               onTap: () => Navigator.of(context).push<void>(
@@ -158,92 +201,64 @@ class _CreatorStudioContent extends StatelessWidget {
                 ),
               ),
             ),
-            _StatTileData(
-              icon: Icons.hub_rounded,
-              value: '${clubs.length}',
-              label: 'Communities',
-            ),
-            _StatTileData(
-              icon: Icons.trending_up_rounded,
-              value: 'Soon',
-              label: 'Audience growth',
-              comingSoon: true,
-            ),
-          ],
-        ),
-        const SizedBox(height: 18),
-
-        const _SectionLabel('Hosting'),
-        _StatGrid(
-          tiles: [
-            _StatTileData(
-              icon: Icons.meeting_room_rounded,
-              value: '${rooms.length}',
-              label: 'Rooms hosted',
-            ),
-            _StatTileData(
-              icon: Icons.podcasts_rounded,
-              value: liveRoomCount > 0 ? '$liveRoomCount live' : 'None live',
-              label: 'Live now',
-              highlight: liveRoomCount > 0,
-            ),
-            _StatTileData(
-              icon: Icons.graphic_eq_rounded,
-              value: _formatMinutes(profile.voiceMinutes),
-              label: 'Speaking time',
-            ),
-            _StatTileData(
-              icon: Icons.record_voice_over_rounded,
+            _StatStripItem(value: '${clubs.length}', label: 'Communities'),
+            _StatStripItem(
               value: _formatMinutes(profile.hostMinutes),
               label: 'Hosting time',
             ),
+            _StatStripItem(
+              value: _formatMinutes(profile.voiceMinutes),
+              label: 'Speaking time',
+            ),
           ],
         ),
-        if (rooms.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          _RoomsList(rooms: rooms),
-        ],
-        const SizedBox(height: 18),
+        const SizedBox(height: 26),
 
-        const _SectionLabel('Voice Moments'),
-        _StatGrid(
-          tiles: [
-            _StatTileData(
-              icon: Icons.mic_rounded,
-              value: '${publishedMoments.length}',
-              label: 'Published',
-            ),
-            _StatTileData(
-              icon: Icons.pending_actions_rounded,
-              value: '${draftMoments.length}',
-              label: 'Drafts',
+        Row(
+          children: [
+            const Expanded(child: _SectionLabel('Your rooms')),
+            Text(
+              '${rooms.length} hosted',
+              style: const TextStyle(color: _muted, fontSize: 12.5),
             ),
           ],
         ),
-        const SizedBox(height: 18),
+        const SizedBox(height: 10),
+        rooms.isEmpty
+            ? _EmptySection(
+                icon: Icons.meeting_room_outlined,
+                message: 'Host your first room to start building a stage.',
+              )
+            : _RoomsList(rooms: rooms),
+        const SizedBox(height: 26),
+
+        Row(
+          children: [
+            const Expanded(child: _SectionLabel('Voice Moments')),
+            Text(
+              '${publishedMoments.length} published · ${draftMoments.length} draft',
+              style: const TextStyle(color: _muted, fontSize: 12.5),
+            ),
+          ],
+        ),
+        if (moments.isEmpty) ...[
+          const SizedBox(height: 10),
+          const _EmptySection(
+            icon: Icons.mic_none_rounded,
+            message:
+                'Post a Voice Moment to give your audience something to react to.',
+          ),
+        ],
+        const SizedBox(height: 26),
 
         const _SectionLabel('Recent activity'),
+        const SizedBox(height: 10),
         _RecentActivityCard(rooms: rooms, moments: moments),
-        const SizedBox(height: 18),
+        const SizedBox(height: 26),
 
-        const _SectionLabel('Creator tools'),
-        _ComingSoonCard(
-          icon: Icons.bar_chart_rounded,
-          title: 'Creator analytics',
-          subtitle: 'Detailed audience and engagement insights are on the way.',
-        ),
+        const _SectionLabel("What's next"),
         const SizedBox(height: 10),
-        _ComingSoonCard(
-          icon: Icons.campaign_rounded,
-          title: 'Pinned announcements',
-          subtitle: 'Pin an update to the top of your profile for followers.',
-        ),
-        const SizedBox(height: 10),
-        _ComingSoonCard(
-          icon: Icons.payments_rounded,
-          title: 'Monetization',
-          subtitle: 'Tipping and subscriptions for creators are coming soon.',
-        ),
+        const _UpcomingToolsRow(),
       ],
     );
   }
@@ -257,28 +272,32 @@ class _CreatorStudioContent extends StatelessWidget {
 }
 
 class _ProfileOverviewCard extends StatelessWidget {
-  const _ProfileOverviewCard({required this.profile});
+  const _ProfileOverviewCard({
+    required this.profile,
+    required this.liveRoomCount,
+  });
   final UserProfile profile;
+  final int liveRoomCount;
 
   @override
   Widget build(BuildContext context) {
     final avatar = profile.photoUrl?.trim();
     final verification = switch (profile.accountType) {
       AccountType.official => (
-          'Officially verified',
-          Icons.verified_rounded,
-          const Color(0xFF4DA3FF),
-        ),
+        'Officially verified',
+        Icons.verified_rounded,
+        const Color(0xFF4DA3FF),
+      ),
       AccountType.creator => (
-          'Creator account',
-          Icons.auto_awesome_rounded,
-          const Color(0xFFFFA52B),
-        ),
+        'Creator account',
+        Icons.auto_awesome_rounded,
+        const Color(0xFFFFA52B),
+      ),
       AccountType.personal => (
-          'Personal account',
-          Icons.person_rounded,
-          _muted,
-        ),
+        'Personal account',
+        Icons.person_rounded,
+        _muted,
+      ),
     };
 
     return Container(
@@ -298,17 +317,27 @@ class _ProfileOverviewCard extends StatelessWidget {
             padding: const EdgeInsets.all(3),
             decoration: const BoxDecoration(
               shape: BoxShape.circle,
-              gradient: LinearGradient(colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)]),
+              gradient: LinearGradient(
+                colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
+              ),
             ),
             child: CircleAvatar(
               radius: 30,
               backgroundColor: const Color(0xFF281133),
-              backgroundImage: avatar?.isNotEmpty == true ? NetworkImage(avatar!) : null,
+              backgroundImage: avatar?.isNotEmpty == true
+                  ? NetworkImage(avatar!)
+                  : null,
               child: avatar?.isNotEmpty == true
                   ? null
                   : Text(
-                      profile.displayName.isEmpty ? '?' : profile.displayName[0].toUpperCase(),
-                      style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900),
+                      profile.displayName.isEmpty
+                          ? '?'
+                          : profile.displayName[0].toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
             ),
           ),
@@ -321,7 +350,11 @@ class _ProfileOverviewCard extends StatelessWidget {
                   profile.displayName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
                 const SizedBox(height: 5),
                 Row(
@@ -333,7 +366,11 @@ class _ProfileOverviewCard extends StatelessWidget {
                         verification.$1,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: verification.$3, fontSize: 12, fontWeight: FontWeight.w700),
+                        style: TextStyle(
+                          color: verification.$3,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ],
@@ -341,6 +378,39 @@ class _ProfileOverviewCard extends StatelessWidget {
               ],
             ),
           ),
+          if (liveRoomCount > 0) ...[
+            const SizedBox(width: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFF335C),
+                borderRadius: BorderRadius.circular(99),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    liveRoomCount > 1 ? '$liveRoomCount LIVE' : 'LIVE',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: .3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -359,7 +429,9 @@ class _PersonalAccountBanner extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
         onTap: () => Navigator.of(context).push(
-          MaterialPageRoute<void>(builder: (_) => EditProfileScreen(profile: profile)),
+          MaterialPageRoute<void>(
+            builder: (_) => EditProfileScreen(profile: profile),
+          ),
         ),
         child: Container(
           padding: const EdgeInsets.all(14),
@@ -374,7 +446,12 @@ class _PersonalAccountBanner extends StatelessWidget {
               const Expanded(
                 child: Text(
                   'Switch to a Creator account to unlock the full creator toolkit.',
-                  style: TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600, height: 1.3),
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    height: 1.3,
+                  ),
                 ),
               ),
               const Icon(Icons.chevron_right_rounded, color: _muted),
@@ -396,7 +473,9 @@ class _QuickActionsRow extends StatelessWidget {
             icon: Icons.meeting_room_rounded,
             label: 'Create Room',
             onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const RoomTypeSelectorScreen()),
+              MaterialPageRoute<void>(
+                builder: (_) => const RoomTypeSelectorScreen(),
+              ),
             ),
           ),
         ),
@@ -416,7 +495,9 @@ class _QuickActionsRow extends StatelessWidget {
             icon: Icons.mic_rounded,
             label: 'Post Moment',
             onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const RecordVoiceMomentScreen()),
+              MaterialPageRoute<void>(
+                builder: (_) => const RecordVoiceMomentScreen(),
+              ),
             ),
           ),
         ),
@@ -427,7 +508,8 @@ class _QuickActionsRow extends StatelessWidget {
             label: 'Invite',
             onTap: () => SharePlus.instance.share(
               ShareParams(
-                text: 'Join me on YoVoice — the app for live voice rooms and communities: https://yovoice.app/download',
+                text:
+                    'Join me on YoVoice — the app for live voice rooms and communities: https://yovoice.app/download',
               ),
             ),
           ),
@@ -438,7 +520,11 @@ class _QuickActionsRow extends StatelessWidget {
 }
 
 class _QuickAction extends StatelessWidget {
-  const _QuickAction({required this.icon, required this.label, required this.onTap});
+  const _QuickAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
   final IconData icon;
   final String label;
   final VoidCallback onTap;
@@ -466,7 +552,11 @@ class _QuickAction extends StatelessWidget {
                 textAlign: TextAlign.center,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),
@@ -486,107 +576,214 @@ class _SectionLabel extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(2, 0, 0, 10),
       child: Text(
         text,
-        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+          fontWeight: FontWeight.w900,
+        ),
       ),
     );
   }
 }
 
-class _StatTileData {
-  const _StatTileData({
-    required this.icon,
-    required this.value,
-    required this.label,
-    this.onTap,
-    this.comingSoon = false,
-    this.highlight = false,
-  });
-
-  final IconData icon;
+class _StatStripItem {
+  const _StatStripItem({required this.value, required this.label, this.onTap});
   final String value;
   final String label;
   final VoidCallback? onTap;
-  final bool comingSoon;
-  final bool highlight;
 }
 
-class _StatGrid extends StatelessWidget {
-  const _StatGrid({required this.tiles});
-  final List<_StatTileData> tiles;
+/// A glanceable strip, not a dashboard grid -- these numbers are context
+/// for the creator, not the reason they opened this screen.
+class _StatStrip extends StatelessWidget {
+  const _StatStrip({required this.items});
+  final List<_StatStripItem> items;
 
   @override
   Widget build(BuildContext context) {
-    return GridView.builder(
-      padding: EdgeInsets.zero,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: tiles.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-        childAspectRatio: 2.6,
-      ),
-      itemBuilder: (context, index) {
-        final tile = tiles[index];
-        return Opacity(
-          opacity: tile.comingSoon ? .55 : 1,
-          child: Material(
-            color: const Color(0xFF150C1D),
-            borderRadius: BorderRadius.circular(16),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(16),
-              onTap: tile.comingSoon ? null : tile.onTap,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: tile.highlight ? const Color(0xFFFF335C) : const Color(0xFF382741),
+    return SizedBox(
+      height: 62,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: items.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 22),
+        itemBuilder: (context, index) {
+          final item = items[index];
+          return InkWell(
+            onTap: item.onTap,
+            borderRadius: BorderRadius.circular(10),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    item.value,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 19,
+                      letterSpacing: -0.4,
+                    ),
                   ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      tile.icon,
-                      color: tile.highlight ? const Color(0xFFFF335C) : _accent,
-                      size: 21,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            tile.value,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15),
-                          ),
-                          Text(
-                            tile.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: _muted, fontSize: 11),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (tile.comingSoon)
-                      const Text(
-                        'SOON',
-                        style: TextStyle(color: _muted, fontSize: 8.5, fontWeight: FontWeight.w900, letterSpacing: .4),
-                      )
-                    else if (tile.onTap != null)
-                      const Icon(Icons.chevron_right_rounded, color: _muted, size: 18),
-                  ],
-                ),
+                  const SizedBox(height: 2),
+                  Text(
+                    item.label,
+                    style: const TextStyle(color: _muted, fontSize: 11.5),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _EmptySection extends StatelessWidget {
+  const _EmptySection({required this.icon, required this.message});
+  final IconData icon;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _border),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: _muted, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: _muted,
+                fontSize: 12.5,
+                height: 1.4,
               ),
             ),
           ),
-        );
-      },
+        ],
+      ),
+    );
+  }
+}
+
+class _UpcomingTool {
+  const _UpcomingTool(this.icon, this.title, this.subtitle);
+  final IconData icon;
+  final String title;
+  final String subtitle;
+}
+
+const _upcomingTools = [
+  _UpcomingTool(
+    Icons.bar_chart_rounded,
+    'Analytics',
+    'Audience and engagement insights',
+  ),
+  _UpcomingTool(
+    Icons.campaign_rounded,
+    'Pinned posts',
+    'Pin an update for your followers',
+  ),
+  _UpcomingTool(
+    Icons.payments_rounded,
+    'Monetization',
+    'Tipping and subscriptions',
+  ),
+];
+
+/// A compact, honestly-labeled preview row instead of three full-width
+/// cards competing with real content for attention -- see ADR-012 for why
+/// this project shows unbuilt features as disabled previews, never fake
+/// data or dead buttons.
+class _UpcomingToolsRow extends StatelessWidget {
+  const _UpcomingToolsRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 108,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: _upcomingTools.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final tool = _upcomingTools[index];
+          return Opacity(
+            opacity: .6,
+            child: Container(
+              width: 150,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: _surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: _border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(tool.icon, color: _muted, size: 18),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF241B2A),
+                          borderRadius: BorderRadius.circular(99),
+                          border: Border.all(color: _border),
+                        ),
+                        child: const Text(
+                          'SOON',
+                          style: TextStyle(
+                            color: _muted,
+                            fontSize: 8.5,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: .4,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Spacer(),
+                  Text(
+                    tool.title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    tool.subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _muted,
+                      fontSize: 10.5,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -610,7 +807,9 @@ class _RoomsList extends StatelessWidget {
           return InkWell(
             borderRadius: BorderRadius.circular(18),
             onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
+              MaterialPageRoute<void>(
+                builder: (_) => RoomEntryScreen(room: room),
+              ),
             ),
             child: Container(
               width: 168,
@@ -628,25 +827,40 @@ class _RoomsList extends StatelessWidget {
                       CircleAvatar(
                         radius: 16,
                         backgroundColor: const Color(0xFF6D1CAB),
-                        backgroundImage: hasImage ? NetworkImage(room.imageUrl!) : null,
+                        backgroundImage: hasImage
+                            ? NetworkImage(room.imageUrl!)
+                            : null,
                         child: hasImage
                             ? null
                             : Text(
-                                room.name.isEmpty ? '?' : room.name[0].toUpperCase(),
-                                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900),
+                                room.name.isEmpty
+                                    ? '?'
+                                    : room.name[0].toUpperCase(),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w900,
+                                ),
                               ),
                       ),
                       const Spacer(),
                       if (room.isLive)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 3,
+                          ),
                           decoration: BoxDecoration(
                             color: const Color(0xFFFF335C),
                             borderRadius: BorderRadius.circular(99),
                           ),
                           child: const Text(
                             'LIVE',
-                            style: TextStyle(color: Colors.white, fontSize: 8.5, fontWeight: FontWeight.w900),
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 8.5,
+                              fontWeight: FontWeight.w900,
+                            ),
                           ),
                         ),
                     ],
@@ -656,11 +870,17 @@ class _RoomsList extends StatelessWidget {
                     room.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12.5),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12.5,
+                    ),
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    room.isLive ? '${room.participantCount} listening' : '${room.memberCount} members',
+                    room.isLive
+                        ? '${room.participantCount} listening'
+                        : '${room.memberCount} members',
                     style: const TextStyle(color: _muted, fontSize: 10.5),
                   ),
                 ],
@@ -725,7 +945,12 @@ class _RecentActivityCard extends StatelessWidget {
         children: [
           for (var index = 0; index < events.length.clamp(0, 6); index++) ...[
             if (index > 0)
-              const Divider(height: 1, indent: 56, endIndent: 16, color: Color(0xFF382741)),
+              const Divider(
+                height: 1,
+                indent: 56,
+                endIndent: 16,
+                color: Color(0xFF382741),
+              ),
             ListTile(
               leading: Container(
                 width: 34,
@@ -739,7 +964,11 @@ class _RecentActivityCard extends StatelessWidget {
               ),
               title: Text(
                 events[index].$2,
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
               ),
               trailing: Text(
                 events[index].$3,
@@ -762,56 +991,6 @@ class _RecentActivityCard extends StatelessWidget {
   }
 }
 
-class _ComingSoonCard extends StatelessWidget {
-  const _ComingSoonCard({required this.icon, required this.title, required this.subtitle});
-  final IconData icon;
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Opacity(
-      opacity: .6,
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: _surface,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: _border),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: _muted),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13.5)),
-                  const SizedBox(height: 2),
-                  Text(subtitle, style: const TextStyle(color: _muted, fontSize: 11.5, height: 1.3)),
-                ],
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-              decoration: BoxDecoration(
-                color: const Color(0xFF241B2A),
-                borderRadius: BorderRadius.circular(99),
-                border: Border.all(color: _border),
-              ),
-              child: const Text(
-                'SOON',
-                style: TextStyle(color: _muted, fontSize: 9.5, fontWeight: FontWeight.w900, letterSpacing: .4),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _ErrorBody extends StatelessWidget {
   const _ErrorBody({required this.message});
   final String message;
@@ -821,7 +1000,11 @@ class _ErrorBody extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Text(message, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white)),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white),
+        ),
       ),
     );
   }

@@ -305,15 +305,18 @@ class _MainShellState extends State<MainShell> {
     await _openMoreDestination(destination);
   }
 
+  // Pushes the destination's own screen directly -- every destination
+  // already owns a complete, purpose-built Scaffold with its own header
+  // and back button (see each screen's own header widget). Wrapping it in
+  // another Scaffold+AppBar here used to double up chrome on every single
+  // "More" destination: two stacked titles at best (Settings), a second
+  // full Material AppBar at worst (Awards) -- see ADR-019.
   Future<void> _openMoreDestination(MoreDestination destination) async {
     final screen = moreDestinationScreen(destination);
 
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) =>
-            MoreDestinationPage(destination: destination, child: screen),
-      ),
-    );
+    await Navigator.of(
+      context,
+    ).push<void>(MaterialPageRoute<void>(builder: (_) => screen));
   }
 
   @override

@@ -5,6 +5,7 @@ import 'package:yovoice/features/clubs/data/models/club_invite.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 import 'package:yovoice/features/clubs/presentation/screens/create_club_screen.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 
 class ClubsScreen extends StatefulWidget {
   const ClubsScreen({super.key});
@@ -286,9 +287,18 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 18, 16, 8),
+      padding: const EdgeInsets.fromLTRB(14, 18, 16, 8),
       child: Row(
         children: [
+          YoIconButton(
+            icon: Icons.arrow_back_ios_new_rounded,
+            iconSize: 18,
+            size: 40,
+            backgroundColor: _ClubsScreenState._surface,
+            borderColor: _ClubsScreenState._surfaceLight,
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          const SizedBox(width: 10),
           const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

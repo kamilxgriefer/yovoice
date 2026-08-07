@@ -53,6 +53,7 @@ given a false-precision date.
 | [016](#adr-016-native-android-and-ios-window-chrome-is-pinned-dark-not-os-controlled)                   | Native Android and iOS window chrome is pinned dark, not OS-controlled                      | Accepted | 2026-08-06                           |
 | [017](#adr-017-android-build-fixes-core-library-desugaring-and-drawable-resource-references)            | Android build fixes: core library desugaring and drawable resource references               | Accepted | 2026-08-07                           |
 | [018](#adr-018-per-screen-firestore-streams-are-created-once-in-initstate-never-inline-in-build)         | Per-screen Firestore streams are created once in `initState`, never inline in `build()`      | Accepted | 2026-08-07                           |
+| [019](#adr-019-more-menu-destinations-own-their-full-chrome-no-wrapper-scaffold)                        | "More" menu destinations own their full chrome; no wrapper Scaffold                         | Accepted | 2026-08-07                           |
 
 ---
 
@@ -968,3 +969,65 @@ a `club_overview_screen.dart` invite sheet) that weren't fixed this pass
 because they don't sit behind a frequently-rebuilding `build()` the way
 the four fixed screens did — lower severity, not zero, worth a future
 pass.
+
+---
+
+## ADR-019: "More" menu destinations own their full chrome; no wrapper Scaffold
+
+**Status**: Accepted
+**Date**: 2026-08-07
+
+### Context
+
+A product-quality pass reported the Settings screen as "broken — large
+white background, content missing." Tracing the actual navigation (not
+assuming from the filename) found the real defect: every single one of
+the seven "More" menu destinations (Friends, Discover, Clubs,
+Notifications, Achievements, Creator Studio, Settings) is a complete,
+independently-designed screen with its own `Scaffold`, its own
+background, and its own custom header — but `main_shell.dart` was
+pushing every one of them wrapped in `MoreDestinationPage`
+(`more_sheet.dart`), which added a *second* `Scaffold` with a generic
+`AppBar` (its own title, its own back button) on top.
+
+The severity varied by screen: Settings only doubled its title text
+(harmless-looking but visibly wrong). Achievements was worse —
+`AchievementsScreen` has its own full `AppBar` showing real progress
+("X/100 titles"), so reaching Awards via the More menu showed **two
+stacked Material app bars and two back buttons**, a plainly broken
+screen. Six of the seven destination screens had no back button of
+their own at all — they'd been built assuming the wrapper's AppBar was
+the only source of back navigation, which is why nobody had simply
+deleted the wrapper before.
+
+### Decision
+
+Removed `MoreDestinationPage` and `moreDestinationLabel` entirely.
+`main_shell.dart`'s `_openMoreDestination` now pushes each destination
+screen directly. Added a small `YoIconButton`-based back button to each
+screen's own header for the six that lacked one (Settings, Friends,
+Discover, Clubs, Creator Studio — Achievements and Notification
+preferences already had their own).
+
+### Reasoning
+
+Each destination screen's own header was already more considered and
+on-brand than the wrapper's generic default AppBar (custom title +
+subtitle copy, trailing actions like Friends' request-count badge or
+Clubs' create button) — the wrapper was the lower-quality, redundant
+layer, not the screens. Fixing this once at the call site
+(`main_shell.dart`) plus one header addition per screen was less
+invasive than trying to make seven different screens defer their own
+chrome to a shared wrapper, and it gives every "More" destination the
+same visual back-button treatment for the first time, which
+`YoIconButton` (already existing in `lib/shared/widgets/buttons/`)
+made trivial to keep consistent.
+
+### Consequences
+
+Every "More" destination now looks and behaves correctly with a single,
+purpose-built header instead of doubled or missing chrome. This was a
+universal, previously-undiscovered bug — worth remembering that "looks
+right in a code read" isn't the same as "was ever actually opened and
+looked at," especially for a navigation path (More menu) that's one tap
+removed from the primary bottom navigation and easy to under-test.

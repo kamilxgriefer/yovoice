@@ -9,6 +9,7 @@ import 'package:yovoice/features/friends/presentation/screens/blocked_users_scre
 import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 
 enum _FriendsFilter { all, online, requests }
 
@@ -207,6 +208,15 @@ class _FriendsScreenState extends State<FriendsScreen> {
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
       child: Row(
         children: [
+          YoIconButton(
+            icon: Icons.arrow_back_ios_new_rounded,
+            iconSize: 18,
+            size: 40,
+            backgroundColor: _surface,
+            borderColor: _border,
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          const SizedBox(width: 10),
           const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

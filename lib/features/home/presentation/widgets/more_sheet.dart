@@ -40,62 +40,6 @@ Widget moreDestinationScreen(MoreDestination destination) {
   };
 }
 
-String moreDestinationLabel(MoreDestination destination) {
-  return switch (destination) {
-    MoreDestination.friends => 'Friends',
-    MoreDestination.discover => 'Discover',
-    MoreDestination.clubs => 'Clubs',
-    MoreDestination.notifications => 'Alerts',
-    MoreDestination.achievements => 'Awards',
-    MoreDestination.creatorStudio => 'Creator Studio',
-    MoreDestination.settings => 'Settings',
-  };
-}
-
-class MoreDestinationPage extends StatelessWidget {
-  const MoreDestinationPage({
-    required this.destination,
-    required this.child,
-    super.key,
-  });
-
-  final MoreDestination destination;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF080711),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF100B19),
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          tooltip: 'Back',
-          onPressed: () => Navigator.of(context).pop(),
-          icon: const Icon(Icons.arrow_back_ios_new_rounded),
-        ),
-        title: Text(
-          moreDestinationLabel(destination),
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        bottom: const PreferredSize(
-          preferredSize: Size.fromHeight(1),
-          child: Divider(height: 1, color: Color(0xFF2B2436)),
-        ),
-      ),
-      body: MediaQuery.removePadding(
-        context: context,
-        removeTop: true,
-        child: child,
-      ),
-    );
-  }
-}
-
 class MoreSheet extends StatelessWidget {
   const MoreSheet({super.key});
 
