@@ -14,7 +14,7 @@ import 'package:yovoice/features/friends/presentation/screens/blocked_users_scre
 import 'package:yovoice/features/notifications/presentation/screens/notification_preferences_screen.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
-import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
+import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 
 const _background = Color(0xFF080711);
 const _surface = Color(0xFF14101E);
@@ -328,12 +328,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(18, 6, 18, 48),
       children: [
+        // Identity editing lives on the Profile screen (its Edit button),
+        // not in Settings — Settings is configuration, Profile is content.
+        // The hero card is the doorway to that surface.
         _ProfileHeroCard(
           profile: profile,
           onTap: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => EditProfileScreen(profile: profile),
-            ),
+            MaterialPageRoute<void>(builder: (_) => const ProfileScreen()),
           ),
         ),
         const SizedBox(height: 22),
@@ -341,17 +342,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const _GroupLabel('Account'),
         _SettingsGroup(
           children: [
+            // Username and account type are read-only summaries here —
+            // they're edited from Profile → Edit profile, the single
+            // identity-editing surface.
             _SettingsTile(
               icon: Icons.alternate_email_rounded,
               title: 'Username',
               subtitle: profile.username.isEmpty
                   ? 'Not set'
                   : '@${profile.username}',
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => EditProfileScreen(profile: profile),
-                ),
-              ),
             ),
             _SettingsTile(
               icon: Icons.mail_outline_rounded,
@@ -363,11 +362,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               icon: Icons.workspace_premium_outlined,
               title: 'Account type',
               subtitle: profile.accountType.label,
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => EditProfileScreen(profile: profile),
-                ),
-              ),
             ),
             _SettingsTile(
               icon: Icons.event_available_outlined,

@@ -1154,3 +1154,53 @@ reached from an email, i.e. a textbook open-redirect vector.
 - If yovoice.app is ever unreachable, emailed auth links break with it —
   accepted: the website already fronts registration/login for the same
   accounts.
+
+## ADR-023: One profile source of truth; identity fans out server-side
+
+**Context.** Avatar/banner "not appearing consistently" survived three
+rounds of fixes because the architecture allowed it: four separate code
+paths wrote `users/{uid}.photoUrl` (PresenceService, friend_service's
+ensureUserDocument, registration's FirestoreService.createUserProfile —
+which merged a literal `photoUrl: null` — and ProfileService itself),
+several screens read identity from FirebaseAuth instead of Firestore, and
+the copies denormalized into conversations/club members/moments were
+never updated after a change. Separately, Edit Profile stretched
+edge-to-edge on desktop, blowing its 16:9 banner preview up to ~800px
+tall, and profile editing was reachable from three Settings entry points.
+
+**Decision.**
+- `users/{uid}` in Firestore is canonical for all profile identity;
+  ProfileService is its only writer for identity fields. FirebaseAuth
+  mirrors displayName/photoURL (written by ProfileService after saves)
+  but is never read for display.
+- Field names stay `photoUrl`/`bannerUrl` — they are load-bearing schema
+  shared with the website and Functions (CLAUDE.md hard rule); no
+  `avatarUrl` rename, no aliases, no migration needed.
+- A new Cloud Function `onProfileIdentityChanged` (users/{uid} update
+  trigger) fans photoUrl/displayName out to conversations
+  (participantPhotoUrls/Names), club member docs (via the
+  users/{uid}/clubs mirror — deliberately no collectionGroup query,
+  ADR-007) and voice_moments author fields. Room participant docs are
+  excluded: they die with the session.
+- All own-identity UI renders through shared widgets
+  (`UserAvatar`, `ProfileBanner`) with explicit loading/error/fallback
+  states; a broken URL falls back to initials / brand gradient instead
+  of rendering like "no image set".
+- Storage/Firestore consistency: upload first, flip the Firestore
+  pointer second; on pointer failure the fresh upload is deleted (best
+  effort) and the old image stays live. After a successful flip the
+  replaced object is deleted (best effort) — every upload has a fresh
+  timestamped name (that IS the cache-busting strategy), so cleanup is
+  what prevents unbounded orphan growth.
+- Profile editing lives only on Profile → Edit profile; Settings keeps
+  read-only identity summaries and links to the Profile screen.
+
+**Consequences.**
+- The fan-out requires a manual `firebase deploy --only functions`.
+- Username uniqueness remains unenforced (usernames are seeded from
+  display names and duplicates already exist in production). Enforcing
+  it needs a claims collection + backfill migration — deliberately out
+  of scope, recorded in Roadmap rather than half-shipped client-side.
+- lib/dev/profile_preview.dart renders Profile header + Edit profile
+  with fake data at arbitrary widths, so profile-layout regressions can
+  be caught without a signed-in session.

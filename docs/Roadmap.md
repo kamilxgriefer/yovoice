@@ -172,6 +172,24 @@ Ordered by rough priority — re-prioritize freely, this isn't a queue.
   content-type allowlist is exactly the kind of rule that silently breaks
   a client the next time an upload path is added.
 
+### 0c. Username uniqueness is not enforced
+
+- **Status**: Not started; recorded as an explicit decision in
+  [ADR-023](Decisions.md#adr-023-one-profile-source-of-truth-identity-fans-out-server-side).
+- **Description**: `users/{uid}.username` is seeded from display names
+  (and email prefixes), so duplicates already exist in production.
+  Real uniqueness needs a `usernames/{normalized}` claims collection
+  written transactionally with the profile, rules that enforce the
+  claim, a normalization policy, and a backfill migration for existing
+  accounts. Client-side checking alone would be theatre.
+
+### 0d. Deploy the profile identity fan-out
+
+- **Status**: Implemented (`functions/profile/fanout.js`), NOT deployed.
+- **Action**: `firebase deploy --only functions:onProfileIdentityChanged`
+  (or a full functions deploy). Until then, avatar/display-name changes
+  do not propagate to conversations, club member lists or voice moments.
+
 ### 1. Verify no orphaned `rooms/{roomId}/members` documents
 
 - **Status**: Not started.

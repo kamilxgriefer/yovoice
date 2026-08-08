@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/services/firestore_service.dart';
+import 'package:yovoice/shared/models/app_user.dart';
 
 const String _uid = 'user-1';
 const String _avatarUrl =
@@ -178,6 +180,31 @@ void main() {
         expect(updated.photoUrl, nextUrl);
       },
     );
+
+    test('createUserProfile never writes photoUrl — not even null '
+        '(regression: registration merged photoUrl: null over the field '
+        'ProfileService owns)', () async {
+      final db = FakeFirebaseFirestore();
+
+      // Existing avatar on the doc (e.g. re-registration edge cases,
+      // or any future caller running this against a doc that already
+      // has one) must survive.
+      await db.collection('users').doc(_uid).set({'photoUrl': _avatarUrl});
+
+      await FirestoreService(firestore: db).createUserProfile(
+        AppUser(
+          uid: _uid,
+          email: 'user@yovoice.app',
+          username: 'Ada Lovelace',
+          createdAt: DateTime(2026, 8, 8),
+        ),
+      );
+
+      final data = await _readUser(db);
+      expect(data['photoUrl'], _avatarUrl);
+      expect(data['displayName'], 'Ada Lovelace');
+      expect(data['email'], 'user@yovoice.app');
+    });
 
     test(
       'two ProfileService instances share one reactive profile stream',

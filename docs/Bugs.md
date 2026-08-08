@@ -356,3 +356,32 @@ permission flags).
   (share messages, fallback display names, settings copy). All user-facing
   occurrences are now "YO Voice"; code identifiers (`YoVoiceApp`) and
   URLs/package ids unchanged.
+- **Fixed (fourth and final clobber writer): registration merged
+  `photoUrl: null` into `users/{uid}`.**
+  `FirestoreService.createUserProfile()` — called from email/password
+  registration and first-time Google sign-in — wrote the avatar field as
+  a literal null with merge:true. Mostly invisible at account creation,
+  but it made the field's ownership ambiguous and could null a Google
+  avatar seeded in the same sign-in flow. It no longer touches photoUrl
+  (regression-pinned in test/profile_photo_source_of_truth_test.dart);
+  its dead updatePhotoUrl/updateDisplayName siblings were deleted.
+- **Fixed: other people finally see profile changes.** New Cloud
+  Function `onProfileIdentityChanged` fans photoUrl/displayName changes
+  out to conversations, club member docs and voice_moments (see
+  ADR-023). NOT yet deployed — requires `firebase deploy --only
+  functions`, and until then other users' Chats lists keep showing the
+  avatar from when the conversation was created.
+- **Fixed: Edit profile was enormous on desktop.** The screen was an
+  unconstrained full-width ListView, so its AspectRatio(16:9) banner
+  preview scaled with the window — ~810px tall at 1440px wide. The form
+  is now centered and capped at 640px (preview ≤ ~275px tall at 21:9),
+  and the Profile header renders the banner as a centered rounded cover
+  card above 900px instead of a full-bleed stretch. Verified visually
+  via lib/dev/profile_preview.dart at 390 and 1024/1440-class widths;
+  mobile keeps the previous full-bleed composition.
+- **Fixed: broken image URLs were indistinguishable from "no image".**
+  CircleAvatar(backgroundImage:) and DecorationImage swallow load errors
+  silently. Shared UserAvatar/ProfileBanner widgets now render explicit
+  fallbacks (initials / brand gradient) via errorBuilder, and replaced
+  Storage objects are cleaned up after a successful save instead of
+  orphaning forever.

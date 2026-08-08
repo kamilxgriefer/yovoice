@@ -166,3 +166,13 @@ exports.transferClubOwnershipSelf = transferClubOwnershipSelf;
 */
 
 exports.onNotificationCreated = onNotificationCreated;
+
+/*
+|--------------------------------------------------------------------------
+| Profile
+|--------------------------------------------------------------------------
+*/
+
+const { onProfileIdentityChanged } = require("./profile/fanout");
+
+exports.onProfileIdentityChanged = onProfileIdentityChanged;

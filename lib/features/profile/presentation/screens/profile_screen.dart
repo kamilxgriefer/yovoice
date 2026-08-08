@@ -18,6 +18,8 @@ import 'package:yovoice/features/profile/presentation/screens/edit_profile_scree
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
+import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -340,157 +342,175 @@ class _ProfileHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final avatar = profile.photoUrl?.trim();
-    final banner = profile.bannerUrl?.trim();
-    return SizedBox(
-      height: 320,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                image: banner?.isNotEmpty == true
-                    ? DecorationImage(
-                        image: NetworkImage(banner!),
-                        fit: BoxFit.cover,
-                      )
-                    : null,
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Color(0xFF53108C),
-                    Color(0xFF21102E),
-                    Color(0xFF09050F),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withValues(alpha: .05),
-                    const Color(0xFF09050F),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Profile',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 31,
-                        fontWeight: FontWeight.w900,
+    // Full-bleed banner on phones; on wide viewports the same banner
+    // becomes a centered, rounded cover card so a 1440px browser window
+    // doesn't stretch one image across the entire screen. Breakpoint via
+    // LayoutBuilder, proportions via constraints — no scaling transforms.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 900;
+
+        final scrim = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.black.withValues(alpha: .05),
+            const Color(0xFF09050F),
+          ],
+        );
+
+        final bannerLayer = isWide
+            ? Positioned.fill(
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1100),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(26),
+                        child: ProfileBanner(
+                          bannerUrl: profile.bannerUrl,
+                          overlay: scrim,
+                        ),
                       ),
                     ),
                   ),
-                  IconButton.filled(
-                    onPressed: onEdit,
-                    style: IconButton.styleFrom(
-                      backgroundColor: const Color(0xFFAE22FF),
-                    ),
-                    icon: const Icon(Icons.edit_rounded, color: Colors.white),
-                  ),
-                ],
+                ),
+              )
+            : Positioned.fill(
+                child: ProfileBanner(
+                  bannerUrl: profile.bannerUrl,
+                  overlay: scrim,
+                ),
+              );
+
+        return SizedBox(
+          height: isWide ? 300 : 320,
+          child: Stack(
+            children: [bannerLayer, _headerContent(context, isWide)],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _headerContent(BuildContext context, bool isWide) {
+    // On wide screens the text/avatar content tracks the same 1100px cap
+    // as the banner card so they read as one composition.
+    final content = Stack(children: [_titleRow(), _identityRow()]);
+
+    if (!isWide) return content;
+
+    return Positioned.fill(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1100),
+          child: content,
+        ),
+      ),
+    );
+  }
+
+  Widget _titleRow() {
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+        child: Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Profile',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 31,
+                  fontWeight: FontWeight.w900,
+                ),
               ),
             ),
+            IconButton.filled(
+              onPressed: onEdit,
+              style: IconButton.styleFrom(
+                backgroundColor: const Color(0xFFAE22FF),
+              ),
+              icon: const Icon(Icons.edit_rounded, color: Colors.white),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _identityRow() {
+    return Positioned(
+      left: 20,
+      right: 20,
+      bottom: 20,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
+              ),
+            ),
+            child: UserAvatar(
+              radius: 55,
+              photoUrl: profile.photoUrl,
+              displayName: profile.displayName,
+              backgroundColor: const Color(0xFF281133),
+            ),
           ),
-          Positioned(
-            left: 20,
-            right: 20,
-            bottom: 20,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: LinearGradient(
-                      colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
-                    ),
-                  ),
-                  child: CircleAvatar(
-                    radius: 55,
-                    backgroundColor: const Color(0xFF281133),
-                    backgroundImage: avatar?.isNotEmpty == true
-                        ? NetworkImage(avatar!)
-                        : null,
-                    child: avatar?.isNotEmpty == true
-                        ? null
-                        : Text(
-                            profile.displayName.isEmpty
-                                ? '?'
-                                : profile.displayName[0].toUpperCase(),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 40,
-                              fontWeight: FontWeight.w900,
-                            ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          profile.displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 29,
+                            fontWeight: FontWeight.w900,
                           ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                profile.displayName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 29,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                            ),
-                            if (profile.accountType != AccountType.personal)
-                              Padding(
-                                padding: const EdgeInsets.only(left: 6),
-                                child: _AccountTypeBadge(
-                                  accountType: profile.accountType,
-                                ),
-                              ),
-                          ],
                         ),
-                        if (profile.username.isNotEmpty)
-                          Text(
-                            '@${profile.username.replaceAll(' ', '').toLowerCase()}',
-                            style: const TextStyle(
-                              color: Color(0xFFB8ADC1),
-                              fontSize: 15,
-                            ),
+                      ),
+                      if (profile.accountType != AccountType.personal)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: _AccountTypeBadge(
+                            accountType: profile.accountType,
                           ),
-                        if (title != null) ...[
-                          const SizedBox(height: 8),
-                          TitleBadge(achievement: title!),
-                        ],
-                      ],
-                    ),
+                        ),
+                    ],
                   ),
-                ),
-              ],
+                  if (profile.username.isNotEmpty)
+                    Text(
+                      '@${profile.username.replaceAll(' ', '').toLowerCase()}',
+                      style: const TextStyle(
+                        color: Color(0xFFB8ADC1),
+                        fontSize: 15,
+                      ),
+                    ),
+                  if (title != null) ...[
+                    const SizedBox(height: 8),
+                    TitleBadge(achievement: title!),
+                  ],
+                ],
+              ),
             ),
           ),
         ],

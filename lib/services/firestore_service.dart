@@ -12,6 +12,16 @@ class FirestoreService {
     return _firestore.collection('users');
   }
 
+  /// Seeds the registration-time identity fields of `users/{uid}`.
+  ///
+  /// Deliberately does NOT write `photoUrl` — not even null. This field is
+  /// owned exclusively by ProfileService, and merging `photoUrl: null`
+  /// here was the fourth occurrence of the clobber-the-avatar bug class
+  /// (PresenceService, friend_service's ensureUserDocument and Home's
+  /// Auth-fallback read were the first three; see docs/Bugs.md). For a
+  /// Google account, the avatar is seeded once by
+  /// ProfileService.ensureProfile(), which runs at sign-in and only when
+  /// the profile has none.
   Future<void> createUserProfile(AppUser user) async {
     await _usersCollection.doc(user.uid).set({
       ...user.toMap(),
@@ -20,7 +30,6 @@ class FirestoreService {
       'displayName': user.username,
       'username': user.username,
       'email': user.email.toLowerCase(),
-      'photoUrl': null,
       'isOnline': true,
       'lastSeen': FieldValue.serverTimestamp(),
       'createdAt': FieldValue.serverTimestamp(),
@@ -37,24 +46,8 @@ class FirestoreService {
     }, SetOptions(merge: true));
   }
 
-  Future<void> updatePhotoUrl({
-    required String uid,
-    required String? photoUrl,
-  }) async {
-    await _usersCollection.doc(uid).set({
-      'photoUrl': photoUrl,
-    }, SetOptions(merge: true));
-  }
-
-  Future<void> updateDisplayName({
-    required String uid,
-    required String displayName,
-  }) async {
-    await _usersCollection.doc(uid).set({
-      'displayName': displayName.trim(),
-      'username': displayName.trim(),
-    }, SetOptions(merge: true));
-  }
+  // updatePhotoUrl/updateDisplayName used to live here — parallel write
+  // paths into fields ProfileService owns. Removed; nothing called them.
 
   Future<AppUser?> getUserProfile(String uid) async {
     final document = await _usersCollection.doc(uid).get();

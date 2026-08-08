@@ -20,6 +20,7 @@ import 'package:yovoice/features/notifications/data/services/notification_servic
 import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
@@ -382,15 +383,10 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           ),
           const SizedBox(width: 10),
-          CircleAvatar(
+          UserAvatar(
             radius: 24,
-            backgroundColor: const Color(0xFF64258E),
-            backgroundImage: photoUrl?.isNotEmpty == true
-                ? NetworkImage(photoUrl!)
-                : null,
-            child: photoUrl?.isNotEmpty == true
-                ? null
-                : const Icon(Icons.person_rounded, color: Colors.white),
+            photoUrl: photoUrl,
+            fallbackIcon: Icons.person_rounded,
           ),
         ],
       ),

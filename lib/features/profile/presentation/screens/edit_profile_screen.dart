@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({required this.profile, super.key});
@@ -209,82 +211,95 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           ),
         ],
       ),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(18, 12, 18, 40),
-          children: [
-            _ProfileImagePreview(
-              profile: widget.profile,
-              pendingAvatar: _pendingAvatar,
-              pendingBanner: _pendingBanner,
-            ),
-            const SizedBox(height: 14),
-            Row(
+      // The whole form is width-constrained: on a laptop this screen used
+      // to stretch edge to edge, which blew the 16:9 banner preview up to
+      // ~800px tall ("the banner is enormous"). 640 keeps the preview a
+      // compact cover card at every width; mobile is unaffected because
+      // phones never reach the cap.
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
+          child: Form(
+            key: _formKey,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(18, 12, 18, 40),
               children: [
-                Expanded(
-                  child: _ImageAction(
-                    label: _pendingAvatar == null
-                        ? 'Change avatar'
-                        : 'Avatar ready',
-                    icon: Icons.account_circle_outlined,
-                    loading: _pickingAvatar,
-                    onTap: () => _pick(ProfileImageKind.avatar),
-                    onClear: _pendingAvatar == null
-                        ? null
-                        : () => _clearPending(ProfileImageKind.avatar),
-                  ),
+                const _SectionLabel('Profile media'),
+                _ProfileImagePreview(
+                  profile: widget.profile,
+                  pendingAvatar: _pendingAvatar,
+                  pendingBanner: _pendingBanner,
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _ImageAction(
-                    label: _pendingBanner == null
-                        ? 'Change banner'
-                        : 'Banner ready',
-                    icon: Icons.panorama_outlined,
-                    loading: _pickingBanner,
-                    onTap: () => _pick(ProfileImageKind.banner),
-                    onClear: _pendingBanner == null
-                        ? null
-                        : () => _clearPending(ProfileImageKind.banner),
-                  ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _ImageAction(
+                        label: _pendingAvatar == null
+                            ? 'Change avatar'
+                            : 'Avatar ready',
+                        icon: Icons.account_circle_outlined,
+                        loading: _pickingAvatar,
+                        onTap: () => _pick(ProfileImageKind.avatar),
+                        onClear: _pendingAvatar == null
+                            ? null
+                            : () => _clearPending(ProfileImageKind.avatar),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _ImageAction(
+                        label: _pendingBanner == null
+                            ? 'Change banner'
+                            : 'Banner ready',
+                        icon: Icons.panorama_outlined,
+                        loading: _pickingBanner,
+                        onTap: () => _pick(ProfileImageKind.banner),
+                        onClear: _pendingBanner == null
+                            ? null
+                            : () => _clearPending(ProfileImageKind.banner),
+                      ),
+                    ),
+                  ],
                 ),
+                if (_hasPendingImages) ...[
+                  const SizedBox(height: 10),
+                  const Text(
+                    'New images are applied when you press Save.',
+                    style: TextStyle(color: Color(0xFFD3A5FF), fontSize: 12),
+                  ),
+                ],
+                const SizedBox(height: 26),
+                const _SectionLabel('Identity'),
+                _field(_displayName, 'Display name', required: true),
+                _field(_username, 'Username', required: true),
+                _field(_bio, 'Bio', maxLines: 4, maxLength: 220),
+                _AccountTypePicker(
+                  value: _accountType,
+                  onChanged: (value) {
+                    setState(() {
+                      _accountType = value;
+                    });
+                  },
+                ),
+                const SizedBox(height: 26),
+                const _SectionLabel('About you'),
+                _field(_country, 'Country'),
+                _field(_nativeLanguage, 'Native language'),
+                _field(
+                  _spokenLanguages,
+                  'Languages you speak',
+                  hint: 'English, Polish',
+                ),
+                _field(
+                  _learningLanguages,
+                  'Languages you are learning',
+                  hint: 'Spanish, Dutch',
+                ),
+                _field(_website, 'Website'),
               ],
             ),
-            if (_hasPendingImages) ...[
-              const SizedBox(height: 10),
-              const Text(
-                'New images are applied when you press Save.',
-                style: TextStyle(color: Color(0xFFD3A5FF), fontSize: 12),
-              ),
-            ],
-            const SizedBox(height: 20),
-            _AccountTypePicker(
-              value: _accountType,
-              onChanged: (value) {
-                setState(() {
-                  _accountType = value;
-                });
-              },
-            ),
-            const SizedBox(height: 14),
-            _field(_displayName, 'Display name', required: true),
-            _field(_username, 'Username', required: true),
-            _field(_bio, 'Bio', maxLines: 4, maxLength: 220),
-            _field(_country, 'Country'),
-            _field(_nativeLanguage, 'Native language'),
-            _field(
-              _spokenLanguages,
-              'Languages you speak',
-              hint: 'English, Polish',
-            ),
-            _field(
-              _learningLanguages,
-              'Languages you are learning',
-              hint: 'Spanish, Dutch',
-            ),
-            _field(_website, 'Website'),
-          ],
+          ),
         ),
       ),
     );
@@ -329,10 +344,35 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 }
 
-/// Live preview of what Save will publish: the banner at the same 16:9 band
-/// the Profile header shows, with the avatar overlapping it. Pending picks
-/// render straight from memory, so a newly chosen image appears instantly
-/// with no upload and no network round trip.
+/// Section heading used to break the form into Profile media / Identity /
+/// About you instead of one undifferentiated field list.
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Text(
+        text.toUpperCase(),
+        style: const TextStyle(
+          color: Color(0xFF9E92A8),
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.4,
+        ),
+      ),
+    );
+  }
+}
+
+/// Live preview of what Save will publish, built on the same shared
+/// [ProfileBanner]/[UserAvatar] widgets the Profile screen renders with —
+/// so the preview and the real profile literally cannot drift apart.
+/// Pending picks render straight from memory, so a newly chosen image
+/// appears instantly with no upload and no network round trip.
 class _ProfileImagePreview extends StatelessWidget {
   const _ProfileImagePreview({
     required this.profile,
@@ -344,50 +384,24 @@ class _ProfileImagePreview extends StatelessWidget {
   final PickedProfileImage? pendingAvatar;
   final PickedProfileImage? pendingBanner;
 
-  ImageProvider? _banner() {
-    final pending = pendingBanner;
-    if (pending != null) return MemoryImage(pending.bytes);
-    final url = profile.bannerUrl?.trim();
-    if (url != null && url.isNotEmpty) return NetworkImage(url);
-    return null;
-  }
-
-  ImageProvider? _avatar() {
-    final pending = pendingAvatar;
-    if (pending != null) return MemoryImage(pending.bytes);
-    final url = profile.photoUrl?.trim();
-    if (url != null && url.isNotEmpty) return NetworkImage(url);
-    return null;
-  }
-
   @override
   Widget build(BuildContext context) {
-    final banner = _banner();
-    final avatar = _avatar();
+    final pendingBannerBytes = pendingBanner?.bytes;
+    final pendingAvatarBytes = pendingAvatar?.bytes;
 
     return AspectRatio(
-      aspectRatio: ProfileImageRules.banner.aspectRatio,
+      // 21:9 preview: reads as a cover card, and inside the form's 640px
+      // cap it never exceeds ~275px tall on any screen.
+      aspectRatio: 21 / 9,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(18),
         child: Stack(
           fit: StackFit.expand,
           children: [
-            DecoratedBox(
-              decoration: BoxDecoration(
-                image: banner == null
-                    ? null
-                    : DecorationImage(image: banner, fit: BoxFit.cover),
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Color(0xFF53108C),
-                    Color(0xFF21102E),
-                    Color(0xFF09050F),
-                  ],
-                ),
-              ),
-            ),
+            if (pendingBannerBytes != null)
+              Image.memory(pendingBannerBytes, fit: BoxFit.cover)
+            else
+              ProfileBanner(bannerUrl: profile.bannerUrl),
             Positioned(
               left: 16,
               bottom: 16,
@@ -399,23 +413,21 @@ class _ProfileImagePreview extends StatelessWidget {
                     colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
                   ),
                 ),
-                child: CircleAvatar(
-                  radius: 34,
-                  backgroundColor: const Color(0xFF281133),
-                  backgroundImage: avatar,
-                  child: avatar != null
-                      ? null
-                      : Text(
-                          profile.displayName.isEmpty
-                              ? '?'
-                              : profile.displayName[0].toUpperCase(),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                          ),
+                child: pendingAvatarBytes != null
+                    ? ClipOval(
+                        child: Image.memory(
+                          pendingAvatarBytes,
+                          width: 68,
+                          height: 68,
+                          fit: BoxFit.cover,
                         ),
-                ),
+                      )
+                    : UserAvatar(
+                        radius: 34,
+                        photoUrl: profile.photoUrl,
+                        displayName: profile.displayName,
+                        backgroundColor: const Color(0xFF281133),
+                      ),
               ),
             ),
           ],

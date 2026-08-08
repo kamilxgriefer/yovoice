@@ -295,6 +295,10 @@ class ProfileService {
     required String field,
     required bool updateAuthPhoto,
   }) async {
+    // Read the outgoing URL before anything changes so the replaced
+    // object can be cleaned up afterwards.
+    final previousUrl = (await _document.get()).data()?[field] as String?;
+
     final reference = _storage.ref().child(path);
     final uploadTask = reference.putData(
       bytes,
@@ -317,16 +321,55 @@ class ProfileService {
     // avoids asking Storage for a stale or differently-normalized path.
     final url = await snapshot.ref.getDownloadURL();
 
-    await _document.set({
-      field: url,
-      'profileUpdatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    // Consistency contract (Storage and Firestore cannot share a real
+    // transaction): the Firestore field is the source of truth, so the
+    // upload happens FIRST and the pointer flips second. If the pointer
+    // write fails, the just-uploaded object is deleted again (best
+    // effort) and the error propagates — the profile keeps pointing at
+    // the old image and nothing is orphaned. Only after the pointer has
+    // flipped is the OLD object deleted, also best effort: a leaked file
+    // is preferable to a profile pointing at nothing.
+    try {
+      await _document.set({
+        field: url,
+        'profileUpdatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (error) {
+      await snapshot.ref.delete().then((_) {}, onError: (_) {});
+      rethrow;
+    }
 
     if (updateAuthPhoto) {
       await _auth.currentUser?.updatePhotoURL(url);
     }
 
+    await _deleteReplacedImage(previousUrl, replacedBy: url);
+
     return url;
+  }
+
+  /// Best-effort removal of the object a profile image field used to
+  /// point at. Every upload uses a fresh timestamped filename (that's the
+  /// cache-busting strategy — a genuinely new URL, not a query-string
+  /// hack), so without this each change would leave the prior file behind
+  /// forever. Only deletes objects inside this user's own profile folder;
+  /// anything else (external seed URLs, a Google avatar) is left alone.
+  Future<void> _deleteReplacedImage(
+    String? previousUrl, {
+    required String replacedBy,
+  }) async {
+    final url = previousUrl?.trim();
+    if (url == null || url.isEmpty || url == replacedBy) return;
+    if (!url.contains('/users%2F$_uid%2Fprofile%2F') &&
+        !url.contains('/users/$_uid/profile/')) {
+      return;
+    }
+    try {
+      await _storage.refFromURL(url).delete();
+    } catch (_) {
+      // Missing object, revoked token, offline — none of these should
+      // fail the save that already succeeded.
+    }
   }
 }
 
