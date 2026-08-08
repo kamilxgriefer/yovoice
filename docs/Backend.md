@@ -60,6 +60,15 @@ user's per-type notification preferences (`notification_preferences_screen.dart`
 
 ## Admin
 
+**Deployment status (verified against `firebase functions:list`,
+2026-08-08): none of the functions in this section are deployed.** They
+are implemented and exported in `functions/index.js`, but no admin UI
+exists anywhere (the website's `src/app/admin/` is an empty
+placeholder), so there are no callers — and keeping powerful moderation
+endpoints undeployed until something actually needs them is the safer
+default. Deploy them together with whatever admin surface is built
+first.
+
 Every admin function requires a `role` custom claim via `requireRole()` —
 roles come from Auth custom claims, never from a Firestore field, which
 closes off the most common privilege-escalation path (a user editing their

@@ -1339,3 +1339,49 @@ keep their own complete headers; only the bottom bar is re-hosted.
   reflects the shell state at push time; taps always land on the live
   shell because they pop first.
 - Regression tests: `test/more_destination_nav_test.dart`.
+
+## ADR-027: CI gates on the full test suite; Crashlytics is the production crash channel
+
+**Status**: Accepted
+**Date**: 2026-08-08
+
+### Context
+
+The 2026-08-08 product audit found the project's two biggest
+non-feature gaps were observability and CI: (1) the deploy workflow ran
+only `flutter analyze` — a push that broke all 78 Flutter tests and the
+entire rules suite still deployed to production; (2) the app had zero
+crash or error reporting on any platform — a crash in the field left no
+trace anywhere.
+
+### Decision
+
+1. `.github/workflows/firebase-hosting-merge.yml` now gates the Hosting
+   deploy on `flutter test` AND both rules suites
+   (`firestore-tests/rules.test.js`, `firestore-tests/storage.test.js`)
+   run against real emulators in CI (Java + `firebase-tools
+   emulators:exec`, `demo-yovoice` project id so no credentials are
+   needed). Rules *deploys* remain manual per DEPLOYMENT.md — CI only
+   proves the repo's rules pass their tests.
+2. `firebase_crashlytics` added, installed in `main()`:
+   `FlutterError.onError` + `PlatformDispatcher.onError` route uncaught
+   errors to Crashlytics. Collection is disabled in debug builds, the
+   whole setup is try/caught (observability must never take the app
+   down — same posture as the App Check guard), and web is excluded
+   (plugin unsupported there; tracked as a gap in TESTING.md).
+
+### Reasoning
+
+Both use infrastructure the project already has (GitHub Actions,
+the Firebase project) — no new services, accounts, or credentials. The
+storage suite also allowed the `users/{uid}/profile/*` cap to drop from
+10 MB to 2 MB with test proof instead of inspection (the crop editor's
+re-encode made the old ceiling obsolete — ADR-025).
+
+### Consequences
+
+- CI time increases by a few minutes (tests + two emulator boots).
+- Android builds now require the Crashlytics gradle plugin (pinned in
+  `android/settings.gradle.kts`).
+- Web crash reporting remains an open gap; candidates (Sentry, a
+  Firestore error sink) need their own decision.

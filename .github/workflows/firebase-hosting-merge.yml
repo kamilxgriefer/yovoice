@@ -31,6 +31,27 @@ jobs:
       - name: Analyze project
         run: flutter analyze
 
+      - name: Run Flutter tests
+        run: flutter test
+
+      # Firestore security rules suite against the real emulator. Rules
+      # DEPLOYS stay manual on purpose (see docs/DEPLOYMENT.md) — this
+      # only proves the rules in the repo still pass their tests before
+      # anything ships.
+      - name: Set up Java (Firestore emulator)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Run Firestore + Storage rules tests
+        run: |
+          npm --prefix firestore-tests ci
+          npx firebase-tools emulators:exec --only firestore --project demo-yovoice \
+            'npm --prefix firestore-tests test'
+          npx firebase-tools emulators:exec --only storage --project demo-yovoice \
+            'npm --prefix firestore-tests run test:storage'
+
       - name: Build Flutter Web
         run: flutter build web --release
 

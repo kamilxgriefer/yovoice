@@ -16,6 +16,14 @@ someone decide what to pick up next.
 
 ## Done
 
+- Product-audit hardening pass (2026-08-08) — CI now gates deploys on
+  `flutter test` + the Firestore AND Storage rules suites (run against
+  real emulators in the workflow); `storage.rules` got its first
+  emulator test suite (`firestore-tests/storage.test.js`, 22 checks)
+  and the profile-upload cap dropped 10 MB → 2 MB with test proof;
+  Crashlytics installed as the production crash channel (iOS/Android;
+  debug builds excluded)
+  ([ADR-027](Decisions.md#adr-027-ci-gates-on-the-full-test-suite-crashlytics-is-the-production-crash-channel)).
 - P0/P1 bugfix + profile media pass (2026-08-08) — (1) raw
   Dart/Firebase exception text can no longer reach the UI: root cause of
   the "Dart exception thrown from converted Future" chat error was a
@@ -150,32 +158,6 @@ someone decide what to pick up next.
 
 Ordered by rough priority — re-prioritize freely, this isn't a queue.
 
-### 0. Lower the `users/{uid}/profile/*` storage cap
-
-- **Status**: Unblocked by the crop editor (now Done): uploads are
-  re-encoded 1024×1024 / 1920×1080 JPEGs (~100–300 KB), so the 10 MB
-  `storage.rules` cap raised for as-is uploads can come back down once
-  real-world sizes are observed.
-
-### 0b. Storage rules have no emulator test coverage
-
-- **Status**: Not started.
-- **Description**: `firestore-tests/rules.test.js` covers Firestore only.
-  `storage.rules` has never been emulator-tested, and `firebase.json` has
-  no `emulators` block for the storage emulator. The
-  `users/{uid}/profile/*` change (10 MB cap, explicit JPEG/PNG/WebP
-  content-type allowlist) was deployed without one — verified instead by
-  inspection: `profile_service.dart` is the only writer to that prefix in
-  the app, it always sets one of the three allowed MIME types, and
-  `yovoice-website` does not use Firebase Storage at all (its only
-  `firebase/storage` reference is a `package-lock.json` transitive
-  entry). That reasoning is sound but it is not a test.
-- **Why it matters**: This project already has a documented history of
-  rule changes that passed review and still failed in production
-  ([ADR-003](Decisions.md#adr-003), [ADR-007](Decisions.md#adr-007)). A
-  content-type allowlist is exactly the kind of rule that silently breaks
-  a client the next time an upload path is added.
-
 ### 0c. Username uniqueness is not enforced
 
 - **Status**: Not started; recorded as an explicit decision in
@@ -187,12 +169,11 @@ Ordered by rough priority — re-prioritize freely, this isn't a queue.
   claim, a normalization policy, and a backfill migration for existing
   accounts. Client-side checking alone would be theatre.
 
-### 0d. Deploy the profile identity fan-out
+### 0d. ~~Deploy the profile identity fan-out~~ DONE
 
-- **Status**: Implemented (`functions/profile/fanout.js`), NOT deployed.
-- **Action**: `firebase deploy --only functions:onProfileIdentityChanged`
-  (or a full functions deploy). Until then, avatar/display-name changes
-  do not propagate to conversations, club member lists or voice moments.
+- **Status**: Deployed — confirmed live via `firebase functions:list`
+  during the 2026-08-08 product audit (this item had gone stale; the
+  fan-out was deployed the same day it was written).
 
 ### 0e. Premium billing adapters
 

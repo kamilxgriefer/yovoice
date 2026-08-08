@@ -8,8 +8,12 @@ exist; know which one you're relying on before trusting it.
 
 `firestore-tests/` — a standalone Node project running regression and
 attack-scenario checks against `firestore.rules` via
-`@firebase/rules-unit-testing` and the Firestore emulator. 43 checks as of
-this writing. Full workflow in
+`@firebase/rules-unit-testing` and the Firestore emulator — 91 checks as
+of 2026-08-08 — plus `storage.test.js`, the same treatment for
+`storage.rules` against the Storage emulator (22 checks: per-path
+ownership, size caps, content-type allowlists, read gating, default
+deny). Both suites also run in CI on every push to `main` and gate the
+Hosting deploy (see [DEPLOYMENT.md](DEPLOYMENT.md)). Full workflow in
 [`firestore-tests/README.md`](../firestore-tests/README.md) and
 [Firebase.md](Firebase.md#firestore-rules-testing); the short version:
 
@@ -44,27 +48,35 @@ wrong reason.
 
 ## Dart tests — real, but narrow
 
-`test/` — two files, two very different levels of maturity:
+`test/` — 78 tests across ~14 files as of 2026-08-08, grown almost
+entirely out of real bugs rather than an even coverage discipline. The
+pattern throughout: fake the Firebase backends
+(`firebase_auth_mocks` / `fake_cloud_firestore` /
+`firebase_storage_mocks`), drive the real production code. Highlights:
 
-- **`test/auth_service_verification_test.dart`** — real unit test
-  coverage for `AuthService`'s email-verification methods
-  (`resendVerificationEmail`, `reloadCurrentUser`, `register`'s
-  verification-failure handling), using `firebase_auth_mocks` and
-  `fake_cloud_firestore` to fake Firebase without touching real
-  infrastructure. This is the pattern to follow for testing a service in
-  isolation — see the file itself for the mock-setup shape
-  (`_buildService()`).
-- **`test/widget_test.dart`** — the default Flutter-generated boilerplate
-  (`expect(true, isTrue)`), never replaced with anything real. Exists, but
-  provides zero actual coverage.
+- **`profile_save_e2e_test.dart`** — drives the REAL EditProfileScreen
+  through pick → crop editor → Save → Storage → Firestore → stream
+  emission; asserts the stored objects are the cropped 1024²/1920×1080
+  JPEGs.
+- **`friend_accept_notification_test.dart`** — the friend-request
+  notification lifecycle (sender notified on accept, dedupe, retirement,
+  silent decline).
+- **`error_messages_test.dart`** — no raw exception text can reach the
+  UI (includes the exact web-interop wrapper string users once saw).
+- **`more_destination_nav_test.dart`** — More destinations keep the
+  shell bottom navigation; bar taps pop back to the shell first.
+- **`image_crop_test.dart`**, **`profile_image_rules_test.dart`** —
+  crop geometry / output dimensions, validation budgets.
+- Plus layout-regression suites (message-bubble overflow, profile
+  header at 7 widths, auth link tap targets) and
+  `auth_service_verification_test.dart`, the original template for the
+  service-with-mocks shape.
 
-**What this means in practice**: almost none of `lib/features/` has unit
-test coverage today. The one exception (`AuthService`'s verification
-methods) exists because that specific flow had a real, confusing bug
-during development and a unit test was the fastest way to pin down its
-contract — not because of a general testing discipline applied evenly
-across the app. Treat that file as a template for adding real coverage to
-another service, not as evidence that services are broadly tested.
+**What this means in practice**: coverage is regression-driven — deep
+where something once broke (profile media, notifications, navigation,
+error copy), absent where nothing has broken yet (rooms, clubs,
+moments services). `test/widget_test.dart` is still the generated
+boilerplate and provides nothing.
 
 Run with:
 
@@ -104,6 +116,9 @@ Worth naming plainly rather than leaving implicit:
   in `functions/package.json` runs anything beyond `firebase emulators:start`.
   Correctness here currently rests entirely on manual verification plus
   the Firestore rules suite covering the data these functions read.
+- Crash visibility on web: Crashlytics (added 2026-08-08) covers iOS and
+  Android only — the Flutter web build still has no crash/error
+  reporting channel beyond the browser console.
 - Almost all Flutter services and widgets beyond `AuthService`'s
   verification methods.
 - Any cross-cutting integration flow (the join-room → LiveKit token flow

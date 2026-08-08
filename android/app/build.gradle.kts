@@ -7,6 +7,7 @@ plugins {
 
     // Firebase / Google Services
     id("com.google.gms.google-services")
+    id("com.google.firebase.crashlytics")
 }
 
 android {

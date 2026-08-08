@@ -14,25 +14,20 @@ service firebase.storage {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
-    // Deployed 2026-08-08. Not emulator-tested — there is no storage rules
-    // harness yet (see Roadmap 0b). Verified by inspection instead:
-    // profile_service.dart is the only writer to this prefix and always
-    // sets one of the three content types below.
+    // Emulator-tested in firestore-tests/storage.test.js (run in CI).
     //
-    // Size cap matches ProfileImageRules' banner budget (10 MB source).
-    // It used to be 8 MB, which the client could not satisfy: a banner is
-    // accepted up to 10 MB and — until the re-encode step lands — the
-    // picked bytes are uploaded as-is on Web, where image_picker ignores
-    // maxWidth. A 9 MB banner therefore passed client validation and was
-    // then rejected here as "unauthorized". Content types are pinned to
-    // the three formats the app can decode everywhere rather than any
-    // image/*, so this is a narrower rule than before despite the higher
-    // ceiling. Tighten the size again once uploads are re-encoded.
+    // Size cap: since the crop editor landed (ADR-025), every profile
+    // upload is a re-encoded JPEG — 1024x1024 avatars / 1920x1080
+    // banners at quality 85, ~100-500 KB in practice. 2 MB is generous
+    // headroom over the largest possible re-encode while cutting the old
+    // as-is-upload ceiling (10 MB) fivefold. The three content types are
+    // kept (not narrowed to JPEG alone) so any not-yet-refreshed client
+    // that still uploads a validated original PNG/WebP keeps working.
     match /users/{userId}/profile/{fileName} {
       allow read: if true;
       allow write: if isSignedIn()
           && request.auth.uid == userId
-          && request.resource.size <= 10 * 1024 * 1024
+          && request.resource.size <= 2 * 1024 * 1024
           && request.resource.contentType in [
                'image/jpeg', 'image/png', 'image/webp'
              ];

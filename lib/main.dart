@@ -1,5 +1,8 @@
+import 'dart:ui' show PlatformDispatcher;
+
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb, debugPrint;
 import 'package:flutter/material.dart';
@@ -13,10 +16,37 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  _installCrashReporting();
   await _activateAppCheck();
   _registerBackgroundMessageHandler();
 
   runApp(const ProviderScope(child: YoVoiceApp()));
+}
+
+// Crashlytics is the production crash/error channel — before this, a
+// crash in the field left no trace anywhere. Not supported on web (the
+// plugin throws), so web keeps the console as its error surface. Debug
+// builds don't report: local development crashes are noise, and the
+// developer is already looking at the console.
+void _installCrashReporting() {
+  if (kIsWeb) return;
+
+  try {
+    final crashlytics = FirebaseCrashlytics.instance;
+    crashlytics.setCrashlyticsCollectionEnabled(!kDebugMode);
+
+    // Uncaught Flutter framework errors (build/layout/gesture).
+    FlutterError.onError = crashlytics.recordFlutterFatalError;
+    // Uncaught async/platform errors that never touch the framework.
+    PlatformDispatcher.instance.onError = (error, stack) {
+      crashlytics.recordError(error, stack, fatal: true);
+      return true;
+    };
+  } catch (error) {
+    // Same posture as App Check below: observability must never be the
+    // thing that takes the app down.
+    debugPrint('Crashlytics setup failed, continuing without it: $error');
+  }
 }
 
 // Must be registered before runApp() per FirebaseMessaging's own

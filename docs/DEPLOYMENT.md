@@ -21,16 +21,21 @@ deployables described in
 
 ```
 checkout → install Flutter (stable channel) → flutter pub get
-  → flutter analyze → flutter build web --release
+  → flutter analyze → flutter test
+  → Firestore + Storage rules suites against the real emulators
+  → flutter build web --release
   → deploy to Firebase Hosting (channel: live)
 ```
 
-**`flutter analyze` is a real gate here, not just a step**: if it fails,
-the workflow stops before building or deploying — a broken `flutter
-analyze` on `main` means the website build doesn't ship, full stop. This
-is the only automatic quality gate this project has (see
+**Every step before the build is a real gate, not just a step**: a
+failing `flutter analyze`, a failing widget/unit test, or a failing
+rules test stops the workflow before anything deploys — a broken `main`
+means the web build doesn't ship, full stop. (Until 2026-08-08 only
+`flutter analyze` gated the deploy; the test and rules-suite gates were
+added in the product-audit pass. Note the rules suites *verify* the
+rules in the repo — rules **deploys** remain manual, see below.) See
 [TESTING.md](TESTING.md) and
-[DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md#verification-checklist-before-calling-something-done)).
+[DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md#verification-checklist-before-calling-something-done).
 
 Deploys to the `live` channel using
 `firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_YOVOICE_EC54A }}'`

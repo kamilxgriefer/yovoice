@@ -3,7 +3,8 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "test": "node rules.test.js"
+    "test": "node rules.test.js",
+    "test:storage": "node storage.test.js"
   },
   "dependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",
