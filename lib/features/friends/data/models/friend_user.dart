@@ -122,7 +122,7 @@ class FriendUser {
       return email.split('@').first;
     }
 
-    return 'YoVoice user';
+    return 'YO Voice user';
   }
 
   static String? _normalizeNullableString(Object? value) {

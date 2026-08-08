@@ -53,7 +53,7 @@ class Conversation {
       return email.split('@').first;
     }
 
-    return 'YoVoice user';
+    return 'YO Voice user';
   }
 
   String emailFor(String userId) {

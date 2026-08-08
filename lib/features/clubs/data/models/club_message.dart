@@ -38,7 +38,7 @@ class ClubMessage {
       senderId: data['senderId'] as String? ?? '',
       senderName: (data['senderName'] as String?)?.trim().isNotEmpty == true
           ? (data['senderName'] as String).trim()
-          : 'YoVoice user',
+          : 'YO Voice user',
       senderPhotoUrl: _nullableString(data['senderPhotoUrl']),
       content: data['content'] as String? ?? '',
       sentAt:

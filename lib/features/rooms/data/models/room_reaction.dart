@@ -23,7 +23,7 @@ class RoomReaction {
     return RoomReaction(
       id: document.id,
       userId: data['userId'] as String? ?? '',
-      displayName: data['displayName'] as String? ?? 'YoVoice user',
+      displayName: data['displayName'] as String? ?? 'YO Voice user',
       emoji: data['emoji'] as String? ?? '👏',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
     );

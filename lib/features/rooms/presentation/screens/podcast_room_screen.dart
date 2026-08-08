@@ -126,9 +126,9 @@ class _PodcastRoomScreenState extends State<PodcastRoomScreen>
     final uri = Uri.https('yovoice.app', '/', {'room': widget.room.id});
     await SharePlus.instance.share(
       ShareParams(
-        title: 'Join ${widget.room.name} on YoVoice',
-        subject: 'YoVoice podcast invitation',
-        text: 'Join the podcast "${widget.room.name}" on YoVoice.\n\n$uri',
+        title: 'Join ${widget.room.name} on YO Voice',
+        subject: 'YO Voice podcast invitation',
+        text: 'Join the podcast "${widget.room.name}" on YO Voice.\n\n$uri',
       ),
     );
   }
@@ -230,7 +230,7 @@ class _PodcastRoomScreenState extends State<PodcastRoomScreen>
                         ),
                       ),
                       subtitle: const Text(
-                        'Invite people with a direct YoVoice link.',
+                        'Invite people with a direct YO Voice link.',
                         style: TextStyle(color: _muted),
                       ),
                       onTap: () {

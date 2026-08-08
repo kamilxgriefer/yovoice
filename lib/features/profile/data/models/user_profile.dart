@@ -99,7 +99,7 @@ class UserProfile {
       email: data['email'] as String? ?? '',
       displayName:
           data['displayName'] as String? ??
-          (fallbackName?.isNotEmpty == true ? fallbackName! : 'YoVoice user'),
+          (fallbackName?.isNotEmpty == true ? fallbackName! : 'YO Voice user'),
       username: data['username'] as String? ?? '',
       bio: data['bio'] as String? ?? '',
       country: data['country'] as String? ?? '',

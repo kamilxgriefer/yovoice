@@ -31,7 +31,7 @@ class RoomParticipant {
 
     return RoomParticipant(
       userId: data['userId'] as String? ?? document.id,
-      displayName: data['displayName'] as String? ?? 'YoVoice user',
+      displayName: data['displayName'] as String? ?? 'YO Voice user',
       photoUrl: data['photoUrl'] as String?,
       role: data['role'] as String? ?? 'listener',
       isMuted: data['isMuted'] as bool? ?? true,

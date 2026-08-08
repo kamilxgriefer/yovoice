@@ -28,11 +28,11 @@ class ClubInvite {
           data['clubId'] as String? ??
           document.reference.parent.parent?.id ??
           '',
-      clubName: (data['clubName'] as String?)?.trim() ?? 'YoVoice club',
+      clubName: (data['clubName'] as String?)?.trim() ?? 'YO Voice club',
       clubAvatarUrl: _nullable(data['clubAvatarUrl']),
       inviteeId: data['inviteeId'] as String? ?? document.id,
       inviterId: data['inviterId'] as String? ?? '',
-      inviterName: (data['inviterName'] as String?)?.trim() ?? 'YoVoice user',
+      inviterName: (data['inviterName'] as String?)?.trim() ?? 'YO Voice user',
       createdAt: _date(data['createdAt']),
     );
   }

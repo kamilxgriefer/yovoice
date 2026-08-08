@@ -1171,7 +1171,7 @@ class NewMessageSheetState extends State<NewMessageSheet> {
                               onTap: () => SharePlus.instance.share(
                                 ShareParams(
                                   text:
-                                      'Join me on YoVoice — the app for live voice rooms and communities: https://yovoice.app/download',
+                                      'Join me on YO Voice — the app for live voice rooms and communities: https://yovoice.app/download',
                                 ),
                               ),
                             ),
@@ -1382,7 +1382,7 @@ class _InviteFriendsTile extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      'Not on YoVoice yet? Send them an invite.',
+                      'Not on YO Voice yet? Send them an invite.',
                       style: TextStyle(
                         color: _MessagesScreenState._muted,
                         fontSize: 11.5,

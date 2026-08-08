@@ -550,7 +550,7 @@ class _AccountTypePicker extends StatelessWidget {
           if (value == AccountType.official) ...[
             const SizedBox(height: 10),
             const Text(
-              'Official status is verified by YoVoice and cannot be selected manually.',
+              'Official status is verified by YO Voice and cannot be selected manually.',
               style: TextStyle(color: Color(0xFFD3A5FF), fontSize: 11),
             ),
           ],

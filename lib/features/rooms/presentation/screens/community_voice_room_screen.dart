@@ -72,7 +72,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
     if (user == null) return;
     final name = user.displayName?.trim().isNotEmpty == true
         ? user.displayName!.trim()
-        : user.email?.split('@').first ?? 'YoVoice user';
+        : user.email?.split('@').first ?? 'YO Voice user';
     try {
       if (_voice.roomId != widget.room.id || !_voice.isConnected) {
         await _voice.join(

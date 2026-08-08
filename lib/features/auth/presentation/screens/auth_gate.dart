@@ -220,7 +220,7 @@ class _WelcomeScreenState extends State<_WelcomeScreen>
                         child: const Column(
                           children: [
                             Text(
-                              'Welcome to YoVoice',
+                              'Welcome to YO Voice',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 color: Colors.white,

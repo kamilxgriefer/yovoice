@@ -61,9 +61,9 @@ class _CommunityRoomLobbyScreenState extends State<CommunityRoomLobbyScreen> {
     final uri = Uri.https('yovoice.app', '/', {'room': widget.room.id});
     await SharePlus.instance.share(
       ShareParams(
-        title: 'Join ${widget.room.name} on YoVoice',
-        subject: 'YoVoice room invitation',
-        text: 'Join "${widget.room.name}" on YoVoice.\n\n$uri',
+        title: 'Join ${widget.room.name} on YO Voice',
+        subject: 'YO Voice room invitation',
+        text: 'Join "${widget.room.name}" on YO Voice.\n\n$uri',
       ),
     );
   }

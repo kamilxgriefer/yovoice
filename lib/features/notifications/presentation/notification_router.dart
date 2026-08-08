@@ -149,7 +149,7 @@ class NotificationRouter {
           otherUserId: otherUserId,
           otherDisplayName: displayName?.isNotEmpty == true
               ? displayName!
-              : 'YoVoice user',
+              : 'YO Voice user',
           otherEmail: otherUserData['email'] as String? ?? '',
           otherPhotoUrl: otherUserData['photoUrl'] as String? ?? '',
         ),

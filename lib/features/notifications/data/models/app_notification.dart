@@ -105,7 +105,7 @@ class AppNotification {
       case NotificationType.moderation:
         return targetLabel ?? 'A moderator took action on your account';
       case NotificationType.system:
-        return targetLabel ?? 'YoVoice';
+        return targetLabel ?? 'YO Voice';
     }
   }
 
@@ -120,7 +120,7 @@ class AppNotification {
       actorId: data['actorId'] as String? ?? '',
       actorName: (data['actorName'] as String?)?.trim().isNotEmpty == true
           ? (data['actorName'] as String).trim()
-          : 'YoVoice user',
+          : 'YO Voice user',
       actorPhotoUrl: data['actorPhotoUrl'] as String?,
       targetId: data['targetId'] as String?,
       targetLabel: data['targetLabel'] as String?,

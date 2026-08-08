@@ -67,7 +67,7 @@ class Club {
       name: (data['name'] as String?)?.trim() ?? 'Untitled club',
       description: (data['description'] as String?)?.trim() ?? '',
       ownerId: data['ownerId'] as String? ?? '',
-      ownerName: (data['ownerName'] as String?)?.trim() ?? 'YoVoice user',
+      ownerName: (data['ownerName'] as String?)?.trim() ?? 'YO Voice user',
       avatarUrl: _nullableString(data['avatarUrl']),
       bannerUrl: _nullableString(data['bannerUrl']),
       privacy: ClubPrivacy.fromValue(data['privacy']),

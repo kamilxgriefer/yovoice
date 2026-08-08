@@ -105,7 +105,7 @@ class VoiceRoom {
     return VoiceRoom(
       id: document.id,
       hostId: data['hostId'] as String? ?? '',
-      hostName: data['hostName'] as String? ?? 'YoVoice user',
+      hostName: data['hostName'] as String? ?? 'YO Voice user',
       hostPhotoUrl: data['hostPhotoUrl'] as String?,
       name: data['name'] as String? ?? 'Untitled room',
       description: data['description'] as String? ?? '',

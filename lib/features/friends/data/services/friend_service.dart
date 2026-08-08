@@ -525,7 +525,7 @@ class FriendService {
     }
     return fallbackEmail.isNotEmpty
         ? fallbackEmail.split('@').first
-        : 'YoVoice user';
+        : 'YO Voice user';
   }
 
   String? _nullable(Object? value) {

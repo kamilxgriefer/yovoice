@@ -408,6 +408,6 @@ class MessageService {
   static String _displayNameFromEmail(String email) {
     final value = email.trim();
 
-    return value.isEmpty ? 'YoVoice user' : value.split('@').first;
+    return value.isEmpty ? 'YO Voice user' : value.split('@').first;
   }
 }

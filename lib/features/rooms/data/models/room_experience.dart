@@ -1,4 +1,4 @@
-/// Defines the two public room experiences available in YoVoice.
+/// Defines the two public room experiences available in YO Voice.
 ///
 /// Firestore used `podcast` in older builds. The parser intentionally keeps
 /// accepting that value so existing rooms continue to open as Broadcast Rooms.

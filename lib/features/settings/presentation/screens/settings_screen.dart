@@ -182,7 +182,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         backgroundColor: _surface,
         title: const Text('Log out?', style: TextStyle(color: Colors.white)),
         content: const Text(
-          'You will need to sign in again to use YoVoice.',
+          'You will need to sign in again to use YO Voice.',
           style: TextStyle(color: _muted),
         ),
         actions: [
@@ -252,7 +252,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onPressed: () {
                   Navigator.pop(sheetContext);
                   _openUrl(
-                    'mailto:support@yovoice.app?subject=Delete%20my%20YoVoice%20account',
+                    'mailto:support@yovoice.app?subject=Delete%20my%20YO%20Voice%20account',
                   );
                 },
                 icon: const Icon(Icons.mail_outline_rounded),
@@ -487,7 +487,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _SettingsTile(
               icon: Icons.dark_mode_rounded,
               title: 'Theme',
-              subtitle: 'Dark — matches YoVoice\'s design',
+              subtitle: 'Dark — matches YO Voice\'s design',
               trailing: Icon(Icons.check_circle_rounded, color: _success),
             ),
             _SettingsTile(

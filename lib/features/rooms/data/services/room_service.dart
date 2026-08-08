@@ -701,6 +701,6 @@ class RoomService {
     if (name != null && name.isNotEmpty) return name;
     final email = user.email?.trim();
     if (email != null && email.isNotEmpty) return email.split('@').first;
-    return 'YoVoice user';
+    return 'YO Voice user';
   }
 }

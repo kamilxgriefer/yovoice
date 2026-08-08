@@ -549,7 +549,7 @@ class _ClubCard extends StatelessWidget {
                           const SizedBox(height: 5),
                           Text(
                             club.description.isEmpty
-                                ? 'A YoVoice club.'
+                                ? 'A YO Voice club.'
                                 : club.description,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,

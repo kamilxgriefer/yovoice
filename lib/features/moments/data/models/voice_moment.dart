@@ -35,7 +35,7 @@ class VoiceMoment {
     return VoiceMoment(
       id: document.id,
       authorId: data['authorId'] as String? ?? '',
-      authorName: data['authorName'] as String? ?? 'YoVoice user',
+      authorName: data['authorName'] as String? ?? 'YO Voice user',
       authorPhotoUrl: data['authorPhotoUrl'] as String?,
       caption: data['caption'] as String? ?? '',
       audioUrl: data['audioUrl'] as String?,

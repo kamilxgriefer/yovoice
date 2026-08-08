@@ -48,7 +48,7 @@ class RoomMessage {
     return RoomMessage(
       id: document.id,
       senderId: data['senderId'] as String? ?? '',
-      senderName: data['senderName'] as String? ?? 'YoVoice user',
+      senderName: data['senderName'] as String? ?? 'YO Voice user',
       senderPhotoUrl: data['senderPhotoUrl'] as String?,
       text: data['text'] as String? ?? '',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),

@@ -173,7 +173,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
             ),
             const SizedBox(height: 2),
             const Text(
-              'Your progress across YoVoice',
+              'Your progress across YO Voice',
               style: TextStyle(
                 color: Color(0xFFA79CAD),
                 fontSize: 12,

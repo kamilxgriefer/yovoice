@@ -121,8 +121,8 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
           Navigator.pop(sheetContext);
           await SharePlus.instance.share(
             ShareParams(
-              text: 'Join ${club.name} on YoVoice: $inviteLink',
-              subject: 'Join ${club.name} on YoVoice',
+              text: 'Join ${club.name} on YO Voice: $inviteLink',
+              subject: 'Join ${club.name} on YO Voice',
             ),
           );
         },

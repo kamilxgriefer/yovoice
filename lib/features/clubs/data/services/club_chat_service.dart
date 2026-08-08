@@ -136,6 +136,6 @@ class ClubChatService {
     if (displayName != null && displayName.isNotEmpty) return displayName;
     final email = user.email?.trim();
     if (email != null && email.isNotEmpty) return email.split('@').first;
-    return 'YoVoice user';
+    return 'YO Voice user';
   }
 }

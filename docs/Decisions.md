@@ -1108,3 +1108,49 @@ trip — which is what the user was actually asking for.
 - The interactive crop/reposition step is **not** implemented yet; the
   aspect ratios in `ProfileImageRules` (1:1 and 16:9) are already the
   values that step should honour.
+
+## ADR-022: Auth action links route through yovoice.app, not Firebase's hosted handler
+
+**Context.** Password-reset and verification emails sent users to
+`yovoice-ec54a.firebaseapp.com/__/auth/action` — Firebase's generic white
+utility page, with no YO Voice identity. A prior session established
+empirically (see the website's `action-code-settings.ts`) that
+`ActionCodeSettings.url` cannot bypass that page: it only becomes the
+`continueUrl` afterward. The only supported bypass is the console's
+"customize action URL" setting, which redirects the emailed link itself.
+
+**Decision.** The website owns the action experience. A server-side
+dispatcher at `yovoice.app/auth/action` (Next.js route handler) receives
+`mode`/`oobCode`/`continueUrl`/`lang` and fans out to branded pages:
+`/reset-password` (verifyPasswordResetCode → form → confirmPasswordReset),
+`/verify-email` (existing applyActionCode handler), `/recover-email`
+(recoverEmail + verifyAndChangeEmail). The console action URL must be set
+to `https://yovoice.app/auth/action` — a one-time manual step documented
+in docs/email-templates/README.md, because Firebase exposes no
+CLI/deploy surface for it in our toolchain. Firebase stays the sole
+source of truth for code validity; nothing is faked client-side.
+
+**Reasoning.** One dispatcher (the console allows exactly one custom
+action URL) keeps every mode on a branded page, including the
+email-change revocation flow that would otherwise silently regress to
+the hosted page. A route handler rather than a page keeps the oobCode
+out of rendered HTML and needs no client JS to dispatch. `continueUrl`
+is allowlist-validated (`safe-continue-url.ts`) at the dispatcher AND at
+each consuming page — it is attacker-controllable input on a page
+reached from an email, i.e. a textbook open-redirect vector.
+
+**Consequences.**
+- The full reset lifecycle was verified against the Firebase Auth
+  emulator end to end (form → confirmPasswordReset → old password
+  rejected / new accepted / code replay rejected). The emulator entry in
+  firebase.json and the env-gated `connectAuthEmulator` hook in the
+  website's firebase config are permanent test infrastructure.
+- Email template bodies are customizable ONLY because Resend SMTP is
+  configured; templates live in docs/email-templates/ and must be pasted
+  into the console by hand.
+- The Flutter app's ActionCodeSettings keep their yovoice.app continue
+  URLs and stop claiming `handleCodeInApp: true`, which was a no-op for
+  these code types.
+- If yovoice.app is ever unreachable, emailed auth links break with it —
+  accepted: the website already fronts registration/login for the same
+  accounts.

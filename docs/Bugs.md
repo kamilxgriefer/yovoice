@@ -334,3 +334,25 @@ permission flags).
   same value from one Firestore listener, and a screen opened after the
   first emission renders immediately instead of flashing a placeholder.
   Cleared on sign-out via `resetCurrentProfileCache()`.
+- **Fixed: password reset / email verification links dumped users on
+  Firebase's generic white `__/auth/action` page.** Not a bug in
+  ActionCodeSettings — its `url` only ever becomes the post-action
+  continueUrl (established empirically in a prior session). The user-facing
+  handler simply didn't exist for reset (`/reset-password` on the website
+  was an empty directory) and the console's action URL was never
+  customized. Now: `yovoice.app/auth/action` dispatcher → branded
+  `/reset-password`, `/verify-email`, `/recover-email` pages; full reset
+  lifecycle verified against the Firebase Auth emulator (old password
+  rejected, new accepted, code replay rejected, reused link shows a
+  branded error, hostile continueUrl stripped by allowlist). Requires the
+  one-time console steps in docs/email-templates/README.md before it's
+  live for real emails. See ADR-022.
+- **Fixed: login's "Forgot password?" ended in a bare SnackBar and could
+  leak account existence.** Now opens a dark "Check your inbox" sheet with
+  neutral copy and a 60s resend cooldown; `user-not-found` deliberately
+  takes the same path as success so the reset form can't be used to probe
+  which emails have accounts.
+- **Fixed: user-facing copy wrote the brand as "YoVoice" in ~30 strings**
+  (share messages, fallback display names, settings copy). All user-facing
+  occurrences are now "YO Voice"; code identifiers (`YoVoiceApp`) and
+  URLs/package ids unchanged.

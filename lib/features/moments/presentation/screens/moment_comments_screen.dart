@@ -64,7 +64,7 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
             ? displayName
             : user.displayName?.trim().isNotEmpty == true
             ? user.displayName!.trim()
-            : user.email?.split('@').first ?? 'YoVoice user',
+            : user.email?.split('@').first ?? 'YO Voice user',
         'authorPhotoUrl': photoUrl ?? user.photoURL,
         'text': text,
         'createdAt': FieldValue.serverTimestamp(),
@@ -132,7 +132,7 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                     itemBuilder: (context, index) {
                       final data = comments[index].data();
                       final name =
-                          data['authorName'] as String? ?? 'YoVoice user';
+                          data['authorName'] as String? ?? 'YO Voice user';
                       final photo = data['authorPhotoUrl'] as String?;
                       final type = data['type'] as String? ?? 'text';
                       return _CommentCard(

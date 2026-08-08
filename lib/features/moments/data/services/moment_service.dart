@@ -97,7 +97,7 @@ class MomentService {
         ? profileName!
         : user.displayName?.trim().isNotEmpty == true
         ? user.displayName!.trim()
-        : user.email?.split('@').first ?? 'YoVoice user';
+        : user.email?.split('@').first ?? 'YO Voice user';
 
     if (replyToMomentId != null && replyToMomentId.isNotEmpty) {
       return _publishVoiceReply(

@@ -25,7 +25,7 @@ class BroadcastHandRequest {
     final timestamp = data['createdAt'];
     return BroadcastHandRequest(
       userId: document.id,
-      displayName: data['displayName'] as String? ?? 'YoVoice user',
+      displayName: data['displayName'] as String? ?? 'YO Voice user',
       photoUrl: data['photoUrl'] as String?,
       createdAt: timestamp is Timestamp ? timestamp.toDate() : null,
     );
@@ -61,7 +61,7 @@ class RoomExperienceService {
     if (displayName != null && displayName.isNotEmpty) return displayName;
     final email = user.email?.trim();
     if (email != null && email.isNotEmpty) return email.split('@').first;
-    return 'YoVoice user';
+    return 'YO Voice user';
   }
 
   Future<void> configureRoom({

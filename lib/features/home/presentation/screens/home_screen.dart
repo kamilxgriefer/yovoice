@@ -651,7 +651,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 onShare: () => SharePlus.instance.share(
                   ShareParams(
                     text:
-                        'Listen to ${moment.authorName} on YoVoice: https://yovoice.app/?moment=${moment.id}',
+                        'Listen to ${moment.authorName} on YO Voice: https://yovoice.app/?moment=${moment.id}',
                   ),
                 ),
               ),

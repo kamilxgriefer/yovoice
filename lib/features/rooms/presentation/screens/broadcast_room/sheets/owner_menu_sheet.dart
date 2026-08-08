@@ -85,7 +85,7 @@ class OwnerMenuSheet extends StatelessWidget {
             OwnerMenuItem(
               icon: Icons.delete_forever_rounded,
               title: 'Delete room permanently',
-              subtitle: 'Remove the room and its messages from YoVoice',
+              subtitle: 'Remove the room and its messages from YO Voice',
               onTap: onDelete,
               destructive: true,
             ),

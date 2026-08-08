@@ -28,7 +28,7 @@ class FollowUser {
           : document.id,
       displayName: (data['displayName'] as String?)?.trim().isNotEmpty == true
           ? (data['displayName'] as String).trim()
-          : 'YoVoice user',
+          : 'YO Voice user',
       username: (data['username'] as String?)?.trim() ?? '',
       photoUrl: (data['photoUrl'] as String?)?.trim().isNotEmpty == true
           ? (data['photoUrl'] as String).trim()

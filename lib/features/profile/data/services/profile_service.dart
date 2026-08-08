@@ -142,7 +142,7 @@ class ProfileService {
 
     final displayName = user.displayName?.trim().isNotEmpty == true
         ? user.displayName!.trim()
-        : (user.email?.split('@').first ?? 'YoVoice user');
+        : (user.email?.split('@').first ?? 'YO Voice user');
 
     final seed = <String, Object?>{
       'uid': user.uid,

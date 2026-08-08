@@ -509,7 +509,7 @@ class _QuickActionsRow extends StatelessWidget {
             onTap: () => SharePlus.instance.share(
               ShareParams(
                 text:
-                    'Join me on YoVoice — the app for live voice rooms and communities: https://yovoice.app/download',
+                    'Join me on YO Voice — the app for live voice rooms and communities: https://yovoice.app/download',
               ),
             ),
           ),

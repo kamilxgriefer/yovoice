@@ -129,7 +129,7 @@ class ClubMember {
 
     return ClubMember(
       userId: data['userId'] as String? ?? document.id,
-      displayName: (data['displayName'] as String?)?.trim() ?? 'YoVoice user',
+      displayName: (data['displayName'] as String?)?.trim() ?? 'YO Voice user',
       photoUrl: _nullableString(data['photoUrl']),
       role: ClubRole.fromValue(data['role']),
       isOnline: data['isOnline'] as bool? ?? false,

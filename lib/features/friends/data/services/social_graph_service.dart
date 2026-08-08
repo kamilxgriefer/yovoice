@@ -25,7 +25,7 @@ class SuggestedFriend {
   factory SuggestedFriend.fromMap(Map<Object?, Object?> map) {
     return SuggestedFriend(
       uid: map['uid'] as String? ?? '',
-      displayName: map['displayName'] as String? ?? 'YoVoice user',
+      displayName: map['displayName'] as String? ?? 'YO Voice user',
       photoUrl: map['photoUrl'] as String?,
       mutualCount: (map['mutualCount'] as num?)?.toInt() ?? 0,
     );

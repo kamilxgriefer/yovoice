@@ -63,7 +63,7 @@ class _VoiceCallScreenState extends State<VoiceCallScreen>
 
     final participantName = user.displayName?.trim().isNotEmpty == true
         ? user.displayName!.trim()
-        : user.email?.split('@').first ?? 'YoVoice user';
+        : user.email?.split('@').first ?? 'YO Voice user';
 
     try {
       await _voice.join(

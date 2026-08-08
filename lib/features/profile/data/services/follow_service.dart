@@ -151,7 +151,7 @@ class FollowService {
   ) {
     return {
       'uid': uid,
-      'displayName': data['displayName'] ?? data['username'] ?? 'YoVoice user',
+      'displayName': data['displayName'] ?? data['username'] ?? 'YO Voice user',
       'username': data['username'] ?? '',
       'photoUrl': data['photoUrl'],
       'followedAt': timestamp,

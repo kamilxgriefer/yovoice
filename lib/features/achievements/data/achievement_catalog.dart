@@ -81,7 +81,7 @@ class AchievementCatalog {
         'Public Figure',
         'Spotlight',
         'Network Star',
-        'YoVoice Icon',
+        'YO Voice Icon',
       ],
     ),
     ..._track(
@@ -127,7 +127,7 @@ class AchievementCatalog {
         'Local',
         'Connector',
         'Networker',
-        'Citizen of YoVoice',
+        'Citizen of YO Voice',
         'World Listener',
         'Community Nomad',
         'Everywhere at Once',
@@ -187,7 +187,7 @@ class AchievementCatalog {
       descriptionNoun: 'active days',
       thresholds: const [1, 3, 7, 14, 30, 60, 100, 180, 365, 730],
       titles: const [
-        'Hello YoVoice',
+        'Hello YO Voice',
         'Back Again',
         'Weekly Regular',
         'Two Week Flame',

@@ -1,7 +1,9 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/features/auth/presentation/widgets/check_inbox_sheet.dart';
 import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
 import 'package:yovoice/features/auth/presentation/screens/register_screen.dart';
 
@@ -121,13 +123,21 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      _showMessage('Password reset email has been sent.');
+      await showCheckInboxSheet(context, email: email);
     } catch (error) {
       if (!mounted) {
         return;
       }
 
-      _showMessage(_authService.getErrorMessage(error));
+      // user-not-found takes the same "Check your inbox" path as success:
+      // a distinct error here would let anyone probe which addresses have
+      // YO Voice accounts. Genuine problems (bad email format, rate
+      // limits, network) still surface normally.
+      if (error is FirebaseAuthException && error.code == 'user-not-found') {
+        await showCheckInboxSheet(context, email: email);
+      } else {
+        _showMessage(_authService.getErrorMessage(error));
+      }
     } finally {
       if (mounted) {
         setState(() {

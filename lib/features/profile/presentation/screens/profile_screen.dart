@@ -723,7 +723,7 @@ class _JourneyCard extends StatelessWidget {
         children: [
           const _Header(
             icon: Icons.auto_awesome_rounded,
-            title: 'Your YoVoice journey',
+            title: 'Your YO Voice journey',
           ),
           const SizedBox(height: 10),
           GridView.builder(
@@ -1093,7 +1093,7 @@ class _AccountCard extends StatelessWidget {
                 builder: (context) => AlertDialog(
                   title: const Text('Log out?'),
                   content: const Text(
-                    'You will need to sign in again to use YoVoice.',
+                    'You will need to sign in again to use YO Voice.',
                   ),
                   actions: [
                     TextButton(

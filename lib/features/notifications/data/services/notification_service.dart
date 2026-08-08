@@ -110,7 +110,7 @@ class NotificationService {
         ? (actorData['displayName'] as String).trim()
         : actor.displayName?.trim().isNotEmpty == true
         ? actor.displayName!.trim()
-        : 'YoVoice user';
+        : 'YO Voice user';
     final actorPhotoUrl = (actorData['photoUrl'] as String?) ?? actor.photoURL;
 
     await _notificationsFor(recipientId).add({

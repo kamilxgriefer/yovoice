@@ -740,7 +740,7 @@ class _EmptyConversation extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             const Text(
-              'You are friends on YoVoice',
+              'You are friends on YO Voice',
               style: TextStyle(color: _ChatScreenState._muted, fontSize: 13),
             ),
             const SizedBox(height: 18),

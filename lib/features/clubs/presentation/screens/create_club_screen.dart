@@ -222,7 +222,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
             _Field(
               controller: _nameController,
               label: 'Club name',
-              hint: 'e.g. YoVoice Founders',
+              hint: 'e.g. YO Voice Founders',
               maxLength: 40,
               validator: (value) {
                 final length = value?.trim().length ?? 0;
@@ -382,7 +382,7 @@ class _HeroCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Build your home on YoVoice',
+                  'Build your home on YO Voice',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 21,
