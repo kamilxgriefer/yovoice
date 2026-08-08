@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Decisions.md",
+                "file": "PROJECT_STRUCTURE.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Decisions"
+              "title": "PROJECT_STRUCTURE"
             }
           }
         ]
@@ -190,17 +190,22 @@
   },
   "active": "b3bb9408fb1083b3",
   "lastOpenFiles": [
+    "email-templates/README.md",
+    "email-templates/verify-email.html",
+    "email-templates/password-reset.html",
+    "email-templates",
+    "Roadmap.md",
+    "Vision.md",
+    "UI.md",
+    "Decisions.md",
     "DEVELOPMENT_WORKFLOW.md",
     "DOCUMENTATION_AUDIT.md",
     "DEPENDENCIES.md",
     "Features.md",
     "SECURITY.md",
     "TESTING.md",
-    "UI.md",
-    "Vision.md",
     "Backend.md",
     "Bugs.md",
-    "Decisions.md",
     "DEPLOYMENT.md",
     "Architecture.md",
     "Firebase.md",
@@ -208,7 +213,6 @@
     "00 Project/Architecture.md",
     "Decisions.md.tmp.27296.cc101447c673",
     "00 Project/Vision.md",
-    "Roadmap.md",
     "Flutter.md",
     "00 Project/Roadmap.md",
     "00 Project/README.md",
@@ -216,7 +220,6 @@
     "00 Project/CLAUDE.md",
     "00 Project/Decisions.md",
     "STAGE_2_COMMUNITY_ROOM.md",
-    "00 Project",
-    "SECURITY_AUDIT.md"
+    "00 Project"
   ]
 }
