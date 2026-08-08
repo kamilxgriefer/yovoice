@@ -81,7 +81,7 @@ class VoiceRoom {
   bool get isBroadcast => roomExperience == RoomExperience.broadcast;
   bool get isCommunityExperience => roomExperience == RoomExperience.community;
 
-  /// Temporary compatibility getter for code created before Broadcast Rooms.
+  /// Temporary compatibility getter for code created before Podcast Rooms.
   @Deprecated('Use isBroadcast instead.')
   bool get isPodcast => isBroadcast;
 

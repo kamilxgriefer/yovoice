@@ -14,6 +14,28 @@ enum VoiceCallStatus {
   failed,
 }
 
+/// What the microphone button should show — one enum, no combinations of
+/// guessed booleans. Every value is a visually distinct UI state.
+enum MicState {
+  /// Publishing and audible.
+  on,
+
+  /// Can publish, currently muted — tap to unmute.
+  muted,
+
+  /// Connected but the token has no publish rights (podcast audience).
+  /// Not an error and not "disabled-looking": the UI should offer
+  /// raise-hand instead of a dead mic.
+  listenOnly,
+
+  /// Connecting or reconnecting — show progress, not a dead button.
+  connecting,
+
+  /// Disconnected, failed, or missing permission — tapping should
+  /// surface what's wrong instead of silently doing nothing.
+  unavailable,
+}
+
 class VoiceCallService extends ChangeNotifier {
   VoiceCallService._();
 
@@ -40,7 +62,44 @@ class VoiceCallService extends ChangeNotifier {
   String? get roomId => _roomId;
   String? get roomName => _roomName;
   String? get errorMessage => _errorMessage;
-  bool get isMuted => _isMuted;
+
+  /// AUTHORITATIVE mute state: while connected, this is LiveKit's own
+  /// publication state, not our remembered boolean. The remembered flag
+  /// only bridges the moments where LiveKit has no answer (connecting,
+  /// or mid-toggle). Guessed local state is exactly what made the mic
+  /// button lie after reconnects and role changes.
+  bool get isMuted {
+    final local = _room?.localParticipant;
+    if (isConnected && local != null && !_muteChangeInProgress) {
+      return !local.isMicrophoneEnabled();
+    }
+    return _isMuted;
+  }
+
+  /// Whether the server-minted token lets us publish audio at all
+  /// (hosts/speakers yes, podcast audience no). Distinct from muted:
+  /// a listener isn't "muted", they're listen-only until promoted.
+  bool get canPublish {
+    final local = _room?.localParticipant;
+    if (local == null) return false;
+    return local.permissions.canPublish;
+  }
+
+  /// The one state the mic UI should render from.
+  MicState get micState {
+    switch (_status) {
+      case VoiceCallStatus.connecting:
+      case VoiceCallStatus.reconnecting:
+        return MicState.connecting;
+      case VoiceCallStatus.disconnected:
+      case VoiceCallStatus.failed:
+        return MicState.unavailable;
+      case VoiceCallStatus.connected:
+        if (!canPublish) return MicState.listenOnly;
+        return isMuted ? MicState.muted : MicState.on;
+    }
+  }
+
   bool get muteChangeInProgress => _muteChangeInProgress;
   bool get isConnected => _status == VoiceCallStatus.connected;
   bool get isBusy =>
@@ -73,7 +132,7 @@ class VoiceCallService extends ChangeNotifier {
           isLocal: true,
           isSpeaking: local.isSpeaking,
           audioLevel: local.audioLevel.clamp(0, 1).toDouble(),
-          isMuted: _isMuted,
+          isMuted: isMuted,
         ),
       );
     }
@@ -180,9 +239,12 @@ class VoiceCallService extends ChangeNotifier {
     if (localParticipant == null || !isConnected || _muteChangeInProgress) {
       return;
     }
-    if (_isMuted == muted) return;
+    // Compare against the AUTHORITATIVE state, not the remembered flag —
+    // they can disagree after a reconnect, and acting on the stale flag
+    // is how the button got stuck looking pressed.
+    if (isMuted == muted) return;
 
-    final previous = _isMuted;
+    final previous = isMuted;
     _muteChangeInProgress = true;
     _isMuted = muted;
     notifyListeners();
@@ -203,7 +265,7 @@ class VoiceCallService extends ChangeNotifier {
       return;
     }
 
-    final previous = _isMuted;
+    final previous = isMuted;
     final next = !previous;
 
     _muteChangeInProgress = true;

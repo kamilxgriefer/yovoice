@@ -1612,7 +1612,7 @@ class _DiscoverEmptyState extends StatelessWidget {
             Text(
               hasFilters
                   ? 'Try another search phrase or clear the selected category.'
-                  : 'Live public Community and Broadcast rooms will appear here automatically.',
+                  : 'Live public Community and Podcast rooms will appear here automatically.',
               textAlign: TextAlign.center,
               style: const TextStyle(
                 color: _DiscoverScreenState._secondaryText,

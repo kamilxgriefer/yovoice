@@ -35,7 +35,7 @@ class OwnerMenuSheet extends StatelessWidget {
               child: Padding(
                 padding: EdgeInsets.fromLTRB(6, 0, 6, 10),
                 child: Text(
-                  'Manage broadcast',
+                  'Manage podcast',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 22,
@@ -71,14 +71,14 @@ class OwnerMenuSheet extends StatelessWidget {
             OwnerMenuItem(
               icon: Icons.analytics_rounded,
               title: 'Live analytics',
-              subtitle: 'View the current broadcast snapshot',
+              subtitle: 'View the current podcast snapshot',
               onTap: onAnalytics,
             ),
             const Divider(color: Color(0xFF3B171E), height: 22),
             OwnerMenuItem(
               icon: Icons.stop_circle_rounded,
-              title: 'End broadcast',
-              subtitle: 'Disconnect everyone and close this broadcast',
+              title: 'End podcast',
+              subtitle: 'Disconnect everyone and close this podcast',
               onTap: onEnd,
               destructive: true,
             ),

@@ -28,7 +28,7 @@ class ShareRoomSheet extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Share broadcast',
+              'Share podcast',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 22,

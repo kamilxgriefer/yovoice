@@ -176,7 +176,7 @@ class AchievementCatalog {
         'Voice Captain',
         'Voice Director',
         'Stage Keeper',
-        'Broadcast Master',
+        'Podcast Master',
         'Community Conductor',
         'Grand Host',
         'Grand Voicekeeper',

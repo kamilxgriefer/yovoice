@@ -640,7 +640,7 @@ class _AccountTypePicker extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           const Text(
-            'Creator accounts are prepared for public followers, broadcasts and creator tools.',
+            'Creator accounts are prepared for public followers, podcasts and creator tools.',
             style: TextStyle(
               color: Color(0xFF9E92A8),
               fontSize: 12,

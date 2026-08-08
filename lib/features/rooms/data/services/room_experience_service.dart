@@ -129,7 +129,7 @@ class RoomExperienceService {
     final data = room.data();
     if (data == null) throw StateError('Room not found.');
     if (!RoomExperience.fromValue(data['experience']).isBroadcast) {
-      throw StateError('Raise hand is available only in Broadcast Rooms.');
+      throw StateError('Raise hand is available only in Podcast Rooms.');
     }
     if (data['handRaisingEnabled'] == false) {
       throw StateError('The host disabled hand raising.');

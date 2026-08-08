@@ -49,7 +49,7 @@ class BroadcastTopBar extends StatelessWidget {
                   ),
                 ),
                 const Text(
-                  'BROADCAST ROOM',
+                  'PODCAST ROOM',
                   style: TextStyle(
                     color: BroadcastRoomColors.accentSoft,
                     fontSize: 10,
@@ -74,7 +74,7 @@ class BroadcastTopBar extends StatelessWidget {
           ),
           if (isHost)
             IconButton(
-              tooltip: 'Manage broadcast',
+              tooltip: 'Manage podcast',
               onPressed: onMenu,
               color: Colors.white,
               icon: const Icon(Icons.more_vert_rounded),
@@ -109,7 +109,7 @@ class BroadcastLiveBadge extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             Text(
-              isLive ? 'LIVE BROADCAST' : 'OFFLINE',
+              isLive ? 'LIVE PODCAST' : 'OFFLINE',
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 11,

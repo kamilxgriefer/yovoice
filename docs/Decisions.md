@@ -1437,3 +1437,42 @@ lines) were unreachable legacy.
 - Old flow's per-room "Enter" tap is gone; audio connects on entry.
 - Regression tests unchanged except the suite additions (statusMessage
   rule check; 92 rules checks total).
+
+## ADR-029: "Podcast Room" is the product name; `broadcast` stays the stored identifier. Mic state is LiveKit-authoritative
+
+**Status**: Accepted
+**Date**: 2026-08-09
+
+### Context
+
+Rooms 2.0 renames Broadcast Rooms to **Podcast Rooms** everywhere a user
+can see, and the microphone button was P0-broken: it rendered muted in a
+near-background color (indistinguishable from disabled), went fully dead
+while connecting/failed, and its state came from a remembered boolean
+that could diverge from LiveKit after reconnects and role changes.
+
+### Decision
+
+1. **Rename, option A (no migration)**: every user-facing string in the
+   app and website now says Podcast; the persisted
+   `experience: 'broadcast'` identifier, enum value, class names, and
+   `broadcastInvite` notification type are unchanged. History note:
+   pre-rename data stored `'podcast'` and ADR-001's legacy mapping
+   already translates it — so the stored vocabulary has now cycled
+   podcast → broadcast → (displayed) Podcast. Renaming stored values
+   would be a two-client migration for zero user value.
+2. **Mic state**: `VoiceCallService.micState` (`MicState` enum: on /
+   muted / listenOnly / connecting / unavailable) is the ONE state the
+   mic UI renders from. `isMuted` now reads LiveKit's
+   `localParticipant.isMicrophoneEnabled()` while connected;
+   `canPublish` reads token permissions. Community room controls render
+   all five states distinctly (muted = bright amber, connecting =
+   spinner, listen-only = "Listening", unavailable = tappable
+   explanation) — a mic that works can never look disabled.
+
+### Consequences
+
+- Rooms 2.0 remaining milestones (new room visuals, chat, board,
+  covers, reactions, Friends-tab navigation) tracked in Roadmap.
+- Broadcast-room controls inherit the authoritative getters; their
+  connecting-state visuals can still be enriched (follow-up).

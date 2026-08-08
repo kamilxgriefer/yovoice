@@ -71,7 +71,7 @@ class RoomTypeSelectorScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           _RoomChoice(
-            title: 'Broadcast Room',
+            title: 'Podcast Room',
             eyebrow: 'HOST + AUDIENCE',
             subtitle: 'A hosted show with a stage, audience and requests.',
             icon: Icons.podcasts_rounded,

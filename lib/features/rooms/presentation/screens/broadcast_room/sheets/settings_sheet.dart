@@ -152,7 +152,7 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
             ),
             const SizedBox(height: 5),
             const Text(
-              'Changes are saved directly to this broadcast.',
+              'Changes are saved directly to this podcast.',
               style: TextStyle(color: BroadcastRoomColors.muted),
             ),
             const SizedBox(height: 20),

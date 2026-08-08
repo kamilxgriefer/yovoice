@@ -118,7 +118,7 @@ class _BroadcastParticipantsSheetState
             children: [
               Expanded(
                 child: Text(
-                  'Broadcast participants',
+                  'Podcast participants',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 22,

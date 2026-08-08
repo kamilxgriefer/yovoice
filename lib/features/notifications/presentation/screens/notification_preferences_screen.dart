@@ -52,7 +52,7 @@ String _labelFor(NotificationType type) {
     case NotificationType.roomInvite:
       return 'Room invitations';
     case NotificationType.broadcastInvite:
-      return 'Broadcast invitations';
+      return 'Podcast invitations';
     case NotificationType.directMessage:
       return 'Direct messages';
     case NotificationType.mention:

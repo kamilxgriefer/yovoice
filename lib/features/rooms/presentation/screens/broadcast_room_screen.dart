@@ -297,7 +297,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Broadcast analytics',
+              'Podcast analytics',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 22,
@@ -306,7 +306,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
             ),
             const SizedBox(height: 6),
             const Text(
-              'Live snapshot for this broadcast.',
+              'Live snapshot for this podcast.',
               style: TextStyle(color: BroadcastRoomColors.muted),
             ),
             const SizedBox(height: 20),
@@ -363,11 +363,11 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
       builder: (dialogContext) => AlertDialog(
         backgroundColor: BroadcastRoomColors.surface,
         title: const Text(
-          'End broadcast?',
+          'End podcast?',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
         ),
         content: const Text(
-          'Everyone will be disconnected, the room will disappear from Discover and this broadcast will be marked as closed.',
+          'Everyone will be disconnected, the room will disappear from Discover and this podcast will be marked as closed.',
           style: TextStyle(color: BroadcastRoomColors.muted, height: 1.4),
         ),
         actions: [
@@ -380,7 +380,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
             style: FilledButton.styleFrom(
               backgroundColor: BroadcastRoomColors.accent,
             ),
-            child: const Text('End broadcast'),
+            child: const Text('End podcast'),
           ),
         ],
       ),
@@ -416,7 +416,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
         ),
         content: const Text(
-          'This removes the broadcast, participants and room messages. This action cannot be undone.',
+          'This removes the podcast, participants and room messages. This action cannot be undone.',
           style: TextStyle(color: BroadcastRoomColors.muted, height: 1.4),
         ),
         actions: [

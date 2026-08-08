@@ -97,7 +97,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         foregroundColor: Colors.white,
         centerTitle: true,
         title: Text(
-          _isBroadcast ? 'Create Broadcast Room' : 'Create Community Room',
+          _isBroadcast ? 'Create Podcast Room' : 'Create Community Room',
           style: const TextStyle(fontWeight: FontWeight.w900),
         ),
       ),
@@ -233,7 +233,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
           child: _busy
               ? const CircularProgressIndicator(color: Colors.white)
               : Text(
-                  _isBroadcast ? 'Start broadcast' : 'Start community room',
+                  _isBroadcast ? 'Start podcast' : 'Start community room',
                   style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
         ),

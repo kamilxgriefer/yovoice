@@ -128,6 +128,23 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
     await _rooms.setMuted(roomId: widget.room.id, isMuted: _voice.isMuted);
   }
 
+  /// The mic can't publish right now — say why instead of a dead tap.
+  void _explainMicState() {
+    final message = switch (_voice.micState) {
+      MicState.connecting => 'Connecting to live audio…',
+      MicState.listenOnly =>
+        "You're listening — the host controls who can speak here.",
+      MicState.unavailable =>
+        _voice.errorMessage ??
+            'Live audio is not connected. Leave and rejoin to retry.',
+      MicState.on || MicState.muted => '',
+    };
+    if (message.isEmpty || !mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
   void _openParticipants(
     List<RoomParticipant> participants, {
     required bool speakersOnly,
@@ -212,11 +229,11 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
                   ),
                 ),
                 _BottomControls(
-                  muted: _voice.isMuted,
-                  connected: _voice.isConnected,
+                  micState: _voice.micState,
                   busy: _voice.muteChangeInProgress,
                   onMute: _toggleMute,
                   onLeave: _leave,
+                  onMicBlocked: _explainMicState,
                 ),
               ],
             ),
@@ -703,21 +720,59 @@ class _SpacePainter extends CustomPainter {
 
 class _BottomControls extends StatelessWidget {
   const _BottomControls({
-    required this.muted,
-    required this.connected,
+    required this.micState,
     required this.busy,
     required this.onMute,
     required this.onLeave,
+    required this.onMicBlocked,
   });
 
-  final bool muted;
-  final bool connected;
+  final MicState micState;
   final bool busy;
   final Future<void> Function() onMute;
   final Future<void> Function() onLeave;
 
+  /// Tapping the mic while it genuinely can't publish explains WHY
+  /// instead of silently doing nothing.
+  final VoidCallback onMicBlocked;
+
   @override
   Widget build(BuildContext context) {
+    // Every MicState is a visually distinct button — the mic must never
+    // look "permanently pressed" or dead while it actually works.
+    final (icon, label, style, tappable) = switch (micState) {
+      MicState.on => (
+        Icons.mic_rounded,
+        'Mute',
+        _MicStyle.live,
+        true,
+      ),
+      MicState.muted => (
+        Icons.mic_off_rounded,
+        'Unmute',
+        _MicStyle.muted,
+        true,
+      ),
+      MicState.connecting => (
+        Icons.mic_rounded,
+        'Connecting…',
+        _MicStyle.waiting,
+        false,
+      ),
+      MicState.listenOnly => (
+        Icons.headphones_rounded,
+        'Listening',
+        _MicStyle.info,
+        true,
+      ),
+      MicState.unavailable => (
+        Icons.mic_off_rounded,
+        'Audio off',
+        _MicStyle.error,
+        true,
+      ),
+    };
+
     return Container(
       padding: const EdgeInsets.fromLTRB(22, 12, 22, 20),
       decoration: BoxDecoration(
@@ -728,18 +783,21 @@ class _BottomControls extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           _RoundControl(
-            icon: muted ? Icons.mic_off_rounded : Icons.mic_rounded,
-            label: muted ? 'Unmute' : 'Mute',
-            enabled: connected && !busy,
-            highlighted: !muted,
-            onTap: onMute,
+            icon: icon,
+            label: label,
+            enabled: tappable && !busy,
+            micStyle: style,
+            showSpinner: micState == MicState.connecting,
+            onTap: micState == MicState.on || micState == MicState.muted
+                ? onMute
+                : () async => onMicBlocked(),
           ),
           const SizedBox(width: 28),
           _RoundControl(
             icon: Icons.call_end_rounded,
             label: 'Leave',
             enabled: true,
-            danger: true,
+            micStyle: _MicStyle.danger,
             onTap: onLeave,
           ),
         ],
@@ -748,34 +806,43 @@ class _BottomControls extends StatelessWidget {
   }
 }
 
+enum _MicStyle { live, muted, waiting, info, error, danger }
+
 class _RoundControl extends StatelessWidget {
   const _RoundControl({
     required this.icon,
     required this.label,
     required this.enabled,
     required this.onTap,
-    this.highlighted = false,
-    this.danger = false,
+    required this.micStyle,
+    this.showSpinner = false,
   });
 
   final IconData icon;
   final String label;
   final bool enabled;
   final Future<void> Function() onTap;
-  final bool highlighted;
-  final bool danger;
+  final _MicStyle micStyle;
+  final bool showSpinner;
 
   @override
   Widget build(BuildContext context) {
-    final color = danger
-        ? const Color(0xFFFF3C68)
-        : highlighted
-        ? const Color(0xFFB62CFF)
-        : const Color(0xFF21152A);
+    // Muted is a bright, obviously-tappable amber — never the old
+    // near-background dark that read as a disabled button.
+    final color = switch (micStyle) {
+      _MicStyle.live => const Color(0xFFB62CFF),
+      _MicStyle.muted => const Color(0xFFB3801A),
+      _MicStyle.waiting => const Color(0xFF3A2C49),
+      _MicStyle.info => const Color(0xFF2A5A8A),
+      _MicStyle.error => const Color(0xFF7A2436),
+      _MicStyle.danger => const Color(0xFFFF3C68),
+    };
     return Opacity(
-      opacity: enabled ? 1 : .45,
+      // Even "waiting" stays near-opaque: a briefly-connecting mic must
+      // not read as a permanently dead control.
+      opacity: enabled ? 1 : .8,
       child: InkWell(
-        onTap: enabled ? () => onTap() : null,
+        onTap: () => onTap(),
         borderRadius: BorderRadius.circular(40),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -786,7 +853,7 @@ class _RoundControl extends StatelessWidget {
               decoration: BoxDecoration(
                 color: color,
                 shape: BoxShape.circle,
-                boxShadow: highlighted
+                boxShadow: micStyle == _MicStyle.live
                     ? const [
                         BoxShadow(
                           color: Color(0x88B62CFF),
@@ -796,7 +863,15 @@ class _RoundControl extends StatelessWidget {
                       ]
                     : null,
               ),
-              child: Icon(icon, color: Colors.white, size: 28),
+              child: showSpinner
+                  ? const Padding(
+                      padding: EdgeInsets.all(18),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        color: Colors.white70,
+                      ),
+                    )
+                  : Icon(icon, color: Colors.white, size: 28),
             ),
             const SizedBox(height: 7),
             Text(
