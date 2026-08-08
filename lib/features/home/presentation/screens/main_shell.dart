@@ -13,7 +13,8 @@ import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
-import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
+import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_screen.dart';
@@ -26,7 +27,8 @@ class MainShell extends StatefulWidget {
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends State<MainShell>
+    with SingleTickerProviderStateMixin {
   static const Color _background = Color(0xFF080711);
   static const Color _navigationBackground = Color(0xFF151020);
   static const Color _primary = Color(0xFF9D20FF);
@@ -53,10 +55,13 @@ class _MainShellState extends State<MainShell> {
   int _unreadConversationCount = 0;
   bool _hasInitialConversationSnapshot = false;
 
+  // Friends replaced Profile as the third primary tab: it's the
+  // higher-frequency social destination. Profile lives in More and
+  // behind every own-avatar tap instead.
   static const List<Widget> _screens = [
     HomeScreen(),
     MessagesScreen(),
-    ProfileScreen(),
+    FriendsScreen(isRootTab: true),
   ];
 
   String get _currentUserId => FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -143,6 +148,7 @@ class _MainShellState extends State<MainShell> {
 
   @override
   void dispose() {
+    _tabTransition.dispose();
     _conversationSubscription?.cancel();
     _verificationCheckTimer?.cancel();
     _removeMessageOverlay();
@@ -274,6 +280,16 @@ class _MainShellState extends State<MainShell> {
     _messageOverlay = null;
   }
 
+  // Drives the between-tab transition: IndexedStack swaps the child
+  // instantly (state fully preserved), and this controller layers a fast
+  // fade + tiny rise over the swap so switching feels connected rather
+  // than abrupt. 220ms, subtle enough that the app still feels instant.
+  late final AnimationController _tabTransition = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+    value: 1,
+  );
+
   void _onDestinationSelected(int index) {
     if (_selectedIndex == index) {
       return;
@@ -284,6 +300,7 @@ class _MainShellState extends State<MainShell> {
     setState(() {
       _selectedIndex = index;
     });
+    _tabTransition.forward(from: 0);
   }
 
   Future<void> _openVoiceAction() async {
@@ -344,7 +361,21 @@ class _MainShellState extends State<MainShell> {
           if (_showVerificationBanner)
             _VerificationBanner(onTap: _openVerifyEmail),
           Expanded(
-            child: IndexedStack(index: _selectedIndex, children: _screens),
+            child: AnimatedBuilder(
+              animation: _tabTransition,
+              builder: (context, child) {
+                final t = Curves.easeOutCubic.transform(_tabTransition.value);
+                return Opacity(
+                  // Never fully transparent — no flash, no white frame.
+                  opacity: .55 + .45 * t,
+                  child: Transform.translate(
+                    offset: Offset(0, 8 * (1 - t)),
+                    child: child,
+                  ),
+                );
+              },
+              child: IndexedStack(index: _selectedIndex, children: _screens),
+            ),
           ),
         ],
       ),
@@ -641,85 +672,104 @@ class _BottomNavigation extends StatelessWidget {
   final VoidCallback onVoicePressed;
   final VoidCallback onMorePressed;
 
+  /// Maps a selected TAB index (0 Home, 1 Chats, 2 Friends) onto its
+  /// SLOT in the five-slot dock row (voice occupies slot 2).
+  static int _slotFor(int tabIndex) => tabIndex < 2 ? tabIndex : 3;
+
   @override
   Widget build(BuildContext context) {
     final safeBottom = MediaQuery.paddingOf(context).bottom;
 
-    return SizedBox(
-      height: 104 + safeBottom,
-      child: Stack(
-        clipBehavior: Clip.none,
-        alignment: Alignment.topCenter,
-        children: [
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: Container(
-              height: 84 + safeBottom,
-              decoration: const BoxDecoration(
-                color: _MainShellState._navigationBackground,
-                border: Border(
-                  top: BorderSide(color: Color(0xFF2B2436), width: 1),
-                ),
-              ),
-              child: Padding(
-                padding: EdgeInsets.only(
-                  left: 12,
-                  right: 12,
-                  top: 8,
-                  bottom: safeBottom + 4,
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _NavigationItem(
-                        icon: Icons.home_outlined,
-                        selectedIcon: Icons.home_rounded,
-                        label: 'Home',
-                        isSelected: selectedIndex == 0,
-                        onPressed: () => onDestinationSelected(0),
-                      ),
+    // Floating dock: detached from the screen edges, soft surface, thin
+    // border, ambient shadow — navigation as part of the identity, not
+    // an edge-to-edge slab. The voice action lives IN the dock, slightly
+    // raised, instead of floating over it as an unrelated circle.
+    return Padding(
+      padding: EdgeInsets.fromLTRB(14, 0, 14, safeBottom > 0 ? safeBottom : 12),
+      child: Container(
+        height: 76,
+        decoration: BoxDecoration(
+          color: const Color(0xF7161022),
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(color: const Color(0xFF2E2440)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x66000000),
+              blurRadius: 28,
+              offset: Offset(0, 10),
+            ),
+            BoxShadow(color: Color(0x229D20FF), blurRadius: 40),
+          ],
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+        child: Stack(
+          children: [
+            // The selection capsule TRAVELS between slots instead of
+            // blinking out and reappearing.
+            AnimatedAlign(
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment(_slotFor(selectedIndex) / 2 - 1, 0),
+              child: FractionallySizedBox(
+                widthFactor: 1 / 5,
+                heightFactor: 1,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: _MainShellState._primary.withValues(alpha: .16),
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(
+                      color: _MainShellState._primary.withValues(alpha: .35),
                     ),
-                    Expanded(
-                      child: _NavigationItem(
-                        icon: Icons.chat_bubble_outline_rounded,
-                        selectedIcon: Icons.chat_bubble_rounded,
-                        label: 'Chats',
-                        badgeCount: unreadConversationCount,
-                        isSelected: selectedIndex == 1,
-                        onPressed: () => onDestinationSelected(1),
-                      ),
-                    ),
-                    const SizedBox(width: 88),
-                    Expanded(
-                      child: _NavigationItem(
-                        icon: Icons.person_outline_rounded,
-                        selectedIcon: Icons.person_rounded,
-                        label: 'Profile',
-                        isSelected: selectedIndex == 2,
-                        onPressed: () => onDestinationSelected(2),
-                      ),
-                    ),
-                    Expanded(
-                      child: _NavigationItem(
-                        icon: Icons.grid_view_rounded,
-                        selectedIcon: Icons.grid_view_rounded,
-                        label: 'More',
-                        isSelected: false,
-                        onPressed: onMorePressed,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
-          ),
-          Positioned(
-            top: 0,
-            child: _VoiceActionButton(onPressed: onVoicePressed),
-          ),
-        ],
+            Row(
+              children: [
+                Expanded(
+                  child: _NavigationItem(
+                    icon: Icons.home_outlined,
+                    selectedIcon: Icons.home_rounded,
+                    label: 'Home',
+                    isSelected: selectedIndex == 0,
+                    onPressed: () => onDestinationSelected(0),
+                  ),
+                ),
+                Expanded(
+                  child: _NavigationItem(
+                    icon: Icons.chat_bubble_outline_rounded,
+                    selectedIcon: Icons.chat_bubble_rounded,
+                    label: 'Chats',
+                    badgeCount: unreadConversationCount,
+                    isSelected: selectedIndex == 1,
+                    onPressed: () => onDestinationSelected(1),
+                  ),
+                ),
+                Expanded(
+                  child: _VoiceActionButton(onPressed: onVoicePressed),
+                ),
+                Expanded(
+                  child: _NavigationItem(
+                    icon: Icons.people_outline_rounded,
+                    selectedIcon: Icons.people_rounded,
+                    label: 'Friends',
+                    isSelected: selectedIndex == 2,
+                    onPressed: () => onDestinationSelected(2),
+                  ),
+                ),
+                Expanded(
+                  child: _NavigationItem(
+                    icon: Icons.grid_view_rounded,
+                    selectedIcon: Icons.grid_view_rounded,
+                    label: 'More',
+                    isSelected: false,
+                    onPressed: onMorePressed,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -756,40 +806,36 @@ class _NavigationItem extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           onTap: onPressed,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(22),
           child: SizedBox.expand(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 220),
+                      // The traveling capsule behind the row is the
+                      // selection surface; the icon itself just rises a
+                      // touch and brightens — felt more than noticed.
+                      AnimatedSlide(
+                        duration: const Duration(milliseconds: 200),
                         curve: Curves.easeOutCubic,
-                        width: isSelected ? 52 : 42,
-                        height: 34,
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? _MainShellState._primary
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(18),
-                          boxShadow: isSelected
-                              ? const [
-                                  BoxShadow(
-                                    color: Color(0x559D20FF),
-                                    blurRadius: 18,
-                                    spreadRadius: 1,
-                                  ),
-                                ]
-                              : null,
-                        ),
-                        child: Icon(
-                          isSelected ? selectedIcon : icon,
-                          color: color,
-                          size: 24,
+                        offset: isSelected ? const Offset(0, -.06) : Offset.zero,
+                        child: AnimatedScale(
+                          duration: const Duration(milliseconds: 200),
+                          curve: Curves.easeOutBack,
+                          scale: isSelected ? 1.06 : 1,
+                          child: SizedBox(
+                            width: 42,
+                            height: 30,
+                            child: Icon(
+                              isSelected ? selectedIcon : icon,
+                              color: color,
+                              size: 23,
+                            ),
+                          ),
                         ),
                       ),
                       if (badgeCount > 0)
@@ -859,65 +905,90 @@ class _VoiceActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: 'Use your voice',
-      child: Material(
-        color: Colors.transparent,
-        shape: const CircleBorder(),
-        child: InkWell(
-          onTap: onPressed,
-          customBorder: const CircleBorder(),
-          child: Container(
-            width: 74,
-            height: 74,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFFC73AFF),
-                  Color(0xFF981DFF),
-                  Color(0xFF6A00FF),
-                ],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Color(0x779D20FF),
-                  blurRadius: 26,
-                  spreadRadius: 2,
-                  offset: Offset(0, 7),
+    // Integrated into the dock (slightly raised) instead of hovering
+    // over it. When a live room connection exists, a ring appears — the
+    // dock itself tells you you're on air.
+    return ListenableBuilder(
+      listenable: VoiceCallService.instance,
+      builder: (context, _) {
+        final voice = VoiceCallService.instance;
+        final live =
+            voice.roomId != null &&
+            voice.status != VoiceCallStatus.disconnected &&
+            voice.status != VoiceCallStatus.failed;
+
+        return Semantics(
+          button: true,
+          label: live ? 'Voice — live in a room' : 'Use your voice',
+          child: Center(
+            child: Transform.translate(
+              offset: const Offset(0, -9),
+              child: Material(
+                color: Colors.transparent,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  onTap: onPressed,
+                  customBorder: const CircleBorder(),
+                  child: Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Color(0xFFC73AFF),
+                          Color(0xFF981DFF),
+                          Color(0xFF6A00FF),
+                        ],
+                      ),
+                      border: live
+                          ? Border.all(color: const Color(0xFFFF3F72), width: 2)
+                          : null,
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x779D20FF),
+                          blurRadius: 22,
+                          spreadRadius: 1,
+                          offset: Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: const Center(child: _WaveformIcon(compact: true)),
+                  ),
                 ),
-              ],
+              ),
             ),
-            child: const Center(child: _WaveformIcon()),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
 
 class _WaveformIcon extends StatelessWidget {
-  const _WaveformIcon();
+  const _WaveformIcon({this.compact = false});
+
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
+    final scale = compact ? .68 : 1.0;
+    return Row(
       mainAxisSize: MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        _WaveBar(height: 14),
-        SizedBox(width: 4),
-        _WaveBar(height: 25),
-        SizedBox(width: 4),
-        _WaveBar(height: 35),
-        SizedBox(width: 4),
-        _WaveBar(height: 25),
-        SizedBox(width: 4),
-        _WaveBar(height: 14),
+        _WaveBar(height: 14 * scale),
+        const SizedBox(width: 3),
+        _WaveBar(height: 25 * scale),
+        const SizedBox(width: 3),
+        _WaveBar(height: 35 * scale),
+        const SizedBox(width: 3),
+        _WaveBar(height: 25 * scale),
+        const SizedBox(width: 3),
+        _WaveBar(height: 14 * scale),
       ],
     );
   }

@@ -22,6 +22,7 @@ import 'package:yovoice/features/notifications/data/services/notification_servic
 import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -399,11 +400,18 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           ),
           const SizedBox(width: 10),
-          UserAvatar(
-            radius: 24,
-            photoUrl: photoUrl,
-            fallbackIcon: Icons.person_rounded,
-            premium: premium,
+          // Your own avatar is always a door to your Profile — Profile
+          // left the primary navigation when Friends took its tab.
+          GestureDetector(
+            onTap: () => Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(builder: (_) => const ProfileScreen()),
+            ),
+            child: UserAvatar(
+              radius: 24,
+              photoUrl: photoUrl,
+              fallbackIcon: Icons.person_rounded,
+              premium: premium,
+            ),
           ),
         ],
       ),

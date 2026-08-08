@@ -5,6 +5,7 @@ import 'package:yovoice/features/creator/presentation/screens/creator_studio_scr
 import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notification_preferences_screen.dart';
+import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/settings_screen.dart';
 
 enum MoreDestination {
@@ -15,6 +16,7 @@ enum MoreDestination {
   achievements,
   creatorStudio,
   settings,
+  profile,
 }
 
 Future<MoreDestination?> showMoreSheet(BuildContext context) {
@@ -37,6 +39,7 @@ Widget moreDestinationScreen(MoreDestination destination) {
     MoreDestination.achievements => const AwardsHubScreen(),
     MoreDestination.creatorStudio => const CreatorStudioScreen(),
     MoreDestination.settings => const SettingsScreen(),
+    MoreDestination.profile => const ProfileScreen(),
   };
 }
 
@@ -103,11 +106,14 @@ class MoreSheet extends StatelessWidget {
             crossAxisSpacing: 11,
             childAspectRatio: .93,
             children: const [
+              // Friends graduated to the primary bottom navigation;
+              // Profile moved here in its place (still one tap away via
+              // any of your own avatars too).
               _MoreTile(
-                destination: MoreDestination.friends,
-                icon: Icons.people_rounded,
-                label: 'Friends',
-                subtitle: 'People',
+                destination: MoreDestination.profile,
+                icon: Icons.person_rounded,
+                label: 'Profile',
+                subtitle: 'You',
               ),
               _MoreTile(
                 destination: MoreDestination.discover,

@@ -14,7 +14,11 @@ import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 enum _FriendsFilter { all, online, requests }
 
 class FriendsScreen extends StatefulWidget {
-  const FriendsScreen({super.key});
+  const FriendsScreen({this.isRootTab = false, super.key});
+
+  /// True when hosted as the shell's Friends tab — there is nothing to
+  /// pop back to, so the header hides its back button.
+  final bool isRootTab;
 
   @override
   State<FriendsScreen> createState() => _FriendsScreenState();
@@ -208,15 +212,17 @@ class _FriendsScreenState extends State<FriendsScreen> {
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
       child: Row(
         children: [
-          YoIconButton(
-            icon: Icons.arrow_back_ios_new_rounded,
-            iconSize: 18,
-            size: 40,
-            backgroundColor: _surface,
-            borderColor: _border,
-            onPressed: () => Navigator.of(context).pop(),
-          ),
-          const SizedBox(width: 10),
+          if (!widget.isRootTab) ...[
+            YoIconButton(
+              icon: Icons.arrow_back_ios_new_rounded,
+              iconSize: 18,
+              size: 40,
+              backgroundColor: _surface,
+              borderColor: _border,
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            const SizedBox(width: 10),
+          ],
           const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

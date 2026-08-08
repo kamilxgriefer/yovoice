@@ -51,7 +51,7 @@ void main() {
     // The full shell bar is present on the pushed destination route.
     expect(find.text('Home'), findsOneWidget);
     expect(find.text('Chats'), findsOneWidget);
-    expect(find.text('Profile'), findsOneWidget);
+    expect(find.text('Friends'), findsOneWidget);
     expect(find.text('More'), findsOneWidget);
     // Including live shell state — the unread badge is the same widget,
     // not a per-screen reimplementation.
@@ -69,10 +69,10 @@ void main() {
       onDestinationSelected: (index) => selected = index,
     );
 
-    await tester.tap(find.text('Profile'));
+    await tester.tap(find.text('Friends'));
     await tester.pumpAndSettle();
 
-    expect(selected, 2, reason: 'Profile tab index must reach the shell');
+    expect(selected, 2, reason: 'Friends tab index must reach the shell');
     expect(
       find.text('SHELL'),
       findsOneWidget,
