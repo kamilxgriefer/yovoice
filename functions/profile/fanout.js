@@ -126,10 +126,24 @@ const onProfileIdentityChanged = onDocumentUpdated(
       total += pending;
     }
 
+    // photoPath is the object path only (no token) — public-read by
+    // storage.rules design, logged to make render-side failures
+    // diagnosable: with the path, the served bytes/headers can be
+    // inspected directly.
+    let photoPath = null;
+    if (photoChanged && photoUrl) {
+      try {
+        photoPath = decodeURIComponent(new URL(photoUrl).pathname);
+      } catch {
+        photoPath = "unparseable";
+      }
+    }
+
     logger.info("profile identity fan-out", {
       uid,
       photoChanged,
       nameChanged,
+      photoPath,
       conversations: conversations.size,
       clubMemberships: memberships.size,
       moments: moments.size,

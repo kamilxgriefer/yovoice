@@ -49,9 +49,16 @@ class ProfileBanner extends StatelessWidget {
                 child: child,
               );
             },
-            // Fall through to the gradient underneath.
-            errorBuilder: (context, error, stackTrace) =>
-                const SizedBox.shrink(),
+            // Fall through to the gradient underneath — but never
+            // silently (see UserAvatar: a hidden load failure is
+            // indistinguishable from "no banner set").
+            errorBuilder: (context, error, stackTrace) {
+              debugPrint(
+                '[IMAGE] banner load failed '
+                '${Uri.tryParse(url)?.path}: $error',
+              );
+              return const SizedBox.shrink();
+            },
           ),
         if (overlay != null)
           DecoratedBox(decoration: BoxDecoration(gradient: overlay)),

@@ -79,7 +79,17 @@ class UserAvatar extends StatelessWidget {
                     child: child,
                   );
                 },
-                errorBuilder: (context, error, stackTrace) => fallback(),
+                errorBuilder: (context, error, stackTrace) {
+                  // The graceful fallback must never be a silent one:
+                  // production debugging showed Firestore holding a valid
+                  // URL while the avatar "wasn't there" — the load was
+                  // failing and this branch hid it. Path only, no token.
+                  debugPrint(
+                    '[IMAGE] avatar load failed '
+                    '${Uri.tryParse(url)?.path}: $error',
+                  );
+                  return fallback();
+                },
               ),
       ),
     );
