@@ -34,6 +34,8 @@ class UserProfile {
     required this.photoUrl,
     required this.bannerUrl,
     this.premiumIdentity = false,
+    this.statusMessage = '',
+    this.isOnline = false,
     required this.website,
     required this.accountType,
     required this.friendCount,
@@ -70,6 +72,14 @@ class UserProfile {
   /// firestore.rules, which is what makes it safe for other users'
   /// clients to render the premium ring from it.
   final bool premiumIdentity;
+
+  /// The "vibe" line — a short, social status ("Music + late night
+  /// talks", "Gaming tonight 🎮"). The profile's headline, unlike [bio]
+  /// (longer) or [website] (demoted to a secondary detail).
+  final String statusMessage;
+
+  /// Live presence flag maintained by PresenceService's heartbeat.
+  final bool isOnline;
   final String website;
   final AccountType accountType;
   final int friendCount;
@@ -116,6 +126,8 @@ class UserProfile {
       photoUrl: data['photoUrl'] as String?,
       bannerUrl: data['bannerUrl'] as String?,
       premiumIdentity: data['premiumIdentity'] as bool? ?? false,
+      statusMessage: data['statusMessage'] as String? ?? '',
+      isOnline: data['isOnline'] as bool? ?? false,
       website: data['website'] as String? ?? '',
       accountType: AccountType.fromValue(data['accountType']),
       friendCount: readInt('friendCount'),

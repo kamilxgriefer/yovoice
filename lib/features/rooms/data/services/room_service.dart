@@ -552,6 +552,24 @@ class RoomService {
     });
   }
 
+  /// Host declining a raise-hand request: lowers the participant's hand
+  /// without promoting them. Accepting is setParticipantSpeakerStatus
+  /// (which clears the hand as part of the promotion).
+  Future<void> moderateHandLowered({
+    required String roomId,
+    required String participantId,
+  }) async {
+    await _requireHost(roomId);
+    await _rooms
+        .doc(roomId)
+        .collection('participants')
+        .doc(participantId)
+        .update({
+          'isHandRaised': false,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+  }
+
   Future<void> moderateParticipantMute({
     required String roomId,
     required String participantId,

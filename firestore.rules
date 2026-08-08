@@ -206,6 +206,7 @@ service cloud.firestore {
                     'uid', 'email', 'displayName', 'username', 'photoUrl',
                     'bannerUrl', 'bio', 'country', 'nativeLanguage',
                     'spokenLanguages', 'learningLanguages', 'website',
+                    'statusMessage',
                     'accountType', 'profileUpdatedAt',
                     'isOnline', 'lastSeen', 'presenceUpdatedAt',
                     'messageCount', 'followerCount', 'followingCount',

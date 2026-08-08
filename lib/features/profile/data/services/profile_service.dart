@@ -207,6 +207,7 @@ class ProfileService {
     required List<String> learningLanguages,
     required String website,
     required AccountType accountType,
+    String statusMessage = '',
   }) async {
     final cleanDisplayName = displayName.trim();
     final cleanUsername = username.trim();
@@ -226,6 +227,7 @@ class ProfileService {
       'nativeLanguage': nativeLanguage.trim(),
       'spokenLanguages': spokenLanguages,
       'learningLanguages': learningLanguages,
+      'statusMessage': statusMessage.trim(),
       'website': website.trim(),
       'accountType': accountType.name,
       'profileUpdatedAt': FieldValue.serverTimestamp(),

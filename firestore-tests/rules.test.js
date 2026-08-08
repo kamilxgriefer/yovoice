@@ -1211,6 +1211,31 @@ async function main() {
   });
 
   await check(
+    "statusMessage (vibe): owner can set it, another user cannot",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "users/vibe-uid"), {
+          uid: "vibe-uid",
+          displayName: "Vibe User",
+        });
+      });
+      const owner = testEnv.authenticatedContext("vibe-uid", {
+        email_verified: true,
+      });
+      await assertSucceeds(
+        updateDoc(doc(owner.firestore(), "users/vibe-uid"), {
+          statusMessage: "Music + late night talks",
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(host.firestore(), "users/vibe-uid"), {
+          statusMessage: "hijacked vibe",
+        }),
+      );
+    },
+  );
+
+  await check(
     "accountType: creator requires premium; personal is free; official never client-settable",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (ctx) => {

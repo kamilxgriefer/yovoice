@@ -17,6 +17,7 @@ import 'package:yovoice/features/profile/presentation/screens/profile_screen.dar
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_screen.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_mini_bar.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -347,12 +348,20 @@ class _MainShellState extends State<MainShell> {
           ),
         ],
       ),
-      bottomNavigationBar: _BottomNavigation(
-        selectedIndex: _selectedIndex,
-        unreadConversationCount: _unreadConversationCount,
-        onDestinationSelected: _onDestinationSelected,
-        onVoicePressed: _openVoiceAction,
-        onMorePressed: _openMoreMenu,
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Live-room mini player: renders nothing unless a room
+          // connection is active, so it can sit here unconditionally.
+          const RoomMiniBar(),
+          _BottomNavigation(
+            selectedIndex: _selectedIndex,
+            unreadConversationCount: _unreadConversationCount,
+            onDestinationSelected: _onDestinationSelected,
+            onVoicePressed: _openVoiceAction,
+            onMorePressed: _openMoreMenu,
+          ),
+        ],
       ),
     );
   }
@@ -394,7 +403,11 @@ class MoreDestinationHost extends StatelessWidget {
     return Scaffold(
       backgroundColor: _MainShellState._background,
       body: body,
-      bottomNavigationBar: _BottomNavigation(
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const RoomMiniBar(),
+          _BottomNavigation(
         selectedIndex: selectedIndex,
         unreadConversationCount: unreadConversationCount,
         onDestinationSelected: (index) {
@@ -409,6 +422,8 @@ class MoreDestinationHost extends StatelessWidget {
           Navigator.of(context).pop();
           onMorePressed();
         },
+          ),
+        ],
       ),
     );
   }

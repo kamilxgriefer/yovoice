@@ -42,6 +42,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   late final TextEditingController _displayName;
   late final TextEditingController _username;
+  late final TextEditingController _statusMessage;
   late final TextEditingController _bio;
   late final TextEditingController _country;
   late final TextEditingController _nativeLanguage;
@@ -69,6 +70,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final profile = widget.profile;
     _displayName = TextEditingController(text: profile.displayName);
     _username = TextEditingController(text: profile.username);
+    _statusMessage = TextEditingController(text: profile.statusMessage);
     _bio = TextEditingController(text: profile.bio);
     _country = TextEditingController(text: profile.country);
     _nativeLanguage = TextEditingController(text: profile.nativeLanguage);
@@ -86,6 +88,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   void dispose() {
     _displayName.dispose();
     _username.dispose();
+    _statusMessage.dispose();
     _bio.dispose();
     _country.dispose();
     _nativeLanguage.dispose();
@@ -142,6 +145,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         learningLanguages: _split(_learningLanguages),
         website: _website.text,
         accountType: _accountType,
+        statusMessage: _statusMessage.text,
       );
       // Success is only announced AFTER every stage completed: uploads,
       // Firestore pointer flips and the text-field write. The messenger
@@ -335,6 +339,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 const _SectionLabel('Identity'),
                 _field(_displayName, 'Display name', required: true),
                 _field(_username, 'Username', required: true),
+                // The "vibe" line — the profile's social headline, shown
+                // on previews and search results. Website was demoted to
+                // an About-you detail in its favor.
+                _field(
+                  _statusMessage,
+                  'Vibe',
+                  hint: 'Music + late night talks · Gaming tonight 🎮',
+                  maxLength: 80,
+                ),
                 _field(_bio, 'Bio', maxLines: 4, maxLength: 220),
                 StreamBuilder<SubscriptionEntitlements>(
                   stream: _entitlementService.watchCurrentEntitlements(),

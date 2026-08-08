@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 
 class AnalyticsTile extends StatelessWidget {
   const AnalyticsTile({
@@ -177,6 +178,14 @@ class _BroadcastParticipantsSheetState
                         horizontal: 4,
                         vertical: 5,
                       ),
+                      // No dead avatars: any row opens the person's
+                      // profile preview without leaving the room.
+                      onTap: () => showProfilePreview(
+                        context,
+                        userId: person.userId,
+                        displayName: person.displayName,
+                        photoUrl: person.photoUrl,
+                      ),
                       leading: CircleAvatar(
                         backgroundColor: const Color(0xFF792032),
                         backgroundImage: person.photoUrl == null
@@ -225,6 +234,44 @@ class _BroadcastParticipantsSheetState
                               color: person.isHandRaised
                                   ? BroadcastRoomColors.accentSoft
                                   : BroadcastRoomColors.muted,
+                            )
+                          // A raised hand is a REQUEST — answer it in
+                          // one tap, not through a buried menu.
+                          : person.isHandRaised
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  tooltip: 'Bring to stage',
+                                  onPressed: () => _action(
+                                    () => widget.service
+                                        .setParticipantSpeakerStatus(
+                                          roomId: widget.roomId,
+                                          participantId: person.userId,
+                                          isSpeaker: true,
+                                        ),
+                                  ),
+                                  icon: const Icon(
+                                    Icons.check_circle_rounded,
+                                    color: Color(0xFF35D07F),
+                                    size: 28,
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Decline',
+                                  onPressed: () => _action(
+                                    () => widget.service.moderateHandLowered(
+                                      roomId: widget.roomId,
+                                      participantId: person.userId,
+                                    ),
+                                  ),
+                                  icon: const Icon(
+                                    Icons.cancel_rounded,
+                                    color: Color(0xFFFF6A76),
+                                    size: 28,
+                                  ),
+                                ),
+                              ],
                             )
                           : PopupMenuButton<String>(
                               color: const Color(0xFF261016),

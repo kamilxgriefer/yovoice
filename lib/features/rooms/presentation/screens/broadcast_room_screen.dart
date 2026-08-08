@@ -4,7 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'package:yovoice/features/calls/presentation/screens/podcast_voice_call_screen.dart';
+import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -18,6 +18,7 @@ import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheet
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/participants_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/settings_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/share_room_sheet.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
 
 class BroadcastRoomScreen extends StatefulWidget {
   const BroadcastRoomScreen({required this.room, super.key});
@@ -31,6 +32,12 @@ class BroadcastRoomScreen extends StatefulWidget {
 class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
     with SingleTickerProviderStateMixin {
   final RoomService _rooms = RoomService();
+  // Live audio is part of the room, not a second screen: entering the
+  // broadcast connects you (listen-only until promoted — publish rights
+  // come from the server-minted LiveKit token, never the client). The
+  // old flow pushed a separate PodcastVoiceCallScreen with its own
+  // duplicate stage; that screen is gone.
+  final VoiceCallService _voice = VoiceCallService.instance;
   late final AnimationController _pulse;
 
   // Created once instead of inline in build() -- StreamBuilder resubscribes
@@ -42,8 +49,8 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
   StreamSubscription<List<RoomParticipant>>? _participantsWatch;
   bool _wasSeenAsParticipant = false;
 
-  bool _joining = false;
   bool _ending = false;
+  bool _roomOver = false;
 
   String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
   bool get _isHost => widget.room.hostId == _uid;
@@ -56,15 +63,69 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1250),
     )..repeat(reverse: true);
+    _voice.addListener(_refreshVoice);
     _participants = _rooms.watchParticipants(widget.room.id);
     _participantsWatch = _participants.listen(_handleParticipantsUpdate);
+    unawaited(_connectVoice());
   }
 
   @override
   void dispose() {
     _pulse.dispose();
+    _voice.removeListener(_refreshVoice);
     unawaited(_participantsWatch?.cancel());
+    // Deliberately NOT disconnecting here: backing out minimizes the
+    // room (the shell's mini bar keeps it live). Only an explicit Leave
+    // or the room ending disconnects.
     super.dispose();
+  }
+
+  void _refreshVoice() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _connectVoice() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    final name = user.displayName?.trim().isNotEmpty == true
+        ? user.displayName!.trim()
+        : user.email?.split('@').first ?? 'YO Voice user';
+    try {
+      if (_voice.roomId != widget.room.id || !_voice.isConnected) {
+        await _voice.join(
+          roomId: widget.room.id,
+          roomName: widget.room.name,
+          participantName: name,
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      _showMessage(
+        _voice.errorMessage ?? 'Could not join live audio. Please try again.',
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _toggleMic() async {
+    await _voice.toggleMute();
+    try {
+      await _rooms.setMuted(roomId: widget.room.id, isMuted: _voice.isMuted);
+    } catch (_) {
+      // The LiveKit state is authoritative for what others hear; the
+      // Firestore flag is cosmetic here and self-heals on next change.
+    }
+  }
+
+  Future<void> _leaveRoom() async {
+    if (_ending) return;
+    await _voice.disconnect();
+    try {
+      await _rooms.leaveRoom(widget.room.id);
+    } catch (_) {
+      // Leaving must never trap someone in the room UI.
+    }
+    if (mounted) Navigator.of(context).pop();
   }
 
   // Ending or deleting a broadcast room deletes every participant doc,
@@ -73,12 +134,18 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
   // have to notice and back out manually. The host doesn't need this:
   // _endBroadcast/_confirmDeleteRoom already navigate them out directly.
   void _handleParticipantsUpdate(List<RoomParticipant> participants) {
-    final stillIn = participants.any(
+    final mine = participants.where(
       (participant) => participant.userId == _uid,
     );
 
-    if (stillIn) {
+    if (mine.isNotEmpty) {
       _wasSeenAsParticipant = true;
+      // A moderator's mute (or a promotion, which starts muted) must
+      // reach the actual microphone, not just the roster flag.
+      final me = mine.first;
+      if (_voice.isConnected && me.isMuted != _voice.isMuted) {
+        unawaited(_voice.setMuted(me.isMuted));
+      }
       return;
     }
 
@@ -86,38 +153,13 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
       return;
     }
 
+    // Removed by a moderator, or the room ended and deleted every
+    // participant doc: cut the audio and show the ended state.
     _ending = true;
+    unawaited(_voice.disconnect());
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _showMessage('This room has ended.');
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      if (mounted) setState(() => _roomOver = true);
     });
-  }
-
-  Future<void> _joinVoice() async {
-    if (_joining) return;
-    setState(() => _joining = true);
-
-    try {
-      await _rooms.joinRoom(widget.room.id);
-
-      if (!mounted) return;
-
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => PodcastVoiceCallScreen(
-            roomId: widget.room.id,
-            roomName: widget.room.name,
-            hostId: widget.room.hostId,
-          ),
-        ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      _showMessage(_readableError(error), isError: true);
-    } finally {
-      if (mounted) setState(() => _joining = false);
-    }
   }
 
   Future<void> _toggleHand(RoomParticipant? me) async {
@@ -349,6 +391,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
     setState(() => _ending = true);
 
     try {
+      await _voice.disconnect();
       await _rooms.setRoomStatus(widget.room.id, RoomStatus.closed);
 
       if (!mounted) return;
@@ -397,6 +440,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
     setState(() => _ending = true);
 
     try {
+      await _voice.disconnect();
       await _rooms.deleteRoom(widget.room.id);
 
       if (!mounted) return;
@@ -558,19 +602,23 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
                     ),
                     BroadcastBottomControls(
                       isHost: _isHost,
-                      joining: _joining,
                       ending: _ending,
+                      connected: _voice.isConnected,
+                      micMuted: _voice.isMuted,
+                      micBusy: _voice.muteChangeInProgress,
+                      canSpeak: me != null && (me.isSpeaker || me.isHost),
                       handRaised: me?.isHandRaised ?? false,
                       canRaiseHand: me != null && !me.isSpeaker && !me.isHost,
-                      onJoin: _joinVoice,
+                      onMic: _toggleMic,
                       onRaiseHand: () => _toggleHand(me),
                       onShare: _openShareSheet,
                       onParticipants: () => _openParticipants(participants),
                       onEnd: _confirmEndBroadcast,
+                      onLeave: _leaveRoom,
                     ),
                   ],
                 ),
-                if (_ending)
+                if (_ending && !_roomOver)
                   const Positioned.fill(
                     child: ColoredBox(
                       color: Color(0x99000000),
@@ -579,6 +627,13 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
                           color: BroadcastRoomColors.accent,
                         ),
                       ),
+                    ),
+                  ),
+                if (_roomOver)
+                  Positioned.fill(
+                    child: RoomEndedState(
+                      roomName: widget.room.name,
+                      accent: BroadcastRoomColors.accent,
                     ),
                   ),
               ],

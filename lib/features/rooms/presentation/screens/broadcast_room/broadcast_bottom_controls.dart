@@ -2,31 +2,48 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
 
+/// The broadcast room's one stable control bar. Live audio is connected
+/// the moment the room opens, so there is no "Enter" button anymore —
+/// the bar holds the actions a participant actually uses, in fixed
+/// positions: mic (or raise-hand for the audience), participants, share,
+/// and an explicit Leave (End for the host).
 class BroadcastBottomControls extends StatelessWidget {
   const BroadcastBottomControls({
     super.key,
     required this.isHost,
-    required this.joining,
     required this.ending,
+    required this.connected,
+    required this.micMuted,
+    required this.micBusy,
+    required this.canSpeak,
     required this.handRaised,
     required this.canRaiseHand,
-    required this.onJoin,
+    required this.onMic,
     required this.onRaiseHand,
     required this.onShare,
     required this.onParticipants,
     required this.onEnd,
+    required this.onLeave,
   });
 
   final bool isHost;
-  final bool joining;
   final bool ending;
+  final bool connected;
+  final bool micMuted;
+  final bool micBusy;
+
+  /// Host or promoted speaker — the only people whose mic button works.
+  /// The server-minted LiveKit token enforces the same rule; this just
+  /// keeps the UI honest about it.
+  final bool canSpeak;
   final bool handRaised;
   final bool canRaiseHand;
-  final VoidCallback onJoin;
+  final VoidCallback onMic;
   final VoidCallback onRaiseHand;
   final VoidCallback onShare;
   final VoidCallback onParticipants;
   final VoidCallback onEnd;
+  final VoidCallback onLeave;
 
   @override
   Widget build(BuildContext context) {
@@ -38,83 +55,54 @@ class BroadcastBottomControls extends StatelessWidget {
         borderRadius: BorderRadius.circular(26),
         border: Border.all(color: BroadcastRoomColors.border),
       ),
-      child: isHost
-          ? Row(
-              children: [
-                Expanded(
-                  child: BroadcastHostBottomAction(
-                    icon: Icons.headphones_rounded,
-                    label: joining ? 'Joining…' : 'Enter',
-                    onTap: joining || ending ? null : onJoin,
-                  ),
-                ),
-                Expanded(
-                  child: BroadcastHostBottomAction(
-                    icon: Icons.groups_rounded,
-                    label: 'Guests',
-                    onTap: ending ? null : onParticipants,
-                  ),
-                ),
-                Expanded(
-                  child: BroadcastHostBottomAction(
-                    icon: Icons.ios_share_rounded,
-                    label: 'Share',
-                    onTap: ending ? null : onShare,
-                  ),
-                ),
-                Expanded(
-                  child: BroadcastHostBottomAction(
-                    icon: Icons.stop_circle_rounded,
-                    label: 'End',
-                    destructive: true,
-                    onTap: ending ? null : onEnd,
-                  ),
-                ),
-              ],
+      child: Row(
+        children: [
+          if (canSpeak)
+            Expanded(
+              child: BroadcastHostBottomAction(
+                icon: micMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                label: micMuted ? 'Unmute' : 'Mute',
+                highlighted: !micMuted,
+                onTap: ending || micBusy || !connected ? null : onMic,
+              ),
             )
-          : Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: joining ? null : onJoin,
-                    icon: const Icon(Icons.headphones_rounded),
-                    label: Text(joining ? 'Joining…' : 'Join broadcast'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: BroadcastRoomColors.accent,
-                      minimumSize: const Size.fromHeight(52),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                IconButton.filledTonal(
-                  onPressed: canRaiseHand ? onRaiseHand : null,
-                  style: IconButton.styleFrom(
-                    backgroundColor: handRaised
-                        ? const Color(0xFFFF6A76)
-                        : const Color(0xFF37141B),
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(52, 52),
-                  ),
-                  icon: Icon(
-                    handRaised
-                        ? Icons.pan_tool_alt_rounded
-                        : Icons.back_hand_outlined,
-                  ),
-                  tooltip: handRaised ? 'Lower hand' : 'Raise hand',
-                ),
-                const SizedBox(width: 8),
-                IconButton.filledTonal(
-                  onPressed: onShare,
-                  style: IconButton.styleFrom(
-                    backgroundColor: const Color(0xFF37141B),
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(52, 52),
-                  ),
-                  icon: const Icon(Icons.ios_share_rounded),
-                  tooltip: 'Share room',
-                ),
-              ],
+          else
+            Expanded(
+              child: BroadcastHostBottomAction(
+                icon: handRaised
+                    ? Icons.pan_tool_alt_rounded
+                    : Icons.back_hand_outlined,
+                label: handRaised ? 'Lower hand' : 'Raise hand',
+                highlighted: handRaised,
+                onTap: ending || !canRaiseHand ? null : onRaiseHand,
+              ),
             ),
+          Expanded(
+            child: BroadcastHostBottomAction(
+              icon: Icons.groups_rounded,
+              label: 'People',
+              onTap: ending ? null : onParticipants,
+            ),
+          ),
+          Expanded(
+            child: BroadcastHostBottomAction(
+              icon: Icons.ios_share_rounded,
+              label: 'Share',
+              onTap: ending ? null : onShare,
+            ),
+          ),
+          Expanded(
+            child: BroadcastHostBottomAction(
+              icon: isHost
+                  ? Icons.stop_circle_rounded
+                  : Icons.logout_rounded,
+              label: isHost ? 'End' : 'Leave',
+              destructive: true,
+              onTap: ending ? null : (isHost ? onEnd : onLeave),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -126,15 +114,25 @@ class BroadcastHostBottomAction extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.destructive = false,
+    this.highlighted = false,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback? onTap;
   final bool destructive;
+  final bool highlighted;
 
   @override
   Widget build(BuildContext context) {
+    final color = onTap == null
+        ? Colors.white30
+        : destructive
+        ? BroadcastRoomColors.accentSoft
+        : highlighted
+        ? const Color(0xFFFFB3BD)
+        : Colors.white;
+
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
@@ -143,24 +141,14 @@ class BroadcastHostBottomAction extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              color: onTap == null
-                  ? Colors.white30
-                  : destructive
-                  ? BroadcastRoomColors.accentSoft
-                  : Colors.white,
-              size: 23,
-            ),
+            Icon(icon, color: color, size: 23),
             const SizedBox(height: 5),
             Text(
               label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: onTap == null
-                    ? Colors.white30
-                    : destructive
-                    ? BroadcastRoomColors.accentSoft
-                    : Colors.white,
+                color: color,
                 fontSize: 10,
                 fontWeight: FontWeight.w800,
               ),

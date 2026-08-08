@@ -19,7 +19,11 @@ class VoiceCallService extends ChangeNotifier {
 
   static final VoiceCallService instance = VoiceCallService._();
 
-  final VoiceTokenService _tokenService = VoiceTokenService();
+  // Lazy: VoiceTokenService touches FirebaseFunctions at construction,
+  // and this singleton is now reachable from always-mounted UI (the
+  // shell's RoomMiniBar) — including in widget tests with no Firebase
+  // app. Nothing needs the token service until an actual join().
+  late final VoiceTokenService _tokenService = VoiceTokenService();
 
   Room? _room;
   EventsListener<RoomEvent>? _events;
@@ -151,8 +155,16 @@ class VoiceCallService extends ChangeNotifier {
         throw StateError('Local voice participant was not created.');
       }
 
-      await localParticipant.setMicrophoneEnabled(true);
-      _isMuted = false;
+      try {
+        await localParticipant.setMicrophoneEnabled(true);
+        _isMuted = false;
+      } catch (_) {
+        // Listen-only token: broadcast audience members can't publish
+        // (canPublish is computed server-side from their role). That's
+        // a working join, not a failure — they're here to listen, and
+        // a later promotion re-grants the mic via a fresh token.
+        _isMuted = true;
+      }
       _startAudioMeter();
       _setStatus(VoiceCallStatus.connected);
     } catch (error) {

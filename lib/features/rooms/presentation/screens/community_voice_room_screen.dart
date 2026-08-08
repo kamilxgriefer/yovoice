@@ -8,6 +8,7 @@ import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
 
 class CommunityVoiceRoomScreen extends StatefulWidget {
   const CommunityVoiceRoomScreen({required this.room, super.key});
@@ -38,6 +39,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
   StreamSubscription<List<RoomParticipant>>? _participantSubscription;
   bool _joinedDocumentSeen = false;
   bool _leaving = false;
+  bool _roomOver = false;
 
   String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
   bool get _isHost => _uid == widget.room.hostId;
@@ -103,13 +105,12 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
     }
 
     if (_joinedDocumentSeen && mounted && !_leaving) {
+      // Removed by the host, or the room ended: cut the audio and show
+      // the ended state instead of ejecting with a snackbar.
       _leaving = true;
       await _voice.disconnect();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('You were removed from the room.')),
-      );
-      Navigator.of(context).pop();
+      setState(() => _roomOver = true);
     }
   }
 
@@ -172,6 +173,15 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
             .where((participant) => participant.isSpeaker)
             .length;
         final listeners = roomParticipants.length - speaking;
+
+        if (_roomOver) {
+          return Scaffold(
+            backgroundColor: _background,
+            body: SafeArea(
+              child: RoomEndedState(roomName: widget.room.name),
+            ),
+          );
+        }
 
         return Scaffold(
           backgroundColor: _background,

@@ -1385,3 +1385,55 @@ re-encode made the old ceiling obsolete — ADR-025).
   `android/settings.gradle.kts`).
 - Web crash reporting remains an open gap; candidates (Sentry, a
   Firestore error sink) need their own decision.
+
+## ADR-028: Rooms are continuous — no lobby, minimize-not-disconnect, one audio surface per room
+
+**Status**: Accepted
+**Date**: 2026-08-09
+
+### Context
+
+Joining a room was a chain of screens: community rooms went
+entry → lobby → voice screen (backing out dropped you in the lobby,
+possibly still connected), and broadcast rooms split the stage view from
+a second PodcastVoiceCallScreen with its own duplicate stage. Backing
+out of a room left the LiveKit connection running with NO UI attached.
+Separately, `room_screen.dart` and `podcast_room_screen.dart` (~2,160
+lines) were unreachable legacy.
+
+### Decision
+
+1. Entering a room puts you IN the room: RoomEntryScreen routes straight
+   to CommunityVoiceRoomScreen / BroadcastRoomScreen; both own their
+   VoiceCallService connection (community already did; broadcast now
+   connects on entry — the "Join broadcast"→second-screen flow is gone).
+   The lobby and both legacy screens plus PodcastVoiceCallScreen are
+   deleted (~4,000 lines).
+2. Back = minimize, Leave = leave. Backing out keeps the audio alive and
+   the shell's new RoomMiniBar (ListenableBuilder on the
+   VoiceCallService singleton, hosted above the bottom nav in MainShell
+   and MoreDestinationHost) shows room name, live/reconnecting state,
+   mute and an explicit leave; tapping returns to the room.
+3. VoiceCallService.join() tolerates listen-only tokens: broadcast
+   audience tokens have canPublish=false, and setMicrophoneEnabled(true)
+   throwing there was aborting the whole join (the bug that made
+   listeners' audio silently fail). Now it degrades to muted-listener.
+4. Room end / removal shows the shared RoomEndedState (Discover / Home
+   actions) instead of a snackbar eject. Raised hands get one-tap
+   Accept/Decline in the participants sheet (new
+   RoomService.moderateHandLowered for decline; accept was already
+   setParticipantSpeakerStatus, which clears the hand).
+5. Every participant row / chat header opens the new ProfilePreviewSheet
+   (shared widget) — relationship-aware actions without leaving the
+   room. New optional users.statusMessage ("vibe") field added to the
+   rules allowlist (emulator-tested) and Edit Profile; website field
+   demoted below it.
+
+### Consequences
+
+- The community lobby's room-details content has no dedicated surface
+  right now (share stays in both rooms' UIs; a compact room-info sheet
+  is a known follow-up).
+- Old flow's per-room "Enter" tap is gone; audio connects on entry.
+- Regression tests unchanged except the suite additions (statusMessage
+  rule check; 92 rules checks total).

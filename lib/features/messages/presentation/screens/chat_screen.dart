@@ -10,6 +10,7 @@ import 'package:yovoice/features/achievements/data/services/achievement_service.
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -460,6 +461,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 onBack: () => Navigator.pop(context),
                 onMute: _toggleMute,
                 onArchive: _archiveConversation,
+                onProfileTap: () => showProfilePreview(
+                  context,
+                  userId: widget.otherUserId,
+                  displayName: widget.otherDisplayName,
+                  photoUrl: widget.otherPhotoUrl,
+                ),
               ),
               Expanded(
                 child: StreamBuilder<List<Message>>(
@@ -571,6 +578,7 @@ class _ChatHeader extends StatelessWidget {
     required this.onBack,
     required this.onMute,
     required this.onArchive,
+    required this.onProfileTap,
   });
 
   final String displayName;
@@ -580,6 +588,10 @@ class _ChatHeader extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback onMute;
   final VoidCallback onArchive;
+
+  /// No dead avatars: tapping the person you're talking to opens their
+  /// profile preview.
+  final VoidCallback onProfileTap;
 
   @override
   Widget build(BuildContext context) {
@@ -599,10 +611,16 @@ class _ChatHeader extends StatelessWidget {
               size: 20,
             ),
           ),
-          _Avatar(name: displayName, url: photoUrl, radius: 20),
+          GestureDetector(
+            onTap: onProfileTap,
+            child: _Avatar(name: displayName, url: photoUrl, radius: 20),
+          ),
           const SizedBox(width: 11),
           Expanded(
-            child: StreamBuilder<ChatPresence>(
+            child: GestureDetector(
+              onTap: onProfileTap,
+              behavior: HitTestBehavior.opaque,
+              child: StreamBuilder<ChatPresence>(
               stream: presenceStream,
               builder: (context, snapshot) {
                 final presence = snapshot.data;
@@ -633,6 +651,7 @@ class _ChatHeader extends StatelessWidget {
                   ],
                 );
               },
+              ),
             ),
           ),
           // Deliberately disabled, not a dead tap target: 1:1 calls need

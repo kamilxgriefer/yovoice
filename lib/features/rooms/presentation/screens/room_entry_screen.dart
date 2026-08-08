@@ -4,7 +4,7 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_experience_service.dart';
-import 'package:yovoice/features/rooms/presentation/screens/community_room_lobby_screen.dart';
+import 'package:yovoice/features/rooms/presentation/screens/community_voice_room_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room_screen.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
@@ -58,7 +58,10 @@ class _RoomEntryScreenState extends State<RoomEntryScreen> {
         if (snapshot.data == RoomExperience.broadcast) {
           return BroadcastRoomScreen(room: widget.room);
         }
-        return CommunityRoomLobbyScreen(room: widget.room);
+        // Straight into the room — the lobby detour is gone. Callers
+        // joined the room (Firestore) before pushing this screen; the
+        // room screen itself owns the live-audio connection.
+        return CommunityVoiceRoomScreen(room: widget.room);
       },
     );
   }
