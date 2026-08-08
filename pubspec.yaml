@@ -50,6 +50,7 @@ dev_dependencies:
   fake_cloud_firestore: ^4.2.0
   mock_exceptions: ^0.8.2
   firebase_core_platform_interface: ^8.1.0
+  firebase_storage_mocks: ^0.8.1
 
 dependency_overrides:
   device_info_plus: 12.3.0

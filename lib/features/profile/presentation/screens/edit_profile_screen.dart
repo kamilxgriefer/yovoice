@@ -6,16 +6,21 @@ import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class EditProfileScreen extends StatefulWidget {
-  const EditProfileScreen({required this.profile, super.key});
+  const EditProfileScreen({required this.profile, this.service, super.key});
 
   final UserProfile profile;
+
+  /// Injectable so the end-to-end save test (test/profile_save_e2e_test.dart)
+  /// can drive THIS screen's real pick→validate→upload→persist pipeline
+  /// against mock Firebase backends. Production callers pass nothing.
+  final ProfileService? service;
 
   @override
   State<EditProfileScreen> createState() => _EditProfileScreenState();
 }
 
 class _EditProfileScreenState extends State<EditProfileScreen> {
-  final _service = ProfileService();
+  late final ProfileService _service = widget.service ?? ProfileService();
   final _formKey = GlobalKey<FormState>();
 
   late final TextEditingController _displayName;
@@ -83,8 +88,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _save() async {
-    if (!_formKey.currentState!.validate() || _saving) return;
+    if (_saving) return;
+    if (!_formKey.currentState!.validate()) {
+      // A silent return here looked like a successful no-op save — the
+      // user pressed Save, nothing happened, they left assuming it
+      // worked. Validation failure must be loud.
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please fix the highlighted fields before saving.'),
+        ),
+      );
+      return;
+    }
 
+    final messenger = ScaffoldMessenger.of(context);
     setState(() => _saving = true);
     try {
       // Images first: if an upload fails the text edits are not committed
@@ -109,7 +126,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         website: _website.text,
         accountType: _accountType,
       );
+      // Success is only announced AFTER every stage completed: uploads,
+      // Firestore pointer flips and the text-field write. The messenger
+      // was captured before the pop so the confirmation survives this
+      // screen's disposal.
       if (mounted) Navigator.of(context).pop();
+      messenger.showSnackBar(const SnackBar(content: Text('Profile saved.')));
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(

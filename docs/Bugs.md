@@ -385,3 +385,42 @@ permission flags).
   fallbacks (initials / brand gradient) via errorBuilder, and replaced
   Storage objects are cleaned up after a successful save instead of
   orphaning forever.
+- **Fixed (regression from 82c1746, mine): Profile avatar clipped at the
+  top of the page on mobile.** The header refactor returned the inner
+  Stack (title row + identity row) as a NON-positioned child of the
+  header's outer Stack on <900px widths. A non-positioned Stack child
+  sizes to its own children, so the inner Stack collapsed to the title
+  row's height and the identity row's `bottom: 20` anchored to that
+  collapsed ~70px box at the top — avatar drawn above the viewport, name
+  at the top, dead space below. The width-matrix test written for the fix
+  then caught the SAME collapse on ≥900px widths (avatar 76px above the
+  header): ConstrainedBox capped width but left height loose. Both
+  branches now wrap the content in Positioned.fill (+SizedBox.expand on
+  the wide branch). The header was also extracted to a public
+  ProfileHeader widget rendered by the screen, the dev harness AND
+  test/profile_header_layout_test.dart (8 sizes: 320/375/390/393/430/
+  768/1024/1440 — avatar-fully-inside asserted at each), because the
+  regression shipped precisely while the harness mirrored the layout
+  instead of importing it.
+- **Proven end to end (not merely reviewed): the profile media save
+  pipeline.** test/profile_save_e2e_test.dart drives the real
+  EditProfileScreen with generated "YO TEST AVATAR"/"YO TEST BANNER"
+  images through real pick→validate→pending→Save code against
+  firebase_storage_mocks/fake_cloud_firestore, and asserts: Storage
+  object exists at users/{uid}/profile/<kind>_<ts>.png with byte-exact
+  content; Firestore photoUrl/bannerUrl/bio updated; Auth photoURL
+  mirrored; the shared watchCurrentProfile stream emits the new values;
+  replacement mints a new URL and deletes the old object; an oversized
+  file is rejected with the product's exact copy. Structured [PROFILE]
+  stage logging (deliberately present in release web) traces
+  SELECTED→VALIDATED→UPLOAD_STARTED/COMPLETE→URL_RECEIVED→
+  FIRESTORE_UPDATE→STATE_REFRESHED in the browser console for field
+  debugging.
+- **Fixed: silent no-op Save.** Edit profile's Save returned without ANY
+  feedback when form validation failed — indistinguishable from success.
+  It now says so, and a real success ("Profile saved.") is announced only
+  after every stage completes.
+- **Fixed: dead Voice call button in chat** — empty onPressed since the
+  screen was built. Now explicitly disabled + labeled per ADR-012; 1:1
+  calls need a signaling subsystem (ringing notifications,
+  accept/decline, call sessions) that doesn't exist yet.

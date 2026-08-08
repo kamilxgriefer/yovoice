@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show debugPrint;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -241,6 +243,15 @@ class ProfileService {
   ///
   /// Throws [ProfileImageException] with a user-facing message when the file
   /// is too large or is not a format every supported platform can decode.
+  /// Structured diagnostics for the save pipeline. Deliberately plain
+  /// debugPrint so the stages are visible in a production web console
+  /// while the persistence bug is being chased in the field. Logs paths,
+  /// sizes and MIME types — never tokens, credentials or full download
+  /// URLs.
+  static void _logStage(String stage, [Map<String, Object?>? data]) {
+    debugPrint('[PROFILE] $stage${data == null ? '' : ' $data'}');
+  }
+
   Future<PickedProfileImage?> pickProfileImage(ProfileImageKind kind) async {
     final rules = ProfileImageRules.of(kind);
 
@@ -253,16 +264,26 @@ class ProfileService {
       maxWidth: rules.maxOutputEdge.toDouble(),
     );
 
-    if (image == null) return null;
+    if (image == null) {
+      _logStage('PROFILE_MEDIA_PICKER_CANCELLED', {'kind': kind.name});
+      return null;
+    }
 
     final bytes = await image.readAsBytes();
+    _logStage('PROFILE_MEDIA_SELECTED', {
+      'kind': kind.name,
+      'bytes': bytes.lengthInBytes,
+      'pickerName': image.name,
+    });
     rules.validateSource(bytes);
 
-    return PickedProfileImage(
-      kind: kind,
-      bytes: bytes,
-      format: ProfileImageRules.detectFormat(bytes)!,
-    );
+    final format = ProfileImageRules.detectFormat(bytes)!;
+    _logStage('PROFILE_MEDIA_VALIDATED', {
+      'kind': kind.name,
+      'format': format.mimeType,
+    });
+
+    return PickedProfileImage(kind: kind, bytes: bytes, format: format);
   }
 
   /// Uploads an already-validated image and persists its URL.
@@ -299,6 +320,12 @@ class ProfileService {
     // object can be cleaned up afterwards.
     final previousUrl = (await _document.get()).data()?[field] as String?;
 
+    _logStage('${field.toUpperCase()}_UPLOAD_STARTED', {
+      'path': path,
+      'bytes': bytes.lengthInBytes,
+      'contentType': contentType,
+    });
+
     final reference = _storage.ref().child(path);
     final uploadTask = reference.putData(
       bytes,
@@ -310,6 +337,9 @@ class ProfileService {
     final snapshot = await uploadTask;
 
     if (snapshot.state != TaskState.success) {
+      _logStage('${field.toUpperCase()}_UPLOAD_FAILED', {
+        'state': snapshot.state.name,
+      });
       throw FirebaseException(
         plugin: 'firebase_storage',
         code: 'upload-failed',
@@ -317,9 +347,16 @@ class ProfileService {
       );
     }
 
+    _logStage('${field.toUpperCase()}_UPLOAD_COMPLETE', {
+      'path': snapshot.ref.fullPath,
+    });
+
     // Use the exact reference returned by the completed upload task. This
     // avoids asking Storage for a stale or differently-normalized path.
     final url = await snapshot.ref.getDownloadURL();
+    _logStage('${field.toUpperCase()}_URL_RECEIVED', {
+      'host': Uri.tryParse(url)?.host,
+    });
 
     // Consistency contract (Storage and Firestore cannot share a real
     // transaction): the Firestore field is the source of truth, so the
@@ -329,21 +366,28 @@ class ProfileService {
     // the old image and nothing is orphaned. Only after the pointer has
     // flipped is the OLD object deleted, also best effort: a leaked file
     // is preferable to a profile pointing at nothing.
+    _logStage('PROFILE_FIRESTORE_UPDATE_STARTED', {'field': field});
     try {
       await _document.set({
         field: url,
         'profileUpdatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (error) {
+      _logStage('PROFILE_FIRESTORE_UPDATE_FAILED', {
+        'field': field,
+        'error': error.runtimeType.toString(),
+      });
       await snapshot.ref.delete().then((_) {}, onError: (_) {});
       rethrow;
     }
+    _logStage('PROFILE_FIRESTORE_UPDATE_COMPLETE', {'field': field});
 
     if (updateAuthPhoto) {
       await _auth.currentUser?.updatePhotoURL(url);
     }
 
     await _deleteReplacedImage(previousUrl, replacedBy: url);
+    _logStage('PROFILE_STATE_REFRESHED', {'field': field});
 
     return url;
   }

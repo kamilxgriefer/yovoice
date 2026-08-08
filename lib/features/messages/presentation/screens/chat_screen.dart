@@ -633,10 +633,15 @@ class _ChatHeader extends StatelessWidget {
               },
             ),
           ),
-          IconButton(
-            onPressed: () {},
-            tooltip: 'Voice call',
-            icon: const Icon(Icons.call_outlined, color: Colors.white),
+          // Deliberately disabled, not a dead tap target: 1:1 calls need
+          // signaling that doesn't exist yet (ringing notifications,
+          // accept/decline, call session docs — VoiceCallScreen is
+          // room-based). Disabled + labeled per ADR-012 until that
+          // subsystem is built.
+          const IconButton(
+            onPressed: null,
+            tooltip: 'Voice calls — coming soon',
+            icon: Icon(Icons.call_outlined, color: Colors.white38),
           ),
           PopupMenuButton<String>(
             color: _ChatScreenState._surface,

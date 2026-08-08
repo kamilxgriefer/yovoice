@@ -16,9 +16,8 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
 import 'package:yovoice/firebase_options.dart';
-import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
-import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -100,109 +99,16 @@ class _PreviewHome extends StatelessWidget {
         ),
         body: TabBarView(
           children: [
-            _HeaderPreview(profile: _fakeProfile),
+            ListView(
+              children: [
+                ProfileHeader(profile: _fakeProfile, onEdit: () {}),
+                const SizedBox(height: 400),
+              ],
+            ),
             EditProfileScreen(profile: _fakeProfile),
           ],
         ),
       ),
-    );
-  }
-}
-
-/// Mirrors the Profile screen's responsive header composition (the real
-/// _ProfileHero is private to profile_screen.dart and is driven by live
-/// streams; this reproduces its banner geometry 1:1 for layout checks).
-class _HeaderPreview extends StatelessWidget {
-  const _HeaderPreview({required this.profile});
-
-  final UserProfile profile;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView(
-      children: [
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final isWide = constraints.maxWidth >= 900;
-            final scrim = LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Colors.black.withValues(alpha: .05),
-                const Color(0xFF09050F),
-              ],
-            );
-
-            return SizedBox(
-              height: isWide ? 300 : 320,
-              child: Stack(
-                children: [
-                  if (isWide)
-                    Positioned.fill(
-                      child: Align(
-                        alignment: Alignment.topCenter,
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 1100),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(26),
-                              child: ProfileBanner(
-                                bannerUrl: profile.bannerUrl,
-                                overlay: scrim,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    )
-                  else
-                    Positioned.fill(
-                      child: ProfileBanner(
-                        bannerUrl: profile.bannerUrl,
-                        overlay: scrim,
-                      ),
-                    ),
-                  Positioned(
-                    left: 40,
-                    bottom: 20,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: LinearGradient(
-                              colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
-                            ),
-                          ),
-                          child: UserAvatar(
-                            radius: 55,
-                            photoUrl: profile.photoUrl,
-                            displayName: profile.displayName,
-                            backgroundColor: const Color(0xFF281133),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Text(
-                          profile.displayName,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 29,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-        const SizedBox(height: 400),
-      ],
     );
   }
 }
