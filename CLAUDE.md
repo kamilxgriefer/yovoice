@@ -3,6 +3,29 @@
 This file is auto-loaded at the start of every session in this repo. The
 rules below are not suggestions — follow them exactly.
 
+## What YO Voice is
+
+A premium consumer social **voice-first** product: live voice rooms, voice
+moments, and messaging, with a dark/cosmic visual identity. The Flutter app
+in this repo is the primary product. Main areas: Home, Rooms
+(Community + Broadcast), Chats, Friends, Clubs, Profile, creator/follow,
+Settings. Product detail lives in [docs/Vision.md](docs/Vision.md) and
+[docs/Features.md](docs/Features.md).
+
+## Product invariants
+
+- **Community rooms and Broadcast rooms are different products**, not two
+  labels for one thing. `RoomExperience` (`lib/features/rooms/data/models/room_experience.dart`)
+  is a real two-value enum and they route to different screens. Never
+  collapse, merge, or "unify" them without being explicitly asked.
+- **Never invent backend functionality, fake users, or fake activity.** If
+  something has no backend, show it disabled/"Coming soon" (see the Hard
+  rules below).
+- **The theme code is the single source of truth for the palette** —
+  `lib/core/theme/app_colors.dart`. Read it rather than trusting remembered
+  hex values; they have already drifted once. The identity is dark,
+  premium, slightly cosmic, warm, voice-first.
+
 ## Before making significant changes
 
 Read [docs/Vision.md](docs/Vision.md), [docs/Architecture.md](docs/Architecture.md)
@@ -69,6 +92,15 @@ version:
   snapshot) before a bigger change — see `docs/Decisions.md`.
 - **Verification gate**: `flutter analyze` must be clean before considering
   Dart work done. For UI changes, verify in the iOS Simulator when possible.
+- **Visual claims need visual proof.** `flutter analyze`, `flutter test`,
+  widget tests, and a successful build prove *code health* — they do not
+  prove a screen renders correctly. Never call a visual/UI issue "fixed"
+  without having actually opened the screen and looked at it. If it could
+  not be inspected (tooling broken, environment blocked), say so and mark
+  it UNVERIFIED rather than implying it was checked. Web has an extra
+  trap: browsers can serve a stale `main.dart.js`, so confirm the deployed
+  bytes actually contain the change before concluding anything from a
+  screenshot.
 - **Firestore rules changes**: always emulator-tested before deploy — see
   `docs/TESTING.md` and `firestore-tests/README.md`. A passing test suite
   that never exercises a real `collectionGroup()` query does not prove a
