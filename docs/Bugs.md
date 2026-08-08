@@ -424,3 +424,33 @@ permission flags).
   screen was built. Now explicitly disabled + labeled per ADR-012; 1:1
   calls need a signaling subsystem (ringing notifications,
   accept/decline, call sessions) that doesn't exist yet.
+- **Fixed (THE root cause of "saved but no avatar/banner", found with
+  production evidence): the default Storage bucket had no CORS
+  configuration.** Full diagnostic chain: fan-out logs proved Firestore
+  photoUrl updates on Save (uid + object path captured); the stored
+  objects fetched publicly as valid images (curl 200, correct
+  content-type, real photo bytes); THEN the in-browser test from the
+  app's own origin showed the asymmetry — fetching a MISSING object
+  returned a clean JSON 404 (the Storage API front-end adds
+  Access-Control-Allow-Origin to error responses), while fetching the
+  REAL object threw `TypeError: Failed to fetch`, because successful
+  alt=media downloads are served with the BUCKET's CORS config, which
+  was empty. Browsers therefore blocked every real image byte; the
+  errorBuilder fallbacks rendered initials/gradient, indistinguishable
+  from "no image set". This also explains why NO Storage-hosted image
+  (avatars, banners, club avatars, room images) has ever rendered in
+  the web app, and why the earlier CORS probe — run against an error
+  response — was misleading. Fix: bucket CORS set to allow GET/HEAD
+  from any origin (media on this bucket is public-read by rules design
+  anyway) via a one-shot admin function, executed once and deleted;
+  functions/admin/apply-storage-cors.js is kept unexported as the
+  documented reapply path. Verified after: the same fetch+decode from
+  the app origin succeeds (200, 1024x1819, 352,362 bytes) with
+  access-control-allow-origin present on the real object. No client
+  change was needed — stored URLs were always correct.
+- **Known minor issue: replaced profile images may not be cleaned up.**
+  The user's superseded avatar (avatar_1786204059179.png) was still
+  fetchable after being replaced — `_deleteReplacedImage`'s best-effort
+  delete is failing silently, most likely refFromURL vs the
+  `.firebasestorage.app` bucket URL format. Cosmetic storage cost only;
+  needs a debugPrint in the catch and a look at refFromURL handling.
