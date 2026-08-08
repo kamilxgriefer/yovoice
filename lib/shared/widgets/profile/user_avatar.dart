@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/shared/widgets/profile/premium_avatar_frame.dart';
+
 /// The one way to render a user's avatar.
 ///
 /// Replaces the ad-hoc `CircleAvatar(backgroundImage: NetworkImage(...))`
@@ -14,6 +16,7 @@ class UserAvatar extends StatelessWidget {
     this.displayName,
     this.backgroundColor = const Color(0xFF64258E),
     this.fallbackIcon,
+    this.premium = false,
     super.key,
   });
 
@@ -25,6 +28,11 @@ class UserAvatar extends StatelessWidget {
   /// Shown when there is no usable image AND no name to take an initial
   /// from (e.g. Home's header before the profile stream emits).
   final IconData? fallbackIcon;
+
+  /// Wraps the avatar in the canonical [PremiumAvatarFrame]. Callers pass
+  /// `profile.premiumIdentity` — the server-written public mirror of the
+  /// entitlement — never a locally computed flag.
+  final bool premium;
 
   String get _initial {
     final name = displayName?.trim() ?? '';
@@ -50,7 +58,7 @@ class UserAvatar extends StatelessWidget {
       );
     }
 
-    return ClipOval(
+    final avatar = ClipOval(
       child: Container(
         width: diameter,
         height: diameter,
@@ -75,5 +83,8 @@ class UserAvatar extends StatelessWidget {
               ),
       ),
     );
+
+    if (!premium) return avatar;
+    return PremiumAvatarFrame(child: avatar);
   }
 }

@@ -190,6 +190,31 @@ Ordered by rough priority — re-prioritize freely, this isn't a queue.
   (or a full functions deploy). Until then, avatar/display-name changes
   do not propagate to conversations, club member lists or voice moments.
 
+### 0e. Premium billing adapters + rules deploy
+
+- **Status**: Architecture shipped (ADR-024); three pieces remain.
+- **Actions**:
+  1. Run `firestore-tests` (needs a JVM) and deploy `firestore.rules` —
+     until then the premium gates on club creation / accountType are
+     client-side only.
+  2. Create store products `yovoice_premium_monthly` (€9.99) and
+     `yovoice_premium_yearly` (€89.99) in App Store Connect + Play
+     Console; add an IAP plugin client-side; implement the verification
+     adapters in functions/premium/entitlements.js (App Store Server
+     API key, Play service-account, or web provider webhooks). Each
+     adapter ends by calling applyEntitlements() — nothing else changes.
+  3. Interim: grant premium via the `adminSetPremiumEntitlements`
+     callable (admin/superAdmin only).
+
+### 0f. Room experience redesign on shared primitives
+
+- **Status**: Not started this round (premium architecture took the
+  slot). PremiumAvatarFrame + the entitlement system are ready for room
+  surfaces; the Community Room's _CommunityHeart is the natural seed for
+  a shared VoiceCore. Planned: extract VoiceCore/RoomHeader/
+  ParticipantAvatar primitives, then recompose Community, Broadcast and
+  Club rooms; premium presence must never outrank speaking state.
+
 ### 1. Verify no orphaned `rooms/{roomId}/members` documents
 
 - **Status**: Not started.

@@ -288,7 +288,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     // avatar (or nothing) while Profile showed the real
                     // one. Before the stream's first emission `profile` is
                     // null and the avatar simply renders its placeholder.
-                    return _header(name, profile?.photoUrl);
+                    return _header(
+                      name,
+                      profile?.photoUrl,
+                      premium: profile?.premiumIdentity ?? false,
+                    );
                   },
                 ),
               ),
@@ -308,7 +312,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _header(String name, String? photoUrl) {
+  Widget _header(String name, String? photoUrl, {bool premium = false}) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
       child: Row(
@@ -387,6 +391,7 @@ class _HomeScreenState extends State<HomeScreen> {
             radius: 24,
             photoUrl: photoUrl,
             fallbackIcon: Icons.person_rounded,
+            premium: premium,
           ),
         ],
       ),

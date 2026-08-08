@@ -12,6 +12,9 @@ import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/blocked_users_screen.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notification_preferences_screen.dart';
+import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
+import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
+import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
@@ -36,6 +39,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _profileService = ProfileService();
   final _authService = AuthService();
   final _friendService = FriendService();
+  final _entitlementService = EntitlementService();
 
   PackageInfo? _packageInfo;
   final Map<Permission, PermissionStatus> _permissionStatus = {};
@@ -369,6 +373,79 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: _formatJoinDate(profile.createdAt),
             ),
           ],
+        ),
+        const SizedBox(height: 22),
+
+        const _GroupLabel('YO Voice Premium'),
+        StreamBuilder<SubscriptionEntitlements>(
+          stream: _entitlementService.watchCurrentEntitlements(),
+          builder: (context, snapshot) {
+            final entitlements = snapshot.data ?? SubscriptionEntitlements.free;
+            final periodEnd = entitlements.currentPeriodEnd;
+
+            if (!entitlements.isPremium) {
+              return _SettingsGroup(
+                children: [
+                  _SettingsTile(
+                    icon: Icons.workspace_premium_outlined,
+                    title: 'Upgrade to Premium',
+                    subtitle:
+                        'Creator profile, Club creation and premium identity',
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const PremiumScreen(),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            }
+
+            return _SettingsGroup(
+              children: [
+                _SettingsTile(
+                  icon: Icons.workspace_premium_rounded,
+                  title: 'YO Voice Premium — ${entitlements.plan.label}',
+                  subtitle: entitlements.inGracePeriod
+                      ? 'Payment issue — check your billing details'
+                      : periodEnd == null
+                      ? 'Active'
+                      : 'Renews or ends '
+                            '${periodEnd.day}.${periodEnd.month}.${periodEnd.year}',
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const PremiumScreen(),
+                    ),
+                  ),
+                ),
+                _SettingsTile(
+                  icon: Icons.manage_accounts_outlined,
+                  title: 'Manage subscription',
+                  // Apple/Google subscriptions can only be cancelled in
+                  // the platform's own subscription manager — linking
+                  // there is the honest flow, not a fake in-app cancel.
+                  subtitle: kIsWeb
+                      ? 'Purchases and billing management'
+                      : 'Opens your store subscription settings',
+                  onTap: () {
+                    if (kIsWeb) {
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const PremiumScreen(),
+                        ),
+                      );
+                      return;
+                    }
+                    _openUrl(
+                      Theme.of(context).platform == TargetPlatform.iOS
+                          ? 'https://apps.apple.com/account/subscriptions'
+                          : 'https://play.google.com/store/account/subscriptions',
+                    );
+                  },
+                ),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 22),
 

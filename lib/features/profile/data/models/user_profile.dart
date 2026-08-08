@@ -33,6 +33,7 @@ class UserProfile {
     required this.learningLanguages,
     required this.photoUrl,
     required this.bannerUrl,
+    this.premiumIdentity = false,
     required this.website,
     required this.accountType,
     required this.friendCount,
@@ -63,6 +64,12 @@ class UserProfile {
   final List<String> learningLanguages;
   final String? photoUrl;
   final String? bannerUrl;
+
+  /// Public mirror of the Premium entitlement, written ONLY by Cloud
+  /// Functions (premium/entitlements.js) — not client-writable per
+  /// firestore.rules, which is what makes it safe for other users'
+  /// clients to render the premium ring from it.
+  final bool premiumIdentity;
   final String website;
   final AccountType accountType;
   final int friendCount;
@@ -108,6 +115,7 @@ class UserProfile {
       learningLanguages: readStrings('learningLanguages'),
       photoUrl: data['photoUrl'] as String?,
       bannerUrl: data['bannerUrl'] as String?,
+      premiumIdentity: data['premiumIdentity'] as bool? ?? false,
       website: data['website'] as String? ?? '',
       accountType: AccountType.fromValue(data['accountType']),
       friendCount: readInt('friendCount'),

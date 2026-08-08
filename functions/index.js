@@ -176,3 +176,19 @@ exports.onNotificationCreated = onNotificationCreated;
 const { onProfileIdentityChanged } = require("./profile/fanout");
 
 exports.onProfileIdentityChanged = onProfileIdentityChanged;
+
+/*
+|--------------------------------------------------------------------------
+| Premium
+|--------------------------------------------------------------------------
+*/
+
+const {
+  adminSetPremiumEntitlements,
+  verifyPurchase,
+  expirePremiumIdentity,
+} = require("./premium/entitlements");
+
+exports.adminSetPremiumEntitlements = adminSetPremiumEntitlements;
+exports.verifyPurchase = verifyPurchase;
+exports.expirePremiumIdentity = expirePremiumIdentity;

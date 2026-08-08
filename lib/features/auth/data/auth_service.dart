@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import 'package:yovoice/features/auth/data/action_code_settings.dart';
+import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/models/app_user.dart';
 import 'package:yovoice/services/firestore_service.dart';
@@ -237,9 +238,10 @@ class AuthService {
       }
     } finally {
       await _firebaseAuth.signOut();
-      // Drop the cached current-profile stream so the next account never
-      // inherits the previous user's replayed snapshot.
+      // Drop the cached current-profile/entitlement streams so the next
+      // account never inherits the previous user's replayed snapshots.
       ProfileService.resetCurrentProfileCache();
+      EntitlementService.resetCache();
     }
   }
 

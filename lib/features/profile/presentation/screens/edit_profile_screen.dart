@@ -1,12 +1,20 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
+import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
+import 'package:yovoice/features/premium/presentation/widgets/premium_upsell_sheet.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class EditProfileScreen extends StatefulWidget {
-  const EditProfileScreen({required this.profile, this.service, super.key});
+  const EditProfileScreen({
+    required this.profile,
+    this.service,
+    this.entitlements,
+    super.key,
+  });
 
   final UserProfile profile;
 
@@ -15,12 +23,17 @@ class EditProfileScreen extends StatefulWidget {
   /// against mock Firebase backends. Production callers pass nothing.
   final ProfileService? service;
 
+  /// Injectable for the premium-gating tests.
+  final EntitlementService? entitlements;
+
   @override
   State<EditProfileScreen> createState() => _EditProfileScreenState();
 }
 
 class _EditProfileScreenState extends State<EditProfileScreen> {
   late final ProfileService _service = widget.service ?? ProfileService();
+  late final EntitlementService _entitlementService =
+      widget.entitlements ?? EntitlementService();
   final _formKey = GlobalKey<FormState>();
 
   late final TextEditingController _displayName;
@@ -296,12 +309,36 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 _field(_displayName, 'Display name', required: true),
                 _field(_username, 'Username', required: true),
                 _field(_bio, 'Bio', maxLines: 4, maxLength: 220),
-                _AccountTypePicker(
-                  value: _accountType,
-                  onChanged: (value) {
-                    setState(() {
-                      _accountType = value;
-                    });
+                StreamBuilder<SubscriptionEntitlements>(
+                  stream: _entitlementService.watchCurrentEntitlements(),
+                  builder: (context, entitlementSnapshot) {
+                    final entitlements =
+                        entitlementSnapshot.data ??
+                        SubscriptionEntitlements.free;
+                    return _AccountTypePicker(
+                      value: _accountType,
+                      creatorPaused:
+                          _accountType == AccountType.creator &&
+                          !entitlements.creatorEnabled,
+                      onChanged: (value) {
+                        // Creator is a Premium capability. A free member
+                        // selecting it gets the explanation + Explore
+                        // Premium path — the segment itself never
+                        // silently no-ops. (firestore.rules enforces the
+                        // same gate server-side; this is the UX layer.)
+                        if (value == AccountType.creator &&
+                            !entitlements.creatorEnabled) {
+                          showPremiumUpsellSheet(
+                            context,
+                            upsellContext: PremiumUpsellContext.creator,
+                          );
+                          return;
+                        }
+                        setState(() {
+                          _accountType = value;
+                        });
+                      },
+                    );
                   },
                 ),
                 const SizedBox(height: 26),
@@ -527,10 +564,19 @@ class _ImageAction extends StatelessWidget {
 }
 
 class _AccountTypePicker extends StatelessWidget {
-  const _AccountTypePicker({required this.value, required this.onChanged});
+  const _AccountTypePicker({
+    required this.value,
+    required this.onChanged,
+    this.creatorPaused = false,
+  });
 
   final AccountType value;
   final ValueChanged<AccountType> onChanged;
+
+  /// True when the profile is Creator but Premium has lapsed: the
+  /// Creator identity and data stay intact, premium Creator tools are
+  /// paused until Premium returns (ADR-024 expiration policy).
+  final bool creatorPaused;
 
   @override
   Widget build(BuildContext context) {
@@ -586,6 +632,15 @@ class _AccountTypePicker extends StatelessWidget {
             const Text(
               'Official status is verified by YO Voice and cannot be selected manually.',
               style: TextStyle(color: Color(0xFFD3A5FF), fontSize: 11),
+            ),
+          ],
+          if (creatorPaused) ...[
+            const SizedBox(height: 10),
+            const Text(
+              'Creator tools are paused — your Premium subscription has '
+              'ended. Your Creator profile and data are safe and unlock '
+              'again with Premium.',
+              style: TextStyle(color: Color(0xFFFFB547), fontSize: 11),
             ),
           ],
         ],

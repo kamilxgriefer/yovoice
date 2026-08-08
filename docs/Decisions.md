@@ -1204,3 +1204,53 @@ tall, and profile editing was reachable from three Settings entry points.
 - lib/dev/profile_preview.dart renders Profile header + Edit profile
   with fake data at arbitrary widths, so profile-layout regressions can
   be caught without a signed-in session.
+
+## ADR-024: Premium entitlements are server-written, time-validated, and gate Creator + Clubs
+
+**Context.** The product needed a real subscription tier (Creator,
+Club creation, premium identity) — and the audit found Creator was
+already claimable by ANY client: `accountType` sat in the users-doc
+write allowlist with no gate. No billing/IAP code existed anywhere.
+
+**Decision.**
+- `entitlements/{uid}` is the trusted subscription document. Written
+  exclusively by Cloud Functions (`premium/entitlements.js`); rules deny
+  all client writes and allow reads only by the owner. It stores plan
+  (monthly €9.99 / yearly €89.99, centralized in Flutter's
+  `premium_plans.dart`), status (`active|trialing|grace|expired`),
+  `currentPeriodEnd`, and derived flags (creatorEnabled, canCreateClubs,
+  premiumIdentityEnabled, maxOwnedClubs=3) so future tiers can vary
+  entitlements without schema changes.
+- **Validity is time-based everywhere**: rules (`hasActivePremium()`),
+  the client model, and the paywall all compare `currentPeriodEnd`
+  against now — expiry enforces itself with no job in the authorization
+  path. A daily sweep only tidies the cosmetic mirror.
+- `users/{uid}.premiumIdentity` is the public, server-written mirror
+  that lets OTHER users' clients render the premium ring; it is
+  deliberately absent from the client-writable allowlist.
+- Server enforcement: club `create` requires `hasActivePremium()`;
+  `accountType` may change to `creator` only with active premium,
+  `official` is never client-settable, `personal` is always allowed.
+  UI gates (PremiumGates, upsell sheets) are UX, not security.
+- **Expiration policy**: nothing is deleted. Clubs created while
+  premium remain intact with owner and members; only creating MORE
+  clubs is blocked. A lapsed Creator keeps profile/followers/content;
+  Creator Studio shows a "tools paused" banner until Premium returns.
+  The rules allow `accountType` to REMAIN `creator` after expiry (the
+  gate is on changing INTO creator), which is what makes the
+  keep-your-data policy work.
+- Purchases: `verifyPurchase` exists and deliberately declines until
+  store verification is configured (App Store Server API key / Play
+  service account / web provider webhooks). Nothing is ever unlocked on
+  a client's claim. `adminSetPremiumEntitlements` (admin/superAdmin
+  guarded) is the interim grant path and the testing mechanism.
+
+**Consequences.**
+- firestore.rules changes are implemented and covered by six new cases
+  in firestore-tests/rules.test.js but NOT deployed — the emulator
+  convention (ADR-007) requires a JVM this machine lacks. Until the
+  user runs the suite and deploys rules, the server gates are not live.
+- Store console setup (products `yovoice_premium_monthly`/`_yearly`),
+  verification credentials, and an IAP client plugin remain manual.
+- EntitlementService caches one replayed stream per uid (the
+  ProfileService pattern) and fails closed: errors emit FREE.

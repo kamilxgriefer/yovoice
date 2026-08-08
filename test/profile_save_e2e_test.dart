@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
@@ -182,8 +183,11 @@ void main() {
       );
       navigatorKey.currentState!.push(
         MaterialPageRoute<void>(
-          builder: (_) =>
-              EditProfileScreen(profile: _seedProfile(), service: service),
+          builder: (_) => EditProfileScreen(
+            profile: _seedProfile(),
+            service: service,
+            entitlements: EntitlementService(firestore: db, auth: auth),
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -389,7 +393,11 @@ void main() {
     await db.collection('users').doc(_uid).set({'uid': _uid});
     await tester.pumpWidget(
       MaterialApp(
-        home: EditProfileScreen(profile: _seedProfile(), service: service),
+        home: EditProfileScreen(
+          profile: _seedProfile(),
+          service: service,
+          entitlements: EntitlementService(firestore: db, auth: auth),
+        ),
       ),
     );
     await tester.pumpAndSettle();

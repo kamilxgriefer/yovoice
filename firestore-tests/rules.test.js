@@ -1148,6 +1148,112 @@ async function main() {
     },
   );
 
+  // ── Premium entitlements (ADR-024) ────────────────────────────────
+
+  await check("client cannot write its own entitlements doc", async () => {
+    const db = host.firestore();
+    await assertFails(
+      setDoc(doc(db, "entitlements/host-uid"), { isPremium: true }),
+    );
+  });
+
+  await check("client can read own entitlements, not someone else's", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "entitlements/host-uid"), {
+        status: "active",
+        currentPeriodEnd: new Date(Date.now() + 86400000),
+      });
+    });
+    await assertSucceeds(getDoc(doc(host.firestore(), "entitlements/host-uid")));
+    await assertFails(
+      getDoc(doc(attacker.firestore(), "entitlements/host-uid")),
+    );
+  });
+
+  await check("club creation requires active premium", async () => {
+    // host has active entitlements (seeded above); attacker has none.
+    await assertSucceeds(
+      setDoc(doc(host.firestore(), "clubs/premium-club"), {
+        ownerId: "host-uid",
+        name: "Premium Club",
+        memberCount: 1,
+      }),
+    );
+    await assertFails(
+      setDoc(doc(attacker.firestore(), "clubs/free-club"), {
+        ownerId: "attacker-uid",
+        name: "Free Club",
+        memberCount: 1,
+      }),
+    );
+  });
+
+  await check("expired premium cannot create clubs", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "entitlements/invitee-uid"), {
+        status: "active",
+        currentPeriodEnd: new Date(Date.now() - 1000), // already past
+      });
+    });
+    await assertFails(
+      setDoc(doc(invitee.firestore(), "clubs/expired-club"), {
+        ownerId: "invitee-uid",
+        name: "Expired Club",
+        memberCount: 1,
+      }),
+    );
+  });
+
+  await check(
+    "accountType: creator requires premium; personal is free; official never client-settable",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), "users/host-uid"),
+          { accountType: "personal" },
+          { merge: true },
+        );
+        await setDoc(
+          doc(ctx.firestore(), "users/attacker-uid"),
+          { accountType: "personal" },
+          { merge: true },
+        );
+      });
+      // Premium host can become creator.
+      await assertSucceeds(
+        updateDoc(doc(host.firestore(), "users/host-uid"), {
+          accountType: "creator",
+        }),
+      );
+      // Free attacker cannot.
+      await assertFails(
+        updateDoc(doc(attacker.firestore(), "users/attacker-uid"), {
+          accountType: "creator",
+        }),
+      );
+      // Nobody can self-declare official.
+      await assertFails(
+        updateDoc(doc(host.firestore(), "users/host-uid"), {
+          accountType: "official",
+        }),
+      );
+      // Dropping back to personal is always allowed.
+      await assertSucceeds(
+        updateDoc(doc(host.firestore(), "users/host-uid"), {
+          accountType: "personal",
+        }),
+      );
+    },
+  );
+
+  await check("client cannot write premiumIdentity on users doc", async () => {
+    await assertFails(
+      updateDoc(doc(host.firestore(), "users/host-uid"), {
+        premiumIdentity: true,
+      }),
+    );
+  });
+
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();
   process.exit(failed > 0 ? 1 : 0);

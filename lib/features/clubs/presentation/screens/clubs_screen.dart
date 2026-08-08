@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/premium/premium_gates.dart';
+
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/models/club_invite.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
@@ -25,6 +27,8 @@ class _ClubsScreenState extends State<ClubsScreen> {
   final Set<String> _processingInvites = <String>{};
 
   Future<void> _openCreateClub() async {
+    if (!await PremiumGates.ensureCanCreateClub(context)) return;
+    if (!mounted) return;
     final created = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(builder: (_) => const CreateClubScreen()),
     );

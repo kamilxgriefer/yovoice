@@ -165,6 +165,7 @@ class ProfileHeader extends StatelessWidget {
               photoUrl: profile.photoUrl,
               displayName: profile.displayName,
               backgroundColor: const Color(0xFF281133),
+              premium: profile.premiumIdentity,
             ),
           ),
           const SizedBox(width: 16),

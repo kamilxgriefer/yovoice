@@ -33,6 +33,17 @@ class ClubService {
   CollectionReference<Map<String, dynamic>> get _clubs =>
       _firestore.collection('clubs');
 
+  /// How many clubs the signed-in user currently owns. Used by the
+  /// premium club-creation gate (entitlements.maxOwnedClubs) — a count
+  /// aggregate, so no documents are downloaded.
+  Future<int> countOwnedClubs() async {
+    final snapshot = await _clubs
+        .where('ownerId', isEqualTo: _user.uid)
+        .count()
+        .get();
+    return snapshot.count ?? 0;
+  }
+
   User get _user {
     final user = _auth.currentUser;
     if (user == null) {

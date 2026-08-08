@@ -1,4 +1,9 @@
 import 'package:flutter/material.dart';
+
+import 'package:yovoice/features/premium/premium_gates.dart';
+import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
+import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
+import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -170,6 +175,24 @@ class _CreatorStudioContent extends StatelessWidget {
           _PersonalAccountBanner(profile: profile),
           const SizedBox(height: 14),
         ],
+        // Expiration policy (ADR-024): a Creator whose Premium lapsed
+        // keeps every byte of Creator data — the paused banner explains
+        // why premium tools are unavailable instead of hiding them.
+        if (profile.accountType != AccountType.personal)
+          StreamBuilder<SubscriptionEntitlements>(
+            stream: EntitlementService().watchCurrentEntitlements(),
+            builder: (context, snapshot) {
+              final entitlements =
+                  snapshot.data ?? SubscriptionEntitlements.free;
+              if (!snapshot.hasData || entitlements.creatorEnabled) {
+                return const SizedBox.shrink();
+              }
+              return const Padding(
+                padding: EdgeInsets.only(bottom: 14),
+                child: _CreatorPausedBanner(),
+              );
+            },
+          ),
         _QuickActionsRow(),
         const SizedBox(height: 24),
 
@@ -484,9 +507,15 @@ class _QuickActionsRow extends StatelessWidget {
           child: _QuickAction(
             icon: Icons.hub_rounded,
             label: 'Create Club',
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const CreateClubScreen()),
-            ),
+            onTap: () async {
+              if (!await PremiumGates.ensureCanCreateClub(context)) return;
+              if (!context.mounted) return;
+              await Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const CreateClubScreen(),
+                ),
+              );
+            },
           ),
         ),
         const SizedBox(width: 10),
@@ -1005,6 +1034,55 @@ class _ErrorBody extends StatelessWidget {
           textAlign: TextAlign.center,
           style: const TextStyle(color: Colors.white),
         ),
+      ),
+    );
+  }
+}
+
+/// Shown when the account is Creator but the Premium subscription has
+/// lapsed. Data is never deleted; tools resume with Premium.
+class _CreatorPausedBanner extends StatelessWidget {
+  const _CreatorPausedBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2A1A0E),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFFFB547).withValues(alpha: .35),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.pause_circle_outline_rounded,
+            color: Color(0xFFFFB547),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'Creator tools are paused — your Premium has ended. Your '
+              'Creator profile, followers and content are safe.',
+              style: TextStyle(
+                color: Color(0xFFF5D9A8),
+                fontSize: 12.5,
+                height: 1.4,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const PremiumScreen()),
+            ),
+            child: const Text(
+              'Explore Premium',
+              style: TextStyle(color: Color(0xFFFFB547), fontSize: 12),
+            ),
+          ),
+        ],
       ),
     );
   }

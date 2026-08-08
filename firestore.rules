@@ -49,6 +49,33 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    // Premium entitlement check. entitlements/{uid} is written ONLY by
+    // Cloud Functions (client writes are denied below), so this cannot be
+    // self-granted from a modified client. Validity is time-based —
+    // request.time vs currentPeriodEnd — so expiry enforces itself with
+    // no scheduled job in the authorization path. "grace" covers billing
+    // retry so a failed card doesn't strip capabilities mid-cycle.
+    function hasActivePremium() {
+      return isSignedIn() &&
+          exists(/databases/$(database)/documents/entitlements/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/entitlements/$(request.auth.uid))
+            .data.status in ['active', 'trialing', 'grace'] &&
+          request.time < get(/databases/$(database)/documents/entitlements/$(request.auth.uid))
+            .data.currentPeriodEnd;
+    }
+
+    // accountType is client-writable ONLY within these transitions:
+    // keeping it unchanged, or setting 'personal' (always allowed), or
+    // setting 'creator' with active Premium. 'official' is never
+    // client-settable. Before this rule ANY client could write
+    // accountType: 'creator' — Creator gating was UI-only.
+    function accountTypeChangeAllowed() {
+      return !request.resource.data.diff(resource.data)
+            .affectedKeys().hasAny(['accountType']) ||
+          request.resource.data.accountType == 'personal' ||
+          (request.resource.data.accountType == 'creator' && hasActivePremium());
+    }
+
     function isOneOfUsers(firstUserId, secondUserId) {
       return isSignedIn() &&
           (request.auth.uid == firstUserId ||
@@ -168,10 +195,13 @@ service cloud.firestore {
       // follow me, I block them) and must be able to correct their own
       // followingCount down by one in that same transaction. No other
       // field may move on someone else's doc.
+      // NB: premiumIdentity is deliberately NOT in this allowlist — it is
+      // the public mirror of the server-managed entitlement and may only
+      // be written by Cloud Functions (Admin SDK bypasses rules).
       allow update: if isSignedIn() &&
           (
             isOwner(userId)
-              ? request.resource.data.diff(resource.data).affectedKeys()
+              ? (request.resource.data.diff(resource.data).affectedKeys()
                   .hasOnly([
                     'uid', 'email', 'displayName', 'username', 'photoUrl',
                     'bannerUrl', 'bio', 'country', 'nativeLanguage',
@@ -184,7 +214,7 @@ service cloud.firestore {
                     'momentCount', 'friendCount', 'unlockedTitleIds',
                     'selectedTitleId', 'achievementsUpdatedAt',
                     'notificationPreferences',
-                  ])
+                  ]) && accountTypeChangeAllowed())
               : request.resource.data.diff(resource.data).affectedKeys()
                   .hasOnly(['friendCount', 'followerCount', 'followingCount'])
           );
@@ -396,10 +426,23 @@ service cloud.firestore {
       }
     }
 
+    // Trusted subscription state. Written exclusively by Cloud Functions
+    // (premium/entitlements.js); a client can read only its own document
+    // and can never write, so premium cannot be self-granted.
+    match /entitlements/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false;
+    }
+
     match /clubs/{clubId} {
       allow read: if isSignedIn();
+      // Club creation is a Premium capability (docs/Decisions.md ADR-024).
+      // The per-user owned-club limit (entitlements.maxOwnedClubs) is
+      // enforced client-side — rules can't count documents — so the hard
+      // server gate here is the premium requirement itself.
       allow create: if isVerified() &&
-          request.resource.data.ownerId == request.auth.uid;
+          request.resource.data.ownerId == request.auth.uid &&
+          hasActivePremium();
       allow update: if isClubOwner(clubId) ||
           canManageClub(clubId) ||
           (
