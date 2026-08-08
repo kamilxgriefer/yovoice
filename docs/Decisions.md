@@ -1254,3 +1254,88 @@ write allowlist with no gate. No billing/IAP code existed anywhere.
   verification credentials, and an IAP client plugin remain manual.
 - EntitlementService caches one replayed stream per uid (the
   ProfileService pattern) and fails closed: errors emit FREE.
+
+## ADR-025: Profile media crop editor ships the final cropped JPEG, not crop metadata
+
+**Status**: Accepted
+**Date**: 2026-08-08
+
+### Context
+
+The P1 profile-media pass required a real crop/reposition editor
+(pinch-zoom, drag, fixed 1:1 avatar frame with circular preview, real
+16:9 banner frame) instead of uploading the picked file as-is and
+letting `BoxFit.cover` decide what's visible. Two architectures were on
+the table: (A) upload the final cropped image, or (B) store the original
+plus deterministic crop metadata (scale / x / y / crop rect) and apply
+it at display time.
+
+### Decision
+
+Option A. `ImageCrop` (`lib/features/profile/data/services/image_crop.dart`)
+decodes with `ui.instantiateImageCodec` (EXIF-correct on all platforms),
+maps the `InteractiveViewer` transform inverse onto source pixels, draws
+the crop through a `PictureRecorder`, and JPEG-encodes via
+`package:image` (quality 85; 1024×1024 avatars, 1920×1080 banners).
+`ImageCropScreen` is the editor UI; `EditProfileScreen._pick` routes
+every pick through it, and the pending/Save semantics of ADR-021 are
+unchanged — the pending bytes are simply the cropped render. The picker
+now requests 2× the output edge so the editor can zoom to 2× before the
+render has to upscale.
+
+### Reasoning
+
+One artifact renders identically on Web and iOS with zero display-time
+transform math; every existing consumer (UserAvatar, ProfileBanner,
+conversations, clubs, the ADR-023 fan-out copies) keeps working
+unchanged; and there is no cross-platform crop-metadata schema to keep
+in sync (option B would have needed every consumer on every platform —
+including the website — to apply the transform identically forever).
+Trade-off: the original never leaves the device, so re-cropping means
+re-picking — the same trade Instagram/WhatsApp/Discord make.
+
+### Consequences
+
+- New dependency: `package:image` (pure Dart, Web-safe) — encode only.
+- Uploads are always JPEG now regardless of picked format.
+- The 10 MB `storage.rules` cap for `users/{uid}/profile/*` can come
+  back down once real-world sizes are observed (Roadmap follow-up).
+- Regression tests: `test/image_crop_test.dart` (geometry + 1:1 output),
+  `test/profile_save_e2e_test.dart` (whole pipeline through the editor).
+
+## ADR-026: "More" destinations re-host the shell's bottom navigation (amends ADR-019)
+
+**Status**: Accepted
+**Date**: 2026-08-08
+
+### Context
+
+P0 report: "the bottom navigation randomly disappears" when entering
+screens through More. It wasn't random — `_openMoreDestination` pushed
+each destination as a plain full-screen `MaterialPageRoute`, which
+covers the shell `Scaffold` and therefore its bottom bar (deterministic,
+but wrong per product intent). Product decision: main destinations
+reached from More (Friends, Discover, Clubs, Notifications, Awards,
+Creator Studio, Settings) are shell-level surfaces and must keep the
+persistent bottom navigation; deep detail flows (a chat, a room, edit
+profile, a settings subpage, another user's profile) intentionally cover
+it.
+
+### Decision
+
+`MoreDestinationHost` (`main_shell.dart`) is the single wrapper for
+every pushed More destination: it re-hosts the shell's own private
+`_BottomNavigation` widget — one source of truth, nothing reimplemented
+per screen — wired so any bar tap pops back to the shell FIRST and then
+forwards to the shell's handler (tab switch, voice sheet, More menu).
+ADR-019's "no wrapper AppBar" rule still stands: destination screens
+keep their own complete headers; only the bottom bar is re-hosted.
+
+### Consequences
+
+- Bottom-nav visibility is now policy, not an accident of which
+  navigation API a screen happened to use.
+- Bar state (selected tab, unread badge) on a pushed destination
+  reflects the shell state at push time; taps always land on the live
+  shell because they pop first.
+- Regression tests: `test/more_destination_nav_test.dart`.

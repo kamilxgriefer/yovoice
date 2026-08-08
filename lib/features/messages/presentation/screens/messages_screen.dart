@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
+import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
@@ -331,17 +333,14 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 
   String _readableError(Object? error) {
-    final message = error.toString();
-
-    if (message.contains('permission-denied')) {
-      return 'Firestore permission denied. Check your security rules.';
-    }
-
-    if (message.contains('failed-precondition') || message.contains('index')) {
-      return 'Firestore needs an index for conversations.';
-    }
-
-    return 'Could not load your conversations.';
+    // Developer-speak ("check your security rules", "needs an index")
+    // never belongs in user-facing copy — route through the shared
+    // mapping with a flow-specific fallback.
+    if (error == null) return 'Could not load your conversations.';
+    return friendlyErrorMessage(
+      error,
+      fallback: 'Could not load your conversations.',
+    );
   }
 }
 

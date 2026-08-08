@@ -51,6 +51,12 @@ async function main() {
   // already-onboarded users throughout the rest of this file. The
   // dedicated `unverified` context further down is what actually
   // exercises the gate itself.
+  // The suite seeds documents as it goes and was only deterministic on a
+  // brand-new emulator; running it twice against the same instance made
+  // unrelated cases fail on leftover state (blocked pairs, existing
+  // conversations). Clearing up front makes every run start identical.
+  await testEnv.clearFirestore();
+
   const host = testEnv.authenticatedContext("host-uid", {
     email_verified: true,
   });
@@ -1253,6 +1259,77 @@ async function main() {
       }),
     );
   });
+
+  // ── Conversation bootstrap (first-chat transaction.get) ──────────
+
+  await check(
+    "get on a NONEXISTENT conversation whose id contains my uid succeeds " +
+      "(openOrCreateConversation's transaction.get)",
+    async () => {
+      await assertSucceeds(
+        getDoc(doc(host.firestore(), "conversations/attacker-uid_host-uid")),
+      );
+      await assertSucceeds(
+        getDoc(doc(host.firestore(), "conversations/host-uid_zzz-uid")),
+      );
+    },
+  );
+
+  await check(
+    "get on a nonexistent conversation between two OTHER users is denied",
+    async () => {
+      await assertFails(
+        getDoc(
+          doc(attacker.firestore(), "conversations/host-uid_invitee-uid"),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "existing conversation stays participant-only for get and list",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "conversations/host-uid_invitee-uid"), {
+          participantIds: ["host-uid", "invitee-uid"],
+        });
+      });
+      await assertSucceeds(
+        getDoc(doc(host.firestore(), "conversations/host-uid_invitee-uid")),
+      );
+      await assertFails(
+        getDoc(
+          doc(attacker.firestore(), "conversations/host-uid_invitee-uid"),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "friendAccepted notification: acceptor can write it into the " +
+      "sender's feed with the exact payload notify() sends",
+    async () => {
+      await assertSucceeds(
+        setDoc(
+          doc(
+            host.firestore(),
+            "users/invitee-uid/notifications/friendAccepted_host-uid",
+          ),
+          {
+            type: "friendAccepted",
+            actorId: "host-uid",
+            actorName: "Host",
+            actorPhotoUrl: null,
+            targetId: null,
+            targetLabel: null,
+            isRead: false,
+            createdAt: new Date(),
+            dedupeKey: null,
+          },
+        ),
+      );
+    },
+  );
 
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();

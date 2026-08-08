@@ -51,6 +51,47 @@ permission flags).
 
 ## UI
 
+- **Fixed (P0, 2026-08-08): raw Dart exception text shown to users when
+  opening a chat.** Tapping the message icon on a friend could render
+  "Dart exception thrown from converted Future…" directly in the UI. Two
+  stacked root causes: (1) `openOrCreateConversation`'s
+  `transaction.get()` on a not-yet-existing conversation hit a Firestore
+  rule that dereferenced `resource.data` on a null resource — a rule
+  *evaluation error*, not a permission denial — which Flutter Web boxes
+  into that exception text (rules fixed: `get` and `list` split, null
+  resource handled by checking the caller's uid inside the deterministic
+  conversation id; deployed); (2) 15+ screens rendered `error.toString()`
+  directly — all now route through `intentionalOrFriendly()` /
+  `friendlyErrorMessage()` (`lib/core/helpers/error_messages.dart`), and
+  `auth_provider` stores mapped messages instead of raw exceptions.
+  Verified live on iOS Simulator and the deployed web app (first-chat
+  bootstrap opens cleanly). Regression tests: `test/error_messages_test.dart`,
+  rules suite conversation-bootstrap cases.
+- **Fixed (P0, 2026-08-08): friend-request acceptance never notified the
+  original sender.** `notify()`'s dedupe path queried the *recipient's*
+  notification subcollection, which rules forbid — the permission-denied
+  silently aborted every deduped notify, so the `friendAccepted`
+  notification was never written. Rewritten to use deterministic doc IDs
+  (the dedupe key IS the doc id; a duplicate becomes a forbidden
+  cross-user update, caught and treated as already-sent — zero extra
+  reads). Acceptance also retires the acceptor's own `friendRequest`
+  notification via `markMatchingRead()`, failures are logged instead of
+  swallowed, and decline/cancel stay intentionally silent. Verified by
+  emulator rules tests and `test/friend_accept_notification_test.dart`;
+  a live two-account UI check needs a second signed-in session
+  (UNVERIFIED live — no second test-account session was available to
+  this session's tooling).
+- **Fixed (P0, 2026-08-08): bottom navigation disappeared on More
+  destinations.** Deterministic, not random: `_openMoreDestination`
+  pushed full-screen routes that covered the shell. Main More
+  destinations now keep the persistent bar via `MoreDestinationHost`
+  (single source of truth re-hosting the shell's own `_BottomNavigation`;
+  bar taps pop back to the shell first). Deep detail flows still cover
+  the bar by design. See
+  [ADR-026](Decisions.md#adr-026-more-destinations-re-host-the-shells-bottom-navigation-amends-adr-019).
+  Verified live on iOS (Settings, Friends) and deployed web
+  (Notification preferences). Regression tests:
+  `test/more_destination_nav_test.dart`.
 - **Fixed: Settings screen was a blank grey panel on Flutter Web.**
   `settings_screen.dart` imported `dart:io`'s `Platform` and called
   `Platform.isIOS` unconditionally inside `_deviceLabel()`, which is

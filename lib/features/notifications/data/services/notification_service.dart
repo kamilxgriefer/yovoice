@@ -94,15 +94,6 @@ class NotificationService {
       );
     }
 
-    if (dedupeKey != null) {
-      final existing = await _notificationsFor(recipientId)
-          .where('dedupeKey', isEqualTo: dedupeKey)
-          .where('isRead', isEqualTo: false)
-          .limit(1)
-          .get();
-      if (existing.docs.isNotEmpty) return;
-    }
-
     final actorDoc = await _users.doc(actor.uid).get();
     final actorData = actorDoc.data() ?? const <String, dynamic>{};
     final actorName =
@@ -113,7 +104,7 @@ class NotificationService {
         : 'YO Voice user';
     final actorPhotoUrl = (actorData['photoUrl'] as String?) ?? actor.photoURL;
 
-    await _notificationsFor(recipientId).add({
+    final payload = {
       'type': type.name,
       'actorId': actor.uid,
       'actorName': actorName,
@@ -123,7 +114,56 @@ class NotificationService {
       'isRead': false,
       'createdAt': FieldValue.serverTimestamp(),
       'dedupeKey': dedupeKey,
-    });
+    };
+
+    // Dedupe via DETERMINISTIC DOC ID, not a query: rules only let a user
+    // read their OWN notification feed, so the old approach — querying the
+    // RECIPIENT's subcollection for an existing dedupeKey — was
+    // permission-denied every time it ran, which silently killed any
+    // notify() call that passed a dedupeKey. With a fixed id, a repeat of
+    // the same event is an UPDATE to an existing doc, which the rules
+    // reject for non-owners — exactly the dedupe behaviour we want, with
+    // zero extra reads.
+    if (dedupeKey != null) {
+      try {
+        await _notificationsFor(recipientId).doc(dedupeKey).set(payload);
+      } on FirebaseException catch (error) {
+        if (error.code == 'permission-denied') {
+          // Duplicate: the deterministic doc already exists and the write
+          // became a (forbidden) cross-user update. Intended outcome.
+          return;
+        }
+        rethrow;
+      }
+      return;
+    }
+
+    await _notificationsFor(recipientId).add(payload);
+  }
+
+  /// Marks the caller's own unread notifications matching [type] +
+  /// [actorId] as read — used when the underlying event is resolved (e.g.
+  /// accepting a friend request retires the request notification) so
+  /// stale entries don't stay actionable.
+  Future<void> markMatchingRead({
+    required NotificationType type,
+    required String actorId,
+  }) async {
+    final own = _notificationsFor(_currentUser.uid);
+    final matches = await own
+        .where('type', isEqualTo: type.name)
+        .where('actorId', isEqualTo: actorId)
+        .where('isRead', isEqualTo: false)
+        .get();
+    if (matches.docs.isEmpty) return;
+    final batch = _firestore.batch();
+    for (final doc in matches.docs) {
+      batch.update(doc.reference, {
+        'isRead': true,
+        'readAt': FieldValue.serverTimestamp(),
+      });
+    }
+    await batch.commit();
   }
 
   // --- FCM device tokens ---

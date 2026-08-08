@@ -38,3 +38,20 @@ String friendlyErrorMessage(Object error, {String? fallback}) {
 
   return fallback ?? 'Something went wrong. Please try again.';
 }
+
+/// For flows that throw INTENTIONAL user-facing copy via StateError /
+/// ArgumentError (e.g. "You must be signed in to start a conversation."),
+/// surfaces that copy; everything else — FirebaseException, boxed JS
+/// interop errors ("Dart exception thrown from converted Future..."),
+/// unexpected internals — is mapped through [friendlyErrorMessage] so raw
+/// exception text can never reach the UI.
+String intentionalOrFriendly(Object error, {String? fallback}) {
+  if (error is StateError) {
+    return error.message;
+  }
+  if (error is ArgumentError && error.message is String) {
+    final message = error.message as String;
+    if (message.isNotEmpty) return message;
+  }
+  return friendlyErrorMessage(error, fallback: fallback);
+}

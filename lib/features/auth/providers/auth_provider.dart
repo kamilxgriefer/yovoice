@@ -42,7 +42,9 @@ class AuthController {
 
       return true;
     } catch (error) {
-      ref.read(authErrorProvider.notifier).state = error.toString();
+      ref.read(authErrorProvider.notifier).state = _service.getErrorMessage(
+        error,
+      );
       return false;
     } finally {
       ref.read(authLoadingProvider.notifier).state = false;
@@ -66,7 +68,9 @@ class AuthController {
 
       return true;
     } catch (error) {
-      ref.read(authErrorProvider.notifier).state = error.toString();
+      ref.read(authErrorProvider.notifier).state = _service.getErrorMessage(
+        error,
+      );
       return false;
     } finally {
       ref.read(authLoadingProvider.notifier).state = false;
@@ -81,7 +85,9 @@ class AuthController {
       await _service.signInWithGoogle();
       return true;
     } catch (error) {
-      ref.read(authErrorProvider.notifier).state = error.toString();
+      ref.read(authErrorProvider.notifier).state = _service.getErrorMessage(
+        error,
+      );
       return false;
     } finally {
       ref.read(authLoadingProvider.notifier).state = false;
@@ -95,7 +101,9 @@ class AuthController {
       await PushNotificationService.instance.unregisterCurrentDevice();
       await _service.signOut();
     } catch (error) {
-      ref.read(authErrorProvider.notifier).state = error.toString();
+      ref.read(authErrorProvider.notifier).state = _service.getErrorMessage(
+        error,
+      );
     }
   }
 

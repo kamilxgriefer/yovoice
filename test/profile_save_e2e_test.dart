@@ -6,6 +6,7 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
@@ -192,17 +193,41 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // --- User flow: pick both images through the real buttons. ---
-      await tester.tap(find.text('Change avatar'));
-      await tester.pumpAndSettle();
+      // --- User flow: pick both images through the real buttons. Each
+      // pick now routes through the REAL crop editor: picker resolves,
+      // the bytes are decoded (real async codec work — hence the
+      // runAsync windows), the editor opens, and "Use photo" renders the
+      // final cropped JPEG. ---
+      Future<void> pickThroughCropEditor(String buttonLabel) async {
+        await tester.tap(find.text(buttonLabel));
+        await tester.pump();
+        // Let ImageCrop.decode finish on the real event loop.
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 300)),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Use photo'),
+          findsOneWidget,
+          reason: 'crop editor must open after picking ($buttonLabel)',
+        );
+        await tester.tap(find.text('Use photo'));
+        await tester.pump();
+        // Let renderCroppedJpeg finish on the real event loop.
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 600)),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await pickThroughCropEditor('Change avatar');
       expect(
         find.text('Avatar ready'),
         findsOneWidget,
-        reason: 'pending avatar state must appear after picking',
+        reason: 'pending avatar state must appear after crop confirm',
       );
 
-      await tester.tap(find.text('Change banner'));
-      await tester.pumpAndSettle();
+      await pickThroughCropEditor('Change banner');
       expect(find.text('Banner ready'), findsOneWidget);
 
       // Edit the bio through the real field. It sits below the fold in
@@ -234,23 +259,41 @@ void main() {
       ))!;
       final names = avatarList.items.map((r) => r.name).toList();
       expect(
-        names.where((n) => n.startsWith('avatar_') && n.endsWith('.png')),
+        names.where((n) => n.startsWith('avatar_') && n.endsWith('.jpg')),
         hasLength(1),
-        reason: 'exactly one uploaded avatar object, timestamped png: $names',
+        reason:
+            'exactly one uploaded avatar object, timestamped jpg '
+            '(the CROPPED render, not the original): $names',
       );
       expect(
-        names.where((n) => n.startsWith('banner_') && n.endsWith('.png')),
+        names.where((n) => n.startsWith('banner_') && n.endsWith('.jpg')),
         hasLength(1),
       );
 
+      // The stored object is the crop editor's output: a JPEG at exactly
+      // the product dimensions — 1:1 for the avatar, 16:9 for the banner.
       final avatarRef = avatarList.items.firstWhere(
         (r) => r.name.startsWith('avatar_'),
       );
       final storedAvatar = await tester.runAsync(() => avatarRef.getData());
+      final decodedAvatar = img.decodeJpg(storedAvatar!)!;
+      expect(decodedAvatar.width, 1024);
       expect(
-        storedAvatar,
-        avatarBytes,
-        reason: 'stored bytes must be exactly the picked image',
+        decodedAvatar.height,
+        1024,
+        reason: 'avatar crop output must remain exactly 1:1',
+      );
+
+      final bannerRef = avatarList.items.firstWhere(
+        (r) => r.name.startsWith('banner_'),
+      );
+      final storedBanner = await tester.runAsync(() => bannerRef.getData());
+      final decodedBanner = img.decodeJpg(storedBanner!)!;
+      expect(decodedBanner.width, 1920);
+      expect(
+        decodedBanner.height,
+        1080,
+        reason: 'banner crop output must be the real 16:9 banner ratio',
       );
 
       // --- PROOF 2: Firestore contains the URLs in the canonical fields.

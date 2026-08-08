@@ -257,11 +257,12 @@ class ProfileService {
 
     // maxWidth keeps a 50MP camera original from being read into memory at
     // full size on the way in. image_picker ignores it on Web, which is why
-    // the byte-size check below is the real guard.
+    // the byte-size check below is the real guard. Twice the output edge so
+    // the crop editor can zoom to 2x before the final render has to upscale.
     final image = await _picker.pickImage(
       source: ImageSource.gallery,
       imageQuality: 90,
-      maxWidth: rules.maxOutputEdge.toDouble(),
+      maxWidth: (rules.maxOutputEdge * 2).toDouble(),
     );
 
     if (image == null) {

@@ -100,7 +100,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     final message = error.toString();
 
     if (message.contains('permission-denied')) {
-      return 'Firestore blocked this action. Final security rules still need to be deployed.';
+      return "You don't have permission to do that.";
     }
 
     if (message.toLowerCase().contains('full')) {

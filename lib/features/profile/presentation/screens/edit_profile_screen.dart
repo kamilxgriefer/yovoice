@@ -1,10 +1,14 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_upsell_sheet.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/data/services/image_crop.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/features/profile/presentation/screens/image_crop_screen.dart';
 import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -169,11 +173,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final picked = await _service.pickProfileImage(kind);
       // Null means the user dismissed the picker — not an error.
       if (!mounted || picked == null) return;
+
+      // Crop/adjust step: the editor returns the final processed JPEG —
+      // what gets stored IS the crop the user composed, not the original
+      // plus display-time alignment tricks.
+      final decoded = await ImageCrop.decode(picked.bytes);
+      if (!mounted) {
+        decoded.dispose();
+        return;
+      }
+      final cropped = await Navigator.of(context).push<Uint8List>(
+        MaterialPageRoute<Uint8List>(
+          builder: (_) => ImageCropScreen(image: decoded, kind: kind),
+        ),
+      );
+      decoded.dispose();
+      // Null means the user backed out of the editor — not an error.
+      if (!mounted || cropped == null) return;
+
+      final processed = PickedProfileImage(
+        kind: kind,
+        bytes: cropped,
+        format: ProfileImageFormat.jpeg,
+      );
       setState(() {
         if (avatar) {
-          _pendingAvatar = picked;
+          _pendingAvatar = processed;
         } else {
-          _pendingBanner = picked;
+          _pendingBanner = processed;
         }
       });
     } catch (error) {

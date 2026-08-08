@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
 import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
@@ -132,7 +134,7 @@ class _MainShellState extends State<MainShell> {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(error.toString().replaceFirst('Bad state: ', '')),
+          content: Text(intentionalOrFriendly(error)),
         ),
       );
     }
@@ -314,9 +316,18 @@ class _MainShellState extends State<MainShell> {
   Future<void> _openMoreDestination(MoreDestination destination) async {
     final screen = moreDestinationScreen(destination);
 
-    await Navigator.of(
-      context,
-    ).push<void>(MaterialPageRoute<void>(builder: (_) => screen));
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => MoreDestinationHost(
+          body: screen,
+          selectedIndex: _selectedIndex,
+          unreadConversationCount: _unreadConversationCount,
+          onDestinationSelected: _onDestinationSelected,
+          onVoicePressed: _openVoiceAction,
+          onMorePressed: _openMoreMenu,
+        ),
+      ),
+    );
   }
 
   @override
@@ -342,6 +353,62 @@ class _MainShellState extends State<MainShell> {
         onDestinationSelected: _onDestinationSelected,
         onVoicePressed: _openVoiceAction,
         onMorePressed: _openMoreMenu,
+      ),
+    );
+  }
+}
+
+/// NAVIGATION POLICY (deliberate, not incidental): main destinations
+/// reached from "More" are shell-level surfaces, so they keep the
+/// persistent bottom navigation — this host re-hosts the SAME
+/// [_BottomNavigation] widget wired back to the shell's state (one source
+/// of truth for the bar; nothing is reimplemented per screen). Deep
+/// detail flows pushed from WITHIN those screens (a friend's profile, a
+/// club's detail, a settings subpage, a chat, a room) continue to push
+/// plain full-screen routes and intentionally cover the bar. Bar taps
+/// here pop back to the shell FIRST, then act, so a tab switch always
+/// lands on the real shell.
+///
+/// Public (unlike the rest of this file's internals) so the navigation
+/// regression test can pump the production wrapper directly.
+class MoreDestinationHost extends StatelessWidget {
+  const MoreDestinationHost({
+    required this.body,
+    required this.selectedIndex,
+    required this.unreadConversationCount,
+    required this.onDestinationSelected,
+    required this.onVoicePressed,
+    required this.onMorePressed,
+    super.key,
+  });
+
+  final Widget body;
+  final int selectedIndex;
+  final int unreadConversationCount;
+  final ValueChanged<int> onDestinationSelected;
+  final VoidCallback onVoicePressed;
+  final VoidCallback onMorePressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _MainShellState._background,
+      body: body,
+      bottomNavigationBar: _BottomNavigation(
+        selectedIndex: selectedIndex,
+        unreadConversationCount: unreadConversationCount,
+        onDestinationSelected: (index) {
+          Navigator.of(context).pop();
+          onDestinationSelected(index);
+        },
+        onVoicePressed: () {
+          Navigator.of(context).pop();
+          onVoicePressed();
+        },
+        onMorePressed: () {
+          Navigator.of(context).pop();
+          onMorePressed();
+        },
       ),
     );
   }

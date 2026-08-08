@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
+import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -143,7 +145,12 @@ class _HomeScreenState extends State<HomeScreen> {
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
-            content: Text(error.toString().replaceFirst('Bad state: ', '')),
+            content: Text(
+              intentionalOrFriendly(
+                error,
+                fallback: "Couldn't open this chat. Please try again.",
+              ),
+            ),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -172,7 +179,12 @@ class _HomeScreenState extends State<HomeScreen> {
         ..hideCurrentSnackBar()
         ..showSnackBar(
           SnackBar(
-            content: Text(error.toString().replaceFirst('Bad state: ', '')),
+            content: Text(
+              intentionalOrFriendly(
+                error,
+                fallback: "Couldn't open this room. Please try again.",
+              ),
+            ),
             behavior: SnackBarBehavior.floating,
           ),
         );

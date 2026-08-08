@@ -16,6 +16,25 @@ someone decide what to pick up next.
 
 ## Done
 
+- P0/P1 bugfix + profile media pass (2026-08-08) — (1) raw
+  Dart/Firebase exception text can no longer reach the UI: root cause of
+  the "Dart exception thrown from converted Future" chat error was a
+  Firestore rule evaluation error on `transaction.get()` of a
+  not-yet-existing conversation (rules fixed + deployed), and every
+  `error.toString()` render was replaced with
+  `intentionalOrFriendly()`/`friendlyErrorMessage()`
+  (`lib/core/helpers/error_messages.dart`, `test/error_messages_test.dart`);
+  (2) accepting a friend request now notifies the ORIGINAL SENDER —
+  `notify()`'s dedupe query was permission-denied and silently killed the
+  write; replaced with deterministic dedupe doc IDs
+  (`test/friend_accept_notification_test.dart`); (3) More destinations
+  keep the persistent bottom navigation via `MoreDestinationHost`
+  ([ADR-026](Decisions.md#adr-026-more-destinations-re-host-the-shells-bottom-navigation-amends-adr-019),
+  `test/more_destination_nav_test.dart`); (4) real avatar/banner crop
+  editor — pinch-zoom/drag/reset, circular avatar preview, 16:9 banner
+  frame, final cropped JPEG uploaded
+  ([ADR-025](Decisions.md#adr-025-profile-media-crop-editor-ships-the-final-cropped-jpeg-not-crop-metadata),
+  `test/image_crop_test.dart`).
 - New message sheet grey-panel fix — `FriendService.watchFriends()` now
   returns a broadcast + last-value-replay stream, so the sheet can share
   one stream instance with `_FriendsRow` without throwing
@@ -131,27 +150,12 @@ someone decide what to pick up next.
 
 Ordered by rough priority — re-prioritize freely, this isn't a queue.
 
-### 0. Profile image crop/reposition editor + processing pipeline
+### 0. Lower the `users/{uid}/profile/*` storage cap
 
-- **Status**: Not started. Validation, limits, previews and save
-  semantics landed
-  ([ADR-021](Decisions.md#adr-021-profile-images-are-pending-local-changes-until-save));
-  the interactive step and the re-encode did not.
-- **Description**: After picking an avatar/banner the user should get a
-  YO Voice-styled editor to pan/zoom/crop before upload — 1:1 for
-  avatars (circular mask over a square asset), 16:9 for banners, with
-  cancel/confirm. The crop result should then be resized to the
-  `ProfileImageRules` output edge (1024 px / 1920 px) and re-encoded so a
-  normal phone photo does not upload at full size. Suggested pipeline:
-  decode with `ui.instantiateImageCodec` (applies EXIF orientation on all
-  three platforms), draw the crop rect through a `PictureRecorder`, read
-  back `rawRgba`, and JPEG-encode. `dart:ui` can only export PNG, so the
-  encode step needs `package:image` (pure Dart, Web-safe) — the one new
-  dependency this work would justify.
-- **Why it matters**: Without it the picked file is uploaded essentially
-  as-is, which is why `storage.rules` had to be raised to 10 MB for
-  `users/{uid}/profile/*`. Once re-encoding lands that cap should come
-  back down.
+- **Status**: Unblocked by the crop editor (now Done): uploads are
+  re-encoded 1024×1024 / 1920×1080 JPEGs (~100–300 KB), so the 10 MB
+  `storage.rules` cap raised for as-is uploads can come back down once
+  real-world sizes are observed.
 
 ### 0b. Storage rules have no emulator test coverage
 

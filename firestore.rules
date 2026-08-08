@@ -361,7 +361,25 @@ service cloud.firestore {
     }
 
     match /conversations/{conversationId} {
-      allow read: if isSignedIn() &&
+      // get is split from list because openOrCreateConversation runs a
+      // transaction.get() on a conversation that may not exist yet (the
+      // first chat between two people). The old single read rule
+      // dereferenced resource.data on that missing doc — a rule
+      // evaluation error, so the get was DENIED and starting any brand
+      // new chat failed (surfacing on web as the boxed "Dart exception
+      // thrown from converted Future" text). For missing docs the get is
+      // allowed only when the deterministic id (uidA_uidB, sorted)
+      // contains the caller's own uid — so nobody can probe whether two
+      // OTHER users have ever talked.
+      allow get: if isSignedIn() &&
+          (
+            resource == null
+              ? conversationId.matches(
+                  '(^' + request.auth.uid + '_.*)|(.*_' + request.auth.uid + '$)'
+                )
+              : request.auth.uid in resource.data.participantIds
+          );
+      allow list: if isSignedIn() &&
           request.auth.uid in resource.data.participantIds;
 
       allow create: if isVerified() &&

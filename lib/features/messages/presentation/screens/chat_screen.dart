@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+
 import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
 import 'package:yovoice/features/achievements/data/services/achievement_service.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
@@ -151,7 +153,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (error) {
       if (mounted) {
-        _showMessage(error.toString().replaceFirst('Bad state: ', ''));
+        _showMessage(intentionalOrFriendly(error));
       }
     } finally {
       if (mounted) {
@@ -321,7 +323,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     } catch (error) {
       if (mounted) {
-        _showMessage(error.toString());
+        _showMessage(intentionalOrFriendly(error));
       }
     }
   }
@@ -368,7 +370,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     } catch (error) {
       if (mounted) {
-        _showMessage(error.toString());
+        _showMessage(intentionalOrFriendly(error));
       }
     }
   }

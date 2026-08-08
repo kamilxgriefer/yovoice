@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+
 import 'package:yovoice/features/premium/premium_gates.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -103,7 +105,10 @@ class _ClubsScreenState extends State<ClubsScreen> {
                       }
                       if (clubSnapshot.hasError) {
                         return _ErrorState(
-                          message: clubSnapshot.error.toString(),
+                          message: friendlyErrorMessage(
+                            clubSnapshot.error ?? 'unknown',
+                            fallback: 'Could not load your clubs.',
+                          ),
                           onRetry: () => setState(() {}),
                         );
                       }

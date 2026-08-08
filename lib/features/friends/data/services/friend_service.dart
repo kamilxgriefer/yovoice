@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show debugPrint;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -384,12 +386,31 @@ class FriendService {
       tx.delete(senderDoc.collection('sentFriendRequests').doc(me.uid));
     });
 
+    // Notify the ORIGINAL SENDER their request was accepted. Deterministic
+    // dedupe id: re-accepting (double-tap, retry) can't duplicate it.
+    // Failures no longer vanish into a silent catch — the acceptance
+    // itself must still succeed, but the miss is logged for diagnosis.
     try {
       await _notifications.notify(
         recipientId: request.senderId,
         type: NotificationType.friendAccepted,
+        dedupeKey: 'friendAccepted_${me.uid}',
       );
-    } catch (_) {}
+    } catch (error) {
+      debugPrint('[NOTIFY] friendAccepted to ${request.senderId} failed: '
+          '${error.runtimeType}');
+    }
+
+    // The acceptor's own "sent you a friend request" notification is now
+    // resolved — retire it so it doesn't linger as an actionable item.
+    try {
+      await _notifications.markMatchingRead(
+        type: NotificationType.friendRequest,
+        actorId: request.senderId,
+      );
+    } catch (_) {
+      // Cosmetic cleanup; never fail the acceptance over it.
+    }
   }
 
   Future<void> declineFriendRequest(String senderId) async {

@@ -1,6 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+
 import 'package:yovoice/features/clubs/data/models/club_channel.dart';
 import 'package:yovoice/features/clubs/data/models/club_message.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
@@ -158,7 +160,10 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
                     return _ChatState(
                       icon: Icons.cloud_off_rounded,
                       title: 'Could not load messages',
-                      subtitle: snapshot.error.toString(),
+                      subtitle: friendlyErrorMessage(
+                        snapshot.error ?? 'unknown',
+                        fallback: 'Could not load this chat.',
+                      ),
                     );
                   }
                   final messages = snapshot.data ?? const <ClubMessage>[];
