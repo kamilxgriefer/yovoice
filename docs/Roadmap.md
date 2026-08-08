@@ -190,13 +190,13 @@ Ordered by rough priority — re-prioritize freely, this isn't a queue.
   (or a full functions deploy). Until then, avatar/display-name changes
   do not propagate to conversations, club member lists or voice moments.
 
-### 0e. Premium billing adapters + rules deploy
+### 0e. Premium billing adapters
 
-- **Status**: Architecture shipped (ADR-024); three pieces remain.
+- **Status**: Architecture shipped (ADR-024). Rules ARE live: a JVM was
+  installed 2026-08-08, the emulator suite passed 87/0 (including the
+  six premium cases) and firestore.rules deployed — club creation and
+  accountType:creator are now enforced server-side.
 - **Actions**:
-  1. Run `firestore-tests` (needs a JVM) and deploy `firestore.rules` —
-     until then the premium gates on club creation / accountType are
-     client-side only.
   2. Create store products `yovoice_premium_monthly` (€9.99) and
      `yovoice_premium_yearly` (€89.99) in App Store Connect + Play
      Console; add an IAP plugin client-side; implement the verification
