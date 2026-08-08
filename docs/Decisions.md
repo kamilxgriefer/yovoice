@@ -1031,3 +1031,80 @@ universal, previously-undiscovered bug — worth remembering that "looks
 right in a code read" isn't the same as "was ever actually opened and
 looked at," especially for a navigation path (More menu) that's one tap
 removed from the primary bottom navigation and easy to under-test.
+
+## ADR-020: Service streams shared by more than one widget must be broadcast + replay
+
+**Context.** `FriendService.watchFriends()` returned
+`StreamController<List<FriendUser>>().stream` — a single-subscription
+stream. `MessagesScreen` creates it once in `initState` and passes the same
+instance to two widgets: `_FriendsRow`, which is always mounted, and
+`NewMessageSheet`, which mounts when the user taps "New message". The
+second `listen()` threw `Bad state: Stream has already been listened to`,
+Flutter substituted its default `ErrorWidget` for that subtree, and in a
+release web build that renders as a plain light-grey rectangle with no
+text. It read as a layout/theming bug for months and was misattributed to
+native window chrome (ADR-016, which remains correct for the *flash* it
+describes — this was a second, unrelated defect).
+
+**Decision.** A stream returned by a service and handed to UI is part of
+that service's public contract, so it must tolerate more than one listener
+and must replay its latest value to late subscribers.
+`watchFriends()` now uses `StreamController.broadcast()` for the
+Firestore fan-in and wraps it in `Stream.multi`, which seeds each new
+subscriber with the cached list before forwarding live updates.
+
+**Reasoning.** Broadcast alone is not enough: the sheet subscribes *after*
+the first emission, and a bare broadcast stream delivers nothing until the
+next Firestore change, so the sheet would show a spinner indefinitely on a
+stable friends list. `Stream.multi` is the standard-library way to give
+each listener its own subscription and is enough here — no rxdart, no
+caching layer, no change to any caller.
+
+**Consequences.**
+- `onListen`/`onCancel` now fire on 0→1 and 1→0 listener transitions, so
+  `start()` resets the teardown flag and `onCancel` clears the per-friend
+  subscription map; a stream can legitimately be restarted.
+- Existing single-listener callers are unaffected.
+- The same shape should be used for any future service stream that a
+  screen may share. `watchConversations()` did not need it: Firestore's
+  own `snapshots()` is already broadcast, which is why only the friends
+  half of the sheet failed.
+- Regression coverage lives in `test/new_message_sheet_test.dart`, and
+  `lib/dev/new_message_preview.dart` can reproduce the pre-fix behaviour
+  on demand via its "Use pre-fix single-subscription streams" toggle.
+
+## ADR-021: Profile images are pending local changes until Save
+
+**Context.** Edit profile uploaded an avatar/banner to Storage and wrote
+the URL to Firestore the moment the user picked a file, while every text
+field on the same screen waited for the Save button. Pressing Back after
+picking an image therefore still changed the profile remotely, and a
+discarded pick left an orphaned Storage object that nothing ever deleted.
+The screen also rendered no preview of either image, so a successful
+upload produced no visible change — the "my new avatar doesn't appear"
+report.
+
+**Decision.** `ProfileService.pickProfileImage()` picks and validates but
+does not upload; it returns a `PickedProfileImage` (bytes + sniffed
+format). `EditProfileScreen` holds that as pending state, previews it
+straight from memory, and `_save()` uploads it alongside the text fields.
+Images upload before the Firestore text write so a failed upload aborts
+the whole save rather than half-applying it.
+
+**Reasoning.** One rule for the whole screen ("nothing is committed until
+Save") is easier to explain than two, it removes the orphaned-upload
+problem at the source rather than adding cleanup, and previewing from
+`MemoryImage` makes the new image appear instantly with no network round
+trip — which is what the user was actually asking for.
+
+**Consequences.**
+- `pickAndUploadImage()` is kept and now delegates, so any other caller
+  keeps working.
+- Nothing reaches Storage until Save, so there is no cleanup job to write.
+- Accepted formats are sniffed from magic bytes (JPEG/PNG/WebP) rather
+  than trusted from the file extension; limits are 5 MB / 1024 px for
+  avatars and 10 MB / 1920 px for banners, encoded in
+  `ProfileImageRules`.
+- The interactive crop/reposition step is **not** implemented yet; the
+  aspect ratios in `ProfileImageRules` (1:1 and 16:9) are already the
+  values that step should honour.

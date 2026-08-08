@@ -14,12 +14,28 @@ service firebase.storage {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
+    // Deployed 2026-08-08. Not emulator-tested — there is no storage rules
+    // harness yet (see Roadmap 0b). Verified by inspection instead:
+    // profile_service.dart is the only writer to this prefix and always
+    // sets one of the three content types below.
+    //
+    // Size cap matches ProfileImageRules' banner budget (10 MB source).
+    // It used to be 8 MB, which the client could not satisfy: a banner is
+    // accepted up to 10 MB and — until the re-encode step lands — the
+    // picked bytes are uploaded as-is on Web, where image_picker ignores
+    // maxWidth. A 9 MB banner therefore passed client validation and was
+    // then rejected here as "unauthorized". Content types are pinned to
+    // the three formats the app can decode everywhere rather than any
+    // image/*, so this is a narrower rule than before despite the higher
+    // ceiling. Tighten the size again once uploads are re-encoded.
     match /users/{userId}/profile/{fileName} {
       allow read: if true;
       allow write: if isSignedIn()
           && request.auth.uid == userId
-          && request.resource.size < 8 * 1024 * 1024
-          && request.resource.contentType.matches('image/.*');
+          && request.resource.size <= 10 * 1024 * 1024
+          && request.resource.contentType in [
+               'image/jpeg', 'image/png', 'image/webp'
+             ];
     }
 
     // room_image_service.dart uploads to room_images/{roomId}/{uid}_{ts}.ext —

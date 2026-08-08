@@ -16,6 +16,20 @@ someone decide what to pick up next.
 
 ## Done
 
+- New message sheet grey-panel fix — `FriendService.watchFriends()` now
+  returns a broadcast + last-value-replay stream, so the sheet can share
+  one stream instance with `_FriendsRow` without throwing
+  `Bad state: Stream has already been listened to` and rendering Flutter's
+  grey `ErrorWidget` over everything below the search field. Sheet also
+  owns a real `Material` surface and has a distinct dark error state.
+  ([ADR-020](Decisions.md#adr-020-service-streams-shared-by-more-than-one-widget-must-be-broadcast--replay),
+  `test/new_message_sheet_test.dart`, `lib/dev/new_message_preview.dart`.)
+- Profile image save semantics + validation — avatar/banner are picked and
+  validated (JPEG/PNG/WebP sniffed from magic bytes; 5 MB/1024 px and
+  10 MB/1920 px budgets in `ProfileImageRules`), previewed instantly from
+  memory in Edit profile, and committed on Save alongside the text fields
+  instead of uploading the instant they are chosen.
+  ([ADR-021](Decisions.md#adr-021-profile-images-are-pending-local-changes-until-save).)
 - Voice Rooms — broadcast, podcast, and community rooms; host/speaker/
   listener roles; hand-raise; moderation; live participant management.
 - Clubs — channels (chat + voice), member roles, invites, ownership
@@ -116,6 +130,47 @@ someone decide what to pick up next.
 ## Planned / Backlog
 
 Ordered by rough priority — re-prioritize freely, this isn't a queue.
+
+### 0. Profile image crop/reposition editor + processing pipeline
+
+- **Status**: Not started. Validation, limits, previews and save
+  semantics landed
+  ([ADR-021](Decisions.md#adr-021-profile-images-are-pending-local-changes-until-save));
+  the interactive step and the re-encode did not.
+- **Description**: After picking an avatar/banner the user should get a
+  YO Voice-styled editor to pan/zoom/crop before upload — 1:1 for
+  avatars (circular mask over a square asset), 16:9 for banners, with
+  cancel/confirm. The crop result should then be resized to the
+  `ProfileImageRules` output edge (1024 px / 1920 px) and re-encoded so a
+  normal phone photo does not upload at full size. Suggested pipeline:
+  decode with `ui.instantiateImageCodec` (applies EXIF orientation on all
+  three platforms), draw the crop rect through a `PictureRecorder`, read
+  back `rawRgba`, and JPEG-encode. `dart:ui` can only export PNG, so the
+  encode step needs `package:image` (pure Dart, Web-safe) — the one new
+  dependency this work would justify.
+- **Why it matters**: Without it the picked file is uploaded essentially
+  as-is, which is why `storage.rules` had to be raised to 10 MB for
+  `users/{uid}/profile/*`. Once re-encoding lands that cap should come
+  back down.
+
+### 0b. Storage rules have no emulator test coverage
+
+- **Status**: Not started.
+- **Description**: `firestore-tests/rules.test.js` covers Firestore only.
+  `storage.rules` has never been emulator-tested, and `firebase.json` has
+  no `emulators` block for the storage emulator. The
+  `users/{uid}/profile/*` change (10 MB cap, explicit JPEG/PNG/WebP
+  content-type allowlist) was deployed without one — verified instead by
+  inspection: `profile_service.dart` is the only writer to that prefix in
+  the app, it always sets one of the three allowed MIME types, and
+  `yovoice-website` does not use Firebase Storage at all (its only
+  `firebase/storage` reference is a `package-lock.json` transitive
+  entry). That reasoning is sound but it is not a test.
+- **Why it matters**: This project already has a documented history of
+  rule changes that passed review and still failed in production
+  ([ADR-003](Decisions.md#adr-003), [ADR-007](Decisions.md#adr-007)). A
+  content-type allowlist is exactly the kind of rule that silently breaks
+  a client the next time an upload path is added.
 
 ### 1. Verify no orphaned `rooms/{roomId}/members` documents
 

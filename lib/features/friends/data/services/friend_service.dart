@@ -58,14 +58,30 @@ class FriendService {
     }, SetOptions(merge: true));
   }
 
+  /// Watches the signed-in user's friends.
+  ///
+  /// The returned stream supports **multiple simultaneous listeners** and
+  /// replays the most recent list to anyone who subscribes late.
+  ///
+  /// Both matter: `MessagesScreen` creates this stream once and hands the
+  /// same instance to `_FriendsRow` *and* to `NewMessageSheet`. While this
+  /// returned a plain single-subscription controller, opening the New
+  /// message sheet threw `Bad state: Stream has already been listened to`
+  /// inside the sheet's StreamBuilder, and Flutter swapped that whole
+  /// subtree for a bare [ErrorWidget] — which renders as an unlabelled
+  /// light-grey rectangle in release web builds. Replay matters because the
+  /// second listener joins after the first value was already emitted, and
+  /// without it the sheet would sit on a spinner until a friend document
+  /// happened to change.
   Stream<List<FriendUser>> watchFriends() {
     final currentUserId = _currentUser.uid;
-    final controller = StreamController<List<FriendUser>>();
+    final controller = StreamController<List<FriendUser>>.broadcast();
     final subscriptions =
         <String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>{};
     final friends = <String, FriendUser>{};
     StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? rootSubscription;
     var closed = false;
+    List<FriendUser>? latest;
 
     void emit() {
       if (closed || controller.isClosed) return;
@@ -76,10 +92,14 @@ class FriendService {
             b.displayName.toLowerCase(),
           );
         });
+      latest = result;
       controller.add(result);
     }
 
     Future<void> start() async {
+      // A broadcast controller calls onListen again if every listener
+      // cancels and a new one arrives later, so reset the teardown flag.
+      closed = false;
       try {
         await ensureUserDocument();
         rootSubscription = _users
@@ -121,11 +141,28 @@ class FriendService {
     controller.onCancel = () async {
       closed = true;
       await rootSubscription?.cancel();
+      rootSubscription = null;
       for (final subscription in subscriptions.values) {
         await subscription.cancel();
       }
+      subscriptions.clear();
     };
-    return controller.stream;
+
+    // Stream.multi gives every listener its own subscription, which lets us
+    // hand the cached list straight to late subscribers before forwarding
+    // live updates.
+    return Stream<List<FriendUser>>.multi((subscriber) {
+      final cached = latest;
+      if (cached != null) {
+        subscriber.add(cached);
+      }
+      final subscription = controller.stream.listen(
+        subscriber.add,
+        onError: subscriber.addError,
+        onDone: subscriber.close,
+      );
+      subscriber.onCancel = subscription.cancel;
+    });
   }
 
   Stream<List<FriendRequest>> watchFriendRequests() {

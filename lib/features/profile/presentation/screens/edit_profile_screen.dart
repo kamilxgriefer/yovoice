@@ -26,9 +26,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late final TextEditingController _website;
 
   bool _saving = false;
-  bool _uploadingAvatar = false;
-  bool _uploadingBanner = false;
+  bool _pickingAvatar = false;
+  bool _pickingBanner = false;
   late AccountType _accountType;
+
+  /// Chosen but not yet uploaded. Images commit on Save together with the
+  /// text fields, so backing out leaves the remote profile untouched and
+  /// never orphans a Storage object.
+  PickedProfileImage? _pendingAvatar;
+  PickedProfileImage? _pendingBanner;
+
+  bool get _hasPendingImages =>
+      _pendingAvatar != null || _pendingBanner != null;
 
   @override
   void initState() {
@@ -76,6 +85,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     setState(() => _saving = true);
     try {
+      // Images first: if an upload fails the text edits are not committed
+      // either, so the user is never left with a half-applied save.
+      final avatar = _pendingAvatar;
+      if (avatar != null) {
+        await _service.uploadProfileImage(avatar);
+      }
+      final banner = _pendingBanner;
+      if (banner != null) {
+        await _service.uploadProfileImage(banner);
+      }
+
       await _service.updateProfile(
         displayName: _displayName.text,
         username: _username.text,
@@ -92,28 +112,33 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      ).showSnackBar(SnackBar(content: Text(_friendlyUploadError(error))));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
-  Future<void> _upload(ProfileImageKind kind) async {
+  Future<void> _pick(ProfileImageKind kind) async {
     final avatar = kind == ProfileImageKind.avatar;
     setState(() {
       if (avatar) {
-        _uploadingAvatar = true;
+        _pickingAvatar = true;
       } else {
-        _uploadingBanner = true;
+        _pickingBanner = true;
       }
     });
 
     try {
-      final url = await _service.pickAndUploadImage(kind);
-      if (!mounted || url == null) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(avatar ? 'Avatar updated.' : 'Banner updated.')),
-      );
+      final picked = await _service.pickProfileImage(kind);
+      // Null means the user dismissed the picker — not an error.
+      if (!mounted || picked == null) return;
+      setState(() {
+        if (avatar) {
+          _pendingAvatar = picked;
+        } else {
+          _pendingBanner = picked;
+        }
+      });
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -124,27 +149,49 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (mounted) {
         setState(() {
           if (avatar) {
-            _uploadingAvatar = false;
+            _pickingAvatar = false;
           } else {
-            _uploadingBanner = false;
+            _pickingBanner = false;
           }
         });
       }
     }
   }
 
+  void _clearPending(ProfileImageKind kind) {
+    setState(() {
+      if (kind == ProfileImageKind.avatar) {
+        _pendingAvatar = null;
+      } else {
+        _pendingBanner = null;
+      }
+    });
+  }
+
+  /// Maps picker/Storage failures onto copy a person can act on. Raw
+  /// Firebase messages ("[firebase_storage/unauthorized] ...") never reach
+  /// the user.
   String _friendlyUploadError(Object error) {
+    if (error is ProfileImageException) return error.message;
+
     final message = error.toString();
-    if (message.contains('object-not-found')) {
-      return 'Storage could not find the uploaded image. Deploy storage rules, then try again.';
+    if (error is ArgumentError) {
+      return message.replaceFirst('Invalid argument(s): ', '');
     }
-    if (message.contains('unauthorized')) {
-      return 'Storage blocked this upload. Deploy storage rules and make sure you are signed in.';
+    if (message.contains('object-not-found')) {
+      return "We couldn't find that image on our servers. Please try again.";
+    }
+    if (message.contains('unauthorized') ||
+        message.contains('permission-denied')) {
+      return "You don't have permission to update this profile.";
     }
     if (message.contains('canceled')) {
-      return 'Image upload was cancelled.';
+      return 'Upload cancelled.';
     }
-    return message;
+    if (message.contains('retry-limit') || message.contains('network')) {
+      return 'Upload failed. Please check your connection and try again.';
+    }
+    return 'Upload failed. Please try again.';
   }
 
   @override
@@ -167,27 +214,50 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(18, 12, 18, 40),
           children: [
+            _ProfileImagePreview(
+              profile: widget.profile,
+              pendingAvatar: _pendingAvatar,
+              pendingBanner: _pendingBanner,
+            ),
+            const SizedBox(height: 14),
             Row(
               children: [
                 Expanded(
                   child: _ImageAction(
-                    label: 'Change avatar',
+                    label: _pendingAvatar == null
+                        ? 'Change avatar'
+                        : 'Avatar ready',
                     icon: Icons.account_circle_outlined,
-                    loading: _uploadingAvatar,
-                    onTap: () => _upload(ProfileImageKind.avatar),
+                    loading: _pickingAvatar,
+                    onTap: () => _pick(ProfileImageKind.avatar),
+                    onClear: _pendingAvatar == null
+                        ? null
+                        : () => _clearPending(ProfileImageKind.avatar),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: _ImageAction(
-                    label: 'Change banner',
+                    label: _pendingBanner == null
+                        ? 'Change banner'
+                        : 'Banner ready',
                     icon: Icons.panorama_outlined,
-                    loading: _uploadingBanner,
-                    onTap: () => _upload(ProfileImageKind.banner),
+                    loading: _pickingBanner,
+                    onTap: () => _pick(ProfileImageKind.banner),
+                    onClear: _pendingBanner == null
+                        ? null
+                        : () => _clearPending(ProfileImageKind.banner),
                   ),
                 ),
               ],
             ),
+            if (_hasPendingImages) ...[
+              const SizedBox(height: 10),
+              const Text(
+                'New images are applied when you press Save.',
+                style: TextStyle(color: Color(0xFFD3A5FF), fontSize: 12),
+              ),
+            ],
             const SizedBox(height: 20),
             _AccountTypePicker(
               value: _accountType,
@@ -259,18 +329,116 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 }
 
+/// Live preview of what Save will publish: the banner at the same 16:9 band
+/// the Profile header shows, with the avatar overlapping it. Pending picks
+/// render straight from memory, so a newly chosen image appears instantly
+/// with no upload and no network round trip.
+class _ProfileImagePreview extends StatelessWidget {
+  const _ProfileImagePreview({
+    required this.profile,
+    required this.pendingAvatar,
+    required this.pendingBanner,
+  });
+
+  final UserProfile profile;
+  final PickedProfileImage? pendingAvatar;
+  final PickedProfileImage? pendingBanner;
+
+  ImageProvider? _banner() {
+    final pending = pendingBanner;
+    if (pending != null) return MemoryImage(pending.bytes);
+    final url = profile.bannerUrl?.trim();
+    if (url != null && url.isNotEmpty) return NetworkImage(url);
+    return null;
+  }
+
+  ImageProvider? _avatar() {
+    final pending = pendingAvatar;
+    if (pending != null) return MemoryImage(pending.bytes);
+    final url = profile.photoUrl?.trim();
+    if (url != null && url.isNotEmpty) return NetworkImage(url);
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final banner = _banner();
+    final avatar = _avatar();
+
+    return AspectRatio(
+      aspectRatio: ProfileImageRules.banner.aspectRatio,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            DecoratedBox(
+              decoration: BoxDecoration(
+                image: banner == null
+                    ? null
+                    : DecorationImage(image: banner, fit: BoxFit.cover),
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0xFF53108C),
+                    Color(0xFF21102E),
+                    Color(0xFF09050F),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 16,
+              bottom: 16,
+              child: Container(
+                padding: const EdgeInsets.all(3),
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
+                  ),
+                ),
+                child: CircleAvatar(
+                  radius: 34,
+                  backgroundColor: const Color(0xFF281133),
+                  backgroundImage: avatar,
+                  child: avatar != null
+                      ? null
+                      : Text(
+                          profile.displayName.isEmpty
+                              ? '?'
+                              : profile.displayName[0].toUpperCase(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ImageAction extends StatelessWidget {
   const _ImageAction({
     required this.label,
     required this.icon,
     required this.loading,
     required this.onTap,
+    this.onClear,
   });
 
   final String label;
   final IconData icon;
   final bool loading;
   final VoidCallback onTap;
+  final VoidCallback? onClear;
 
   @override
   Widget build(BuildContext context) {
@@ -295,7 +463,10 @@ class _ImageAction extends StatelessWidget {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               else
-                Icon(icon, color: const Color(0xFFB33BFF)),
+                Icon(
+                  onClear == null ? icon : Icons.check_circle_rounded,
+                  color: const Color(0xFFB33BFF),
+                ),
               const SizedBox(height: 9),
               Text(
                 label,
@@ -305,6 +476,14 @@ class _ImageAction extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                 ),
               ),
+              if (onClear != null)
+                TextButton(
+                  onPressed: onClear,
+                  child: const Text(
+                    'Undo',
+                    style: TextStyle(color: Color(0xFF9E92A8), fontSize: 12),
+                  ),
+                ),
             ],
           ),
         ),

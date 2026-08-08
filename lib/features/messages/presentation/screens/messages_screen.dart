@@ -132,7 +132,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) {
-        return _NewMessageSheet(
+        return NewMessageSheet(
           friendsStream: _friendsStream,
           conversationsStream: _conversationsStream,
           currentUserId: FirebaseAuth.instance.currentUser?.uid ?? '',
@@ -946,13 +946,25 @@ class _ConversationActionsSheet extends StatelessWidget {
   }
 }
 
-class _NewMessageSheet extends StatefulWidget {
-  const _NewMessageSheet({
+/// Surface colour of the New message sheet. Shared by the sheet's own
+/// Material and by the online badge that punches a hole through it, so the
+/// two can never drift apart.
+const Color _sheetSurface = Color(0xFF120D1A);
+
+/// The "New message" bottom sheet.
+///
+/// Public (rather than library-private) so it can be driven directly by
+/// widget tests and by `lib/dev/new_message_preview.dart` with controlled
+/// loading/empty/error streams — reaching it through [MessagesScreen] would
+/// otherwise require a live Firebase session.
+class NewMessageSheet extends StatefulWidget {
+  const NewMessageSheet({
     required this.friendsStream,
     required this.conversationsStream,
     required this.currentUserId,
     required this.onFriendSelected,
     required this.onConversationSelected,
+    super.key,
   });
 
   final Stream<List<FriendUser>> friendsStream;
@@ -962,10 +974,10 @@ class _NewMessageSheet extends StatefulWidget {
   final ValueChanged<Conversation> onConversationSelected;
 
   @override
-  State<_NewMessageSheet> createState() => _NewMessageSheetState();
+  State<NewMessageSheet> createState() => NewMessageSheetState();
 }
 
-class _NewMessageSheetState extends State<_NewMessageSheet> {
+class NewMessageSheetState extends State<NewMessageSheet> {
   final TextEditingController _controller = TextEditingController();
 
   String _query = '';
@@ -995,11 +1007,16 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
       minChildSize: .5,
       maxChildSize: .94,
       builder: (context, scrollController) {
-        return Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF120D1A),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-          ),
+        // A Material (not a bare DecoratedBox/Container) owns this surface:
+        // showModalBottomSheet is invoked with a transparent background, so
+        // this is the sheet's real surface, and the ListTiles below paint
+        // their background + ink splashes onto the nearest Material
+        // ancestor. Painting it with a plain Container instead put an
+        // opaque box between those tiles and the Material, hiding taps.
+        return Material(
+          color: _sheetSurface,
+          clipBehavior: Clip.antiAlias,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
           child: Column(
             children: [
               const SizedBox(height: 11),
@@ -1057,6 +1074,20 @@ class _NewMessageSheetState extends State<_NewMessageSheet> {
                               color: _MessagesScreenState._primary,
                             ),
                           );
+                        }
+
+                        // Without this the sheet answered a failed query
+                        // with "You're all caught up", which reads as "you
+                        // have no friends" rather than "we couldn't load
+                        // them".
+                        final failed =
+                            (conversationSnapshot.hasError ||
+                                friendSnapshot.hasError) &&
+                            conversations.isEmpty &&
+                            friends.isEmpty;
+
+                        if (failed) {
+                          return const _NewMessageErrorState();
                         }
 
                         final recent =
@@ -1277,7 +1308,7 @@ class _FriendTile extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: const Color(0xFF20D66B),
                   shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFF120D1A), width: 3),
+                  border: Border.all(color: _sheetSurface, width: 3),
                 ),
               ),
             ),
@@ -1423,6 +1454,61 @@ class _NewMessageEmptyState extends StatelessWidget {
               subtitle,
               textAlign: TextAlign.center,
               style: const TextStyle(
+                color: _MessagesScreenState._muted,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown when the friends/conversations queries fail. Deliberately mirrors
+/// [_NewMessageEmptyState]'s dark treatment so a failure never exposes a
+/// lighter surface than the rest of the sheet.
+class _NewMessageErrorState extends StatelessWidget {
+  const _NewMessageErrorState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _MessagesScreenState._surface,
+                shape: BoxShape.circle,
+                border: Border.all(color: _MessagesScreenState._border),
+              ),
+              child: const Icon(
+                Icons.cloud_off_rounded,
+                color: _MessagesScreenState._muted,
+                size: 28,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              "We couldn't load your people",
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 16,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Check your connection and try again.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
                 color: _MessagesScreenState._muted,
                 fontSize: 13,
                 height: 1.4,

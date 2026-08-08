@@ -132,6 +132,79 @@ permission flags).
   sheet code. See
   [ADR-016](Decisions.md#adr-016-native-android-and-ios-window-chrome-is-pinned-dark-not-os-controlled)
   for the full root cause and fix.
+- **Fixed: the New message sheet showed a large light-grey panel filling
+  everything below the search field (Flutter Web).** A *separate* bug from
+  the native window-chrome one above, which stays valid — this one is
+  pure Dart and reproduces on every platform.
+  `FriendService.watchFriends()` returned a plain
+  `StreamController<List<FriendUser>>()`, i.e. a **single-subscription**
+  stream. `MessagesScreen` builds that stream once in `initState` and
+  hands the same instance to two widgets: `_FriendsRow` (always mounted,
+  subscribes first) and `NewMessageSheet`. Opening the sheet therefore
+  made a second `listen()` call, which throws
+  `Bad state: Stream has already been listened to.` inside the sheet's
+  `StreamBuilder`. Flutter replaced that subtree with the default
+  `ErrorWidget` — red with text in debug, an **unlabelled light-grey
+  rectangle in release** — occupying exactly the `Expanded` region below
+  the search field, which is why the handle/title/search stayed correctly
+  dark. Same failure signature as the Settings grey-panel bug above: an
+  exception during build, rendered as a blank grey box in a release web
+  build. Fixed by making `watchFriends()` return a broadcast stream that
+  also replays its last value to late subscribers (via `Stream.multi`) —
+  replay matters because the sheet subscribes *after* the first emission
+  and would otherwise sit on a spinner. **Verified**: reproduced live in
+  Flutter Web with a debug build via `lib/dev/new_message_preview.dart`
+  (screenshot showed the panel and the "already been listened to"
+  message), then re-checked after the fix with the sheet rendering fully
+  dark end to end. Regression covered by `test/new_message_sheet_test.dart`.
+- **Fixed: the New message sheet painted its surface with a bare
+  `Container`.** `showModalBottomSheet` is invoked with
+  `backgroundColor: Colors.transparent`, so that `Container` *was* the
+  sheet's surface — but it sat between the tiles and the nearest
+  `Material`, so every `ListTile` background and ink splash was painted
+  behind it and never seen. Flutter's own assertion ("ListTile background
+  color or ink splashes may be invisible") fired in debug. The sheet now
+  owns a `Material`.
+- **Fixed: a failed friends/conversations query in the New message sheet
+  rendered as "You're all caught up".** The sheet read `snapshot.data`
+  but never checked `hasError`, so a permission failure was
+  indistinguishable from having no friends. There is now a distinct dark
+  error state.
+- **Fixed: a newly chosen avatar/banner appeared to do nothing in Edit
+  profile.** Not a caching bug: `ProfileService` already uploads to a
+  timestamped path (`avatar_<millis>.jpg`), so every upload produces a
+  genuinely new download URL and neither the browser HTTP cache nor
+  Flutter's `ImageCache` can serve a stale image. The real causes were
+  in the UI: (1) `EditProfileScreen` rendered **no avatar or banner
+  preview at all** — just two "Change avatar/Change banner" buttons — so
+  after a successful upload nothing on screen could change; and (2) it
+  received a `UserProfile` as a plain constructor argument and threw away
+  the URL returned by `pickAndUploadImage`, so its own copy of the
+  profile was stale the moment the upload finished. Edit profile now
+  shows a live preview of both images, and a freshly picked file renders
+  instantly from memory (`MemoryImage`) with no upload or network round
+  trip. `ProfileScreen` was already correct — it reads
+  `watchCurrentProfile()` — so it updates as soon as Firestore does.
+- **Changed: avatar/banner now commit on Save instead of uploading
+  immediately.** Previously images were written to Storage and Firestore
+  the instant they were picked, while every text field waited for Save —
+  so pressing Back after choosing an avatar still changed it remotely,
+  and a discarded pick left an orphaned Storage object behind. Picks are
+  now held in memory as pending changes and uploaded by `_save()`, which
+  gives the screen one consistent rule and means nothing reaches Storage
+  unless the user commits.
+- **Known, not yet fixed: other people still see your old avatar.** The
+  photo URL is denormalised into `conversations.participantPhotoUrls`,
+  `users/{uid}/friends/*`, room participants and club members, each
+  written from `FirebaseAuth.currentUser.photoURL` at the time that
+  document was created. Changing your profile photo updates
+  `users/{uid}.photoUrl` but nothing back-fills those copies, so your
+  avatar stays stale in other users' Chats/Friends/Rooms lists (and in
+  your own conversation list). Needs a fan-out — realistically a Cloud
+  Function on `users/{uid}` write — plus a one-off backfill. Also
+  `home_screen.dart:568` still reads `FirebaseAuth.instance.currentUser
+  ?.photoURL` directly, which is a non-reactive snapshot and will not
+  rebuild when the avatar changes.
 - **Fixed: Broadcast Room listeners were left stranded in a dead room.**
   When a host ended or deleted a Broadcast Room, every participant doc
   (including every listener's own) was deleted server-side, but the

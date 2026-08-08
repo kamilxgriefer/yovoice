@@ -6,8 +6,14 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/data/services/profile_image_rules.dart';
 
-enum ProfileImageKind { avatar, banner }
+export 'package:yovoice/features/profile/data/services/profile_image_rules.dart'
+    show
+        ProfileImageException,
+        ProfileImageFormat,
+        ProfileImageKind,
+        ProfileImageRules;
 
 class ProfileService {
   ProfileService({
@@ -128,30 +134,60 @@ class ProfileService {
     await _auth.currentUser?.updateDisplayName(cleanDisplayName);
   }
 
-  Future<String?> pickAndUploadImage(ProfileImageKind kind) async {
+  /// Opens the gallery and returns validated bytes for [kind], or null when
+  /// the user cancels the picker.
+  ///
+  /// Nothing is uploaded here. Edit profile holds the result as a pending
+  /// change and commits it on Save, so backing out of the screen cannot
+  /// leave a changed remote avatar or an orphaned Storage object behind.
+  ///
+  /// Throws [ProfileImageException] with a user-facing message when the file
+  /// is too large or is not a format every supported platform can decode.
+  Future<PickedProfileImage?> pickProfileImage(ProfileImageKind kind) async {
+    final rules = ProfileImageRules.of(kind);
+
+    // maxWidth keeps a 50MP camera original from being read into memory at
+    // full size on the way in. image_picker ignores it on Web, which is why
+    // the byte-size check below is the real guard.
     final image = await _picker.pickImage(
       source: ImageSource.gallery,
-      imageQuality: 88,
-      maxWidth: kind == ProfileImageKind.avatar ? 1200 : 2200,
+      imageQuality: 90,
+      maxWidth: rules.maxOutputEdge.toDouble(),
     );
 
     if (image == null) return null;
 
     final bytes = await image.readAsBytes();
-    final extension = image.name.split('.').last.toLowerCase();
-    final safeExtension = {'jpg', 'jpeg', 'png', 'webp'}.contains(extension)
-        ? extension
-        : 'jpg';
+    rules.validateSource(bytes);
+
+    return PickedProfileImage(
+      kind: kind,
+      bytes: bytes,
+      format: ProfileImageRules.detectFormat(bytes)!,
+    );
+  }
+
+  /// Uploads an already-validated image and persists its URL.
+  Future<String> uploadProfileImage(PickedProfileImage image) {
+    final kind = image.kind;
     final filename =
-        '${kind.name}_${DateTime.now().millisecondsSinceEpoch}.$safeExtension';
+        '${kind.name}_${DateTime.now().millisecondsSinceEpoch}'
+        '.${image.format.extension}';
 
     return _uploadBytes(
-      bytes: bytes,
+      bytes: image.bytes,
       path: 'users/$_uid/profile/$filename',
-      contentType: _contentType(safeExtension),
+      contentType: image.format.mimeType,
       field: kind == ProfileImageKind.avatar ? 'photoUrl' : 'bannerUrl',
       updateAuthPhoto: kind == ProfileImageKind.avatar,
     );
+  }
+
+  /// Kept for callers that still want the old one-shot behaviour.
+  Future<String?> pickAndUploadImage(ProfileImageKind kind) async {
+    final picked = await pickProfileImage(kind);
+    if (picked == null) return null;
+    return uploadProfileImage(picked);
   }
 
   Future<String> _uploadBytes({
@@ -194,12 +230,17 @@ class ProfileService {
 
     return url;
   }
+}
 
-  String _contentType(String extension) {
-    return switch (extension) {
-      'png' => 'image/png',
-      'webp' => 'image/webp',
-      _ => 'image/jpeg',
-    };
-  }
+/// An image chosen by the user and validated, but not yet uploaded.
+class PickedProfileImage {
+  const PickedProfileImage({
+    required this.kind,
+    required this.bytes,
+    required this.format,
+  });
+
+  final ProfileImageKind kind;
+  final Uint8List bytes;
+  final ProfileImageFormat format;
 }
