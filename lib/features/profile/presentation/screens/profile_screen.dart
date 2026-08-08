@@ -451,15 +451,28 @@ class _ProfileHero extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          profile.displayName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 29,
-                            fontWeight: FontWeight.w900,
-                          ),
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                profile.displayName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 29,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                            if (profile.accountType != AccountType.personal)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 6),
+                                child: _AccountTypeBadge(
+                                  accountType: profile.accountType,
+                                ),
+                              ),
+                          ],
                         ),
                         if (profile.username.isNotEmpty)
                           Text(
@@ -481,6 +494,65 @@ class _ProfileHero extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Marks a Creator (or Official) account on the profile header.
+///
+/// The account type already persisted to Firestore and already drove
+/// Creator Studio and Settings, but nothing on the profile itself said
+/// which kind of account you were looking at.
+class _AccountTypeBadge extends StatelessWidget {
+  const _AccountTypeBadge({required this.accountType});
+
+  final AccountType accountType;
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, label, color) = switch (accountType) {
+      AccountType.official => (
+        Icons.verified_rounded,
+        'Official',
+        const Color(0xFF4DA3FF),
+      ),
+      AccountType.creator => (
+        Icons.auto_awesome_rounded,
+        'Creator',
+        const Color(0xFFD3A5FF),
+      ),
+      AccountType.personal => (
+        Icons.person_rounded,
+        'Personal',
+        const Color(0xFFB8ADC1),
+      ),
+    };
+
+    return Tooltip(
+      message: '$label account',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: .14),
+          borderRadius: BorderRadius.circular(99),
+          border: Border.all(color: color.withValues(alpha: .45)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 13, color: color),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

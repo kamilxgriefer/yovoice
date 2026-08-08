@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -23,13 +24,19 @@ class ProfileService {
     ImagePicker? picker,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
-       _storage = storage ?? FirebaseStorage.instance,
+       _storageOverride = storage,
        _picker = picker ?? ImagePicker();
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
-  final FirebaseStorage _storage;
+  final FirebaseStorage? _storageOverride;
   final ImagePicker _picker;
+
+  // Resolved lazily rather than in the constructor: FirebaseStorage.instance
+  // throws without an initialised Firebase app, which would make every
+  // Firestore-only code path (and every test of it) require full Firebase
+  // setup just to construct the service.
+  FirebaseStorage get _storage => _storageOverride ?? FirebaseStorage.instance;
 
   String get _uid {
     final user = _auth.currentUser;
@@ -40,8 +47,74 @@ class ProfileService {
   DocumentReference<Map<String, dynamic>> get _document =>
       _firestore.collection('users').doc(_uid);
 
+  /// One shared, reactive view of the signed-in user's profile.
+  ///
+  /// Every screen that shows the current user's avatar, banner, name or
+  /// account type reads this — Home, Profile, Settings, Creator Studio and
+  /// Edit profile — so there is a single source of truth and they cannot
+  /// disagree. Callers construct `ProfileService()` freely; the underlying
+  /// Firestore listener is cached per uid and shared, and replays the last
+  /// snapshot to late subscribers so a screen opened after the first
+  /// emission renders immediately instead of flashing a placeholder.
+  ///
+  /// Do NOT mix this with `FirebaseAuth.currentUser.photoURL`. That is a
+  /// different, staler store (null for email/password accounts, the Google
+  /// avatar for Google ones) and blending the two is what made a freshly
+  /// saved avatar appear on one screen but not another.
   Stream<UserProfile> watchCurrentProfile() {
-    return _document.snapshots().map(UserProfile.fromFirestore);
+    final uid = _uid;
+    return _sharedProfileStreams.putIfAbsent(
+      uid,
+      () => _buildSharedProfileStream(uid),
+    );
+  }
+
+  static final Map<String, Stream<UserProfile>> _sharedProfileStreams = {};
+
+  Stream<UserProfile> _buildSharedProfileStream(String uid) {
+    final controller = StreamController<UserProfile>.broadcast();
+    UserProfile? latest;
+    StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? subscription;
+
+    controller.onListen = () {
+      subscription = _firestore
+          .collection('users')
+          .doc(uid)
+          .snapshots()
+          .listen(
+            (snapshot) {
+              final profile = UserProfile.fromFirestore(snapshot);
+              latest = profile;
+              if (!controller.isClosed) controller.add(profile);
+            },
+            onError: (Object error, StackTrace stackTrace) {
+              if (!controller.isClosed) {
+                controller.addError(error, stackTrace);
+              }
+            },
+          );
+    };
+    controller.onCancel = () async {
+      await subscription?.cancel();
+      subscription = null;
+    };
+
+    return Stream<UserProfile>.multi((subscriber) {
+      final cached = latest;
+      if (cached != null) subscriber.add(cached);
+      final inner = controller.stream.listen(
+        subscriber.add,
+        onError: subscriber.addError,
+        onDone: subscriber.close,
+      );
+      subscriber.onCancel = inner.cancel;
+    });
+  }
+
+  /// Drops the cached profile stream(s). Call on sign-out so the next
+  /// account does not inherit the previous one's cached snapshot.
+  static void resetCurrentProfileCache() {
+    _sharedProfileStreams.clear();
   }
 
   Stream<UserProfile> watchProfile(String userId) {
@@ -56,24 +129,50 @@ class ProfileService {
     final user = _auth.currentUser;
     if (user == null) return;
 
-    // Only the very first call should write the counter fields below — this
-    // runs on every Profile screen visit, and re-writing them each time was
-    // stomping real progress (friendCount, followerCount, etc.) back to 0
-    // on top of whatever friend_service/follow_service had already
-    // incremented.
     final existing = await _document.get();
-    if (existing.exists) return;
+    final data = existing.data();
+
+    // Keyed off displayName, not document existence: other services
+    // (friend_service's ensureUserDocument, presence) legitimately create
+    // this document with only presence fields, and an `exists` check let
+    // those races leave a brand-new account permanently un-bootstrapped.
+    final alreadySeeded =
+        (data?['displayName'] as String?)?.trim().isNotEmpty == true;
+    if (alreadySeeded) return;
 
     final displayName = user.displayName?.trim().isNotEmpty == true
         ? user.displayName!.trim()
         : (user.email?.split('@').first ?? 'YoVoice user');
 
-    await _document.set({
+    final seed = <String, Object?>{
       'uid': user.uid,
       'email': user.email ?? '',
       'displayName': displayName,
       'username': displayName,
-      'photoUrl': user.photoURL,
+      'profileUpdatedAt': FieldValue.serverTimestamp(),
+    };
+
+    // Seed the avatar from the Auth account (Google sign-in supplies one)
+    // ONLY when the profile has none. photoUrl belongs to this service
+    // once set, and FirebaseAuth's copy is a separate, staler source.
+    final hasProfilePhoto =
+        (data?['photoUrl'] as String?)?.trim().isNotEmpty == true;
+    if (!hasProfilePhoto && user.photoURL?.trim().isNotEmpty == true) {
+      seed['photoUrl'] = user.photoURL;
+    }
+
+    // Counters are only safe to write on true first creation — rewriting
+    // them would stomp progress friend_service/follow_service already
+    // incremented.
+    if (!existing.exists) {
+      seed.addAll(_initialCounters());
+    }
+
+    await _document.set(seed, SetOptions(merge: true));
+  }
+
+  Map<String, Object?> _initialCounters() {
+    return {
       'bio': '',
       'country': '',
       'nativeLanguage': '',
@@ -93,8 +192,7 @@ class ProfileService {
       'reactionCount': 0,
       'hostMinutes': 0,
       'unlockedTitleIds': <String>[],
-      'profileUpdatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    };
   }
 
   Future<void> updateProfile({

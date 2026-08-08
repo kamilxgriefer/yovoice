@@ -24,7 +24,12 @@ class FriendService {
     NotificationService? notificationService,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
-       _notifications = notificationService ?? NotificationService();
+       // Forward the injected instances so constructing FriendService with
+       // fakes doesn't drag in FirebaseFirestore.instance via the default
+       // NotificationService (which needs an initialised Firebase app).
+       _notifications =
+           notificationService ??
+           NotificationService(firestore: firestore, auth: auth);
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
@@ -39,20 +44,28 @@ class FriendService {
     return user;
   }
 
+  /// Makes sure the signed-in user has a `users/{uid}` document so friend
+  /// edges have something to point at.
+  ///
+  /// Deliberately does NOT write `displayName`, `email` or `photoUrl`.
+  /// Those come from FirebaseAuth's `currentUser`, which is a *separate*
+  /// and frequently stale source — `photoURL` is null for email/password
+  /// accounts and holds the Google avatar for Google ones. Writing it here
+  /// clobbered the profile photo that `ProfileService` owns, and this
+  /// method runs on every `watchFriends()` start (Home's friends row and
+  /// Messages both trigger it), so a freshly saved avatar could be wiped
+  /// seconds later by a background stream.
+  ///
+  /// This is the same defect that was already fixed once in
+  /// `PresenceService.setOnline()` — see docs/Bugs.md. Profile field
+  /// bootstrapping for brand-new accounts belongs to
+  /// `ProfileService.ensureProfile()`, which AuthGate already calls at
+  /// sign-in and which no-ops when the document exists.
   Future<void> ensureUserDocument() async {
     final user = _currentUser;
-    final email = user.email?.trim() ?? '';
-    final displayName = user.displayName?.trim().isNotEmpty == true
-        ? user.displayName!.trim()
-        : email.isNotEmpty
-        ? email.split('@').first
-        : 'YoVoice user';
 
     await _users.doc(user.uid).set({
       'uid': user.uid,
-      'displayName': displayName,
-      'email': email.toLowerCase(),
-      'photoUrl': user.photoURL,
       'isOnline': true,
       'lastSeen': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));

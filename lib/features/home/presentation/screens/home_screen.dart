@@ -280,8 +280,14 @@ class _HomeScreenState extends State<HomeScreen> {
                               ? profile.displayName.trim().split(' ').first
                               : fallbackName)
                         : fallbackName;
-                    final photoUrl = profile?.photoUrl ?? user?.photoURL;
-                    return _header(name, photoUrl);
+                    // Single source of truth: the Firestore profile doc.
+                    // This used to fall back to FirebaseAuth's own
+                    // currentUser.photoURL whenever profile.photoUrl was
+                    // null, which meant Home could show a stale Google
+                    // avatar (or nothing) while Profile showed the real
+                    // one. Before the stream's first emission `profile` is
+                    // null and the avatar simply renders its placeholder.
+                    return _header(name, profile?.photoUrl);
                   },
                 ),
               ),
@@ -561,22 +567,30 @@ class _HomeScreenState extends State<HomeScreen> {
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
             children: [
-              _StoryBubble(
-                label: 'Your Moment',
-                photoUrl:
-                    myLatestMoment?.authorPhotoUrl ??
-                    FirebaseAuth.instance.currentUser?.photoURL,
-                isAdd: myLatestMoment == null,
-                showAddBadge: myLatestMoment != null,
-                onTap: () {
-                  final moment = myLatestMoment;
-                  if (moment == null) {
-                    _recordMoment();
-                  } else {
-                    _showMomentPlayer(moment);
-                  }
-                },
-                onAddTap: () => _recordMoment(),
+              // Reads the shared profile stream rather than
+              // FirebaseAuth.currentUser.photoURL, which is a separate,
+              // non-reactive store that never updates after an avatar
+              // change. The moment's own authorPhotoUrl still wins when
+              // present — it is a snapshot of how the moment was posted.
+              StreamBuilder<UserProfile>(
+                stream: _profile,
+                builder: (context, profileSnapshot) => _StoryBubble(
+                  label: 'Your Moment',
+                  photoUrl:
+                      myLatestMoment?.authorPhotoUrl ??
+                      profileSnapshot.data?.photoUrl,
+                  isAdd: myLatestMoment == null,
+                  showAddBadge: myLatestMoment != null,
+                  onTap: () {
+                    final moment = myLatestMoment;
+                    if (moment == null) {
+                      _recordMoment();
+                    } else {
+                      _showMomentPlayer(moment);
+                    }
+                  },
+                  onAddTap: () => _recordMoment(),
+                ),
               ),
               ...stories.map(
                 (moment) => _StoryBubble(

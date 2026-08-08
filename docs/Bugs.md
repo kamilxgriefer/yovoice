@@ -297,3 +297,40 @@ permission flags).
   above — `flutter build apk --debug` succeeds and produces a real APK,
   but nobody has actually run this build and watched it boot. Needs a
   session with an Android emulator/device attached to close the loop.
+- **Fixed (root cause, demonstrated): a saved avatar was wiped seconds
+  later by the friends stream.** `FriendService.ensureUserDocument()`
+  merged `'photoUrl': user.photoURL` — FirebaseAuth's own, separate,
+  frequently-null value — into `users/{uid}.photoUrl`, the exact field
+  `ProfileService` owns. It runs from `watchFriends()`'s `onListen`, so
+  every Home mount, every Messages mount and every browser refresh
+  overwrote the freshly uploaded avatar with whatever Auth happened to
+  hold: `null` for email/password accounts (→ the purple placeholder with
+  the person icon on Home) or a stale Google avatar for Google accounts.
+  This is the third instance of the same defect — `PresenceService` had
+  it, `home_screen` read the same wrong source — and it explains why the
+  earlier "Edit profile has no preview" fix, though real, did not make
+  the avatar appear. Proven, not inferred: `test/profile_photo_source_of_
+  truth_test.dart` fails with `Actual: https://i.stack.imgur.com/34AD2.jpg`
+  when the old line is restored and passes with it removed.
+  `ensureUserDocument()` now writes only `uid`/`isOnline`/`lastSeen`.
+- **Fixed: removing that write exposed an ordering hazard in
+  `ProfileService.ensureProfile()`.** It bailed out on
+  `if (existing.exists) return;`, but `ensureUserDocument()` (and
+  presence) legitimately *create* `users/{uid}` with presence-only
+  fields — so a friends stream that started before AuthGate's
+  `ensureProfile()` left a brand-new account permanently without a
+  displayName. It now keys off whether `displayName` is actually present,
+  seeds the Auth avatar only when the profile has none, and writes the
+  zeroed counters only on true first creation so it can never reset
+  progress.
+- **Fixed: Home mixed two profile-image sources.** The header read
+  `profile?.photoUrl ?? FirebaseAuth.currentUser?.photoURL` and the "Your
+  Moment" bubble read `currentUser?.photoURL` directly — a non-reactive
+  store that never updates after an avatar change. Both now read the
+  shared profile stream, so Home, Profile, Settings and Creator Studio
+  cannot disagree.
+- **Added: `ProfileService.watchCurrentProfile()` is now one shared,
+  replayed broadcast stream cached per uid**, so every screen observes the
+  same value from one Firestore listener, and a screen opened after the
+  first emission renders immediately instead of flashing a placeholder.
+  Cleared on sign-out via `resetCurrentProfileCache()`.
