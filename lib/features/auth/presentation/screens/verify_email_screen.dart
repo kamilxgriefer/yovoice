@@ -152,7 +152,9 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
                         height: 84,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          color: const Color(0xFFA02BFF).withValues(alpha: 0.16),
+                          color: const Color(
+                            0xFFA02BFF,
+                          ).withValues(alpha: 0.16),
                           borderRadius: BorderRadius.circular(28),
                           border: Border.all(color: const Color(0xFF5A2A75)),
                         ),
@@ -190,12 +192,10 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
                       if (!_verified) ...[
                         if (_errorMessage != null) ...[
                           const SizedBox(height: 20),
-                          _MessageBanner(
-                            text: _errorMessage!,
-                            isError: true,
-                          ),
+                          _MessageBanner(text: _errorMessage!, isError: true),
                         ],
-                        if (_successMessage != null && _errorMessage == null) ...[
+                        if (_successMessage != null &&
+                            _errorMessage == null) ...[
                           const SizedBox(height: 20),
                           _MessageBanner(
                             text: _successMessage!,
@@ -259,9 +259,7 @@ class _MessageBanner extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: isError
-            ? const Color(0xFF481C30)
-            : const Color(0xFF203D2C),
+        color: isError ? const Color(0xFF481C30) : const Color(0xFF203D2C),
         borderRadius: BorderRadius.circular(14),
       ),
       child: Text(

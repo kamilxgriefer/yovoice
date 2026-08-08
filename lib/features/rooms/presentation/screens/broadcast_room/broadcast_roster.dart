@@ -63,9 +63,7 @@ class BroadcastSpeakerTile extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
-                participant.isMuted
-                    ? Icons.mic_off_rounded
-                    : Icons.mic_rounded,
+                participant.isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
                 color: participant.isMuted
                     ? BroadcastRoomColors.muted
                     : BroadcastRoomColors.accentSoft,
@@ -104,18 +102,12 @@ class BroadcastEmptyStage extends StatelessWidget {
       ),
       child: const Row(
         children: [
-          Icon(
-            Icons.chair_alt_rounded,
-            color: BroadcastRoomColors.accentSoft,
-          ),
+          Icon(Icons.chair_alt_rounded, color: BroadcastRoomColors.accentSoft),
           SizedBox(width: 12),
           Expanded(
             child: Text(
               'No guest speakers yet. Raised hands will appear in the participant panel.',
-              style: TextStyle(
-                color: BroadcastRoomColors.muted,
-                height: 1.35,
-              ),
+              style: TextStyle(color: BroadcastRoomColors.muted, height: 1.35),
             ),
           ),
         ],
@@ -168,8 +160,7 @@ class BroadcastAudiencePreview extends StatelessWidget {
                               ? Text(
                                   listeners[index].displayName.isEmpty
                                       ? 'Y'
-                                      : listeners[index]
-                                            .displayName[0]
+                                      : listeners[index].displayName[0]
                                             .toUpperCase(),
                                   style: const TextStyle(
                                     color: Colors.white,

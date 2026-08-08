@@ -63,9 +63,7 @@ class SocialGraphService {
 
   Future<List<SuggestedFriend>> getFriendSuggestions({int limit = 10}) async {
     final callable = _functions.httpsCallable('getFriendSuggestions');
-    final result = await callable.call<Map<Object?, Object?>>({
-      'limit': limit,
-    });
+    final result = await callable.call<Map<Object?, Object?>>({'limit': limit});
     final data = result.data;
     return (data['suggestions'] as List<Object?>? ?? const [])
         .map((entry) => SuggestedFriend.fromMap(entry as Map<Object?, Object?>))

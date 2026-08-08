@@ -90,9 +90,9 @@ class _BroadcastParticipantsSheetState
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.toString())),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
@@ -125,10 +125,7 @@ class _BroadcastParticipantsSheetState
                   ),
                 ),
               ),
-              Icon(
-                Icons.groups_rounded,
-                color: BroadcastRoomColors.accentSoft,
-              ),
+              Icon(Icons.groups_rounded, color: BroadcastRoomColors.accentSoft),
             ],
           ),
         ),
@@ -137,14 +134,12 @@ class _BroadcastParticipantsSheetState
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(
             children: [
-              for (
-                final filter in const [
-                  ('all', 'All'),
-                  ('speakers', 'Stage'),
-                  ('listeners', 'Audience'),
-                  ('hands', 'Raised hands'),
-                ]
-              )
+              for (final filter in const [
+                ('all', 'All'),
+                ('speakers', 'Stage'),
+                ('listeners', 'Audience'),
+                ('hands', 'Raised hands'),
+              ])
                 Padding(
                   padding: const EdgeInsets.only(right: 8),
                   child: ChoiceChip(
@@ -166,18 +161,14 @@ class _BroadcastParticipantsSheetState
               ? const Center(
                   child: Text(
                     'Nobody here yet.',
-                    style: TextStyle(
-                      color: BroadcastRoomColors.muted,
-                    ),
+                    style: TextStyle(color: BroadcastRoomColors.muted),
                   ),
                 )
               : ListView.separated(
                   padding: const EdgeInsets.fromLTRB(14, 4, 14, 22),
                   itemCount: items.length,
-                  separatorBuilder: (_, __) => const Divider(
-                    color: Color(0xFF3B171E),
-                    height: 1,
-                  ),
+                  separatorBuilder: (_, __) =>
+                      const Divider(color: Color(0xFF3B171E), height: 1),
                   itemBuilder: (context, index) {
                     final person = items[index];
 

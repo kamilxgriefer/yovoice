@@ -60,9 +60,7 @@ class PushNotificationService {
     _initialized = true;
 
     try {
-      FirebaseMessaging.onBackgroundMessage(
-        firebaseMessagingBackgroundHandler,
-      );
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
       await _initLocalNotifications();
 
       final messaging = FirebaseMessaging.instance;

@@ -155,13 +155,10 @@ class FriendService {
     if (search.length < 2) return const [];
 
     final snapshot = await _users.limit(100).get();
-    final blockedIds = (await _users
-            .doc(_currentUser.uid)
-            .collection('blocked')
-            .get())
-        .docs
-        .map((doc) => doc.id)
-        .toSet();
+    final blockedIds =
+        (await _users.doc(_currentUser.uid).collection('blocked').get()).docs
+            .map((doc) => doc.id)
+            .toSet();
     final results =
         snapshot.docs
             .map(FriendUser.fromFirestore)

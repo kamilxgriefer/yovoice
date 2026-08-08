@@ -36,7 +36,9 @@ class AwardsHubScreen extends StatelessWidget {
         if (profile == null) {
           return const Scaffold(
             backgroundColor: Color(0xFF09050F),
-            body: Center(child: CircularProgressIndicator(color: Color(0xFFB348FF))),
+            body: Center(
+              child: CircularProgressIndicator(color: Color(0xFFB348FF)),
+            ),
           );
         }
         return AchievementsScreen(profile: profile);
@@ -90,18 +92,19 @@ class AwardsProgress {
           .map(AchievementCatalog.byId)
           .whereType<AchievementDefinition>()
           .fold<int>(0, (sum, item) => sum + _xpForRarity(item.rarity)),
-      recentUnlocks = (profile.unlockedTitleTimestamps.entries
-              .map(
-                (entry) => (
-                  achievement: AchievementCatalog.byId(entry.key),
-                  unlockedAt: entry.value,
-                ),
-              )
-              .where((item) => item.achievement != null)
-              .toList()
-            ..sort((a, b) => b.unlockedAt.compareTo(a.unlockedAt)))
-          .map((item) => (item.achievement!, item.unlockedAt))
-          .toList(growable: false);
+      recentUnlocks =
+          (profile.unlockedTitleTimestamps.entries
+                  .map(
+                    (entry) => (
+                      achievement: AchievementCatalog.byId(entry.key),
+                      unlockedAt: entry.value,
+                    ),
+                  )
+                  .where((item) => item.achievement != null)
+                  .toList()
+                ..sort((a, b) => b.unlockedAt.compareTo(a.unlockedAt)))
+              .map((item) => (item.achievement!, item.unlockedAt))
+              .toList(growable: false);
 
   final List<AchievementDefinition> unlocked;
   final int totalXp;
@@ -149,9 +152,8 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
         ? AchievementCatalog.all
         : AchievementCatalog.all
               .where(
-                (item) =>
-                    (_categoryMetrics[category] ?? const <String>{})
-                        .contains(item.metric),
+                (item) => (_categoryMetrics[category] ?? const <String>{})
+                    .contains(item.metric),
               )
               .toList(growable: false);
 
@@ -210,43 +212,40 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                     crossAxisSpacing: 16,
                     mainAxisSpacing: 16,
                   ),
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final achievement = visibleAchievements[index];
-                      final isUnlocked = unlockedIds.contains(achievement.id);
-                      final progress =
-                          widget.profile.achievementStats[achievement.metric] ??
-                          0;
-                      final isSelected =
-                          widget.profile.selectedTitleId == achievement.id;
+                  delegate: SliverChildBuilderDelegate((context, index) {
+                    final achievement = visibleAchievements[index];
+                    final isUnlocked = unlockedIds.contains(achievement.id);
+                    final progress =
+                        widget.profile.achievementStats[achievement.metric] ??
+                        0;
+                    final isSelected =
+                        widget.profile.selectedTitleId == achievement.id;
 
-                      return _AchievementCard(
-                        achievement: achievement,
-                        progress: progress,
-                        unlocked: isUnlocked,
-                        selected: isSelected,
-                        saving: _saving,
-                        onSelect: isUnlocked
-                            ? () async {
-                                final navigator = Navigator.of(context);
+                    return _AchievementCard(
+                      achievement: achievement,
+                      progress: progress,
+                      unlocked: isUnlocked,
+                      selected: isSelected,
+                      saving: _saving,
+                      onSelect: isUnlocked
+                          ? () async {
+                              final navigator = Navigator.of(context);
 
-                                setState(() => _saving = true);
-                                try {
-                                  await _service.selectTitle(achievement.id);
+                              setState(() => _saving = true);
+                              try {
+                                await _service.selectTitle(achievement.id);
 
-                                  if (!mounted) return;
-                                  navigator.pop();
-                                } finally {
-                                  if (mounted) {
-                                    setState(() => _saving = false);
-                                  }
+                                if (!mounted) return;
+                                navigator.pop();
+                              } finally {
+                                if (mounted) {
+                                  setState(() => _saving = false);
                                 }
                               }
-                            : null,
-                      );
-                    },
-                    childCount: visibleAchievements.length,
-                  ),
+                            }
+                          : null,
+                    );
+                  }, childCount: visibleAchievements.length),
                 ),
               ),
             ],
@@ -394,7 +393,10 @@ class _LevelCard extends StatelessWidget {
                 const SizedBox(height: 6),
                 Text(
                   '${progress.xpIntoLevel} / $_xpPerLevel XP to level ${progress.level + 1}',
-                  style: const TextStyle(color: Color(0xFFC7BBD1), fontSize: 11.5),
+                  style: const TextStyle(
+                    color: Color(0xFFC7BBD1),
+                    fontSize: 11.5,
+                  ),
                 ),
               ],
             ),
@@ -528,7 +530,11 @@ class _CategoryChip extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 15, color: selected ? Colors.white : const Color(0xFFB8ADBF)),
+              Icon(
+                icon,
+                size: 15,
+                color: selected ? Colors.white : const Color(0xFFB8ADBF),
+              ),
               const SizedBox(width: 6),
               Text(
                 '$label · $count',
@@ -578,7 +584,11 @@ class _RecentUnlocks extends StatelessWidget {
             child: const Text(
               'No achievements unlocked yet. Chat, host rooms and connect with '
               'friends to earn your first title.',
-              style: TextStyle(color: Color(0xFFA99DB3), fontSize: 12.5, height: 1.4),
+              style: TextStyle(
+                color: Color(0xFFA99DB3),
+                fontSize: 12.5,
+                height: 1.4,
+              ),
             ),
           )
         else
@@ -602,7 +612,11 @@ class _RecentUnlocks extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(_iconForMetric(achievement.metric), color: palette.accent, size: 18),
+                      Icon(
+                        _iconForMetric(achievement.metric),
+                        color: palette.accent,
+                        size: 18,
+                      ),
                       const Spacer(),
                       Text(
                         achievement.title,

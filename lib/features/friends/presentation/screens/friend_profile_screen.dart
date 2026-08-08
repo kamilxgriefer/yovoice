@@ -307,7 +307,9 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                                       ),
                                     )
                                   : const Icon(Icons.block_rounded),
-                              label: Text(_blocking ? 'Blocking...' : 'Block user'),
+                              label: Text(
+                                _blocking ? 'Blocking...' : 'Block user',
+                              ),
                               style: TextButton.styleFrom(
                                 foregroundColor: const Color(0xFF8F8799),
                               ),

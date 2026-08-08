@@ -123,15 +123,15 @@ class UserProfile {
       hostMinutes: readInt('hostMinutes'),
       selectedTitleId: data['selectedTitleId'] as String?,
       unlockedTitleIds: readStrings('unlockedTitleIds'),
-      unlockedTitleTimestamps: (data['unlockedTitleTimestamps']
-                  as Map<String, dynamic>? ??
-              const <String, dynamic>{})
-          .map(
-            (key, value) => MapEntry(
-              key,
-              value is Timestamp ? value.toDate() : DateTime.now(),
-            ),
-          ),
+      unlockedTitleTimestamps:
+          (data['unlockedTitleTimestamps'] as Map<String, dynamic>? ??
+                  const <String, dynamic>{})
+              .map(
+                (key, value) => MapEntry(
+                  key,
+                  value is Timestamp ? value.toDate() : DateTime.now(),
+                ),
+              ),
       createdAt: data['createdAt'] is Timestamp
           ? (data['createdAt'] as Timestamp).toDate()
           : null,

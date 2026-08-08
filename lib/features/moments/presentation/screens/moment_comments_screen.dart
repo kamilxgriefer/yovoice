@@ -44,12 +44,17 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
 
     setState(() => _sending = true);
     try {
-      final userSnapshot = await _firestore.collection('users').doc(user.uid).get();
+      final userSnapshot = await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .get();
       final userData = userSnapshot.data();
       final displayName = (userData?['displayName'] as String?)?.trim();
       final photoUrl = userData?['photoUrl'] as String?;
       final commentReference = _comments.doc();
-      final momentReference = _firestore.collection('voiceMoments').doc(widget.moment.id);
+      final momentReference = _firestore
+          .collection('voiceMoments')
+          .doc(widget.moment.id);
       final batch = _firestore.batch();
 
       batch.set(commentReference, {
@@ -58,8 +63,8 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
         'authorName': displayName?.isNotEmpty == true
             ? displayName
             : user.displayName?.trim().isNotEmpty == true
-                ? user.displayName!.trim()
-                : user.email?.split('@').first ?? 'YoVoice user',
+            ? user.displayName!.trim()
+            : user.email?.split('@').first ?? 'YoVoice user',
         'authorPhotoUrl': photoUrl ?? user.photoURL,
         'text': text,
         'createdAt': FieldValue.serverTimestamp(),
@@ -74,7 +79,9 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text('Could not post comment: $error')));
+        ..showSnackBar(
+          SnackBar(content: Text('Could not post comment: $error')),
+        );
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -94,17 +101,29 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
           children: [
             Expanded(
               child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: _comments.orderBy('createdAt', descending: false).snapshots(),
+                stream: _comments
+                    .orderBy('createdAt', descending: false)
+                    .snapshots(),
                 builder: (context, snapshot) {
                   if (snapshot.hasError) {
-                    return const Center(child: Text('Could not load comments.', style: TextStyle(color: _muted)));
+                    return const Center(
+                      child: Text(
+                        'Could not load comments.',
+                        style: TextStyle(color: _muted),
+                      ),
+                    );
                   }
                   if (!snapshot.hasData) {
                     return const Center(child: CircularProgressIndicator());
                   }
                   final comments = snapshot.data!.docs;
                   if (comments.isEmpty) {
-                    return const Center(child: Text('Be the first to comment.', style: TextStyle(color: _muted)));
+                    return const Center(
+                      child: Text(
+                        'Be the first to comment.',
+                        style: TextStyle(color: _muted),
+                      ),
+                    );
                   }
                   return ListView.separated(
                     padding: const EdgeInsets.all(16),
@@ -112,10 +131,16 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                     separatorBuilder: (_, __) => const SizedBox(height: 10),
                     itemBuilder: (context, index) {
                       final data = comments[index].data();
-                      final name = data['authorName'] as String? ?? 'YoVoice user';
+                      final name =
+                          data['authorName'] as String? ?? 'YoVoice user';
                       final photo = data['authorPhotoUrl'] as String?;
                       final type = data['type'] as String? ?? 'text';
-                      return _CommentCard(name: name, photo: photo, data: data, isVoice: type == 'voice');
+                      return _CommentCard(
+                        name: name,
+                        photo: photo,
+                        data: data,
+                        isVoice: type == 'voice',
+                      );
                     },
                   );
                 },
@@ -123,7 +148,10 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
             ),
             Container(
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-              decoration: const BoxDecoration(color: _surface, border: Border(top: BorderSide(color: _border))),
+              decoration: const BoxDecoration(
+                color: _surface,
+                border: Border(top: BorderSide(color: _border)),
+              ),
               child: Row(
                 children: [
                   Expanded(
@@ -139,7 +167,10 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                         hintStyle: const TextStyle(color: _muted),
                         filled: true,
                         fillColor: _background,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide: BorderSide.none,
+                        ),
                       ),
                     ),
                   ),
@@ -148,7 +179,14 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                     onPressed: _sending ? null : _sendComment,
                     style: IconButton.styleFrom(backgroundColor: _primary),
                     icon: _sending
-                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
                         : const Icon(Icons.send_rounded),
                   ),
                 ],
@@ -162,7 +200,12 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
 }
 
 class _CommentCard extends StatefulWidget {
-  const _CommentCard({required this.name, required this.photo, required this.data, required this.isVoice});
+  const _CommentCard({
+    required this.name,
+    required this.photo,
+    required this.data,
+    required this.isVoice,
+  });
   final String name;
   final String? photo;
   final Map<String, dynamic> data;
@@ -218,32 +261,65 @@ class _CommentCardState extends State<_CommentCard> {
           CircleAvatar(
             radius: 20,
             backgroundColor: _MomentCommentsScreenState._primary,
-            backgroundImage: widget.photo?.isNotEmpty == true ? NetworkImage(widget.photo!) : null,
-            child: widget.photo?.isNotEmpty == true ? null : Text(widget.name.isNotEmpty ? widget.name[0].toUpperCase() : 'Y'),
+            backgroundImage: widget.photo?.isNotEmpty == true
+                ? NetworkImage(widget.photo!)
+                : null,
+            child: widget.photo?.isNotEmpty == true
+                ? null
+                : Text(
+                    widget.name.isNotEmpty ? widget.name[0].toUpperCase() : 'Y',
+                  ),
           ),
           const SizedBox(width: 11),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(widget.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+                Text(
+                  widget.name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
                 if (widget.isVoice) ...[
                   const SizedBox(height: 8),
                   InkWell(
                     onTap: _toggle,
                     borderRadius: BorderRadius.circular(14),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
                       decoration: BoxDecoration(
                         color: const Color(0xFF271335),
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Row(
                         children: [
-                          Icon(_playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Colors.white),
+                          Icon(
+                            _playing
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                            color: Colors.white,
+                          ),
                           const SizedBox(width: 8),
-                          const Expanded(child: Text('Voice reply', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700))),
-                          Text('0:${duration.toString().padLeft(2, '0')}', style: const TextStyle(color: _MomentCommentsScreenState._muted)),
+                          const Expanded(
+                            child: Text(
+                              'Voice reply',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            '0:${duration.toString().padLeft(2, '0')}',
+                            style: const TextStyle(
+                              color: _MomentCommentsScreenState._muted,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -254,7 +330,10 @@ class _CommentCardState extends State<_CommentCard> {
                   ],
                 ] else ...[
                   const SizedBox(height: 4),
-                  Text(text, style: const TextStyle(color: Colors.white, height: 1.35)),
+                  Text(
+                    text,
+                    style: const TextStyle(color: Colors.white, height: 1.35),
+                  ),
                 ],
               ],
             ),

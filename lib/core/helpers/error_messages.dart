@@ -22,7 +22,8 @@ String friendlyErrorMessage(Object error, {String? fallback}) {
       raw.contains('connection')) {
     return 'Check your connection and try again.';
   }
-  if (raw.contains('unauthenticated') || raw.contains('requires-recent-login')) {
+  if (raw.contains('unauthenticated') ||
+      raw.contains('requires-recent-login')) {
     return 'Please sign in again to continue.';
   }
   if (raw.contains('already-exists')) {

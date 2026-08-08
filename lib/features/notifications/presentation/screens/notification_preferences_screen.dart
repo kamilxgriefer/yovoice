@@ -21,10 +21,7 @@ const _kPreferenceGroups = [
   ),
   _PreferenceGroup(
     title: 'Clubs',
-    types: [
-      NotificationType.clubInvite,
-      NotificationType.clubInviteAccepted,
-    ],
+    types: [NotificationType.clubInvite, NotificationType.clubInviteAccepted],
   ),
   _PreferenceGroup(
     title: 'Rooms',

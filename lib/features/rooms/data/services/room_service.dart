@@ -667,7 +667,11 @@ class RoomService {
   }
 
   Future<bool> _isMember(String roomId, String userId) async {
-    return (await _rooms.doc(roomId).collection('roomMembers').doc(userId).get())
+    return (await _rooms
+            .doc(roomId)
+            .collection('roomMembers')
+            .doc(userId)
+            .get())
         .exists;
   }
 

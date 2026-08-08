@@ -111,7 +111,9 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
             _Field(
               controller: _name,
               label: _isBroadcast ? 'Show title' : 'Room name',
-              hint: _isBroadcast ? 'e.g. Flutter Weekly' : 'e.g. Late Night Talk',
+              hint: _isBroadcast
+                  ? 'e.g. Flutter Weekly'
+                  : 'e.g. Late Night Talk',
               maxLength: 50,
               validator: (value) => (value?.trim().length ?? 0) < 3
                   ? 'Enter at least 3 characters'

@@ -563,7 +563,10 @@ class _OrbitPeople extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final center = Offset(constraints.maxWidth / 2, constraints.maxHeight / 2);
+        final center = Offset(
+          constraints.maxWidth / 2,
+          constraints.maxHeight / 2,
+        );
         final orbitRadius = math.min(constraints.maxWidth * .37, 145.0);
 
         return Stack(
@@ -781,9 +784,7 @@ class _PersonAvatar extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         border: Border.all(
-          color: speaking
-              ? const Color(0xFFFF66E9)
-              : const Color(0xFF7B39B3),
+          color: speaking ? const Color(0xFFFF66E9) : const Color(0xFF7B39B3),
           width: speaking ? 2.5 : 1.5,
         ),
         boxShadow: speaking
@@ -903,9 +904,13 @@ class _PeopleSheetState extends State<_PeopleSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final filtered = widget.people.where((person) {
-      return person.displayName.toLowerCase().contains(_query.toLowerCase());
-    }).toList(growable: false);
+    final filtered = widget.people
+        .where((person) {
+          return person.displayName.toLowerCase().contains(
+            _query.toLowerCase(),
+          );
+        })
+        .toList(growable: false);
 
     return DraggableScrollableSheet(
       initialChildSize: .72,
@@ -992,10 +997,8 @@ class _PeopleSheetState extends State<_PeopleSheet> {
                     18 + MediaQuery.paddingOf(context).bottom,
                   ),
                   itemCount: filtered.length,
-                  separatorBuilder: (_, __) => const Divider(
-                    color: Color(0xFF2C2235),
-                    height: 1,
-                  ),
+                  separatorBuilder: (_, __) =>
+                      const Divider(color: Color(0xFF2C2235), height: 1),
                   itemBuilder: (context, index) {
                     final person = filtered[index];
                     final status = person.isHost

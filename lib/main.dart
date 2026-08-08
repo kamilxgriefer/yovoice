@@ -27,9 +27,7 @@ Future<void> main() async {
 void _registerBackgroundMessageHandler() {
   if (kIsWeb) return;
   try {
-    FirebaseMessaging.onBackgroundMessage(
-      firebaseMessagingBackgroundHandler,
-    );
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   } catch (error) {
     debugPrint('FCM background handler registration failed: $error');
   }

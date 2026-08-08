@@ -148,11 +148,7 @@ class BroadcastHostStage extends StatelessWidget {
         borderRadius: BorderRadius.circular(30),
         border: Border.all(color: const Color(0xFF772635)),
         boxShadow: const [
-          BoxShadow(
-            color: Color(0x44FF314F),
-            blurRadius: 28,
-            spreadRadius: 2,
-          ),
+          BoxShadow(color: Color(0x44FF314F), blurRadius: 28, spreadRadius: 2),
         ],
       ),
       child: Column(
@@ -165,10 +161,8 @@ class BroadcastHostStage extends StatelessWidget {
           const SizedBox(height: 14),
           AnimatedBuilder(
             animation: pulse,
-            builder: (context, child) => Transform.scale(
-              scale: 1 + pulse.value * .025,
-              child: child,
-            ),
+            builder: (context, child) =>
+                Transform.scale(scale: 1 + pulse.value * .025, child: child),
             child: CircleAvatar(
               radius: 61,
               backgroundColor: const Color(0xFF7A1C2D),

@@ -37,9 +37,9 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
   @override
   void initState() {
     super.initState();
-    _suggestionsFuture = _socialGraphService
-        .getFriendSuggestions()
-        .catchError((_) => const <SuggestedFriend>[]);
+    _suggestionsFuture = _socialGraphService.getFriendSuggestions().catchError(
+      (_) => const <SuggestedFriend>[],
+    );
   }
 
   @override
@@ -585,10 +585,18 @@ class _SuggestionCard extends StatelessWidget {
                         color: Colors.white,
                       ),
                     )
-                  : Icon(sent ? Icons.check_rounded : Icons.person_add_alt_1_rounded, size: 18),
+                  : Icon(
+                      sent
+                          ? Icons.check_rounded
+                          : Icons.person_add_alt_1_rounded,
+                      size: 18,
+                    ),
               label: Text(
                 sent ? 'Sent' : 'Add',
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
           ),

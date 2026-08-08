@@ -283,8 +283,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   );
                 }
 
-                final requests =
-                    friendSnapshot.data ?? const <FriendRequest>[];
+                final requests = friendSnapshot.data ?? const <FriendRequest>[];
                 final conversations =
                     conversationSnapshot.data ?? const <Conversation>[];
                 final notifications =
@@ -340,8 +339,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                         count: unreadConversations.fold<int>(
                           0,
                           (sum, conversation) =>
-                              sum +
-                              conversation.unreadCountFor(_currentUserId),
+                              sum + conversation.unreadCountFor(_currentUserId),
                         ),
                       ),
                       const SizedBox(height: 10),
@@ -406,9 +404,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       if (notifications.length >= _notificationsLimit)
                         Center(
                           child: TextButton(
-                            onPressed: () => setState(
-                              () => _notificationsLimit += 50,
-                            ),
+                            onPressed: () =>
+                                setState(() => _notificationsLimit += 50),
                             child: const Text(
                               'Load more',
                               style: TextStyle(

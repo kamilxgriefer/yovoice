@@ -15,8 +15,7 @@ class BroadcastSettingsSheet extends StatefulWidget {
   final RoomService service;
 
   @override
-  State<BroadcastSettingsSheet> createState() =>
-      _BroadcastSettingsSheetState();
+  State<BroadcastSettingsSheet> createState() => _BroadcastSettingsSheetState();
 }
 
 class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
@@ -157,11 +156,7 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
               style: TextStyle(color: BroadcastRoomColors.muted),
             ),
             const SizedBox(height: 20),
-            SettingsField(
-              controller: _name,
-              label: 'Room name',
-              maxLength: 80,
-            ),
+            SettingsField(controller: _name, label: 'Room name', maxLength: 80),
             const SizedBox(height: 12),
             SettingsField(
               controller: _description,
@@ -226,15 +221,13 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
               title: 'Auto-mute new listeners',
               subtitle: 'New participants enter without an active microphone.',
               value: _autoMuteNewUsers,
-              onChanged: (value) =>
-                  setState(() => _autoMuteNewUsers = value),
+              onChanged: (value) => setState(() => _autoMuteNewUsers = value),
             ),
             SettingsSwitch(
               title: 'Approval required',
               subtitle: 'Keep this option ready for invite approval workflows.',
               value: _approvalRequired,
-              onChanged: (value) =>
-                  setState(() => _approvalRequired = value),
+              onChanged: (value) => setState(() => _approvalRequired = value),
             ),
             SettingsSwitch(
               title: 'Members can start voice',
@@ -351,10 +344,7 @@ class SettingsSwitch extends StatelessWidget {
       ),
       subtitle: Text(
         subtitle,
-        style: const TextStyle(
-          color: BroadcastRoomColors.muted,
-          fontSize: 12,
-        ),
+        style: const TextStyle(color: BroadcastRoomColors.muted, fontSize: 12),
       ),
       value: value,
       onChanged: onChanged,

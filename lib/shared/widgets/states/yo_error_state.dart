@@ -72,7 +72,11 @@ class YoErrorState extends StatelessWidget {
               style: AppTypography.titleLarge,
             ),
             const SizedBox(height: AppSpacing.sm),
-            Text(text, textAlign: TextAlign.center, style: AppTypography.bodyMedium),
+            Text(
+              text,
+              textAlign: TextAlign.center,
+              style: AppTypography.bodyMedium,
+            ),
             if (onRetry != null) ...<Widget>[
               const SizedBox(height: AppSpacing.lg),
               YoButton(

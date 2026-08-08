@@ -16,6 +16,28 @@
   -->
   <base href="$FLUTTER_BASE_HREF">
 
+  <!--
+    Firebase Auth's hosted action-handler page (firebaseapp.com/__/auth/action)
+    has an "app link" continuation step for verifyEmail that hops through
+    this project's default Hosting domain before falling through to the real
+    continueUrl — confirmed by testing real emailed links, not assumed. This
+    site's own catch-all SPA rewrite (every path -> index.html) swallows that
+    intermediary hop before it can complete, landing the user on the bare
+    Flutter app instead of https://yovoice.app/verify-email. There's no
+    Identity Platform config that disables this hop (Dynamic Links, the only
+    alternative to HOSTING_DOMAIN, were shut down by Google in 2025), so this
+    page detects the hop by its referrer and finishes the redirect itself,
+    before the Flutter engine even starts loading.
+  -->
+  <script>
+    (function () {
+      var ref = document.referrer || "";
+      if (ref.indexOf("firebaseapp.com/__/auth/action") !== -1) {
+        window.location.replace("https://yovoice.app/verify-email");
+      }
+    })();
+  </script>
+
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
 

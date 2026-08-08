@@ -96,7 +96,9 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                   if (snapshot.connectionState == ConnectionState.waiting &&
                       !snapshot.hasData) {
                     return const Center(
-                      child: CircularProgressIndicator(color: Color(0xFFB348FF)),
+                      child: CircularProgressIndicator(
+                        color: Color(0xFFB348FF),
+                      ),
                     );
                   }
 
@@ -182,7 +184,9 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                               ),
                             ),
                             OutlinedButton(
-                              onPressed: processing ? null : () => _unblock(user),
+                              onPressed: processing
+                                  ? null
+                                  : () => _unblock(user),
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: Colors.white,
                                 side: const BorderSide(color: _border),

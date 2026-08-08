@@ -114,9 +114,7 @@ class OwnerMenuItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = destructive
-        ? BroadcastRoomColors.accentSoft
-        : Colors.white;
+    final color = destructive ? BroadcastRoomColors.accentSoft : Colors.white;
 
     return ListTile(
       onTap: onTap,
@@ -138,10 +136,7 @@ class OwnerMenuItem extends StatelessWidget {
       ),
       subtitle: Text(
         subtitle,
-        style: const TextStyle(
-          color: BroadcastRoomColors.muted,
-          fontSize: 12,
-        ),
+        style: const TextStyle(color: BroadcastRoomColors.muted, fontSize: 12),
       ),
       trailing: Icon(Icons.chevron_right_rounded, color: color),
     );

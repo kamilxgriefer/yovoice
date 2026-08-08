@@ -111,8 +111,7 @@ class NotificationService {
         : actor.displayName?.trim().isNotEmpty == true
         ? actor.displayName!.trim()
         : 'YoVoice user';
-    final actorPhotoUrl =
-        (actorData['photoUrl'] as String?) ?? actor.photoURL;
+    final actorPhotoUrl = (actorData['photoUrl'] as String?) ?? actor.photoURL;
 
     await _notificationsFor(recipientId).add({
       'type': type.name,
@@ -133,15 +132,14 @@ class NotificationService {
   // account work cleanly and a single device can be removed on sign-out
   // without needing an exact-match arrayRemove.
 
-  Future<void> registerFcmToken(String token, {required String platform}) async {
-    await _users
-        .doc(_currentUser.uid)
-        .collection('fcmTokens')
-        .doc(token)
-        .set({
-          'platform': platform,
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+  Future<void> registerFcmToken(
+    String token, {
+    required String platform,
+  }) async {
+    await _users.doc(_currentUser.uid).collection('fcmTokens').doc(token).set({
+      'platform': platform,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 
   Future<void> unregisterFcmToken(String token) async {

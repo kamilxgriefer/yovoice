@@ -195,11 +195,7 @@ class BroadcastStatTile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
           child: Column(
             children: [
-              Icon(
-                icon,
-                color: BroadcastRoomColors.accentSoft,
-                size: 20,
-              ),
+              Icon(icon, color: BroadcastRoomColors.accentSoft, size: 20),
               const SizedBox(height: 5),
               Text(
                 '$value',

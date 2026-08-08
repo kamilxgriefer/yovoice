@@ -39,9 +39,9 @@ void main() {
     test('propagates a FirebaseAuthException instead of swallowing it', () {
       final user = MockUser(isEmailVerified: false, email: 'test@example.com');
       final auth = MockFirebaseAuth(mockUser: user, signedIn: true);
-      whenCalling(Invocation.method(#sendEmailVerification, null))
-          .on(user)
-          .thenThrow(FirebaseAuthException(code: 'too-many-requests'));
+      whenCalling(
+        Invocation.method(#sendEmailVerification, null),
+      ).on(user).thenThrow(FirebaseAuthException(code: 'too-many-requests'));
       final service = _buildService(auth);
 
       expect(
