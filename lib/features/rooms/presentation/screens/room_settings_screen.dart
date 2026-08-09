@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
+import 'package:yovoice/features/rooms/data/services/room_image_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 
 const _background = Color(0xFF080711);
@@ -22,6 +24,44 @@ class RoomSettingsScreen extends StatefulWidget {
 class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
   final _formKey = GlobalKey<FormState>();
   final _service = RoomService();
+  final _images = RoomImageService();
+
+  String? _imageUrl;
+  bool _uploadingCover = false;
+
+  /// The cover is part of the room's identity (stage backdrop + Home/
+  /// Discover card). Uploaded immediately on pick — unlike the text
+  /// fields it has its own storage lifecycle, and the card should update
+  /// live for everyone as soon as the host confirms the picker.
+  Future<void> _changeCover() async {
+    if (_uploadingCover) return;
+    try {
+      final picked = await _images.pickImage();
+      if (picked == null || !mounted) return;
+      setState(() => _uploadingCover = true);
+      final url = await _images.uploadRoomImage(
+        roomId: widget.room.id,
+        file: picked,
+      );
+      await _service.updateImageUrl(roomId: widget.room.id, imageUrl: url);
+      if (!mounted) return;
+      setState(() => _imageUrl = url);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            intentionalOrFriendly(
+              error,
+              fallback: "Couldn't update the room cover. Please try again.",
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _uploadingCover = false);
+    }
+  }
 
   late final TextEditingController _name;
   late final TextEditingController _description;
@@ -42,6 +82,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
     final room = widget.room;
     _name = TextEditingController(text: room.name);
     _description = TextEditingController(text: room.description);
+    _imageUrl = room.imageUrl;
     _category = room.category;
     _visibility = room.visibility;
     _language = room.language;
@@ -228,6 +269,57 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(18, 8, 18, 80),
           children: [
+            _Section(
+              title: 'Room cover',
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: AspectRatio(
+                    aspectRatio: 21 / 9,
+                    child: _imageUrl?.trim().isNotEmpty == true
+                        ? Image.network(
+                            _imageUrl!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                const _CoverFallback(),
+                          )
+                        : const _CoverFallback(),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: _uploadingCover ? null : _changeCover,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Color(0xFF3A2C49)),
+                    minimumSize: const Size.fromHeight(46),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  icon: _uploadingCover
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.image_rounded, size: 18),
+                  label: Text(
+                    _uploadingCover
+                        ? 'Uploading…'
+                        : _imageUrl?.trim().isNotEmpty == true
+                        ? 'Change cover'
+                        : 'Add cover',
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'The cover becomes the room card on Home and Discover '
+                  'and the stage backdrop inside the room.',
+                  style: TextStyle(color: Color(0xFF9E92A8), fontSize: 11.5),
+                ),
+              ],
+            ),
             _Section(
               title: 'General',
               children: [
@@ -557,6 +649,30 @@ class _ActionTile extends StatelessWidget {
       subtitle: Text(subtitle, style: const TextStyle(color: _muted)),
       trailing: const Icon(Icons.chevron_right_rounded, color: _muted),
       onTap: onTap,
+    );
+  }
+}
+
+/// Typed placeholder shown when the room has no cover yet.
+class _CoverFallback extends StatelessWidget {
+  const _CoverFallback();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF3A1657), Color(0xFF150F20)],
+        ),
+      ),
+      alignment: Alignment.center,
+      child: Icon(
+        Icons.image_outlined,
+        size: 38,
+        color: Colors.white.withValues(alpha: .25),
+      ),
     );
   }
 }

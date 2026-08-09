@@ -1042,8 +1042,10 @@ class _PremiumRoomCard extends StatelessWidget {
   final VoidCallback onPressed;
 
   Color get _accent {
+    // Matches RoomCardIdentity's accent system (Rooms 2.0): podcast red,
+    // community purple family.
     if (room.isBroadcast) {
-      return const Color(0xFFFF3F8E);
+      return const Color(0xFFFF3E5F);
     }
 
     switch (style) {
@@ -1057,7 +1059,7 @@ class _PremiumRoomCard extends StatelessWidget {
   }
 
   String get _roomTypeLabel {
-    return room.isBroadcast ? 'BROADCAST' : 'COMMUNITY';
+    return room.isBroadcast ? 'PODCAST' : 'COMMUNITY';
   }
 
   String get _peopleLabel {

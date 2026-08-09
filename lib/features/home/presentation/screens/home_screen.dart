@@ -27,6 +27,7 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_card.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({this.onOpenDiscover, super.key});
@@ -1426,108 +1427,9 @@ class _LiveRoomCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 168,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(22),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF33144A), Color(0xFF14101D)],
-            ),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: const Color(0xFF432D5A)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  CircleAvatar(
-                    radius: 22,
-                    backgroundColor: const Color(0xFF64258E),
-                    backgroundImage: room.imageUrl?.isNotEmpty == true
-                        ? NetworkImage(room.imageUrl!)
-                        : null,
-                    child: room.imageUrl?.isNotEmpty == true
-                        ? null
-                        : Text(
-                            room.name.isEmpty
-                                ? '?'
-                                : room.name[0].toUpperCase(),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                  ),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFF416C),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Text(
-                      'LIVE',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: .4,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const Spacer(),
-              Text(
-                room.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                'Hosted by ${room.hostName}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Color(0xFFA79DAF), fontSize: 11),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Icon(
-                    Icons.headset_rounded,
-                    color: Color(0xFFC76DFF),
-                    size: 14,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '${room.participantCount} listening',
-                    style: const TextStyle(
-                      color: Color(0xFFC76DFF),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    // Rooms 2.0 identity card — cover-forward, type-differentiated
+    // (Community / Podcast / Club read differently at a glance).
+    return RoomCard(room: room, onTap: onTap, width: 224, height: 172);
   }
 }
 
