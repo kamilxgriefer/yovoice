@@ -16,6 +16,14 @@ someone decide what to pick up next.
 
 ## Done
 
+- Rooms 2.0 — M1/M2/M3/M8 (2026-08-09): LiveKit-authoritative MicState
+  + mute-race fix; Podcast rename (ADR-029); scalable stage system
+  replacing the orbit, verified at 2/10/50/500 participants (ADR-030);
+  promotion/demotion token refresh; floating navigation dock with
+  Friends as a primary tab. Remaining milestones (covers/cards, room
+  chat, whiteboard, reactions, permissions, analytics, Spotify
+  feasibility, landing page) tracked in the session task ledger.
+
 - Product-audit hardening pass (2026-08-08) — CI now gates deploys on
   `flutter test` + the Firestore AND Storage rules suites (run against
   real emulators in the workflow); `storage.rules` got its first
