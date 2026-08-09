@@ -341,19 +341,35 @@ service cloud.firestore {
             ] &&
             request.resource.data.isRead == false &&
             // bellSuppressed routes a record away from the bell feed while
-            // keeping the document (it still drives push). Optional, and
-            // must be a bool when present so a sender can't smuggle
-            // arbitrary content through it.
+            // keeping the document (it still drives push). Optional (legacy
+            // docs predate it), must be a bool — and suppression itself is
+            // NOT client-trusted: it is only valid when the RECIPIENT's own
+            // friends list contains the sender. That doc is written by the
+            // acceptance flow and can never be forged by the sender, so a
+            // malicious client cannot hide its message request from a
+            // stranger's bell. (Denial costs the attacker nothing they
+            // don't already have — a client can always skip writing the
+            // notification entirely; the invariant is that a SUPPRESSED
+            // record only ever exists between actual friends.)
             (!('bellSuppressed' in request.resource.data) ||
               request.resource.data.bellSuppressed is bool) &&
+            (!(('bellSuppressed' in request.resource.data) &&
+                request.resource.data.bellSuppressed == true) ||
+              exists(/databases/$(database)/documents/users/$(userId)/friends/$(request.auth.uid))) &&
             request.resource.data.keys().hasOnly([
               'type', 'actorId', 'actorName', 'actorPhotoUrl',
               'targetId', 'targetLabel', 'isRead', 'createdAt', 'dedupeKey',
               'bellSuppressed',
             ]);
+        // bellSuppressed in the owner-update set exists for the legacy
+        // backfill (stamping `false` onto pre-field docs so the indexed
+        // bell query covers them). Owner-only and bool-only; an owner
+        // "suppressing" their own record is self-harm, not an attack.
         allow update: if isOwner(userId) &&
             request.resource.data.diff(resource.data).affectedKeys()
-                .hasOnly(['isRead', 'readAt']);
+                .hasOnly(['isRead', 'readAt', 'bellSuppressed']) &&
+            (!('bellSuppressed' in request.resource.data) ||
+              request.resource.data.bellSuppressed is bool);
         allow delete: if isOwner(userId);
       }
 

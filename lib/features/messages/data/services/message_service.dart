@@ -264,16 +264,33 @@ class MessageService {
       // stranger's message request.
     }
 
+    final type = isReplyToRecipient
+        ? NotificationType.reply
+        : NotificationType.directMessage;
     try {
       await _notifications.notify(
         recipientId: recipientId,
-        type: isReplyToRecipient
-            ? NotificationType.reply
-            : NotificationType.directMessage,
+        type: type,
         targetId: conversationId,
         suppressBell: suppressBell,
       );
     } catch (_) {
+      // The rules only accept a SUPPRESSED record when the recipient's
+      // own friends list contains the sender. If our sender-side read
+      // said "friend" but the write was rejected (asymmetric state, e.g.
+      // mid-unfriend), fail toward VISIBLE so the recipient still gets
+      // the record — and its push — rather than nothing.
+      if (suppressBell) {
+        try {
+          await _notifications.notify(
+            recipientId: recipientId,
+            type: type,
+            targetId: conversationId,
+          );
+        } catch (_) {
+          // Best-effort — the message itself already sent above.
+        }
+      }
       // Best-effort — the message itself already sent above.
     }
   }

@@ -897,8 +897,17 @@ async function main() {
     },
   );
 
+  // Suppression authority: the RECIPIENT's own friends list must contain
+  // the sender — seed that canonical doc for the friend case only.
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(
+      doc(ctx.firestore(), "users/invitee-uid/friends/host-uid"),
+      { uid: "host-uid", displayName: "Host" },
+    );
+  });
+
   await check(
-    "notification routing: a bell-suppressed friend-DM record can be written",
+    "notification routing: an ACTUAL FRIEND can write a bell-suppressed DM record",
     async () => {
       const db = host.firestore();
       const ref = doc(db, "users/invitee-uid/notifications/notif-dm-suppressed");
@@ -916,6 +925,72 @@ async function main() {
           bellSuppressed: true,
         }),
       );
+    },
+  );
+
+  await check(
+    "SECURITY: a NON-FRIEND cannot suppress their message from the bell",
+    async () => {
+      // attacker-uid is not in invitee-uid's friends list — hiding a
+      // message request from the recipient's bell must be denied.
+      const db = attacker.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-dm-sneak");
+      await assertFails(
+        setDoc(ref, {
+          type: "directMessage",
+          actorId: "attacker-uid",
+          actorName: "Attacker",
+          actorPhotoUrl: null,
+          targetId: "conversation-2",
+          targetLabel: null,
+          isRead: false,
+          createdAt: new Date(),
+          dedupeKey: null,
+          bellSuppressed: true,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "notification routing: a non-friend's VISIBLE message request is allowed",
+    async () => {
+      const db = attacker.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-dm-request");
+      await assertSucceeds(
+        setDoc(ref, {
+          type: "directMessage",
+          actorId: "attacker-uid",
+          actorName: "Attacker",
+          actorPhotoUrl: null,
+          targetId: "conversation-2",
+          targetLabel: null,
+          isRead: false,
+          createdAt: new Date(),
+          dedupeKey: null,
+          bellSuppressed: false,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "notification routing: the OWNER can backfill bellSuppressed:false onto a legacy doc",
+    async () => {
+      // notif-1 was created earlier without the routing field (legacy
+      // shape) — the recipient's client stamps it visible.
+      const db = invitee.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-1");
+      await assertSucceeds(updateDoc(ref, { bellSuppressed: false }));
+    },
+  );
+
+  await check(
+    "SECURITY: a non-owner cannot rewrite someone else's notification routing",
+    async () => {
+      const db = attacker.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-dm-request");
+      await assertFails(updateDoc(ref, { bellSuppressed: true }));
     },
   );
 

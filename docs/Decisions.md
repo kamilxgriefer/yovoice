@@ -1685,3 +1685,62 @@ layer, never cosmetically per screen:
 - Tests: `test/notification_routing_test.dart` (friend DM → chat YES /
   bell NO with record present; non-friend → bell message request;
   non-chat events → bell; read-state isolation both directions).
+
+## ADR-033a: Notification routing hardened — suppression authority moved to rules; bell feed made flood-immune (amends ADR-033)
+
+**Status**: Accepted
+**Date**: 2026-08-09
+
+### Context
+
+ADR-033's first cut had two weaknesses. (1) `bellSuppressed` was
+client-trusted: a modified client could write a non-friend DM record
+with `bellSuppressed: true`, hiding its message request from the
+recipient's bell. (2) `watchNotifications()` filtered suppressed
+records AFTER a latest-50 query — enough accumulated friend-DM push
+carriers could consume the window and crowd legitimate older bell
+events out of the feed.
+
+### Decision
+
+- **Source of authority: firestore.rules.** A create with
+  `bellSuppressed == true` is allowed only when
+  `users/{recipient}/friends/{sender}` exists — the recipient-side
+  friendship doc, written by the acceptance flow and unforgeable by the
+  sender. The client's friendship read remains a UX optimization only;
+  on a rules denial (asymmetric state) the client retries the record
+  VISIBLE, so the recipient still gets it and its push. Denial gives an
+  attacker nothing: a client can always simply not write a
+  notification; the enforced invariant is that a suppressed record only
+  ever exists between actual friends.
+- **Flood-immune feed.** `notify()` now ALWAYS writes `bellSuppressed`
+  (true/false), and the feed merges two queries: an indexed
+  `bellSuppressed == false` query (composite index deployed —
+  carriers can never consume its window) and the legacy latest-50 query
+  (client-filtered) for pre-field documents, deduped/sorted/capped.
+  If the indexed query fails, the feed degrades to exactly the
+  pre-hardening behavior.
+- **Legacy self-healing.** On feed subscription the client stamps
+  `bellSuppressed: false` onto its own pre-field documents (one
+  bounded pass over the unlimited unread set + opportunistically over
+  the base window) — owner-only, bool-only per rules — after which the
+  indexed query covers them permanently. All legacy docs are bell
+  events by definition: suppression didn't exist yet.
+- **Badge already correct.** `watchUnreadCount()` was and remains an
+  UNLIMITED unread query with client-side suppression filtering — it
+  counts real unread bell-visible records, never a windowed remainder.
+- Push untouched: the carrier doc still fires `onNotificationCreated`;
+  preferences behavior unchanged.
+
+### Consequences
+
+- One `exists()` read per suppressed create; one bounded unread fetch
+  per feed subscription until legacy docs converge (then zero writes).
+- READ legacy docs buried deeper than the base window stay hidden until
+  normalized by passing through a window — identical to pre-hardening
+  reach, accepted.
+- Rules suite 99 checks (non-friend suppression denied; friend
+  suppression allowed; visible request allowed; owner backfill allowed;
+  cross-user routing rewrite denied). Dart suite: retry-to-visible,
+  carrier-flood feed immunity incl. legacy self-heal, flood-proof
+  unread count.
