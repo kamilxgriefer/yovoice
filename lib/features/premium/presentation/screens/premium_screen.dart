@@ -1,31 +1,34 @@
-import 'package:cloud_functions/cloud_functions.dart';
-import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'dart:math' as math;
 
+import 'package:flutter/material.dart';
+
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/premium_plans.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
+import 'package:yovoice/features/premium/presentation/screens/premium_plans_screen.dart';
+import 'package:yovoice/features/premium/presentation/widgets/premium_badge_pill.dart';
+import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/widgets/profile/premium_avatar_frame.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
-const _background = Color(0xFF0D0618);
-const _surface = Color(0xFF191329);
-const _border = Color(0xFF3A3151);
-const _muted = Color(0xFFB4ADC8);
-const _primary = Color(0xFF7B2FF7);
-
-/// The YO Voice Premium page: benefits, plan cards, purchase entry points
-/// and — because it watches the entitlement stream — the success state.
+/// The YO Voice Premium presentation — what a free member sees when they
+/// open Premium. Marketing surface only: the "Check plans" CTA leads to
+/// [PremiumPlansScreen], where the real plans and purchase entry points
+/// live. Because this screen watches the entitlement stream, it is also
+/// the success state: the moment the TRUSTED entitlements document turns
+/// premium, the presentation flips to [_PremiumActiveView] — which makes
+/// it the natural landing after an admin grant or a future real purchase.
 ///
-/// Purchase flow honesty: tapping a plan calls the `verifyPurchase`
-/// backend, which (until the store adapters are configured) declines with
-/// a clear message. Nothing is unlocked optimistically; the screen flips
-/// to the success state only when the TRUSTED entitlements document turns
-/// premium — which also makes this the natural landing after an admin
-/// grant or a future real purchase, with zero extra wiring.
+/// The hero is the signed-in member's REAL avatar (canonical [UserAvatar]
+/// via [ProfileService]) wearing the canonical [PremiumAvatarFrame] —
+/// a truthful preview of their own Premium identity, never a fake person.
 class PremiumScreen extends StatefulWidget {
-  const PremiumScreen({this.entitlementService, super.key});
+  const PremiumScreen({this.entitlementService, this.profileService, super.key});
 
   final EntitlementService? entitlementService;
+  final ProfileService? profileService;
 
   @override
   State<PremiumScreen> createState() => _PremiumScreenState();
@@ -34,56 +37,29 @@ class PremiumScreen extends StatefulWidget {
 class _PremiumScreenState extends State<PremiumScreen> {
   late final EntitlementService _entitlements =
       widget.entitlementService ?? EntitlementService();
+  late final ProfileService _profiles =
+      widget.profileService ?? ProfileService();
 
-  bool _busy = false;
   bool _wasPremiumOnOpen = false;
   bool _checkedInitial = false;
 
-  Future<void> _attemptPurchase(PremiumProduct product) async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    try {
-      await FirebaseFunctions.instanceFor(
-        region: 'europe-west1',
-      ).httpsCallable('verifyPurchase').call<void>({
-        'platform': Theme.of(context).platform.name,
-        'productId': product.storeProductId,
-      });
-    } on FirebaseFunctionsException catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            error.code == 'failed-precondition'
-                ? (error.message ?? 'Purchases are not enabled yet.')
-                : 'Something went wrong. Please try again.',
-          ),
-        ),
-      );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Something went wrong. Please try again.'),
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _openUrl(String url) async {
-    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  void _openPlans() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            PremiumPlansScreen(entitlementService: widget.entitlementService),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _background,
+      backgroundColor: AppColors.background,
       appBar: AppBar(
-        backgroundColor: _background,
+        backgroundColor: Colors.transparent,
         foregroundColor: Colors.white,
-        title: const Text('YO Voice Premium'),
+        elevation: 0,
       ),
       body: StreamBuilder<SubscriptionEntitlements>(
         stream: _entitlements.watchCurrentEntitlements(),
@@ -105,11 +81,9 @@ class _PremiumScreenState extends State<PremiumScreen> {
             );
           }
 
-          return _PaywallView(
-            busy: _busy,
-            onSelect: _attemptPurchase,
-            onRestore: () => _attemptPurchase(PremiumPlans.monthly),
-            onOpenUrl: _openUrl,
+          return _PremiumPresentationView(
+            profileStream: _profiles.watchCurrentProfile(),
+            onCheckPlans: _openPlans,
           );
         },
       ),
@@ -117,18 +91,22 @@ class _PremiumScreenState extends State<PremiumScreen> {
   }
 }
 
-class _PaywallView extends StatelessWidget {
-  const _PaywallView({
-    required this.busy,
-    required this.onSelect,
-    required this.onRestore,
-    required this.onOpenUrl,
+/// Board screen 3: badge pill, headline, real-identity hero, the three
+/// benefit cards, and the "Check plans" CTA.
+class _PremiumPresentationView extends StatelessWidget {
+  const _PremiumPresentationView({
+    required this.profileStream,
+    required this.onCheckPlans,
   });
 
-  final bool busy;
-  final ValueChanged<PremiumProduct> onSelect;
-  final VoidCallback onRestore;
-  final ValueChanged<String> onOpenUrl;
+  final Stream<UserProfile> profileStream;
+  final VoidCallback onCheckPlans;
+
+  static const _benefitIcons = [
+    (Icons.mic_rounded, Color(0xFFD3A5FF)),
+    (Icons.workspace_premium_rounded, Color(0xFFFFC24D)),
+    (Icons.auto_awesome_rounded, Color(0xFFE879F9)),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -136,83 +114,58 @@ class _PaywallView extends StatelessWidget {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(22, 10, 22, 40),
+          padding: const EdgeInsets.fromLTRB(22, 4, 22, 40),
           children: [
-            // Identity preview: the actual premium ring, not a mockup.
-            Center(
-              child: PremiumAvatarFrame(
-                child: CircleAvatar(
-                  radius: 40,
-                  backgroundColor: const Color(0xFF281133),
-                  child: Image.asset(
-                    'assets/images/logo.png',
-                    width: 44,
-                    errorBuilder: (_, __, ___) => const Icon(
-                      Icons.graphic_eq_rounded,
-                      color: Color(0xFFD3A5FF),
-                      size: 34,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
+            const Center(child: PremiumBadgePill()),
+            const SizedBox(height: 18),
             const Text(
-              'Unlock more of your voice',
+              'More room\nfor your voice.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white,
-                fontSize: 27,
+                fontSize: 32,
+                height: 1.12,
                 fontWeight: FontWeight.w900,
-                letterSpacing: -.5,
+                letterSpacing: -.8,
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             const Text(
-              'Premium adds identity and creation on top of everything '
-              'free members already have.',
+              'Create. Lead. Build communities.\nStand out.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: _muted, fontSize: 14, height: 1.5),
-            ),
-            const SizedBox(height: 26),
-            for (final (title, description) in PremiumPlans.benefits)
-              _BenefitRow(title: title, description: description),
-            const SizedBox(height: 26),
-            for (final product in PremiumPlans.all) ...[
-              _PlanCard(product: product, busy: busy, onSelect: onSelect),
-              const SizedBox(height: 12),
-            ],
-            const SizedBox(height: 8),
-            Center(
-              child: TextButton(
-                onPressed: busy ? null : onRestore,
-                child: const Text(
-                  'Restore purchases',
-                  style: TextStyle(color: Color(0xFFD3A5FF)),
-                ),
+              style: TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 14.5,
+                height: 1.45,
               ),
             ),
-            const SizedBox(height: 4),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                TextButton(
-                  onPressed: () => onOpenUrl('https://yovoice.app/terms'),
-                  child: const Text(
-                    'Terms',
-                    style: TextStyle(color: _muted, fontSize: 12),
-                  ),
-                ),
-                const Text('·', style: TextStyle(color: _muted)),
-                TextButton(
-                  onPressed: () => onOpenUrl('https://yovoice.app/privacy'),
-                  child: const Text(
-                    'Privacy',
-                    style: TextStyle(color: _muted, fontSize: 12),
-                  ),
-                ),
-              ],
+            const SizedBox(height: 10),
+            StreamBuilder<UserProfile>(
+              stream: profileStream,
+              builder: (context, snapshot) =>
+                  _PremiumHero(profile: snapshot.data),
             ),
+            const SizedBox(height: 16),
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < PremiumPlans.benefits.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 10),
+                    Expanded(
+                      child: _BenefitCard(
+                        icon: _benefitIcons[i].$1,
+                        iconColor: _benefitIcons[i].$2,
+                        title: PremiumPlans.benefits[i].$1,
+                        subtitle: PremiumPlans.benefits[i].$2,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 26),
+            _CheckPlansButton(onTap: onCheckPlans),
           ],
         ),
       ),
@@ -220,57 +173,187 @@ class _PaywallView extends StatelessWidget {
   }
 }
 
-class _BenefitRow extends StatelessWidget {
-  const _BenefitRow({required this.title, required this.description});
+/// The Premium identity hero: the member's own avatar inside the
+/// canonical premium ring, lifted by a presentation-only backdrop glow,
+/// crown chip and capability pills. Wraps [UserAvatar] — this is a
+/// presentation shell, never a second avatar implementation.
+class _PremiumHero extends StatelessWidget {
+  const _PremiumHero({required this.profile});
 
-  final String title;
-  final String description;
+  final UserProfile? profile;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 34,
-            height: 34,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _primary.withValues(alpha: .16),
-              border: Border.all(color: _primary.withValues(alpha: .4)),
-            ),
-            child: const Icon(
-              Icons.check_rounded,
-              size: 18,
-              color: Color(0xFFD3A5FF),
-            ),
-          ),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = math.min(340.0, constraints.maxWidth);
+        const height = 290.0;
+        const avatarRadius = 72.0;
+        const ringWidth = 4.2;
+        const ringGap = 8.0;
+        // PremiumAvatarFrame inset: ringWidth + gap on every side.
+        const framedRadius = avatarRadius + ringWidth + ringGap;
+
+        // Crown chip sits on the ring's top-right diagonal.
+        const chipSize = 40.0;
+        final chipOffset = framedRadius * math.sqrt2 / 2;
+
+        return Center(
+          child: SizedBox(
+            width: width,
+            height: height,
+            child: Stack(
+              alignment: Alignment.center,
+              clipBehavior: Clip.none,
               children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: RadialGradient(
+                          colors: [
+                            AppColors.secondary.withValues(alpha: .30),
+                            AppColors.primary.withValues(alpha: .14),
+                            Colors.transparent,
+                          ],
+                          stops: const [0, .45, 1],
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  description,
-                  style: const TextStyle(
-                    color: _muted,
-                    fontSize: 13,
-                    height: 1.4,
+                // Bloom behind the ring — the presentation-strength glow
+                // the canonical frame deliberately keeps subtle elsewhere.
+                IgnorePointer(
+                  child: Container(
+                    width: framedRadius * 2,
+                    height: framedRadius * 2,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.secondary.withValues(alpha: .42),
+                          blurRadius: 52,
+                          spreadRadius: 8,
+                        ),
+                        BoxShadow(
+                          color: AppColors.primary.withValues(alpha: .30),
+                          blurRadius: 90,
+                          spreadRadius: 26,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                PremiumAvatarFrame(
+                  ringWidth: ringWidth,
+                  gap: ringGap,
+                  child: UserAvatar(
+                    radius: avatarRadius,
+                    photoUrl: profile?.photoUrl,
+                    displayName: profile?.displayName,
+                    fallbackIcon: Icons.graphic_eq_rounded,
+                  ),
+                ),
+                Positioned(
+                  left: width / 2 + chipOffset - chipSize / 2,
+                  top: height / 2 - chipOffset - chipSize / 2,
+                  child: const _CrownChip(size: chipSize),
+                ),
+                const Positioned(
+                  left: 0,
+                  top: height / 2 + 28,
+                  child: _HeroPill(
+                    icon: Icons.groups_rounded,
+                    label: 'Club Owner',
+                  ),
+                ),
+                const Positioned(
+                  right: 0,
+                  top: height / 2 - 58,
+                  child: _HeroPill(icon: Icons.mic_rounded, label: 'Creator'),
+                ),
+                Positioned(
+                  bottom: 4,
+                  right: width * .12,
+                  child: const _HeroPill(
+                    icon: Icons.auto_awesome_rounded,
+                    label: 'Premium Identity',
                   ),
                 ),
               ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CrownChip extends StatelessWidget {
+  const _CrownChip({required this.size});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [AppColors.primary, AppColors.secondary],
+        ),
+        border: Border.all(color: Colors.white.withValues(alpha: .22)),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.secondary.withValues(alpha: .5),
+            blurRadius: 16,
+          ),
+        ],
+      ),
+      child: Icon(
+        Icons.workspace_premium_rounded,
+        size: size * .55,
+        color: Colors.white,
+      ),
+    );
+  }
+}
+
+class _HeroPill extends StatelessWidget {
+  const _HeroPill({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(999),
+        color: AppColors.surface.withValues(alpha: .88),
+        border: Border.all(color: Colors.white.withValues(alpha: .12)),
+        boxShadow: const [
+          BoxShadow(color: Colors.black45, blurRadius: 12, offset: Offset(0, 3)),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: const Color(0xFFD3A5FF)),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFFF3EFFA),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
@@ -279,110 +362,108 @@ class _BenefitRow extends StatelessWidget {
   }
 }
 
-class _PlanCard extends StatelessWidget {
-  const _PlanCard({
-    required this.product,
-    required this.busy,
-    required this.onSelect,
+class _BenefitCard extends StatelessWidget {
+  const _BenefitCard({
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
   });
 
-  final PremiumProduct product;
-  final bool busy;
-  final ValueChanged<PremiumProduct> onSelect;
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
 
   @override
   Widget build(BuildContext context) {
-    final highlight = product.highlight;
-
-    return Material(
-      color: _surface,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        onTap: busy ? null : () => onSelect(product),
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 18, 10, 16),
+      decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
-        child: Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: highlight ? const Color(0xFFC026FF) : _border,
-              width: highlight ? 1.6 : 1,
+        color: AppColors.surface.withValues(alpha: .5),
+        border: Border.all(color: Colors.white.withValues(alpha: .08)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, size: 26, color: iconColor),
+          const SizedBox(height: 12),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13.5,
+              height: 1.2,
+              fontWeight: FontWeight.w800,
             ),
           ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          product.plan.label,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 16,
-                          ),
-                        ),
-                        if (highlight) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(
-                                0xFFC026FF,
-                              ).withValues(alpha: .18),
-                              borderRadius: BorderRadius.circular(99),
-                            ),
-                            child: const Text(
-                              'Best value',
-                              style: TextStyle(
-                                color: Color(0xFFE9B8FF),
-                                fontSize: 11,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    if (product.equivalentMonthlyPrice != null ||
-                        product.savingsLabel != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 3),
-                        child: Text(
-                          [
-                            product.equivalentMonthlyPrice,
-                            product.savingsLabel,
-                          ].whereType<String>().join(' · '),
-                          style: const TextStyle(color: _muted, fontSize: 12),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+          const SizedBox(height: 7),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 11.5,
+              height: 1.35,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CheckPlansButton extends StatelessWidget {
+  const _CheckPlansButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      height: 58,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(999),
+          gradient: const LinearGradient(
+            colors: [AppColors.primary, AppColors.secondary],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.secondary.withValues(alpha: .38),
+              blurRadius: 26,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(999),
+            onTap: onTap,
+            child: const Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    product.displayPrice,
-                    style: const TextStyle(
+                    'Check plans',
+                    style: TextStyle(
                       color: Colors.white,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 20,
+                      fontSize: 16.5,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
-                  Text(
-                    product.billingPeriodLabel,
-                    style: const TextStyle(color: _muted, fontSize: 12),
+                  SizedBox(width: 8),
+                  Icon(
+                    Icons.arrow_forward_rounded,
+                    size: 19,
+                    color: Colors.white,
                   ),
                 ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -448,7 +529,7 @@ class _PremiumActiveView extends StatelessWidget {
               const Text(
                 'Your voice just got more room to grow.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: _muted, fontSize: 14),
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
               ),
               const SizedBox(height: 18),
               Container(
@@ -457,9 +538,9 @@ class _PremiumActiveView extends StatelessWidget {
                   vertical: 12,
                 ),
                 decoration: BoxDecoration(
-                  color: _surface,
+                  color: AppColors.surface,
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: _border),
+                  border: Border.all(color: AppColors.border),
                 ),
                 child: Text(
                   '${entitlements.plan.label} plan'
@@ -467,14 +548,17 @@ class _PremiumActiveView extends StatelessWidget {
                             '${periodEnd.day}.${periodEnd.month}.${periodEnd.year}'}'
                   '${entitlements.inGracePeriod ? ' · payment issue — check your billing' : ''}',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: _muted, fontSize: 13),
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
+                  ),
                 ),
               ),
               const SizedBox(height: 24),
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(),
                 style: FilledButton.styleFrom(
-                  backgroundColor: _primary,
+                  backgroundColor: AppColors.primary,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 28,
                     vertical: 14,

@@ -1522,3 +1522,61 @@ to both room types.
 - The podcast room keeps its red editorial stage (already list-based and
   scalable); it adopts RoomIdentityCard when covers land (M4).
 - Stage tiles open the profile preview; moderation stays in the drawer.
+
+## ADR-031: Premium is two surfaces — presentation and plans; the hero is the member's real identity
+
+**Status**: Accepted
+**Date**: 2026-08-09
+
+### Context
+
+`PremiumScreen` was one screen doing three jobs: benefit marketing, plan
+cards, and purchase entry. The presentation-board mockups (screens 3–4)
+separate them: a Premium landing ("More room for your voice.", identity
+hero, three benefit cards, "Check plans") and a distinct plans &
+purchase page ("Choose your plan", Monthly/Yearly toggle, side-by-side
+cards, "Everything Premium includes"). The mockup hero is a generated
+marketing portrait — production must not ship fake people.
+
+### Decision
+
+- `PremiumScreen` keeps every existing entry point (settings ×3, upsell
+  sheet, creator studio) and the entitlement-stream success flip, but
+  its free-member body is now the screen-3 presentation. The "Check
+  plans" CTA pushes the new `PremiumPlansScreen`, which owns the plan
+  cards and the real `verifyPurchase` call (moved, not duplicated —
+  honest decline behavior unchanged). If the entitlement turns premium
+  while the plans screen is open, it pops back so `PremiumScreen` plays
+  the existing welcome state.
+- The hero renders the signed-in member's REAL avatar: canonical
+  `UserAvatar` (via `ProfileService.watchCurrentProfile()`) wrapped in
+  the canonical `PremiumAvatarFrame`, plus a presentation-only backdrop
+  bloom, crown chip and capability pills. No second avatar
+  implementation; the frame's subtle in-product treatment is unchanged.
+- Copy lives in `PremiumPlans` (data layer): 3 presentation benefit
+  cards, the per-plan checklist, and the "Everything Premium includes"
+  list — one source so app and marketing surfaces can't drift. Pricing
+  is untouched: €9.99 / €89.99 (Best value, ≈ €7.50/month), store
+  pricing authoritative once billing adapters exist.
+- Both screens take optional injected services (`entitlementService`,
+  `profileService`) so widget tests run against fakes.
+
+### Reasoning
+
+Marketing and purchasing have different jobs: the presentation sells the
+identity ("this is YOU with Premium" — which is also why the hero must
+be the real user, not a fixture), while the plans page handles
+comparison and commitment. Splitting them matches the mockup board, the
+website flow (landing → /premium), and keeps each screen simple.
+
+### Consequences
+
+- The upsell funnel gained one hop: upsell sheet → presentation → plans.
+  Acceptable — the presentation IS the pitch, and "Check plans" is its
+  single primary action.
+- `PremiumPlansScreen` opened while already premium (only reachable via
+  a race) still shows plans; purchase attempts decline server-side as
+  before. The free→premium transition path is what auto-pops.
+- Purchase feedback remains a snackbar with the server's message —
+  live-verified against production `verifyPurchase` (four invocations,
+  auth+app VALID, decline message rendered).

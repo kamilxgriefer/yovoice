@@ -163,37 +163,57 @@ void main() {
     });
   });
 
-  group('Premium paywall', () {
-    testWidgets('free member sees benefits, both plans and Best value', (
-      tester,
-    ) async {
+  group('Premium presentation and plans', () {
+    testWidgets('free member sees the presentation and Check plans leads '
+        'to the real plans screen', (tester) async {
       final db = FakeFirebaseFirestore();
+      final auth = _auth();
       await tester.pumpWidget(
         MaterialApp(
           home: PremiumScreen(
-            entitlementService: EntitlementService(
-              firestore: db,
-              auth: _auth(),
-            ),
+            entitlementService: EntitlementService(firestore: db, auth: auth),
+            profileService: ProfileService(firestore: db, auth: auth),
           ),
         ),
       );
+      // Fixed pumps only: the premium hero ring animates forever, so
+      // pumpAndSettle would never settle.
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(find.text('Unlock more of your voice'), findsOneWidget);
-      expect(find.text('Creator profile'), findsOneWidget);
-      expect(find.text('Create Clubs'), findsOneWidget);
+      expect(find.text('More room\nfor your voice.'), findsOneWidget);
+      expect(find.text('YO VOICE PREMIUM'), findsOneWidget);
 
-      // Plan cards sit below the fold of the lazily-built ListView.
+      // The benefit cards and CTA sit below the fold.
       await tester.scrollUntilVisible(
-        find.text('Restore purchases'),
+        find.text('Check plans'),
         250,
         scrollable: find.byType(Scrollable).first,
       );
       await tester.pump();
+      expect(find.text('Become a Creator'), findsOneWidget);
+      expect(find.text('Create your own Clubs'), findsOneWidget);
+      expect(find.text('Stand out'), findsOneWidget);
+      // No pricing on the presentation — that's the plans screen's job.
+      expect(find.text('€9.99'), findsNothing);
+
+      await tester.tap(find.text('Check plans'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text('Choose your plan'), findsOneWidget);
       expect(find.text('€9.99'), findsOneWidget);
       expect(find.text('€89.99'), findsOneWidget);
       expect(find.text('Best value'), findsOneWidget);
+      expect(find.text('≈ €7.50 / month'), findsOneWidget);
+      expect(find.text('Save about 25%'), findsOneWidget);
+
+      await tester.scrollUntilVisible(
+        find.text('Restore purchases'),
+        250,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.pump();
+      expect(find.text('Everything Premium includes:'), findsOneWidget);
       expect(find.text('Restore purchases'), findsOneWidget);
     });
 
@@ -201,6 +221,7 @@ void main() {
       tester,
     ) async {
       final db = FakeFirebaseFirestore();
+      final auth = _auth();
       await _seedEntitlements(
         db,
         status: 'active',
@@ -210,10 +231,8 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: PremiumScreen(
-            entitlementService: EntitlementService(
-              firestore: db,
-              auth: _auth(),
-            ),
+            entitlementService: EntitlementService(firestore: db, auth: auth),
+            profileService: ProfileService(firestore: db, auth: auth),
           ),
         ),
       );
@@ -223,6 +242,7 @@ void main() {
       expect(find.text('You have YO Voice Premium'), findsOneWidget);
       expect(find.textContaining('Yearly plan'), findsOneWidget);
       expect(find.text('€9.99'), findsNothing);
+      expect(find.text('Check plans'), findsNothing);
     });
   });
 

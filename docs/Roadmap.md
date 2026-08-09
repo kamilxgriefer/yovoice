@@ -16,6 +16,19 @@ someone decide what to pick up next.
 
 ## Done
 
+- Mockup visual overhaul — Home + rooms + Premium (2026-08-09): M1 Home
+  Live Social Hub (real-data VoiceCore hero, Your People status row,
+  `c979d20`); M2 room chat + reactions in both room types and From your
+  Clubs on Home (`ee30f6f`, rules deployed); M3 Premium presentation
+  (board screen 3) + dedicated plans screen (board screen 4) — the old
+  single paywall split into `PremiumScreen` (marketing presentation with
+  the member's real avatar in the canonical premium ring) and
+  `PremiumPlansScreen` (toggle, side-by-side plan cards, real
+  `verifyPurchase` wiring; decline path live-verified against production)
+  ([ADR-031](Decisions.md#adr-031-premium-is-two-surfaces-presentation-and-plans-the-hero-is-the-members-real-identity)).
+  Board screens 5 (profile/creator) and 6 (club room) still open — see
+  the agent handoff ledger.
+
 - Rooms 2.0 — M1/M2/M3/M8 (2026-08-09): LiveKit-authoritative MicState
   + mute-race fix; Podcast rename (ADR-029); scalable stage system
   replacing the orbit, verified at 2/10/50/500 participants (ADR-030);
