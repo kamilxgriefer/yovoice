@@ -4,6 +4,7 @@ import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class AnalyticsTile extends StatelessWidget {
   const AnalyticsTile({
@@ -186,22 +187,13 @@ class _BroadcastParticipantsSheetState
                         displayName: person.displayName,
                         photoUrl: person.photoUrl,
                       ),
-                      leading: CircleAvatar(
+                      // Canonical avatar component — same loader, error
+                      // state and caching as every other surface.
+                      leading: UserAvatar(
+                        radius: 20,
+                        photoUrl: person.photoUrl,
+                        displayName: person.displayName,
                         backgroundColor: const Color(0xFF792032),
-                        backgroundImage: person.photoUrl == null
-                            ? null
-                            : NetworkImage(person.photoUrl!),
-                        child: person.photoUrl == null
-                            ? Text(
-                                person.displayName.isEmpty
-                                    ? 'Y'
-                                    : person.displayName[0].toUpperCase(),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              )
-                            : null,
                       ),
                       title: Text(
                         person.displayName,
