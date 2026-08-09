@@ -4,6 +4,7 @@ import 'package:yovoice/features/clubs/presentation/screens/clubs_screen.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_studio_screen.dart';
 import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
+import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notification_preferences_screen.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/settings_screen.dart';
@@ -12,12 +13,25 @@ enum MoreDestination {
   friends,
   discover,
   clubs,
+  moments,
   notifications,
   achievements,
   creatorStudio,
   settings,
   profile,
 }
+
+/// Destinations the DESKTOP rail shows directly, so the desktop "More"
+/// menu can drop them and stay free of duplicates. Mobile keeps showing
+/// all of them in its sheet — its dock has no room for them, and that
+/// layout is deliberately untouched.
+const Set<MoreDestination> desktopRailDestinations = {
+  MoreDestination.discover,
+  MoreDestination.moments,
+  MoreDestination.clubs,
+  MoreDestination.creatorStudio,
+  MoreDestination.friends,
+};
 
 Future<MoreDestination?> showMoreSheet(BuildContext context) {
   return showModalBottomSheet<MoreDestination>(
@@ -35,12 +49,108 @@ Widget moreDestinationScreen(MoreDestination destination) {
     MoreDestination.friends => const FriendsScreen(),
     MoreDestination.discover => const DiscoverScreen(),
     MoreDestination.clubs => const ClubsScreen(),
+    MoreDestination.moments => const MomentsScreen(),
     MoreDestination.notifications => const NotificationPreferencesScreen(),
     MoreDestination.achievements => const AwardsHubScreen(),
     MoreDestination.creatorStudio => const CreatorStudioScreen(),
     MoreDestination.settings => const SettingsScreen(),
     MoreDestination.profile => const ProfileScreen(),
   };
+}
+
+/// The DESKTOP "More": a compact popover anchored to the rail item —
+/// no dimmed page, no drag handle, no bottom sheet. Lists only what the
+/// rail does not already show, so nothing appears twice.
+Future<MoreDestination?> showDesktopMoreMenu(
+  BuildContext context, {
+  required Offset anchor,
+}) {
+  const items = <(MoreDestination, IconData, String, String)>[
+    (
+      MoreDestination.achievements,
+      Icons.emoji_events_rounded,
+      'Awards',
+      'Titles and progress',
+    ),
+    (
+      MoreDestination.notifications,
+      Icons.notifications_active_rounded,
+      'Alerts',
+      'Notification preferences',
+    ),
+    (
+      MoreDestination.settings,
+      Icons.settings_rounded,
+      'Settings',
+      'Privacy, account and app',
+    ),
+  ];
+
+  return showMenu<MoreDestination>(
+    context: context,
+    // Anchored beside the rail item, not centered over the page.
+    position: RelativeRect.fromLTRB(
+      anchor.dx,
+      anchor.dy,
+      anchor.dx + 280,
+      anchor.dy + 320,
+    ),
+    color: const Color(0xFF171021),
+    surfaceTintColor: Colors.transparent,
+    elevation: 14,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(18),
+      side: const BorderSide(color: MoreSheet._border),
+    ),
+    constraints: const BoxConstraints(minWidth: 264, maxWidth: 300),
+    items: [
+      for (final (destination, icon, label, subtitle) in items)
+        PopupMenuItem<MoreDestination>(
+          value: destination,
+          height: 58,
+          child: Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: MoreSheet._primary.withValues(alpha: .18),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Icon(icon, size: 18, color: const Color(0xFFD28AFF)),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: MoreSheet._muted,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+    ],
+  );
 }
 
 class MoreSheet extends StatelessWidget {

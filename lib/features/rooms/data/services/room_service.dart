@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
+import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
+import 'package:yovoice/features/achievements/data/services/achievement_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -116,6 +118,14 @@ class RoomService {
     }
 
     await batch.commit();
+
+    // Creating a room is the SOURCE EVENT for the 'rooms' achievement
+    // metric; nothing wrote roomCount before, so room-based achievements
+    // could never progress. Best-effort — the room already exists.
+    await AchievementService(firestore: _firestore, auth: _auth)
+        .incrementMetric('rooms')
+        .catchError((_) => const <AchievementDefinition>[]);
+
     return VoiceRoom.fromFirestore(await room.get());
   }
 

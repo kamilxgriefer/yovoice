@@ -70,6 +70,7 @@ class _DesktopPreviewHomeState extends State<_DesktopPreviewHome> {
             unreadNotificationCount: 6,
             onSelect: (item) => setState(() => _active = item),
             onCreateRoom: () {},
+            onCreateMoment: () {},
             onOpenProfile: () {},
             onOpenProfileSettings: () {},
           ),

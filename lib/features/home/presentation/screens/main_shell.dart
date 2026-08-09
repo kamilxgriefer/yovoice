@@ -339,8 +339,22 @@ class _MainShellState extends State<MainShell>
     );
   }
 
+  final GlobalKey _moreItemKey = GlobalKey();
+
+  /// Mobile keeps its bottom sheet; desktop gets an anchored popover
+  /// beside the rail item — no dimmed page, no drag handle.
   Future<void> _openMoreMenu() async {
-    final destination = await showMoreSheet(context);
+    final MoreDestination? destination;
+    if (MediaQuery.sizeOf(context).width >= _desktopBreakpoint) {
+      final box =
+          _moreItemKey.currentContext?.findRenderObject() as RenderBox?;
+      final anchor = box == null
+          ? const Offset(16, 320)
+          : box.localToGlobal(Offset(box.size.width - 8, 0));
+      destination = await showDesktopMoreMenu(context, anchor: anchor);
+    } else {
+      destination = await showMoreSheet(context);
+    }
     if (!mounted || destination == null) {
       return;
     }
@@ -363,12 +377,36 @@ class _MainShellState extends State<MainShell>
           body: screen,
           selectedIndex: _selectedIndex,
           unreadConversationCount: _unreadConversationCount,
+          unreadNotificationCount: _unreadNotificationCount,
+          activeDesktopItem: _desktopItemFor(destination),
           onDestinationSelected: _onDestinationSelected,
           onVoicePressed: _openVoiceAction,
           onMorePressed: _openMoreMenu,
+          onDesktopNavSelected: (item) =>
+              unawaited(_onDesktopNavSelected(item)),
+          onCreateRoom: () => unawaited(_openCreateRoom()),
+          onCreateMoment: () => unawaited(_openCreateMoment()),
+          onOpenProfile: () => unawaited(_openProfile()),
+          onOpenProfileSettings: () => unawaited(_openProfileSettings()),
         ),
       ),
     );
+  }
+
+  /// Which rail item should read as active while a pushed destination is
+  /// open, so the desktop shell never looks "nowhere".
+  static DesktopNavItem? _desktopItemFor(MoreDestination destination) {
+    return switch (destination) {
+      MoreDestination.discover => DesktopNavItem.discover,
+      MoreDestination.moments => DesktopNavItem.moments,
+      MoreDestination.clubs => DesktopNavItem.clubs,
+      MoreDestination.creatorStudio => DesktopNavItem.creatorStudio,
+      MoreDestination.friends => DesktopNavItem.friends,
+      MoreDestination.achievements ||
+      MoreDestination.notifications ||
+      MoreDestination.settings => DesktopNavItem.more,
+      MoreDestination.profile => null,
+    };
   }
 
   // --- Desktop-only wiring (>= _desktopBreakpoint) ---------------------
@@ -399,9 +437,21 @@ class _MainShellState extends State<MainShell>
         await Navigator.of(context).push<void>(
           MaterialPageRoute<void>(builder: (_) => const NotificationsScreen()),
         );
+      case DesktopNavItem.moments:
+        await _openMoreDestination(MoreDestination.moments);
+      case DesktopNavItem.clubs:
+        await _openMoreDestination(MoreDestination.clubs);
+      case DesktopNavItem.creatorStudio:
+        await _openMoreDestination(MoreDestination.creatorStudio);
       case DesktopNavItem.more:
         await _openMoreMenu();
     }
+  }
+
+  Future<void> _openCreateMoment() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const RecordVoiceMomentScreen()),
+    );
   }
 
   Future<void> _openProfile() async {
@@ -458,11 +508,13 @@ class _MainShellState extends State<MainShell>
               child: Row(
                 children: [
                   DesktopSidebar(
+                    moreItemKey: _moreItemKey,
                     active: _activeDesktopItem,
                     unreadConversationCount: _unreadConversationCount,
                     unreadNotificationCount: _unreadNotificationCount,
                     onSelect: (item) => unawaited(_onDesktopNavSelected(item)),
                     onCreateRoom: () => unawaited(_openCreateRoom()),
+                    onCreateMoment: () => unawaited(_openCreateMoment()),
                     onOpenProfile: () => unawaited(_openProfile()),
                     onOpenProfileSettings: () =>
                         unawaited(_openProfileSettings()),
@@ -578,6 +630,13 @@ class MoreDestinationHost extends StatelessWidget {
     required this.onDestinationSelected,
     required this.onVoicePressed,
     required this.onMorePressed,
+    this.unreadNotificationCount = 0,
+    this.activeDesktopItem,
+    this.onDesktopNavSelected,
+    this.onCreateRoom,
+    this.onCreateMoment,
+    this.onOpenProfile,
+    this.onOpenProfileSettings,
     super.key,
   });
 
@@ -588,8 +647,60 @@ class MoreDestinationHost extends StatelessWidget {
   final VoidCallback onVoicePressed;
   final VoidCallback onMorePressed;
 
+  // Desktop-only wiring. When present (and the window is wide) the
+  // destination renders INSIDE the persistent desktop shell — the mobile
+  // dock/HUD never appears at desktop widths.
+  final int unreadNotificationCount;
+  final DesktopNavItem? activeDesktopItem;
+  final ValueChanged<DesktopNavItem>? onDesktopNavSelected;
+  final VoidCallback? onCreateRoom;
+  final VoidCallback? onCreateMoment;
+  final VoidCallback? onOpenProfile;
+  final VoidCallback? onOpenProfileSettings;
+
   @override
   Widget build(BuildContext context) {
+    final isDesktop =
+        MediaQuery.sizeOf(context).width >= _MainShellState._desktopBreakpoint;
+
+    if (isDesktop && onDesktopNavSelected != null) {
+      // Rail taps pop this route FIRST, then act, so the shell's own
+      // state stays the single source of truth (same contract the mobile
+      // bar below already uses).
+      void popThen(VoidCallback action) {
+        Navigator.of(context).pop();
+        action();
+      }
+
+      return Scaffold(
+        backgroundColor: _MainShellState._background,
+        body: Column(
+          children: [
+            Expanded(
+              child: Row(
+                children: [
+                  DesktopSidebar(
+                    active: activeDesktopItem,
+                    unreadConversationCount: unreadConversationCount,
+                    unreadNotificationCount: unreadNotificationCount,
+                    onSelect: (item) =>
+                        popThen(() => onDesktopNavSelected!(item)),
+                    onCreateRoom: () => popThen(onCreateRoom ?? () {}),
+                    onCreateMoment: () => popThen(onCreateMoment ?? () {}),
+                    onOpenProfile: () => popThen(onOpenProfile ?? () {}),
+                    onOpenProfileSettings: () =>
+                        popThen(onOpenProfileSettings ?? () {}),
+                  ),
+                  Expanded(child: body),
+                ],
+              ),
+            ),
+            const RoomMiniBar(),
+          ],
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: _MainShellState._background,
       body: body,

@@ -4,6 +4,7 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
@@ -17,13 +18,25 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 /// gear's settings callback, and Voice Trending rendering real live
 /// rooms rather than placeholder content.
 void main() {
-  Widget host(Widget child) => MaterialApp(
-    home: Scaffold(body: SizedBox(width: 1440, height: 900, child: child)),
-  );
+  Widget host(Widget child) => MaterialApp(home: Scaffold(body: child));
+
+  /// Desktop-sized surface — the rail is a desktop-only surface and the
+  /// default 800x600 test window is narrower than the smallest desktop.
+  void useDesktopWindow(
+    WidgetTester tester, {
+    Size size = const Size(1440, 900),
+  }) {
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+  }
 
   group('DesktopSidebar', () {
-    testWidgets('shows exactly the six primary destinations and NO '
-        'Profile nav item', (tester) async {
+    testWidgets('shows every primary destination (incl. the promoted '
+        'Moments/Clubs/Creator Studio) and NO Profile nav item', (
+      tester,
+    ) async {
+      useDesktopWindow(tester);
       await tester.pumpWidget(
         host(
           DesktopSidebar(
@@ -32,6 +45,7 @@ void main() {
             unreadNotificationCount: 0,
             onSelect: (_) {},
             onCreateRoom: () {},
+            onCreateMoment: () {},
             onOpenProfile: () {},
             onOpenProfileSettings: () {},
           ),
@@ -45,6 +59,9 @@ void main() {
         'Chats',
         'Notifications',
         'Friends',
+        'Moments',
+        'Clubs',
+        'Creator Studio',
         'More',
       ]) {
         expect(find.text(label), findsOneWidget, reason: '$label missing');
@@ -52,12 +69,46 @@ void main() {
       // Profile is represented by the bottom card, never a nav item.
       expect(find.text('Profile'), findsNothing);
       expect(find.text('Create Room'), findsOneWidget);
+      expect(find.text('Create your Moment'), findsOneWidget);
+    });
+
+    testWidgets('Create your Moment is a distinct action from Create Room', (
+      tester,
+    ) async {
+      var rooms = 0;
+      var moments = 0;
+      useDesktopWindow(tester);
+      await tester.pumpWidget(
+        host(
+          DesktopSidebar(
+            active: DesktopNavItem.home,
+            unreadConversationCount: 0,
+            unreadNotificationCount: 0,
+            onSelect: (_) {},
+            onCreateRoom: () => rooms++,
+            onCreateMoment: () => moments++,
+            onOpenProfile: () {},
+            onOpenProfileSettings: () {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('Create your Moment'));
+      await tester.pump();
+      expect(moments, 1);
+      expect(rooms, 0);
+
+      await tester.tap(find.text('Create Room'));
+      await tester.pump();
+      expect(rooms, 1);
     });
 
     testWidgets('the gear opens profile settings; the card body opens the '
         'profile — two distinct callbacks', (tester) async {
       var settings = 0;
       var profile = 0;
+      useDesktopWindow(tester);
       await tester.pumpWidget(
         host(
           DesktopSidebar(
@@ -66,6 +117,7 @@ void main() {
             unreadNotificationCount: 0,
             onSelect: (_) {},
             onCreateRoom: () {},
+            onCreateMoment: () {},
             onOpenProfile: () => profile++,
             onOpenProfileSettings: () => settings++,
           ),
@@ -83,6 +135,7 @@ void main() {
       tester,
     ) async {
       final tapped = <DesktopNavItem>[];
+      useDesktopWindow(tester);
       await tester.pumpWidget(
         host(
           DesktopSidebar(
@@ -91,6 +144,7 @@ void main() {
             unreadNotificationCount: 0,
             onSelect: tapped.add,
             onCreateRoom: () {},
+            onCreateMoment: () {},
             onOpenProfile: () {},
             onOpenProfileSettings: () {},
           ),
@@ -103,6 +157,9 @@ void main() {
         'Chats',
         'Notifications',
         'Friends',
+        'Moments',
+        'Clubs',
+        'Creator Studio',
         'More',
       ]) {
         await tester.tap(find.text(label));
@@ -114,11 +171,15 @@ void main() {
         DesktopNavItem.chats,
         DesktopNavItem.notifications,
         DesktopNavItem.friends,
+        DesktopNavItem.moments,
+        DesktopNavItem.clubs,
+        DesktopNavItem.creatorStudio,
         DesktopNavItem.more,
       ]);
     });
 
     testWidgets('unread counts surface as badges', (tester) async {
+      useDesktopWindow(tester);
       await tester.pumpWidget(
         host(
           DesktopSidebar(
@@ -127,6 +188,7 @@ void main() {
             unreadNotificationCount: 6,
             onSelect: (_) {},
             onCreateRoom: () {},
+            onCreateMoment: () {},
             onOpenProfile: () {},
             onOpenProfileSettings: () {},
           ),
@@ -136,6 +198,67 @@ void main() {
 
       expect(find.text('3'), findsOneWidget);
       expect(find.text('6'), findsOneWidget);
+    });
+  });
+
+  group('MoreDestinationHost', () {
+    testWidgets('at DESKTOP width a pushed destination keeps the sidebar '
+        'and shows NO mobile dock', (tester) async {
+      useDesktopWindow(tester);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MoreDestinationHost(
+            body: const Scaffold(body: Center(child: Text('Awards body'))),
+            selectedIndex: 0,
+            unreadConversationCount: 0,
+            unreadNotificationCount: 0,
+            activeDesktopItem: DesktopNavItem.more,
+            onDestinationSelected: (_) {},
+            onVoicePressed: () {},
+            onMorePressed: () {},
+            onDesktopNavSelected: (_) {},
+            onCreateRoom: () {},
+            onCreateMoment: () {},
+            onOpenProfile: () {},
+            onOpenProfileSettings: () {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Awards body'), findsOneWidget);
+      // The persistent rail is present…
+      expect(find.byType(DesktopSidebar), findsOneWidget);
+      expect(find.text('Create Room'), findsOneWidget);
+      // …and the mobile dock is not: its Voice action never renders here.
+      expect(find.byType(BottomNavigationBar), findsNothing);
+    });
+
+    testWidgets('at MOBILE width the same host keeps the existing dock', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MoreDestinationHost(
+            body: const Scaffold(body: Center(child: Text('Awards body'))),
+            selectedIndex: 0,
+            unreadConversationCount: 0,
+            onDestinationSelected: (_) {},
+            onVoicePressed: () {},
+            onMorePressed: () {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Awards body'), findsOneWidget);
+      // Mobile is untouched: no desktop rail, dock still hosted.
+      expect(find.byType(DesktopSidebar), findsNothing);
+      expect(find.text('Home'), findsWidgets);
     });
   });
 

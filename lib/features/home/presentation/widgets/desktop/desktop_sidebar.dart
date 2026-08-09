@@ -13,7 +13,17 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 /// Deliberately NOT a nav item: Profile. On desktop the signed-in user is
 /// represented by the profile card pinned at the bottom of this rail
 /// (tap = profile, gear = profile & account settings).
-enum DesktopNavItem { home, discover, chats, notifications, friends, more }
+enum DesktopNavItem {
+  home,
+  discover,
+  chats,
+  notifications,
+  friends,
+  moments,
+  clubs,
+  creatorStudio,
+  more,
+}
 
 class DesktopSidebar extends StatelessWidget {
   const DesktopSidebar({
@@ -22,9 +32,11 @@ class DesktopSidebar extends StatelessWidget {
     required this.unreadNotificationCount,
     required this.onSelect,
     required this.onCreateRoom,
+    required this.onCreateMoment,
     required this.onOpenProfile,
     required this.onOpenProfileSettings,
     this.profileService,
+    this.moreItemKey,
     super.key,
   });
 
@@ -34,9 +46,13 @@ class DesktopSidebar extends StatelessWidget {
   final int unreadNotificationCount;
   final ValueChanged<DesktopNavItem> onSelect;
   final VoidCallback onCreateRoom;
+  final VoidCallback onCreateMoment;
   final VoidCallback onOpenProfile;
   final VoidCallback onOpenProfileSettings;
   final ProfileService? profileService;
+
+  /// Anchors the desktop More popover to the rail item.
+  final GlobalKey? moreItemKey;
 
   static const double width = 264;
 
@@ -54,53 +70,92 @@ class DesktopSidebar extends StatelessWidget {
         children: [
           const _Wordmark(),
           const SizedBox(height: 26),
-          _NavTile(
-            item: DesktopNavItem.home,
-            icon: Icons.home_rounded,
-            label: 'Home',
-            active: active == DesktopNavItem.home,
-            onTap: onSelect,
+          // The rail must survive short desktop windows (a 1440x700
+          // laptop): nine destinations plus two create actions overflow
+          // a fixed column, so the navigation block scrolls while the
+          // profile card stays pinned to the bottom.
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _NavTile(
+                    item: DesktopNavItem.home,
+                    icon: Icons.home_rounded,
+                    label: 'Home',
+                    active: active == DesktopNavItem.home,
+                    onTap: onSelect,
+                  ),
+                  _NavTile(
+                    item: DesktopNavItem.discover,
+                    icon: Icons.explore_outlined,
+                    label: 'Discover',
+                    active: active == DesktopNavItem.discover,
+                    onTap: onSelect,
+                  ),
+                  _NavTile(
+                    item: DesktopNavItem.chats,
+                    icon: Icons.chat_bubble_outline_rounded,
+                    label: 'Chats',
+                    badge: unreadConversationCount,
+                    active: active == DesktopNavItem.chats,
+                    onTap: onSelect,
+                  ),
+                  _NavTile(
+                    item: DesktopNavItem.notifications,
+                    icon: Icons.notifications_none_rounded,
+                    label: 'Notifications',
+                    badge: unreadNotificationCount,
+                    active: active == DesktopNavItem.notifications,
+                    onTap: onSelect,
+                  ),
+                  _NavTile(
+                    item: DesktopNavItem.friends,
+                    icon: Icons.people_alt_outlined,
+                    label: 'Friends',
+                    active: active == DesktopNavItem.friends,
+                    onTap: onSelect,
+                  ),
+                  // Promoted out of More: the rail has the room the dock never
+                  // did, and these are high-frequency destinations.
+                  _NavTile(
+                    item: DesktopNavItem.moments,
+                    icon: Icons.graphic_eq_rounded,
+                    label: 'Moments',
+                    active: active == DesktopNavItem.moments,
+                    onTap: onSelect,
+                  ),
+                  _NavTile(
+                    item: DesktopNavItem.clubs,
+                    icon: Icons.groups_2_outlined,
+                    label: 'Clubs',
+                    active: active == DesktopNavItem.clubs,
+                    onTap: onSelect,
+                  ),
+                  _NavTile(
+                    item: DesktopNavItem.creatorStudio,
+                    icon: Icons.auto_graph_rounded,
+                    label: 'Creator Studio',
+                    active: active == DesktopNavItem.creatorStudio,
+                    onTap: onSelect,
+                  ),
+                  _NavTile(
+                    key: moreItemKey,
+                    item: DesktopNavItem.more,
+                    icon: Icons.more_horiz_rounded,
+                    label: 'More',
+                    active: active == DesktopNavItem.more,
+                    onTap: onSelect,
+                  ),
+                  const SizedBox(height: 18),
+                  _CreateRoomButton(onTap: onCreateRoom),
+                  const SizedBox(height: 9),
+                  _CreateMomentButton(onTap: onCreateMoment),
+                ],
+              ),
+            ),
           ),
-          _NavTile(
-            item: DesktopNavItem.discover,
-            icon: Icons.explore_outlined,
-            label: 'Discover',
-            active: active == DesktopNavItem.discover,
-            onTap: onSelect,
-          ),
-          _NavTile(
-            item: DesktopNavItem.chats,
-            icon: Icons.chat_bubble_outline_rounded,
-            label: 'Chats',
-            badge: unreadConversationCount,
-            active: active == DesktopNavItem.chats,
-            onTap: onSelect,
-          ),
-          _NavTile(
-            item: DesktopNavItem.notifications,
-            icon: Icons.notifications_none_rounded,
-            label: 'Notifications',
-            badge: unreadNotificationCount,
-            active: active == DesktopNavItem.notifications,
-            onTap: onSelect,
-          ),
-          _NavTile(
-            item: DesktopNavItem.friends,
-            icon: Icons.people_alt_outlined,
-            label: 'Friends',
-            active: active == DesktopNavItem.friends,
-            onTap: onSelect,
-          ),
-          _NavTile(
-            item: DesktopNavItem.more,
-            icon: Icons.more_horiz_rounded,
-            label: 'More',
-            active: active == DesktopNavItem.more,
-            onTap: onSelect,
-          ),
-          const SizedBox(height: 22),
-          _CreateRoomButton(onTap: onCreateRoom),
-          const Spacer(),
+          const SizedBox(height: 12),
           _ProfileCard(
             profileService: profileService,
             onTap: onOpenProfile,
@@ -154,6 +209,7 @@ class _NavTile extends StatefulWidget {
     required this.active,
     required this.onTap,
     this.badge = 0,
+    super.key,
   });
 
   final DesktopNavItem item;
@@ -298,6 +354,40 @@ class _CreateRoomButton extends StatelessWidget {
                 ],
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Secondary action under Create Room: outlined, quieter, and pointed at
+/// the SAME real recording flow the dock's voice action uses.
+class _CreateMomentButton extends StatelessWidget {
+  const _CreateMomentButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      height: 46,
+      child: OutlinedButton.icon(
+        onPressed: onTap,
+        style: OutlinedButton.styleFrom(
+          side: BorderSide(color: AppColors.primary.withValues(alpha: .5)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+        icon: const Icon(Icons.mic_rounded, size: 17, color: Color(0xFFD3A5FF)),
+        label: const Text(
+          'Create your Moment',
+          style: TextStyle(
+            color: Color(0xFFD3A5FF),
+            fontSize: 13.5,
+            fontWeight: FontWeight.w700,
           ),
         ),
       ),

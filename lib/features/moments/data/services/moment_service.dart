@@ -4,6 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
+import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
+import 'package:yovoice/features/achievements/data/services/achievement_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 
 class MomentService {
@@ -11,13 +13,21 @@ class MomentService {
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
     FirebaseStorage? storage,
+    AchievementService? achievementService,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
-       _storage = storage ?? FirebaseStorage.instance;
+       _storage = storage ?? FirebaseStorage.instance,
+       _achievements =
+           achievementService ??
+           AchievementService(
+             firestore: firestore ?? FirebaseFirestore.instance,
+             auth: auth ?? FirebaseAuth.instance,
+           );
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final FirebaseStorage _storage;
+  final AchievementService _achievements;
 
   CollectionReference<Map<String, dynamic>> get _moments =>
       _firestore.collection('voiceMoments');
@@ -148,6 +158,15 @@ class MomentService {
         'publishedAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
+
+      // Publishing is the SOURCE EVENT for the 'moments' achievement
+      // metric. Nothing incremented momentCount before this, so every
+      // Moment-based achievement sat permanently at 0/N no matter how
+      // many Moments were posted. Best-effort: a counter write must
+      // never fail an already-published Moment.
+      await _achievements
+          .incrementMetric('moments')
+          .catchError((_) => const <AchievementDefinition>[]);
 
       return document.id;
     } catch (_) {
