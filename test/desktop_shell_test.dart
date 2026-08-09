@@ -178,6 +178,30 @@ void main() {
       ]);
     });
 
+    testWidgets('survives a SHORT desktop window (1440x620) — the rail '
+        'scrolls instead of overflowing', (tester) async {
+      useDesktopWindow(tester, size: const Size(1440, 620));
+      await tester.pumpWidget(
+        host(
+          DesktopSidebar(
+            active: DesktopNavItem.home,
+            unreadConversationCount: 0,
+            unreadNotificationCount: 0,
+            onSelect: (_) {},
+            onCreateRoom: () {},
+            onCreateMoment: () {},
+            onOpenProfile: () {},
+            onOpenProfileSettings: () {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      // The pinned profile card stays reachable at any height.
+      expect(find.byTooltip('Profile settings'), findsOneWidget);
+    });
+
     testWidgets('unread counts surface as badges', (tester) async {
       useDesktopWindow(tester);
       await tester.pumpWidget(
