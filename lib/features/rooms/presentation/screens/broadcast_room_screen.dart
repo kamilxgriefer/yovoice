@@ -84,6 +84,13 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
     if (mounted) setState(() {});
   }
 
+  bool _roleReconnectInFlight = false;
+
+  Future<void> _reconnectForRole() async {
+    await _voice.disconnect();
+    await _connectVoice();
+  }
+
   Future<void> _connectVoice() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -147,6 +154,26 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
       final me = mine.first;
       if (_voice.isConnected && me.isMuted && !_voice.isMuted) {
         unawaited(_voice.setMuted(true));
+      }
+
+      // Role changed (accepted onto the stage, or moved back to the
+      // audience): LiveKit permissions live in the TOKEN, which was
+      // minted for the old role — without a fresh one an accepted
+      // speaker still can't publish, and a demoted speaker still can.
+      // Rejoin mints a token for the real current role. Brief gap;
+      // a server-side live permission update (LiveKit server API via a
+      // Cloud Function) is the gapless follow-up, tracked in Roadmap.
+      final shouldPublish = me.isSpeaker || me.isHost;
+      if (_voice.isConnected &&
+          _voice.roomId == widget.room.id &&
+          shouldPublish != _voice.canPublish &&
+          !_roleReconnectInFlight) {
+        _roleReconnectInFlight = true;
+        unawaited(
+          _reconnectForRole().whenComplete(
+            () => _roleReconnectInFlight = false,
+          ),
+        );
       }
       return;
     }
