@@ -3,14 +3,20 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/clubs/data/models/club.dart';
+import 'package:yovoice/features/clubs/data/services/club_service.dart';
+import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/recent_room_messages.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class CommunityVoiceRoomScreen extends StatefulWidget {
   const CommunityVoiceRoomScreen({required this.room, super.key});
@@ -36,6 +42,12 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   // setState() in this screen was tearing down and re-registering its
   // listener on every rebuild).
   late final Stream<List<RoomParticipant>> _participants;
+
+  /// Non-null only for club-lounge rooms — the live club document that
+  /// drives the club identity banner and top-bar title (board screen 6).
+  late final Stream<Club>? _club = widget.room.clubId == null
+      ? null
+      : ClubService().watchClub(widget.room.clubId!);
   StreamSubscription<List<RoomParticipant>>? _participantSubscription;
   bool _joinedDocumentSeen = false;
   bool _leaving = false;
@@ -43,6 +55,11 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
 
   String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
   bool get _isHost => _uid == widget.room.hostId;
+  bool get _isClubRoom => widget.room.isClubRoom;
+
+  /// Club rooms carry the club-teal identity the room cards introduced;
+  /// plain community rooms keep their purple.
+  Color get _accent => _isClubRoom ? AppColors.accent : const Color(0xFF9D20FF);
 
   @override
   void initState() {
@@ -117,9 +134,26 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     if (_leaving) return;
     _leaving = true;
     await _voice.disconnect();
-    await _rooms.leaveRoom(widget.room.id);
+    // Club lounges get the lounge bookkeeping (isLive drops when the
+    // last member leaves) — plain leaveRoom left lounges "live" forever.
+    final clubId = widget.room.clubId;
+    if (clubId != null) {
+      await _rooms.leaveClubLounge(clubId);
+    } else {
+      await _rooms.leaveRoom(widget.room.id);
+    }
     if (!mounted) return;
     Navigator.of(context).pop();
+  }
+
+  void _openClubOverview() {
+    final clubId = widget.room.clubId;
+    if (clubId == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ClubOverviewScreen(clubId: clubId),
+      ),
+    );
   }
 
   Future<void> _toggleMute() async {
@@ -188,7 +222,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   /// mute flags come from the Firestore roster. Listeners never render
   /// on the stage — a room with 500 listeners paints the same number of
   /// widgets as a room with 5.
-  Widget _buildStage(List<RoomParticipant> roomParticipants) {
+  Widget _buildStage(List<RoomParticipant> roomParticipants, Club? club) {
     final voiceByIdentity = {
       for (final v in _voice.participants) v.identity: v,
     };
@@ -213,21 +247,27 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     final anyoneSpeaking = stageSpeakers.any((s) => s.isSpeaking);
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 92),
       children: [
-        RoomIdentityCard(
-          roomName: widget.room.name,
-          topic: widget.room.description.trim().isNotEmpty
-              ? widget.room.description
-              : widget.room.category,
-          accent: const Color(0xFF9D20FF),
-          imageUrl: widget.room.imageUrl,
-          quiet: !anyoneSpeaking,
-        ),
+        // Club rooms lead with the club's identity (board screen 6);
+        // the generic room identity card stays for plain rooms — and as
+        // the graceful fallback while the club document loads.
+        if (club != null)
+          _ClubBanner(club: club, onTap: _openClubOverview)
+        else
+          RoomIdentityCard(
+            roomName: widget.room.name,
+            topic: widget.room.description.trim().isNotEmpty
+                ? widget.room.description
+                : widget.room.category,
+            accent: _accent,
+            imageUrl: widget.room.imageUrl,
+            quiet: !anyoneSpeaking,
+          ),
         const SizedBox(height: 14),
         StageGrid(
           speakers: stageSpeakers,
-          accent: const Color(0xFF9D20FF),
+          accent: _accent,
           onOverflowTap: () => _openParticipants(_latestParticipants),
           onSpeakerTap: (speaker) => showProfilePreview(
             context,
@@ -239,7 +279,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
         const SizedBox(height: 12),
         ListenersStrip(
           count: listeners.length,
-          accent: const Color(0xFF9D20FF),
+          accent: _accent,
           onTap: () => _openParticipants(_latestParticipants),
           previewPhotoUrls: [for (final l in listeners.take(4)) l.photoUrl],
           previewNames: [for (final l in listeners.take(4)) l.displayName],
@@ -250,8 +290,21 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
 
   List<RoomParticipant> _latestParticipants = const [];
 
+  void _openChat() {
+    showRoomChatSheet(context, roomId: widget.room.id, isHost: _isHost);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final clubStream = _club;
+    if (clubStream == null) return _buildRoom(null);
+    return StreamBuilder<Club>(
+      stream: clubStream,
+      builder: (context, snapshot) => _buildRoom(snapshot.data),
+    );
+  }
+
+  Widget _buildRoom(Club? club) {
     return StreamBuilder<List<RoomParticipant>>(
       stream: _participants,
       builder: (context, snapshot) {
@@ -277,7 +330,10 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
             child: Column(
               children: [
                 _TopBar(
-                  roomName: widget.room.name,
+                  roomName: club?.name ?? widget.room.name,
+                  subtitle: _isClubRoom ? 'Club Room' : null,
+                  avatarUrl: club?.avatarUrl,
+                  avatarName: club?.name,
                   status: _voice.status,
                   speaking: speaking,
                   listeners: listeners,
@@ -285,18 +341,34 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
                   onSpeakingTap: () => _openParticipants(roomParticipants),
                   onListenersTap: () => _openParticipants(roomParticipants),
                 ),
-                Expanded(child: _buildStage(roomParticipants)),
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: _buildStage(roomParticipants, club),
+                      ),
+                      // Board screens 2/6: the newest chat floats over
+                      // the stage so talk stays visible mid-room.
+                      Positioned(
+                        left: 16,
+                        right: 16,
+                        bottom: 8,
+                        child: RecentRoomMessages(
+                          roomId: widget.room.id,
+                          service: _rooms,
+                          onOpenChat: _openChat,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 _BottomControls(
                   micState: _voice.micState,
                   busy: _voice.muteChangeInProgress,
                   onMute: _toggleMute,
                   onLeave: _leave,
                   onMicBlocked: _explainMicState,
-                  onChat: () => showRoomChatSheet(
-                    context,
-                    roomId: widget.room.id,
-                    isHost: _isHost,
-                  ),
+                  onChat: _openChat,
                   onPeople: () => _openParticipants(_latestParticipants),
                 ),
               ],
@@ -317,6 +389,9 @@ class _TopBar extends StatelessWidget {
     required this.onBack,
     required this.onSpeakingTap,
     required this.onListenersTap,
+    this.subtitle,
+    this.avatarUrl,
+    this.avatarName,
   });
 
   final String roomName;
@@ -326,6 +401,12 @@ class _TopBar extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback onSpeakingTap;
   final VoidCallback onListenersTap;
+
+  /// Club rooms label themselves ("Club Room") instead of the generic
+  /// connection status line.
+  final String? subtitle;
+  final String? avatarUrl;
+  final String? avatarName;
 
   @override
   Widget build(BuildContext context) {
@@ -338,6 +419,10 @@ class _TopBar extends StatelessWidget {
             icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 32),
             color: Colors.white,
           ),
+          if (avatarName != null) ...[
+            UserAvatar(radius: 17, photoUrl: avatarUrl, displayName: avatarName),
+            const SizedBox(width: 10),
+          ],
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -353,9 +438,11 @@ class _TopBar extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  _statusText(status),
-                  style: const TextStyle(
-                    color: Color(0xFFB6A9C2),
+                  subtitle ?? _statusText(status),
+                  style: TextStyle(
+                    color: subtitle == null
+                        ? const Color(0xFFB6A9C2)
+                        : AppColors.accent,
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                   ),
@@ -386,6 +473,82 @@ class _TopBar extends StatelessWidget {
     VoiceCallStatus.failed => 'CONNECTION FAILED',
     VoiceCallStatus.disconnected => 'OFFLINE',
   };
+}
+
+/// The club identity card leading a club room's stage (board screen 6):
+/// club art, name, member line and a chevron into the club overview.
+class _ClubBanner extends StatelessWidget {
+  const _ClubBanner({required this.club, required this.onTap});
+
+  final Club club;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final line = club.description.trim().isNotEmpty
+        ? club.description.trim()
+        : '${club.memberCount} members';
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: LinearGradient(
+            colors: [
+              const Color(0xFF10202A),
+              const Color(0xFF0B111E).withValues(alpha: .9),
+            ],
+          ),
+          border: Border.all(color: AppColors.accent.withValues(alpha: .35)),
+        ),
+        child: Row(
+          children: [
+            UserAvatar(
+              radius: 24,
+              photoUrl: club.avatarUrl,
+              displayName: club.name,
+              backgroundColor: const Color(0xFF123A44),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    club.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    line,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF9FB6BE),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: Color(0xFF9FB6BE),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _CounterPill extends StatelessWidget {

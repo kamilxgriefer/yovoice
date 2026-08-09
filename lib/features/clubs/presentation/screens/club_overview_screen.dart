@@ -7,7 +7,7 @@ import 'package:yovoice/features/clubs/data/models/club_member.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_chat_screen.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_member_management_screen.dart';
-import 'package:yovoice/features/calls/presentation/screens/voice_call_screen.dart';
+import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -68,7 +68,7 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
       if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => VoiceCallScreen(roomId: room.id, roomName: room.name),
+          builder: (_) => RoomEntryScreen(room: room),
         ),
       );
     } catch (error) {

@@ -50,6 +50,7 @@ class VoiceRoom {
     required this.createdAt,
     required this.updatedAt,
     this.experience = 'community',
+    this.clubId,
   });
 
   final String id;
@@ -75,6 +76,13 @@ class VoiceRoom {
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final String experience;
+
+  /// Set on club-lounge rooms (written by ensureClubLounge). Older lounge
+  /// documents may predate the field, so fromFirestore falls back to the
+  /// `club_lounge_` id prefix those rooms have always carried.
+  final String? clubId;
+
+  bool get isClubRoom => clubId != null;
 
   RoomExperience get roomExperience => RoomExperience.fromValue(experience);
 
@@ -126,6 +134,11 @@ class VoiceRoom {
       createdAt: readDate(data['createdAt']),
       updatedAt: readDate(data['updatedAt']),
       experience: data['experience'] as String? ?? 'community',
+      clubId:
+          data['clubId'] as String? ??
+          (document.id.startsWith('club_lounge_')
+              ? document.id.substring('club_lounge_'.length)
+              : null),
     );
   }
 

@@ -8,7 +8,6 @@ import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
-import 'package:yovoice/features/calls/presentation/screens/voice_call_screen.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/from_your_clubs.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
@@ -132,7 +131,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
-          builder: (_) => VoiceCallScreen(roomId: room.id, roomName: room.name),
+          builder: (_) => RoomEntryScreen(room: room),
         ),
       );
     } catch (error) {

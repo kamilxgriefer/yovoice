@@ -22,6 +22,31 @@ class RoomService {
     return user;
   }
 
+  /// Canonical identity for everything this service writes (rosters,
+  /// members, messages): the profile document — the avatar system's
+  /// source of truth — with FirebaseAuth only as the fallback for
+  /// not-yet-seeded profiles. FirebaseAuth's displayName/photoURL go
+  /// stale after profile edits, which is how a renamed member's old
+  /// avatar kept appearing on stage tiles and chat rows.
+  Future<({String displayName, String? photoUrl})> _identity() async {
+    final user = _user;
+    try {
+      final snapshot = await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      final data = snapshot.data();
+      final name = (data?['displayName'] as String?)?.trim();
+      final photo = (data?['photoUrl'] as String?)?.trim();
+      return (
+        displayName: name?.isNotEmpty == true ? name! : _resolveUserName(user),
+        photoUrl: photo?.isNotEmpty == true ? photo : user.photoURL,
+      );
+    } catch (_) {
+      return (displayName: _resolveUserName(user), photoUrl: user.photoURL);
+    }
+  }
+
   Future<VoiceRoom> createRoom({
     required String name,
     required String description,
@@ -39,14 +64,15 @@ class RoomService {
     }
 
     final room = _rooms.doc();
-    final hostName = _resolveUserName(user);
+    final identity = await _identity();
+    final hostName = identity.displayName;
     final batch = _firestore.batch();
     final isCommunity = roomType == RoomType.community;
 
     batch.set(room, {
       'hostId': user.uid,
       'hostName': hostName,
-      'hostPhotoUrl': user.photoURL,
+      'hostPhotoUrl': identity.photoUrl,
       'name': normalizedName,
       'description': description.trim(),
       'category': category,
@@ -71,7 +97,7 @@ class RoomService {
       batch.set(room.collection('roomMembers').doc(user.uid), {
         'userId': user.uid,
         'displayName': hostName,
-        'photoUrl': user.photoURL,
+        'photoUrl': identity.photoUrl,
         'role': 'owner',
         'joinedAt': FieldValue.serverTimestamp(),
       });
@@ -79,7 +105,7 @@ class RoomService {
       batch.set(room.collection('participants').doc(user.uid), {
         'userId': user.uid,
         'displayName': hostName,
-        'photoUrl': user.photoURL,
+        'photoUrl': identity.photoUrl,
         'role': 'host',
         'isMuted': false,
         'isSpeaker': true,
@@ -285,6 +311,7 @@ class RoomService {
 
   Future<VoiceRoom> joinRoom(String roomId) async {
     final user = _user;
+    final identity = await _identity();
     final room = _rooms.doc(roomId);
     final participant = room.collection('participants').doc(user.uid);
 
@@ -310,8 +337,8 @@ class RoomService {
 
       transaction.set(participant, {
         'userId': user.uid,
-        'displayName': _resolveUserName(user),
-        'photoUrl': user.photoURL,
+        'displayName': identity.displayName,
+        'photoUrl': identity.photoUrl,
         'role': data['hostId'] == user.uid ? 'host' : 'listener',
         'isMuted': data['hostId'] == user.uid
             ? false
@@ -331,6 +358,7 @@ class RoomService {
 
   Future<void> joinCommunity(String roomId) async {
     final user = _user;
+    final identity = await _identity();
     final room = _rooms.doc(roomId);
     final member = room.collection('roomMembers').doc(user.uid);
     await _firestore.runTransaction((transaction) async {
@@ -351,8 +379,8 @@ class RoomService {
       final count = (data['memberCount'] as num?)?.toInt() ?? 0;
       transaction.set(member, {
         'userId': user.uid,
-        'displayName': _resolveUserName(user),
-        'photoUrl': user.photoURL,
+        'displayName': identity.displayName,
+        'photoUrl': identity.photoUrl,
         'role': 'member',
         'joinedAt': FieldValue.serverTimestamp(),
       });
@@ -560,10 +588,11 @@ class RoomService {
     if (normalized.length > 500) {
       throw ArgumentError('A room message can contain up to 500 characters.');
     }
+    final identity = await _identity();
     await _rooms.doc(roomId).collection('messages').add({
       'senderId': user.uid,
-      'senderName': _resolveUserName(user),
-      'senderPhotoUrl': user.photoURL,
+      'senderName': identity.displayName,
+      'senderPhotoUrl': identity.photoUrl,
       'text': normalized,
       'createdAt': FieldValue.serverTimestamp(),
       'reactions': <String, List<String>>{},

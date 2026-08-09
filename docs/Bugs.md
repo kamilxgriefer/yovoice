@@ -51,6 +51,38 @@ permission flags).
 
 ## UI
 
+- **Fixed (P1, 2026-08-09): room rosters, members and chat messages
+  wrote STALE identity (FirebaseAuth displayName/photoURL) instead of
+  the canonical profile.** FirebaseAuth's cached identity is not updated
+  by profile edits, so a member who changed their name/avatar kept
+  appearing with the old one on stage tiles, roster previews and chat
+  rows (observed live: CeoGriefer's messages carried a long-replaced
+  avatar). Every identity write in `RoomService` (create, join,
+  community join, sendRoomMessage) now goes through `_identity()`, which
+  reads `users/{uid}` — the avatar system's source of truth — with
+  FirebaseAuth only as the unseeded-profile fallback. Verified live in a
+  production two-user room: consecutive messages show the stale-then-
+  correct avatar (old docs are immutable by design; the server-side
+  fan-out repairs rosters on the NEXT profile change, and new writes are
+  correct from the start).
+- **Fixed (2026-08-09): club lounges stayed `isLive` forever after the
+  last member left.** The lounge flow opened the legacy `VoiceCallScreen`,
+  whose leave path calls plain `leaveRoom` — `leaveClubLounge` (which
+  drops `isLive` at zero participants) had NO callers. Club lounges now
+  route through `RoomEntryScreen` into the shared room shell, whose
+  leave is lounge-aware. (Part of the board-screen-6 club room rebuild,
+  ADR-032.)
+- **Open (observed once, 2026-08-09): own-participant ended-state
+  false(?) positive.** ~80 seconds after creating a fresh community room
+  (while a second session of the same human was active in another room
+  on another account), the host's screen flipped to "This room has
+  ended" — meaning the own-participant doc vanished from the roster
+  stream, without any leave/moderation action on the device. Not yet
+  reproduced or root-caused (candidate suspects: cross-session activity
+  on the same account from the deployed web build, or a listener
+  emitting an incomplete snapshot). The room itself stayed live.
+  Investigate before treating roster-driven eviction as reliable.
+
 - **Fixed (P0, 2026-08-08): raw Dart exception text shown to users when
   opening a chat.** Tapping the message icon on a friend could render
   "Dart exception thrown from converted Future…" directly in the UI. Two

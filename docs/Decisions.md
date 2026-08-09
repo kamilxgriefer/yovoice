@@ -1580,3 +1580,62 @@ website flow (landing → /premium), and keeps each screen simple.
 - Purchase feedback remains a snackbar with the server's message —
   live-verified against production `verifyPurchase` (four invocations,
   auth+app VALID, decline message rendered).
+
+## ADR-032: Club lounges are club-identity rooms on the shared community shell; room writers source identity from the profile document
+
+**Status**: Accepted
+**Date**: 2026-08-09
+
+### Context
+
+Club lounges were already VoiceRoom documents (`rooms/club_lounge_{id}`,
+`experience: community`) but opened in the legacy `VoiceCallScreen` —
+outside the Rooms 2.0 stage system, without chat/reactions/moderation,
+and with a leave path that never ran the lounge bookkeeping. Board
+screen 6 specifies a club-identity room: club banner, stage, audience,
+floating recent messages. Separately, live testing exposed that every
+roster/member/message write took displayName/photoURL from FirebaseAuth,
+which goes stale after profile edits — wrong avatars on stage tiles and
+chat rows.
+
+### Decision
+
+- `VoiceRoom` gains an optional `clubId` (maps the field ensureClubLounge
+  always wrote; falls back to the `club_lounge_` id prefix). Lounge entry
+  points (Home's From your Clubs, Club overview) push `RoomEntryScreen`,
+  which routes community-experience rooms — club lounges included — to
+  `CommunityVoiceRoomScreen`. No second audio surface (ADR-028 holds).
+- The community screen is club-aware, not forked: with a `clubId` it
+  watches the club document and renders the club banner (art, name,
+  members line, chevron → Club overview) in place of the generic room
+  identity card, a "Club Room" top-bar subtitle with the club-teal
+  accent (`AppColors.accent` — same identity language as the room
+  cards), and a lounge-aware leave (`leaveClubLounge`, which finally has
+  a caller — lounges no longer stay live forever).
+- New shared `RecentRoomMessages` widget floats the newest two chat
+  messages over the stage (board screens 2 and 6) — a window onto the
+  existing `rooms/{id}/messages` backend, tap-through to the chat sheet,
+  renders nothing when the room has no messages.
+- `RoomService._identity()`: all identity writes read `users/{uid}`
+  (canonical) with FirebaseAuth as the unseeded fallback.
+  `VoiceCallScreen` remains for 1:1 calls only.
+
+### Reasoning
+
+One room shell means club rooms inherit everything the stage system
+already does (scaling, moderation, chat, mic state) and everything it
+gains later. The identity fix closes the writer-side half of the
+canonical-avatar mandate — readers were consolidated in the M1/M2
+passes, but stale writes kept re-introducing wrong avatars at the data
+layer.
+
+### Consequences
+
+- Club-branch UI (banner, subtitle, teal accent) is code-complete but
+  NOT yet verified in a live club room: no controllable account has
+  Premium, club creation is Premium-gated, and
+  `adminSetPremiumEntitlements` has no caller UI. Unblocking needs an
+  owner-side entitlement grant; the live check stays on the ledger.
+- Old messages keep their stale sender identity (message docs are
+  immutable by rule); correctness applies to new writes.
+- The overlay is verified live in a production two-user community room.

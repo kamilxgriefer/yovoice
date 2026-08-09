@@ -147,31 +147,53 @@ Firestore from inside a real live room WITH a second human present;
 canonical avatars on Home/hero/people/chat rows; avatar change
 propagated across surfaces and survived relaunches (observed when the
 user changed CeoGriefer's avatar mid-session).
+VERIFIED LIVE (2026-08-09 pm session): Premium presentation → Check
+plans → plans screen navigation; real `verifyPurchase` decline path
+(4 production invocations, auth+app VALID, server message rendered in
+snackbar — burst-capture proof); plans Monthly/Yearly toggle emphasis;
+profile header chips row (harness w/ creator+premium fixture) and
+free-account absence (live device); RecentRoomMessages overlay over the
+stage in a production TWO-USER room ("new test", Griefer hosting);
+RoomService canonical-identity writes (consecutive messages show
+stale-then-correct avatar after the fix — before/after in one frame).
 PARTIALLY VERIFIED: message/reaction rendering on the OTHER user's
 screen not directly observed (their device not controllable).
-NOT VERIFIED: listener→speaker→demotion live round-trip (needs two
-humans; code + rules + one-sided decline observed only); Club-room
-canonical avatars (no live club room existed; CeoGriefer has no club
-memberships and club creation is Premium-gated); From-your-Clubs live
-states beyond the hidden state; cover-upload tap-through in Room
-Settings; full responsive matrix.
+NOT VERIFIED: listener→speaker→demotion live round-trip; club-room
+UI (banner/subtitle/teal accent/lounge leave) in a LIVE club room —
+still blocked: no controllable account has Premium, club creation is
+Premium-gated, and `adminSetPremiumEntitlements` has NO caller UI
+(gap — needs an owner-side grant path first); From-your-Clubs live
+states beyond hidden; cover-upload tap-through; responsive matrix.
+OPEN OBSERVATION: one occurrence of a false(?) "room has ended" on the
+host ~80s after creating a room while the same human's other account
+was active elsewhere — see Bugs.md "own-participant ended-state".
 
-## Next-work ledger (priority order — matches Task #18)
+## Completed this session (2026-08-09 pm, commits after 269fd56)
 
-1. Premium presentation visual pass (board screen 3) — app.
-2. Plans visual pass (board screen 4) — keep pricing/architecture.
-3. Website Premium landing visual refresh (screen 3 as reference).
-4. Profile/Creator refinement (screen 5) — presentation only.
-5. Club Room rebuild (screen 6) — replace `VoiceCallScreen` for club
-   lounges with a club-identity room on the shared stage system; keep
-   club permissions; FINALLY verify canonical avatars in a live club
-   room here.
-6. Floating recent-messages overlay on the stage (board screen 2).
-7. Design-token consolidation (only values used by the new surfaces).
-8. Responsive matrix 320→1440 (app web + website).
-9. Side-by-side reference comparisons for all six screens.
-10. Live two-user verifications (chat both-screens; raise-hand
-    accept→speak→demote; needs the second tester, e.g. Sieeema live).
+- `3b23792` M3: Premium presentation (screen 3) + PremiumPlansScreen
+  (screen 4), ADR-031. All five entry points preserved.
+- website `ed606b3`: Premium surfaces adopt the same design language
+  (PremiumBadge, identity hero + pills, benefit cards, plans checklist).
+- `4ac185f` screen 5: header chips row (AccountTypeBadge +
+  PremiumIdentityChip), compact stats, website chip, owner crown.
+- club room rebuild + overlay + identity fix (ADR-032): lounges →
+  shared shell via RoomEntryScreen; club banner; lounge-aware leave
+  (fixes forever-live lounges); RecentRoomMessages (screens 2+6);
+  VoiceRoom.clubId; RoomService._identity() canonical writes.
+
+## Next-work ledger (priority order)
+
+1. LIVE club-room verification (screen 6 club branch + canonical
+   avatars in a club lounge). BLOCKED on a Premium grant for a
+   controllable account — `adminSetPremiumEntitlements` exists
+   (userManager-gated callable) but has no caller UI; build a small
+   admin surface or have the owner grant manually, then: create club →
+   enter lounge → verify banner/teal/leave/avatars live.
+2. Responsive matrix 320→1440 (app web + website) + side-by-side
+   comparisons for screens 1/2/5/6 (3/4 done this session).
+3. Remaining live two-user checks: other-screen message rendering;
+   raise-hand accept→speak→demote lifecycle.
+4. Design-token consolidation (values used by the new surfaces).
 Backlog behind these: whiteboard (M6), room privileges/VIP grants,
 Spotify feasibility note, room analytics, desktop-adaptive navigation,
 ephemeral floating reactions (needs LiveKit data channel).

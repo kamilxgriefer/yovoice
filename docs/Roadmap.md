@@ -32,8 +32,15 @@ someone decide what to pick up next.
   `PremiumIdentityChip`), compact stat formatting (1.8K), website chip
   in Voice identity, owner crown + "· Owner" on owned club tiles (all
   real-data-conditional; no XP bar or Moments/Activity tabs — those
-  systems don't exist and honesty wins over the mockup). Board screen 6
-  (club room) still open — see the agent handoff ledger.
+  systems don't exist and honesty wins over the mockup); board screen 6
+  club room rebuild — lounges route into the shared community shell with
+  club banner/teal identity and lounge-aware leave, plus the shared
+  `RecentRoomMessages` stage overlay (board screen 2, live-verified in a
+  production two-user room) and the canonical-identity fix for all room
+  writes ([ADR-032](Decisions.md#adr-032-club-lounges-are-club-identity-rooms-on-the-shared-community-shell-room-writers-source-identity-from-the-profile-document)).
+  Still open: live club-room verification (blocked on a Premium grant —
+  `adminSetPremiumEntitlements` has no caller UI), responsive matrix,
+  remaining two-user checks.
 
 - Rooms 2.0 — M1/M2/M3/M8 (2026-08-09): LiveKit-authoritative MicState
   + mute-race fix; Podcast rename (ADR-029); scalable stage system
