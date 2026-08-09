@@ -181,19 +181,50 @@ was active elsewhere — see Bugs.md "own-participant ended-state".
   (fixes forever-live lounges); RecentRoomMessages (screens 2+6);
   VoiceRoom.clubId; RoomService._identity() canonical writes.
 
+## Session 3 (2026-08-09 evening) — matrix + eviction fix
+
+- `36b81c7` responsive matrix 320→1440 for the Premium surfaces +
+  overlay (`test/premium_screens_layout_test.dart`). It CAUGHT three
+  real RenderFlex overflows on the plans screen at phone widths
+  (Monthly/Yearly toggle, Best-value pill on half-width cards,
+  secure-checkout footer) — all fixed with scaleDown fitting.
+- website `f63b705`: the homepage Premium hero used a fixed
+  `w-[340px]`, forcing its grid column wider than a 320px viewport and
+  letting `overflow-hidden` clip the headline by 40px. Now
+  `w-full max-w-[340px]` + `min-w-0`. VERIFIED on the deployed site
+  (headline clipping 40px → 0; 320/768/1440 free of content overflow,
+  only intentional decorative glows sit outside the viewport).
+- `e86ae30` root-caused and fixed the Bugs.md false "room has ended":
+  the screens trusted a roster `snapshots()` emission, which can be
+  CACHE-sourced, so a transient snapshot without the own document read
+  as a removal. Now gated on
+  `RoomService.isParticipantRemovedOnServer()` (explicit `Source.server`,
+  fails CLOSED) in BOTH room types + re-entry guards. Tests:
+  `room_removal_confirmation_test.dart`. The original one-off sighting
+  was never reproduced on demand — this is a root-cause fix for a
+  mechanism that produces exactly that symptom, not a replayed repro.
+- `voice_room_club_identity_test.dart` covers the club-vs-plain routing
+  switch (explicit field, legacy id-prefix fallback, negative cases).
+
 ## Next-work ledger (priority order)
 
 1. LIVE club-room verification (screen 6 club branch + canonical
-   avatars in a club lounge). BLOCKED on a Premium grant for a
-   controllable account — `adminSetPremiumEntitlements` exists
-   (userManager-gated callable) but has no caller UI; build a small
-   admin surface or have the owner grant manually, then: create club →
-   enter lounge → verify banner/teal/leave/avatars live.
-2. Responsive matrix 320→1440 (app web + website) + side-by-side
-   comparisons for screens 1/2/5/6 (3/4 done this session).
-3. Remaining live two-user checks: other-screen message rendering;
-   raise-hand accept→speak→demote lifecycle.
+   avatars in a club lounge). The blocker MOVED: the owner admin
+   surface now exists (website `45d7c3c`, `/admin` → Grant Premium),
+   so the remaining step is a human one — sign in as the owner, grant
+   CeoGriefer Premium, then in the app: create club → enter lounge →
+   verify banner / teal identity / lounge-aware leave / canonical
+   avatars. NOT done by the agent: that flow needs owner credentials
+   and a production role/entitlement mutation.
+2. Remaining live two-user checks (need a real second human, e.g.
+   Sieeema): other-screen message rendering; Podcast raise-hand
+   accept→speak→demote lifecycle.
+3. Side-by-side reference comparisons for board screens 1/2/5/6
+   (3/4 done in session 2; the app-side responsive matrix is now
+   automated for the Premium surfaces).
 4. Design-token consolidation (values used by the new surfaces).
+5. Stabilize the flaky `profile_save_e2e_test` full-suite case
+   (see Bugs.md → Test reliability).
 Backlog behind these: whiteboard (M6), room privileges/VIP grants,
 Spotify feasibility note, room analytics, desktop-adaptive navigation,
 ephemeral floating reactions (needs LiveKit data channel).
