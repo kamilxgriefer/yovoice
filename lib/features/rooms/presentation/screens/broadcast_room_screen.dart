@@ -18,6 +18,7 @@ import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheet
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/participants_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/settings_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/share_room_sheet.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
 
 class BroadcastRoomScreen extends StatefulWidget {
@@ -644,6 +645,12 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
                       onParticipants: () => _openParticipants(participants),
                       onEnd: _confirmEndBroadcast,
                       onLeave: _leaveRoom,
+                      onChat: () => showRoomChatSheet(
+                        context,
+                        roomId: widget.room.id,
+                        isHost: _isHost,
+                        accent: BroadcastRoomColors.accent,
+                      ),
                     ),
                   ],
                 ),

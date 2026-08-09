@@ -512,6 +512,44 @@ class RoomService {
     }
   }
 
+  /// Toggles the caller's [emoji] reaction on a room message. The rules
+  /// only permit touching the reactions map, never the message body.
+  Future<void> toggleRoomMessageReaction({
+    required String roomId,
+    required String messageId,
+    required String emoji,
+  }) async {
+    final uid = _user.uid;
+    final reference =
+        _rooms.doc(roomId).collection('messages').doc(messageId);
+    await _firestore.runTransaction((tx) async {
+      final snapshot = await tx.get(reference);
+      if (!snapshot.exists) return;
+      final raw = snapshot.data()?['reactions'];
+      final current = <String, List<String>>{
+        if (raw is Map)
+          for (final entry in raw.entries)
+            '${entry.key}': [
+              if (entry.value is List)
+                for (final id in entry.value as List) '$id',
+            ],
+      };
+      final users = current[emoji] ?? <String>[];
+      users.contains(uid) ? users.remove(uid) : users.add(uid);
+      users.isEmpty ? current.remove(emoji) : current[emoji] = users;
+      tx.update(reference, {'reactions': current});
+    });
+  }
+
+  /// Host moderation: removes a message from the room chat.
+  Future<void> deleteRoomMessage({
+    required String roomId,
+    required String messageId,
+  }) async {
+    await _requireHost(roomId);
+    await _rooms.doc(roomId).collection('messages').doc(messageId).delete();
+  }
+
   Future<void> sendRoomMessage({
     required String roomId,
     required String text,

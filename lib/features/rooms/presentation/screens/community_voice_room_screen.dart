@@ -8,6 +8,7 @@ import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 
@@ -291,6 +292,12 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
                   onMute: _toggleMute,
                   onLeave: _leave,
                   onMicBlocked: _explainMicState,
+                  onChat: () => showRoomChatSheet(
+                    context,
+                    roomId: widget.room.id,
+                    isHost: _isHost,
+                  ),
+                  onPeople: () => _openParticipants(_latestParticipants),
                 ),
               ],
             ),
@@ -437,12 +444,16 @@ class _BottomControls extends StatelessWidget {
     required this.onMute,
     required this.onLeave,
     required this.onMicBlocked,
+    required this.onChat,
+    required this.onPeople,
   });
 
   final MicState micState;
   final bool busy;
   final Future<void> Function() onMute;
   final Future<void> Function() onLeave;
+  final VoidCallback onChat;
+  final VoidCallback onPeople;
 
   /// Tapping the mic while it genuinely can't publish explains WHY
   /// instead of silently doing nothing.
@@ -504,7 +515,23 @@ class _BottomControls extends StatelessWidget {
                 ? onMute
                 : () async => onMicBlocked(),
           ),
-          const SizedBox(width: 28),
+          const SizedBox(width: 18),
+          _RoundControl(
+            icon: Icons.forum_rounded,
+            label: 'Chat',
+            enabled: true,
+            micStyle: _MicStyle.info,
+            onTap: () async => onChat(),
+          ),
+          const SizedBox(width: 18),
+          _RoundControl(
+            icon: Icons.groups_rounded,
+            label: 'People',
+            enabled: true,
+            micStyle: _MicStyle.waiting,
+            onTap: () async => onPeople(),
+          ),
+          const SizedBox(width: 18),
           _RoundControl(
             icon: Icons.call_end_rounded,
             label: 'Leave',

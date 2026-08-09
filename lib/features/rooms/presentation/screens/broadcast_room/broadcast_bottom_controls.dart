@@ -24,6 +24,7 @@ class BroadcastBottomControls extends StatelessWidget {
     required this.onParticipants,
     required this.onEnd,
     required this.onLeave,
+    required this.onChat,
   });
 
   final bool isHost;
@@ -44,6 +45,7 @@ class BroadcastBottomControls extends StatelessWidget {
   final VoidCallback onParticipants;
   final VoidCallback onEnd;
   final VoidCallback onLeave;
+  final VoidCallback onChat;
 
   @override
   Widget build(BuildContext context) {
@@ -77,6 +79,13 @@ class BroadcastBottomControls extends StatelessWidget {
                 onTap: ending || !canRaiseHand ? null : onRaiseHand,
               ),
             ),
+          Expanded(
+            child: BroadcastHostBottomAction(
+              icon: Icons.forum_rounded,
+              label: 'Chat',
+              onTap: ending ? null : onChat,
+            ),
+          ),
           Expanded(
             child: BroadcastHostBottomAction(
               icon: Icons.groups_rounded,

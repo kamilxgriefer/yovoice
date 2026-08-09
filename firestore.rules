@@ -686,7 +686,18 @@ service cloud.firestore {
               isRoomMember(roomId) ||
               isRoomHost(roomId)
             );
-        allow update, delete: if false;
+        // Room chat reactions (Rooms 2.0): people in the room may toggle
+        // the reactions map and NOTHING else — sender, text and
+        // timestamps stay immutable. Deletes are host moderation only.
+        allow update: if isSignedIn() &&
+            (
+              isRoomParticipant(roomId) ||
+              isRoomMember(roomId) ||
+              isRoomHost(roomId)
+            ) &&
+            request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['reactions']);
+        allow delete: if isRoomHost(roomId);
       }
 
       // Broadcast Room raise-hand queue (room_experience_service.dart,

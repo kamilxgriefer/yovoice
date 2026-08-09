@@ -1211,6 +1211,66 @@ async function main() {
   });
 
   await check(
+    "room chat: reactions-only updates allowed for people in the room; text immutable; host-only delete",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, "rooms/chat-room"), {
+          hostId: "host-uid",
+          name: "Chat Room",
+          visibility: "public",
+          isLive: true,
+        });
+        await setDoc(doc(db, "rooms/chat-room/participants/guest-uid"), {
+          userId: "guest-uid",
+          role: "listener",
+          isSpeaker: false,
+        });
+        await setDoc(doc(db, "rooms/chat-room/messages/m1"), {
+          senderId: "host-uid",
+          senderName: "Host",
+          text: "hello room",
+          reactions: {},
+        });
+      });
+      const guest = testEnv.authenticatedContext("guest-uid", {
+        email_verified: true,
+      });
+      // Participant may toggle reactions…
+      await assertSucceeds(
+        updateDoc(doc(guest.firestore(), "rooms/chat-room/messages/m1"), {
+          reactions: { "🔥": ["guest-uid"] },
+        }),
+      );
+      // …but not rewrite the message body.
+      await assertFails(
+        updateDoc(doc(guest.firestore(), "rooms/chat-room/messages/m1"), {
+          text: "hijacked",
+        }),
+      );
+      // Someone outside the room can't react at all.
+      const outsider = testEnv.authenticatedContext("outsider-uid", {
+        email_verified: true,
+      });
+      await assertFails(
+        updateDoc(doc(outsider.firestore(), "rooms/chat-room/messages/m1"), {
+          reactions: { "🔥": ["outsider-uid"] },
+        }),
+      );
+      // Delete is host moderation only.
+      await assertFails(
+        deleteDoc(doc(guest.firestore(), "rooms/chat-room/messages/m1")),
+      );
+      const roomHost = testEnv.authenticatedContext("host-uid", {
+        email_verified: true,
+      });
+      await assertSucceeds(
+        deleteDoc(doc(roomHost.firestore(), "rooms/chat-room/messages/m1")),
+      );
+    },
+  );
+
+  await check(
     "statusMessage (vibe): owner can set it, another user cannot",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (ctx) => {

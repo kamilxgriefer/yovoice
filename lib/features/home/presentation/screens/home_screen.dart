@@ -8,7 +8,9 @@ import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
+import 'package:yovoice/features/calls/presentation/screens/voice_call_screen.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
+import 'package:yovoice/features/home/presentation/widgets/from_your_clubs.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
@@ -112,6 +114,43 @@ class _HomeScreenState extends State<HomeScreen> {
           behavior: SnackBarBehavior.floating,
         ),
       );
+  }
+
+  /// Same join flow the Club overview uses: enterClubLounge (creates or
+  /// reuses the deterministic lounge room) then the club audio screen.
+  Future<void> _joinClubLounge(Club club, VoiceRoom lounge) async {
+    try {
+      final room = await _roomService.enterClubLounge(
+        clubId: club.id,
+        clubName: club.name,
+        clubDescription: club.description,
+        language: club.defaultLanguage,
+        ownerId: club.ownerId,
+        ownerName: club.ownerName,
+        imageUrl: club.avatarUrl,
+      );
+      if (!mounted) return;
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => VoiceCallScreen(roomId: room.id, roomName: room.name),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              intentionalOrFriendly(
+                error,
+                fallback: "Couldn't open this club room. Please try again.",
+              ),
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
   }
 
   Future<void> _openRoom(VoiceRoom room) async {
@@ -283,6 +322,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               SliverToBoxAdapter(child: _activeFriends()),
               SliverToBoxAdapter(child: _liveRooms()),
+              SliverToBoxAdapter(
+                child: FromYourClubs(onJoinLounge: _joinClubLounge),
+              ),
               SliverToBoxAdapter(child: _voiceStories()),
               SliverToBoxAdapter(child: _sectionTitle('Your feed')),
               SliverToBoxAdapter(child: _feed()),
