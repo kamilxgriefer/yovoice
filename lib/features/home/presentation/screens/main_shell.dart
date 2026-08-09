@@ -8,7 +8,14 @@ import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
 import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
+import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
+import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
+import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
@@ -55,6 +62,10 @@ class _MainShellState extends State<MainShell>
   int _unreadConversationCount = 0;
   bool _hasInitialConversationSnapshot = false;
 
+  /// Desktop sidebar badge only — the same routed count the bell shows.
+  int _unreadNotificationCount = 0;
+  StreamSubscription<int>? _notificationCountSubscription;
+
   // Friends replaced Profile as the third primary tab: it's the
   // higher-frequency social destination. Profile lives in More and
   // behind every own-avatar tap instead.
@@ -84,6 +95,17 @@ class _MainShellState extends State<MainShell>
         // The Chats screen displays Firestore errors directly.
       },
     );
+
+    _notificationCountSubscription = NotificationService()
+        .watchUnreadCount()
+        .listen(
+          (count) {
+            if (mounted) setState(() => _unreadNotificationCount = count);
+          },
+          onError: (_) {
+            // A badge is not worth surfacing an error for.
+          },
+        );
 
     if (_showVerificationBanner) {
       // Soft reminder, not the active "waiting room" VerifyEmailScreen is —
@@ -150,6 +172,7 @@ class _MainShellState extends State<MainShell>
   void dispose() {
     _tabTransition.dispose();
     _conversationSubscription?.cancel();
+    _notificationCountSubscription?.cancel();
     _verificationCheckTimer?.cancel();
     _removeMessageOverlay();
     super.dispose();
@@ -348,11 +371,133 @@ class _MainShellState extends State<MainShell>
     );
   }
 
+  // --- Desktop-only wiring (>= _desktopBreakpoint) ---------------------
+  //
+  // The desktop rail is a PRESENTATION shell over the same destinations,
+  // state and routes the dock uses; nothing below this line changes the
+  // phone layout, which keeps the dock exactly as it was.
+
+  static const double _desktopBreakpoint = 1100;
+
+  DesktopNavItem get _activeDesktopItem => switch (_selectedIndex) {
+    1 => DesktopNavItem.chats,
+    2 => DesktopNavItem.friends,
+    _ => DesktopNavItem.home,
+  };
+
+  Future<void> _onDesktopNavSelected(DesktopNavItem item) async {
+    switch (item) {
+      case DesktopNavItem.home:
+        _onDestinationSelected(0);
+      case DesktopNavItem.chats:
+        _onDestinationSelected(1);
+      case DesktopNavItem.friends:
+        _onDestinationSelected(2);
+      case DesktopNavItem.discover:
+        await _openMoreDestination(MoreDestination.discover);
+      case DesktopNavItem.notifications:
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(builder: (_) => const NotificationsScreen()),
+        );
+      case DesktopNavItem.more:
+        await _openMoreMenu();
+    }
+  }
+
+  Future<void> _openProfile() async {
+    await _openMoreDestination(MoreDestination.profile);
+  }
+
+  /// The sidebar gear: the signed-in user's profile & account settings —
+  /// the existing Settings screen, not a desktop-only duplicate.
+  Future<void> _openProfileSettings() async {
+    await _openMoreDestination(MoreDestination.settings);
+  }
+
+  Future<void> _openCreateRoom() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const RoomTypeSelectorScreen()),
+    );
+  }
+
+  Widget _tabContent() {
+    return AnimatedBuilder(
+      animation: _tabTransition,
+      builder: (context, child) {
+        final t = Curves.easeOutCubic.transform(_tabTransition.value);
+        return Opacity(
+          // Never fully transparent — no flash, no white frame.
+          opacity: .55 + .45 * t,
+          child: Transform.translate(
+            offset: Offset(0, 8 * (1 - t)),
+            child: child,
+          ),
+        );
+      },
+      child: IndexedStack(index: _selectedIndex, children: _screens),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     HomeScreen.openDiscoverTab = () {
       unawaited(_openMoreDestination(MoreDestination.discover));
     };
+
+    final isDesktop =
+        MediaQuery.sizeOf(context).width >= _desktopBreakpoint;
+
+    if (isDesktop) {
+      return Scaffold(
+        backgroundColor: _background,
+        body: Column(
+          children: [
+            if (_showVerificationBanner)
+              _VerificationBanner(onTap: _openVerifyEmail),
+            Expanded(
+              child: Row(
+                children: [
+                  DesktopSidebar(
+                    active: _activeDesktopItem,
+                    unreadConversationCount: _unreadConversationCount,
+                    unreadNotificationCount: _unreadNotificationCount,
+                    onSelect: (item) => unawaited(_onDesktopNavSelected(item)),
+                    onCreateRoom: () => unawaited(_openCreateRoom()),
+                    onOpenProfile: () => unawaited(_openProfile()),
+                    onOpenProfileSettings: () =>
+                        unawaited(_openProfileSettings()),
+                  ),
+                  Expanded(child: _tabContent()),
+                  // The right column belongs to Home, exactly as in the
+                  // desktop reference.
+                  if (_selectedIndex == 0)
+                    _DesktopRightColumn(
+                      onOpenRoom: (room) => unawaited(
+                        Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(
+                            builder: (_) => RoomEntryScreen(room: room),
+                          ),
+                        ),
+                      ),
+                      onSeeAll: () => unawaited(
+                        _openMoreDestination(MoreDestination.discover),
+                      ),
+                      onCheckPlans: () => unawaited(
+                        Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const PremiumScreen(),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const RoomMiniBar(),
+          ],
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: _background,
@@ -360,23 +505,7 @@ class _MainShellState extends State<MainShell>
         children: [
           if (_showVerificationBanner)
             _VerificationBanner(onTap: _openVerifyEmail),
-          Expanded(
-            child: AnimatedBuilder(
-              animation: _tabTransition,
-              builder: (context, child) {
-                final t = Curves.easeOutCubic.transform(_tabTransition.value);
-                return Opacity(
-                  // Never fully transparent — no flash, no white frame.
-                  opacity: .55 + .45 * t,
-                  child: Transform.translate(
-                    offset: Offset(0, 8 * (1 - t)),
-                    child: child,
-                  ),
-                );
-              },
-              child: IndexedStack(index: _selectedIndex, children: _screens),
-            ),
-          ),
+          Expanded(child: _tabContent()),
         ],
       ),
       bottomNavigationBar: Column(
@@ -392,6 +521,36 @@ class _MainShellState extends State<MainShell>
             onVoicePressed: _openVoiceAction,
             onMorePressed: _openMoreMenu,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Home's desktop right column: Voice Trending over the top, the Premium
+/// card beneath — both scroll together so a short window never clips the
+/// CTA.
+class _DesktopRightColumn extends StatelessWidget {
+  const _DesktopRightColumn({
+    required this.onOpenRoom,
+    required this.onSeeAll,
+    required this.onCheckPlans,
+  });
+
+  final ValueChanged<VoiceRoom> onOpenRoom;
+  final VoidCallback onSeeAll;
+  final VoidCallback onCheckPlans;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 344,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(6, 20, 20, 20),
+        children: [
+          VoiceTrendingCard(onOpenRoom: onOpenRoom, onSeeAll: onSeeAll),
+          const SizedBox(height: 16),
+          PremiumDesktopCard(onCheckPlans: onCheckPlans),
         ],
       ),
     );

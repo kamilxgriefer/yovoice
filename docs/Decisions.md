@@ -1744,3 +1744,55 @@ events out of the feed.
   cross-user routing rewrite denied). Dart suite: retry-to-visible,
   carrier-flood feed immunity incl. legacy self-heal, flood-proof
   unread count.
+
+## ADR-034: The desktop layout is a presentation shell over the existing navigation, not a second navigation system
+
+**Status**: Accepted
+**Date**: 2026-08-09
+
+### Context
+
+The app had ONE layout at every width — the floating dock — so a 1440px
+browser rendered a phone UI stretched wide. The desktop reference
+(`assets/images/home page assets.png`) specifies a left rail, a Home
+right column, and a Premium card. Nothing described in it existed yet:
+there was no sidebar, no "Trending Now" card, no "Upgrade to YO Voice
+Pro" card and no desktop Profile item to remove.
+
+### Decision
+
+- `MainShell` gains ONE width branch (`>= 1100`). Below it the phone
+  path is byte-equivalent to before (the tab content moved into a shared
+  `_tabContent()` used by both). Mobile layout, breakpoints and dock are
+  untouched.
+- `DesktopSidebar` is presentation only: it holds no navigation state
+  and defines no routes. Every tap calls back into `MainShell`, which
+  stays the single source of truth — Home/Chats/Friends switch the same
+  `IndexedStack` index the dock uses; Discover and More reuse
+  `MoreDestination` + `showMoreSheet`; Notifications pushes the same
+  `NotificationsScreen` the Home bell opens. Nothing is duplicated and
+  no destination became unreachable (More still exposes Profile, Clubs,
+  Alerts, Awards, Creator Studio, Settings — the sheet is SHARED with
+  mobile and was deliberately not modified).
+- Profile is deliberately NOT a rail item: the signed-in user is the
+  bottom profile card (body → profile, violet gear → the existing
+  Settings screen — no duplicate settings surface).
+- Home's right column shows `VoiceTrendingCard` (Trending Moments from
+  `watchLivePublicRooms`, People to Follow from the existing
+  `getFriendSuggestions` callable; each section HIDES when its real
+  source is empty rather than showing invented people) and
+  `PremiumDesktopCard` (three benefits read from `PremiumPlans.benefits`
+  — the same source the mobile presentation and the website use — over
+  a gradient "Check plans" CTA into the existing `PremiumScreen`).
+- Desktop widgets construct their services defensively: a nav rail must
+  degrade to an empty state, never a red error box, when a service can't
+  be built (no session yet, dev harness).
+
+### Consequences
+
+- `lib/dev/desktop_preview.dart` (+ launch config, port 5608) renders
+  the rail and right column at any width without signing in — the same
+  reason profile_preview exists.
+- Voice Trending's populated state is covered by widget tests; its live
+  populated state in the real app still depends on real live rooms and
+  real suggestions existing for the signed-in account.
