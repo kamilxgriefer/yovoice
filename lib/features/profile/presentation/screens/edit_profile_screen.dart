@@ -559,40 +559,52 @@ class _ImageAction extends StatelessWidget {
       child: InkWell(
         onTap: loading ? null : onTap,
         borderRadius: BorderRadius.circular(18),
+        // Compact ROW, not a tall tile: these are two small controls, and
+        // the old stacked-icon-over-label blocks dominated the form for
+        // what is a secondary action. Pick / crop / validate / upload
+        // behaviour behind them is unchanged.
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 18),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
             border: Border.all(color: const Color(0xFF3B2B48)),
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(14),
           ),
-          child: Column(
+          child: Row(
             children: [
               if (loading)
                 const SizedBox(
-                  width: 22,
-                  height: 22,
+                  width: 18,
+                  height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               else
                 Icon(
                   onClear == null ? icon : Icons.check_circle_rounded,
+                  size: 20,
                   color: const Color(0xFFB33BFF),
                 ),
-              const SizedBox(height: 9),
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
               if (onClear != null)
-                TextButton(
+                IconButton(
                   onPressed: onClear,
-                  child: const Text(
-                    'Undo',
-                    style: TextStyle(color: Color(0xFF9E92A8), fontSize: 12),
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Undo',
+                  icon: const Icon(
+                    Icons.close_rounded,
+                    size: 16,
+                    color: Color(0xFF9E92A8),
                   ),
                 ),
             ],

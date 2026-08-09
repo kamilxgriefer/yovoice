@@ -118,26 +118,45 @@ class ProfileHeader extends StatelessWidget {
       bottom: false,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-        child: Row(
-          children: [
-            const Expanded(
-              child: Text(
-                'Profile',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 31,
-                  fontWeight: FontWeight.w900,
+        child: Builder(
+          builder: (context) => Row(
+            children: [
+              // A physical Back control whenever there IS somewhere to go
+              // back to. Profile is pushed as a route from the avatar, the
+              // profile card and More, and previously offered no way out
+              // but a system gesture — which desktop web does not have.
+              if (Navigator.of(context).canPop())
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: IconButton(
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    icon: const Icon(Icons.arrow_back_rounded),
+                    color: Colors.white,
+                    tooltip: 'Back',
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.black.withValues(alpha: .28),
+                    ),
+                  ),
+                ),
+              const Expanded(
+                child: Text(
+                  'Profile',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 31,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
-            ),
-            IconButton.filled(
-              onPressed: onEdit,
-              style: IconButton.styleFrom(
-                backgroundColor: const Color(0xFFAE22FF),
+              IconButton.filled(
+                onPressed: onEdit,
+                style: IconButton.styleFrom(
+                  backgroundColor: const Color(0xFFAE22FF),
+                ),
+                icon: const Icon(Icons.edit_rounded, color: Colors.white),
               ),
-              icon: const Icon(Icons.edit_rounded, color: Colors.white),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

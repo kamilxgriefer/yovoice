@@ -40,6 +40,23 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="color-scheme" content="dark">
+
+  <!--
+    The website's /app launch screen fades its composition out and navigates
+    here. With no background declared, the browser paints its default white
+    canvas for everything between navigation and the Flutter engine's first
+    frame — a white flash at the exact end of an otherwise seamless
+    transition. #0D0618 is AppColors.background (lib/core/theme/app_colors.dart),
+    so the hand-off lands on the colour Flutter is about to paint anyway.
+  -->
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background-color: #0D0618;
+    }
+  </style>
 
   <title>YoVoice</title>
 
