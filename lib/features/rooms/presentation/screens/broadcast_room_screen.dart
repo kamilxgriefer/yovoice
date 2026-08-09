@@ -141,10 +141,12 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
     if (mine.isNotEmpty) {
       _wasSeenAsParticipant = true;
       // A moderator's mute (or a promotion, which starts muted) must
-      // reach the actual microphone, not just the roster flag.
+      // reach the actual microphone — but never auto-UNMUTE from the
+      // doc: a stale unmuted flag raced the user's own Mute tap and
+      // reverted it (same fix as the community room).
       final me = mine.first;
-      if (_voice.isConnected && me.isMuted != _voice.isMuted) {
-        unawaited(_voice.setMuted(me.isMuted));
+      if (_voice.isConnected && me.isMuted && !_voice.isMuted) {
+        unawaited(_voice.setMuted(true));
       }
       return;
     }

@@ -1476,3 +1476,49 @@ that could diverge from LiveKit after reconnects and role changes.
   covers, reactions, Friends-tab navigation) tracked in Roadmap.
 - Broadcast-room controls inherit the authoritative getters; their
   connecting-state visuals can still be enriched (follow-up).
+
+## ADR-030: The Rooms 2.0 stage is a bounded speaker grid; audiences are numbers, never floating avatars
+
+**Status**: Accepted
+**Date**: 2026-08-09
+
+### Context
+
+The community room's orbit layout painted every participant as a
+floating avatar around a "heart" — charming at 5 people, unusable at 50,
+and its constant orbital animation ran even in silent rooms. Rooms 2.0
+requires layouts whose complexity does not grow with audience size.
+
+### Decision
+
+New pure stage system in
+`lib/features/rooms/presentation/widgets/room_stage.dart`
+(RoomIdentityCard / SpeakerTile / StageGrid / ListenersStrip), consumed
+by the community room and previewable at 2/10/50/500 mocked
+participants via `lib/dev/stage_preview.dart`:
+
+- The STAGE shows at most 8 tiles — host, moderators, speakers, ordered
+  host → mods → actively-speaking — with a "+N on stage" overflow tile.
+  Listeners appear ONLY as a count strip and in the People drawer.
+- Speaking state animates per-tile from real LiveKit audio levels; a
+  silent stage is a still stage (the orbit's perpetual AnimationController
+  is gone).
+- The room's identity (name, description/topic, future cover via
+  VoiceRoom.imageUrl) is painted INTO the stage; when nobody speaks the
+  identity card leans in with a conversation prompt instead of an empty
+  center.
+- One People drawer (host → speakers → listeners) replaces the two
+  separate speaker/listener sheets.
+
+Also fixed while verifying live: the roster-sync race that reverted a
+user's own Mute tap (the participants listener force-applied a stale
+`isMuted:false` doc). Sync is now ONE-WAY — a moderator's mute is
+enforced onto the mic; an unmuted doc never auto-unmutes anyone. Applied
+to both room types.
+
+### Consequences
+
+- ~440 lines of orbit/cosmic painting deleted from the community screen.
+- The podcast room keeps its red editorial stage (already list-based and
+  scalable); it adopts RoomIdentityCard when covers land (M4).
+- Stage tiles open the profile preview; moderation stays in the drawer.

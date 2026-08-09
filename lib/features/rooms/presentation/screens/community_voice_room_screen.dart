@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +8,8 @@ import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 
 class CommunityVoiceRoomScreen extends StatefulWidget {
   const CommunityVoiceRoomScreen({required this.room, super.key});
@@ -20,13 +21,11 @@ class CommunityVoiceRoomScreen extends StatefulWidget {
       _CommunityVoiceRoomScreenState();
 }
 
-class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
-    with SingleTickerProviderStateMixin {
+class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   static const _background = Color(0xFF05030A);
 
   final _voice = VoiceCallService.instance;
   final _rooms = RoomService();
-  late final AnimationController _motion;
   // Single shared stream instance -- both the manual subscription below and
   // the StreamBuilder in build() listen to this same Stream, instead of
   // each calling watchParticipants() independently. Firestore's snapshots()
@@ -47,10 +46,6 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
   @override
   void initState() {
     super.initState();
-    _motion = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 28),
-    )..repeat();
     _voice.addListener(_refresh);
     _participants = _rooms.watchParticipants(widget.room.id);
     _participantSubscription = _participants.listen(_handleParticipantState);
@@ -61,7 +56,6 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
   void dispose() {
     _participantSubscription?.cancel();
     _voice.removeListener(_refresh);
-    _motion.dispose();
     super.dispose();
   }
 
@@ -98,8 +92,12 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
     if (own.isNotEmpty) {
       _joinedDocumentSeen = true;
       final participant = own.first;
-      if (participant.isMuted != _voice.isMuted && _voice.isConnected) {
-        await _voice.setMuted(participant.isMuted);
+      // ONE-WAY enforcement: a moderator's mute must reach the real
+      // microphone, but a (possibly stale) unmuted doc must never
+      // auto-unmute someone — that raced the user's own Mute tap and
+      // instantly reverted it (doc write lands after the local toggle).
+      if (participant.isMuted && !_voice.isMuted && _voice.isConnected) {
+        await _voice.setMuted(true);
       }
       return;
     }
@@ -145,21 +143,24 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  void _openParticipants(
-    List<RoomParticipant> participants, {
-    required bool speakersOnly,
-  }) {
-    final visible = speakersOnly
-        ? participants.where((participant) => participant.isSpeaker).toList()
-        : participants.where((participant) => !participant.isSpeaker).toList();
+  // One People drawer for the whole room — sections instead of two
+  // separate speaker/listener sheets (the sheet sorts host → speakers →
+  // listeners and labels roles per row).
+  void _openParticipants(List<RoomParticipant> participants) {
+    final ordered = [...participants]..sort((a, b) {
+      int rank(RoomParticipant p) => p.isHost ? 0 : p.isSpeaker ? 1 : 2;
+      final byRank = rank(a).compareTo(rank(b));
+      if (byRank != 0) return byRank;
+      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+    });
 
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) => _ParticipantsSheet(
-        title: speakersOnly ? 'Speaking now' : 'Listeners',
-        participants: visible,
+        title: 'People · ${participants.length}',
+        participants: ordered,
         hostId: widget.room.hostId,
         currentUserId: _uid,
         canModerate: _isHost,
@@ -180,12 +181,81 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
     );
   }
 
+  /// Rooms 2.0 stage: identity card + a calm speaker grid + the
+  /// audience as a strip. Live speaking state and audio levels come from
+  /// LiveKit ([_voice.participants], matched by uid identity); roles and
+  /// mute flags come from the Firestore roster. Listeners never render
+  /// on the stage — a room with 500 listeners paints the same number of
+  /// widgets as a room with 5.
+  Widget _buildStage(List<RoomParticipant> roomParticipants) {
+    final voiceByIdentity = {
+      for (final v in _voice.participants) v.identity: v,
+    };
+
+    final stageSpeakers = [
+      for (final p in roomParticipants.where(
+        (p) => p.isSpeaker || p.isHost,
+      ))
+        StageSpeaker(
+          userId: p.userId,
+          displayName: p.displayName,
+          photoUrl: p.photoUrl,
+          isHost: p.isHost,
+          isMuted: p.isMuted,
+          isSpeaking: voiceByIdentity[p.userId]?.isSpeaking ?? false,
+          audioLevel: voiceByIdentity[p.userId]?.audioLevel ?? 0,
+        ),
+    ];
+    final listeners = roomParticipants
+        .where((p) => !p.isSpeaker && !p.isHost)
+        .toList(growable: false);
+    final anyoneSpeaking = stageSpeakers.any((s) => s.isSpeaking);
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+      children: [
+        RoomIdentityCard(
+          roomName: widget.room.name,
+          topic: widget.room.description.trim().isNotEmpty
+              ? widget.room.description
+              : widget.room.category,
+          accent: const Color(0xFF9D20FF),
+          imageUrl: widget.room.imageUrl,
+          quiet: !anyoneSpeaking,
+        ),
+        const SizedBox(height: 14),
+        StageGrid(
+          speakers: stageSpeakers,
+          accent: const Color(0xFF9D20FF),
+          onOverflowTap: () => _openParticipants(_latestParticipants),
+          onSpeakerTap: (speaker) => showProfilePreview(
+            context,
+            userId: speaker.userId,
+            displayName: speaker.displayName,
+            photoUrl: speaker.photoUrl,
+          ),
+        ),
+        const SizedBox(height: 12),
+        ListenersStrip(
+          count: listeners.length,
+          accent: const Color(0xFF9D20FF),
+          onTap: () => _openParticipants(_latestParticipants),
+          previewPhotoUrls: [for (final l in listeners.take(4)) l.photoUrl],
+          previewNames: [for (final l in listeners.take(4)) l.displayName],
+        ),
+      ],
+    );
+  }
+
+  List<RoomParticipant> _latestParticipants = const [];
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<RoomParticipant>>(
       stream: _participants,
       builder: (context, snapshot) {
         final roomParticipants = snapshot.data ?? const <RoomParticipant>[];
+        _latestParticipants = roomParticipants;
         final speaking = roomParticipants
             .where((participant) => participant.isSpeaker)
             .length;
@@ -211,23 +281,10 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen>
                   speaking: speaking,
                   listeners: listeners,
                   onBack: () => Navigator.of(context).pop(),
-                  onSpeakingTap: () =>
-                      _openParticipants(roomParticipants, speakersOnly: true),
-                  onListenersTap: () =>
-                      _openParticipants(roomParticipants, speakersOnly: false),
+                  onSpeakingTap: () => _openParticipants(roomParticipants),
+                  onListenersTap: () => _openParticipants(roomParticipants),
                 ),
-                Expanded(
-                  child: AnimatedBuilder(
-                    animation: _motion,
-                    builder: (context, _) => _CosmicStage(
-                      participants: _voice.participants,
-                      energy: _voice.roomEnergy,
-                      progress: _motion.value,
-                      status: _voice.status,
-                      roomName: widget.room.name,
-                    ),
-                  ),
-                ),
+                Expanded(child: _buildStage(roomParticipants)),
                 _BottomControls(
                   micState: _voice.micState,
                   busy: _voice.muteChangeInProgress,
@@ -371,351 +428,6 @@ class _CounterPill extends StatelessWidget {
       ),
     );
   }
-}
-
-class _CosmicStage extends StatelessWidget {
-  const _CosmicStage({
-    required this.participants,
-    required this.energy,
-    required this.progress,
-    required this.status,
-    required this.roomName,
-  });
-
-  final List<VoiceParticipantViewData> participants;
-  final double energy;
-  final double progress;
-  final VoiceCallStatus status;
-  final String roomName;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final size = Size(constraints.maxWidth, constraints.maxHeight);
-        final center = Offset(size.width / 2, size.height / 2);
-        final coreSize = math.min(size.width, size.height) * .31;
-
-        return ClipRect(
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: CustomPaint(
-                  painter: _SpacePainter(progress: progress, energy: energy),
-                ),
-              ),
-              Positioned(
-                left: center.dx - coreSize / 2,
-                top: center.dy - coreSize / 2,
-                child: _CommunityHeart(
-                  size: coreSize,
-                  energy: energy,
-                  connected: status == VoiceCallStatus.connected,
-                  roomName: roomName,
-                ),
-              ),
-              ..._buildOrbitingPeople(size, center, coreSize),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  List<Widget> _buildOrbitingPeople(Size size, Offset center, double coreSize) {
-    if (participants.isEmpty) return const [];
-    final avatarSize = size.width < 600 ? 70.0 : 82.0;
-    final availableRadius = math.min(size.width, size.height) / 2;
-    final innerRadius = math.max(coreSize * .82, availableRadius * .58);
-    final outerRadius = math.min(
-      availableRadius - avatarSize * .65,
-      innerRadius + avatarSize * .72,
-    );
-
-    return List.generate(participants.length, (index) {
-      final participant = participants[index];
-      final ring = index % 2;
-      final radius = ring == 0 ? innerRadius : outerRadius;
-      final slots = math.max(1, (participants.length / 2).ceil());
-      final base = 2 * math.pi * (index ~/ 2) / slots;
-      final direction = ring == 0 ? 1.0 : -.72;
-      final angle = base + progress * math.pi * 2 * direction - math.pi / 2;
-      final x = center.dx + math.cos(angle) * radius - avatarSize / 2;
-      final y = center.dy + math.sin(angle) * radius - avatarSize / 2;
-
-      return Positioned(
-        left: x.clamp(4, size.width - avatarSize - 4).toDouble(),
-        top: y.clamp(4, size.height - avatarSize - 34).toDouble(),
-        child: _CosmicAvatar(participant: participant, size: avatarSize),
-      );
-    });
-  }
-}
-
-class _CommunityHeart extends StatelessWidget {
-  const _CommunityHeart({
-    required this.size,
-    required this.energy,
-    required this.connected,
-    required this.roomName,
-  });
-
-  final double size;
-  final double energy;
-  final bool connected;
-  final String roomName;
-
-  @override
-  Widget build(BuildContext context) {
-    final glow = .25 + energy * .55;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: const RadialGradient(
-          colors: [
-            Color(0xFFFF88FF),
-            Color(0xFFB42BFF),
-            Color(0xFF5512B8),
-            Color(0xFF160429),
-            Color(0xFF06030B),
-          ],
-          stops: [0, .18, .48, .78, 1],
-        ),
-        border: Border.all(
-          color: Color.lerp(
-            const Color(0xFF8D35D3),
-            const Color(0xFFFFA1FF),
-            energy,
-          )!,
-          width: 2.5 + energy * 3,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFFBF2DFF).withValues(alpha: glow),
-            blurRadius: 40 + energy * 55,
-            spreadRadius: 4 + energy * 10,
-          ),
-          BoxShadow(
-            color: const Color(0xFF5B25FF).withValues(alpha: .25),
-            blurRadius: 90,
-            spreadRadius: 18,
-          ),
-        ],
-      ),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.graphic_eq_rounded,
-              color: Colors.white,
-              size: size * .22,
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              'HEART OF THE\nCOMMUNITY',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                height: 1,
-                fontWeight: FontWeight.w900,
-                letterSpacing: .8,
-              ),
-            ),
-            const SizedBox(height: 7),
-            Text(
-              connected
-                  ? energy > .55
-                        ? 'The room is alive'
-                        : energy > .16
-                        ? 'Voices are connecting'
-                        : 'Listening for voices'
-                  : 'Connecting…',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Color(0xFFE7CFF2),
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CosmicAvatar extends StatelessWidget {
-  const _CosmicAvatar({required this.participant, required this.size});
-
-  final VoiceParticipantViewData participant;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    final level = participant.audioLevel.clamp(0.0, 1.0);
-    final speaking = participant.isSpeaking;
-    final aura = participant.isLocal
-        ? const Color(0xFF5BE7FF)
-        : speaking
-        ? Color.lerp(const Color(0xFF8F42FF), const Color(0xFFFF64EF), level)!
-        : const Color(0xFF7D39B5);
-    final initial = participant.displayName.trim().isEmpty
-        ? '?'
-        : participant.displayName.trim()[0].toUpperCase();
-
-    return SizedBox(
-      width: size + 24,
-      height: size + 38,
-      child: Column(
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 90),
-            width: size,
-            height: size,
-            transformAlignment: Alignment.center,
-            transform: Matrix4.diagonal3Values(
-              speaking ? 1.04 + level * .12 : 1,
-              speaking ? 1.04 + level * .12 : 1,
-              1,
-            ),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: RadialGradient(
-                colors: [
-                  aura,
-                  const Color(0xFF351048),
-                  const Color(0xFF08040E),
-                ],
-              ),
-              border: Border.all(
-                color: aura,
-                width: speaking ? 3 + level * 3 : 1.6,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: aura.withValues(alpha: speaking ? .75 : .25),
-                  blurRadius: speaking ? 24 + 34 * level : 11,
-                  spreadRadius: speaking ? 3 + 5 * level : 0,
-                ),
-              ],
-            ),
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                Text(
-                  initial,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: size * .36,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                if (participant.isMuted)
-                  Positioned(
-                    right: 1,
-                    bottom: 1,
-                    child: Container(
-                      padding: const EdgeInsets.all(5),
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF160C1C),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.mic_off_rounded,
-                        size: 13,
-                        color: Color(0xFFFF8BE9),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            participant.isLocal
-                ? '${participant.displayName} (you)'
-                : participant.displayName,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: speaking ? Colors.white : const Color(0xFFD4C7DC),
-              fontSize: 11,
-              fontWeight: speaking ? FontWeight.w900 : FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SpacePainter extends CustomPainter {
-  _SpacePainter({required this.progress, required this.energy});
-
-  final double progress;
-  final double energy;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Offset.zero & size;
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..shader = const RadialGradient(
-          center: Alignment(-.45, -.7),
-          radius: 1.25,
-          colors: [Color(0xFF32124B), Color(0xFF11091B), Color(0xFF05030A)],
-          stops: [0, .45, 1],
-        ).createShader(rect),
-    );
-
-    final center = Offset(size.width / 2, size.height / 2);
-    final maxRadius = math.min(size.width, size.height) * .47;
-    for (var i = 0; i < 3; i++) {
-      final radius = maxRadius * (.48 + i * .22);
-      canvas.drawCircle(
-        center,
-        radius,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = i == 0 ? 1.4 : 1
-          ..color = const Color(0xFFB240FF).withValues(alpha: .18 - i * .035),
-      );
-    }
-
-    final wave = maxRadius * (.34 + ((progress * 2) % 1) * .72);
-    canvas.drawCircle(
-      center,
-      wave,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.3 + energy * 2
-        ..color = const Color(
-          0xFFE15AFF,
-        ).withValues(alpha: (.18 + energy * .25) * (1 - ((progress * 2) % 1))),
-    );
-
-    final starPaint = Paint();
-    for (var i = 0; i < 100; i++) {
-      final seed = i * 17.173;
-      final x = (math.sin(seed) * .5 + .5) * size.width;
-      final baseY = (math.cos(seed * 1.71) * .5 + .5) * size.height;
-      final y = (baseY + progress * (8 + i % 7)) % size.height;
-      final twinkle =
-          .25 + .55 * (math.sin(progress * math.pi * 2 + seed).abs());
-      starPaint.color = Colors.white.withValues(alpha: twinkle);
-      canvas.drawCircle(Offset(x, y), i % 13 == 0 ? 1.35 : .65, starPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _SpacePainter oldDelegate) =>
-      oldDelegate.progress != progress || oldDelegate.energy != energy;
 }
 
 class _BottomControls extends StatelessWidget {

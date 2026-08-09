@@ -65,7 +65,7 @@ class RoomTypeSelectorScreen extends StatelessWidget {
             features: const [
               'Free-flowing voice conversation',
               'Live chat and reactions',
-              'Cosmic orbital room experience',
+              'Calm stage with speaker tiles',
             ],
             onTap: () => _openRoom(context, RoomExperience.community),
           ),
