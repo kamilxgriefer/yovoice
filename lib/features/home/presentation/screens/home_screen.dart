@@ -12,8 +12,6 @@ import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
-import 'package:yovoice/features/messages/data/services/message_service.dart';
-import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
@@ -23,10 +21,13 @@ import 'package:yovoice/features/notifications/presentation/screens/notification
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
+import 'package:yovoice/shared/widgets/profile/people_status_ring.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
+import 'package:yovoice/features/home/presentation/widgets/live_now_hero.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_card.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -50,7 +51,6 @@ class _HomeScreenState extends State<HomeScreen> {
   final HomeFeedService _feedService = HomeFeedService();
   final FriendService _friendService = FriendService();
   final RoomService _roomService = RoomService();
-  final MessageService _messageService = MessageService();
   final MomentService _momentService = MomentService();
   final NotificationService _notificationService = NotificationService();
   final ProfileService _profileService = ProfileService();
@@ -112,51 +112,6 @@ class _HomeScreenState extends State<HomeScreen> {
           behavior: SnackBarBehavior.floating,
         ),
       );
-  }
-
-  Future<void> _startChat(FriendUser friend) async {
-    try {
-      final conversationId = await _messageService.openOrCreateConversation(
-        otherUserId: friend.id,
-        otherDisplayName: friend.displayName,
-        otherEmail: friend.email,
-        otherPhotoUrl: friend.photoUrl ?? '',
-      );
-
-      if (!mounted) {
-        return;
-      }
-
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => ChatScreen(
-            conversationId: conversationId,
-            otherUserId: friend.id,
-            otherDisplayName: friend.displayName,
-            otherEmail: friend.email,
-            otherPhotoUrl: friend.photoUrl ?? '',
-          ),
-        ),
-      );
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              intentionalOrFriendly(
-                error,
-                fallback: "Couldn't open this chat. Please try again.",
-              ),
-            ),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-    }
   }
 
   Future<void> _openRoom(VoiceRoom room) async {
@@ -310,10 +265,25 @@ class _HomeScreenState extends State<HomeScreen> {
                   },
                 ),
               ),
-              SliverToBoxAdapter(child: _livePulse()),
+              // Mockup order: LIVE NOW hero → Your people → Rooms for
+              // you → From your Clubs; Moments/feed follow below. The
+              // hero absorbs the old Live Pulse stat card (same _rooms
+              // stream, presented as a place instead of a number).
+              SliverToBoxAdapter(
+                child: StreamBuilder<List<VoiceRoom>>(
+                  stream: _rooms,
+                  builder: (context, snapshot) {
+                    final live = snapshot.data ?? const <VoiceRoom>[];
+                    return LiveNowHero(
+                      room: live.isEmpty ? null : live.first,
+                      onJoin: _openRoom,
+                    );
+                  },
+                ),
+              ),
+              SliverToBoxAdapter(child: _activeFriends()),
               SliverToBoxAdapter(child: _liveRooms()),
               SliverToBoxAdapter(child: _voiceStories()),
-              SliverToBoxAdapter(child: _activeFriends()),
               SliverToBoxAdapter(child: _sectionTitle('Your feed')),
               SliverToBoxAdapter(child: _feed()),
               SliverToBoxAdapter(child: _suggestedClubs()),
@@ -326,6 +296,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  String _timeOfDayGreeting() {
+    final hour = DateTime.now().hour;
+    if (hour < 5) return 'Up late,';
+    if (hour < 12) return 'Good morning,';
+    if (hour < 18) return 'Good afternoon,';
+    return 'Good evening,';
+  }
+
   Widget _header(String name, String? photoUrl, {bool premium = false}) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
@@ -336,17 +314,24 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Hello, $name! 👋',
+                  _timeOfDayGreeting(),
+                  style: const TextStyle(color: _muted, fontSize: 14),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$name 👋',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 29,
+                    fontSize: 28,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -.8,
                   ),
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'See what your people are saying right now.',
+                  'Ready to hear something real?',
                   style: TextStyle(color: _muted, fontSize: 13),
                 ),
               ],
@@ -419,85 +404,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _livePulse() {
-    return StreamBuilder<List<VoiceRoom>>(
-      stream: _rooms,
-      builder: (context, roomSnapshot) {
-        final rooms = roomSnapshot.data ?? const <VoiceRoom>[];
-        final people = rooms.fold<int>(
-          0,
-          (sum, room) => sum + room.participantCount,
-        );
-        return StreamBuilder<List<VoiceMoment>>(
-          stream: _moments,
-          builder: (context, momentSnapshot) {
-            final moments = momentSnapshot.data ?? const <VoiceMoment>[];
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18),
-              child: InkWell(
-                onTap: widget.onOpenDiscover ?? HomeScreen.openDiscoverTab,
-                borderRadius: BorderRadius.circular(22),
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF54126F), Color(0xFF24112F)],
-                    ),
-                    borderRadius: BorderRadius.circular(22),
-                    border: Border.all(color: const Color(0xFF8B2CB5)),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 45,
-                        height: 45,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFFF416C),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.wifi_tethering_rounded,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(width: 13),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'LIVE PULSE',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '${rooms.length} live rooms  •  $people people talking  •  ${moments.length} fresh moments',
-                              style: const TextStyle(
-                                color: Color(0xFFDCCBE4),
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const Icon(
-                        Icons.chevron_right_rounded,
-                        color: Colors.white,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
   // The one thing that makes YO Voice YO Voice: real, currently-live rooms
   // you can join in one tap. Previously only surfaced as a count inside the
   // Live Pulse banner (tap-through to Discover); that made rooms feel like
@@ -522,7 +428,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   const Text(
-                    'Live right now',
+                    'Rooms for you',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 20,
@@ -684,70 +590,57 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // YOUR PEOPLE (mockup): horizontal status-ring row — online friends
+  // first, ring language centralized in PeopleStatus. Tap opens the
+  // profile preview (Message lives there); richer statuses (Speaking /
+  // In a room / In a club) light up once presence carries room context —
+  // never faked before then.
   Widget _activeFriends() {
     return StreamBuilder<List<FriendUser>>(
       stream: _friends,
       builder: (context, snapshot) {
-        final active = (snapshot.data ?? const <FriendUser>[])
-            .where((friend) => friend.isOnline)
-            .take(8)
-            .toList();
-        if (active.isEmpty) return const SizedBox.shrink();
+        final friends = [...(snapshot.data ?? const <FriendUser>[])]
+          ..sort((a, b) => (b.isOnline ? 1 : 0) - (a.isOnline ? 1 : 0));
+        if (friends.isEmpty) return const SizedBox.shrink();
         return Padding(
-          padding: const EdgeInsets.fromLTRB(18, 12, 18, 20),
+          padding: const EdgeInsets.fromLTRB(0, 12, 0, 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Friends active now',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w900,
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 18),
+                child: Text(
+                  'Your people',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
-              const SizedBox(height: 11),
-              Container(
-                decoration: BoxDecoration(
-                  color: _surface,
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: _border),
-                ),
-                child: Column(
-                  children: active
-                      .map(
-                        (friend) => ListTile(
-                          onTap: () => _startChat(friend),
-                          leading: CircleAvatar(
-                            backgroundImage: friend.photoUrl?.isNotEmpty == true
-                                ? NetworkImage(friend.photoUrl!)
-                                : null,
-                            child: friend.photoUrl?.isNotEmpty == true
-                                ? null
-                                : Text(friend.initial),
-                          ),
-                          title: Text(
-                            friend.displayName,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          subtitle: const Text(
-                            'Online now',
-                            style: TextStyle(color: Color(0xFF43D980)),
-                          ),
-                          trailing: IconButton(
-                            tooltip: 'Open chat',
-                            onPressed: () => _startChat(friend),
-                            icon: const Icon(
-                              Icons.chat_bubble_outline_rounded,
-                              color: _primary,
-                            ),
-                          ),
-                        ),
-                      )
-                      .toList(),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 124,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  itemCount: friends.length,
+                  itemBuilder: (context, index) {
+                    final friend = friends[index];
+                    return PeopleStatusAvatar(
+                      displayName: friend.displayName,
+                      photoUrl: friend.photoUrl,
+                      status: friend.isOnline
+                          ? PeopleStatus.online
+                          : PeopleStatus.away,
+                      onTap: () => showProfilePreview(
+                        context,
+                        userId: friend.id,
+                        displayName: friend.displayName,
+                        photoUrl: friend.photoUrl,
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
