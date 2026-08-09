@@ -190,6 +190,8 @@
   },
   "active": "b3bb9408fb1083b3",
   "lastOpenFiles": [
+    "agent_handoffs/mockup_implementation_handoff.md",
+    "agent_handoffs",
     "Sessions/2026-08-08-product-audit-and-hardening.md",
     "Sessions/2026-08-08-p0-bugfixes-and-profile-media-crop.md",
     "email-templates/README.md",
@@ -219,7 +221,6 @@
     "00 Project/Roadmap.md",
     "00 Project/README.md",
     "00 Project/Features.md",
-    "00 Project/CLAUDE.md",
     "00 Project"
   ]
 }
