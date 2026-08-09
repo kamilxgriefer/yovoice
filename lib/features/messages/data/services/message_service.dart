@@ -243,6 +243,27 @@ class MessageService {
 
     final isReplyToRecipient =
         replyTo != null && replyTo.senderId == recipientId;
+
+    // Routing decision, made at the source: a DM to an EXISTING FRIEND
+    // already surfaces through the conversation's unreadCounts (Chats
+    // badge, unread cards), so its notification record is written
+    // bell-suppressed — it still exists (that document is what fires the
+    // push) but never duplicates into the global bell. A non-friend's
+    // message keeps the bell entry: that IS the message-request moment.
+    var suppressBell = false;
+    try {
+      final friendDoc = await _users
+          .doc(currentUserId)
+          .collection('friends')
+          .doc(recipientId)
+          .get();
+      suppressBell = friendDoc.exists;
+    } catch (_) {
+      // Fail open: if friendship can't be read, keep the bell entry — a
+      // redundant bell row for a friend beats silently hiding a
+      // stranger's message request.
+    }
+
     try {
       await _notifications.notify(
         recipientId: recipientId,
@@ -250,6 +271,7 @@ class MessageService {
             ? NotificationType.reply
             : NotificationType.directMessage,
         targetId: conversationId,
+        suppressBell: suppressBell,
       );
     } catch (_) {
       // Best-effort — the message itself already sent above.

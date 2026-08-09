@@ -1639,3 +1639,49 @@ layer.
 - Old messages keep their stale sender identity (message docs are
   immutable by rule); correctness applies to new writes.
 - The overlay is verified live in a production two-user community room.
+
+## ADR-033: Friend DMs never duplicate into the global bell; the notification document stays as the push carrier
+
+**Status**: Accepted
+**Date**: 2026-08-09
+
+### Context
+
+Every DM wrote a `directMessage`/`reply` record into
+`users/{recipient}/notifications` — the same collection the global bell
+feed and badge read — while the send also incremented the
+conversation's `unreadCounts`. One friend DM therefore lit the Chats
+badge, the bell screen's "Unread messages" card AND a bell "Activity"
+row + badge. The document cannot simply be skipped for friends: it is
+what triggers `onNotificationCreated`, the only push path.
+
+### Decision
+
+Routing is decided at the SOURCE and enforced at the storage/query
+layer, never cosmetically per screen:
+
+- `MessageService.sendTextMessage` checks whether the recipient is an
+  existing friend (own `friends/{recipientId}` doc — fail-open on read
+  errors) and passes `suppressBell` to `notify()`.
+- `notify()` writes `bellSuppressed: true` only when suppressing, so
+  every other notification type keeps its exact legacy document shape.
+- `watchNotifications()` and `watchUnreadCount()` exclude suppressed
+  records — filtered client-side because a Firestore `isNotEqualTo`
+  query would also drop every pre-field legacy document.
+- firestore.rules whitelists the optional field and requires it to be a
+  bool (emulator-tested; suite now 95 checks).
+- A non-friend's message keeps its bell entry — presented as
+  "sent you a message request" (friend DMs never reach the bell, so a
+  DM row there is by construction a stranger reaching out).
+- push.js is untouched: friend DMs still push, copy unchanged.
+
+### Consequences
+
+- Legacy pre-fix friend-DM rows still sit in old feeds until they age
+  out of the 50-item window (and now read "message request" — transient
+  cosmetic cost accepted over a backfill).
+- Suppressed records are never surfaced but are marked read by
+  `markAllAsRead` like any other, so nothing accumulates as unread.
+- Tests: `test/notification_routing_test.dart` (friend DM → chat YES /
+  bell NO with record present; non-friend → bell message request;
+  non-chat events → bell; read-state isolation both directions).

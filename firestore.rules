@@ -340,9 +340,16 @@ service cloud.firestore {
               'directMessage', 'mention', 'reply',
             ] &&
             request.resource.data.isRead == false &&
+            // bellSuppressed routes a record away from the bell feed while
+            // keeping the document (it still drives push). Optional, and
+            // must be a bool when present so a sender can't smuggle
+            // arbitrary content through it.
+            (!('bellSuppressed' in request.resource.data) ||
+              request.resource.data.bellSuppressed is bool) &&
             request.resource.data.keys().hasOnly([
               'type', 'actorId', 'actorName', 'actorPhotoUrl',
               'targetId', 'targetLabel', 'isRead', 'createdAt', 'dedupeKey',
+              'bellSuppressed',
             ]);
         allow update: if isOwner(userId) &&
             request.resource.data.diff(resource.data).affectedKeys()

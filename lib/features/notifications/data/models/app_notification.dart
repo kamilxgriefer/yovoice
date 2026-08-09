@@ -37,6 +37,7 @@ class AppNotification {
     required this.isRead,
     required this.createdAt,
     this.dedupeKey,
+    this.bellSuppressed = false,
   });
 
   final String id;
@@ -64,6 +65,13 @@ class AppNotification {
   /// piling up duplicates. Purely advisory — not enforced by rules.
   final String? dedupeKey;
 
+  /// True for records that exist only to carry a push (friend DMs): the
+  /// chat surfaces already show that unread state, so the global bell
+  /// feed and its badge skip these instead of duplicating it. Routing is
+  /// decided by the SENDER at write time (see MessageService), not
+  /// filtered cosmetically per screen.
+  final bool bellSuppressed;
+
   String get title {
     switch (type) {
       case NotificationType.friendRequest:
@@ -89,7 +97,10 @@ class AppNotification {
             ? '$actorName invited you to a broadcast'
             : '$actorName invited you to $targetLabel';
       case NotificationType.directMessage:
-        return '$actorName sent you a message';
+        // Friend DMs never reach the bell (bellSuppressed), so a
+        // directMessage row here is a non-friend reaching out — the
+        // product's "message request" moment.
+        return '$actorName sent you a message request';
       case NotificationType.mention:
         return targetLabel == null
             ? '$actorName mentioned you'
@@ -127,6 +138,7 @@ class AppNotification {
       isRead: data['isRead'] as bool? ?? false,
       createdAt: createdAtValue is Timestamp ? createdAtValue.toDate() : null,
       dedupeKey: data['dedupeKey'] as String?,
+      bellSuppressed: data['bellSuppressed'] as bool? ?? false,
     );
   }
 }

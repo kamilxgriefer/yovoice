@@ -23,6 +23,12 @@ class NotificationService {
   CollectionReference<Map<String, dynamic>> _notificationsFor(String userId) =>
       _users.doc(userId).collection('notifications');
 
+  /// The global bell feed. Bell-suppressed records (friend DMs, which
+  /// exist only to carry a push — the chat surfaces own that unread
+  /// state) are excluded here, not in the UI: every bell renderer gets
+  /// the already-routed list. Filtered client-side because a Firestore
+  /// `isNotEqualTo` query would also drop every legacy document that
+  /// predates the field.
   Stream<List<AppNotification>> watchNotifications({int limit = 50}) {
     return _notificationsFor(_currentUser.uid)
         .orderBy('createdAt', descending: true)
@@ -31,15 +37,22 @@ class NotificationService {
         .map(
           (snapshot) => snapshot.docs
               .map(AppNotification.fromFirestore)
+              .where((notification) => !notification.bellSuppressed)
               .toList(growable: false),
         );
   }
 
+  /// Unread count for the bell badge — same routing rule as the feed:
+  /// suppressed records never light the bell.
   Stream<int> watchUnreadCount() {
     return _notificationsFor(_currentUser.uid)
         .where('isRead', isEqualTo: false)
         .snapshots()
-        .map((snapshot) => snapshot.size);
+        .map(
+          (snapshot) => snapshot.docs
+              .where((doc) => doc.data()['bellSuppressed'] != true)
+              .length,
+        );
   }
 
   Future<void> markAsRead(String notificationId) async {
@@ -75,12 +88,17 @@ class NotificationService {
   /// being one of a known set; there is deliberately nothing here a
   /// malicious actor could use to write deceptive content into someone
   /// else's notification feed.
+  /// [suppressBell] routes the record away from the bell feed/badge while
+  /// still writing it — the document is what triggers the push
+  /// (onNotificationCreated), so a friend DM keeps its push without
+  /// duplicating the chat unread state into the bell.
   Future<void> notify({
     required String recipientId,
     required NotificationType type,
     String? targetId,
     String? targetLabel,
     String? dedupeKey,
+    bool suppressBell = false,
   }) async {
     final actor = _currentUser;
     if (recipientId == actor.uid) return;
@@ -114,6 +132,9 @@ class NotificationService {
       'isRead': false,
       'createdAt': FieldValue.serverTimestamp(),
       'dedupeKey': dedupeKey,
+      // Written only when true so untouched notification types keep
+      // their exact legacy document shape.
+      if (suppressBell) 'bellSuppressed': true,
     };
 
     // Dedupe via DETERMINISTIC DOC ID, not a query: rules only let a user

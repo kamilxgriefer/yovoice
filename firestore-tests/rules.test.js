@@ -898,6 +898,50 @@ async function main() {
   );
 
   await check(
+    "notification routing: a bell-suppressed friend-DM record can be written",
+    async () => {
+      const db = host.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-dm-suppressed");
+      await assertSucceeds(
+        setDoc(ref, {
+          type: "directMessage",
+          actorId: "host-uid",
+          actorName: "Host",
+          actorPhotoUrl: null,
+          targetId: "conversation-1",
+          targetLabel: null,
+          isRead: false,
+          createdAt: new Date(),
+          dedupeKey: null,
+          bellSuppressed: true,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: bellSuppressed must be a bool, not smuggled content",
+    async () => {
+      const db = host.firestore();
+      const ref = doc(db, "users/invitee-uid/notifications/notif-dm-bad-flag");
+      await assertFails(
+        setDoc(ref, {
+          type: "directMessage",
+          actorId: "host-uid",
+          actorName: "Host",
+          actorPhotoUrl: null,
+          targetId: "conversation-1",
+          targetLabel: null,
+          isRead: false,
+          createdAt: new Date(),
+          dedupeKey: null,
+          bellSuppressed: "click here to win",
+        }),
+      );
+    },
+  );
+
+  await check(
     "regression: the recipient can read their own notifications",
     async () => {
       const db = invitee.firestore();
