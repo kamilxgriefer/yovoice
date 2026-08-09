@@ -176,28 +176,15 @@ class ProfileHeader extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          profile.displayName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 29,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                      if (profile.accountType != AccountType.personal)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 6),
-                          child: AccountTypeBadge(
-                            accountType: profile.accountType,
-                          ),
-                        ),
-                    ],
+                  Text(
+                    profile.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 29,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                   if (profile.username.isNotEmpty)
                     Text(
@@ -205,6 +192,25 @@ class ProfileHeader extends StatelessWidget {
                       style: const TextStyle(
                         color: Color(0xFFB8ADC1),
                         fontSize: 15,
+                      ),
+                    ),
+                  // The identity chips row (board screen 5): account type +
+                  // the server-mirrored Premium mark. Only truthful chips —
+                  // premiumIdentity is written by Cloud Functions, never
+                  // computed locally.
+                  if (profile.accountType != AccountType.personal ||
+                      profile.premiumIdentity)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 7),
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          if (profile.accountType != AccountType.personal)
+                            AccountTypeBadge(accountType: profile.accountType),
+                          if (profile.premiumIdentity)
+                            const PremiumIdentityChip(),
+                        ],
                       ),
                     ),
                   if (title != null) ...[
@@ -216,6 +222,46 @@ class ProfileHeader extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The Premium mark on a profile — rendered only from
+/// `profile.premiumIdentity`, the server-written public mirror of the
+/// entitlement. Companion to [AccountTypeBadge] in the header chips row.
+class PremiumIdentityChip extends StatelessWidget {
+  const PremiumIdentityChip({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    const color = Color(0xFFE9B8FF);
+    return Tooltip(
+      message: 'YO Voice Premium member',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0xFFC026FF).withValues(alpha: .16),
+          borderRadius: BorderRadius.circular(99),
+          border: Border.all(
+            color: const Color(0xFFC026FF).withValues(alpha: .5),
+          ),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.workspace_premium_rounded, size: 13, color: color),
+            SizedBox(width: 4),
+            Text(
+              'Premium',
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

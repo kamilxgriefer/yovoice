@@ -25,9 +25,15 @@ someone decide what to pick up next.
   the member's real avatar in the canonical premium ring) and
   `PremiumPlansScreen` (toggle, side-by-side plan cards, real
   `verifyPurchase` wiring; decline path live-verified against production)
-  ([ADR-031](Decisions.md#adr-031-premium-is-two-surfaces-presentation-and-plans-the-hero-is-the-members-real-identity)).
-  Board screens 5 (profile/creator) and 6 (club room) still open — see
-  the agent handoff ledger.
+  ([ADR-031](Decisions.md#adr-031-premium-is-two-surfaces-presentation-and-plans-the-hero-is-the-members-real-identity));
+  website Premium surfaces aligned to the same language
+  (`yovoice-website` `ed606b3`); board screen 5 profile refinement —
+  header chips row (AccountTypeBadge + server-mirrored
+  `PremiumIdentityChip`), compact stat formatting (1.8K), website chip
+  in Voice identity, owner crown + "· Owner" on owned club tiles (all
+  real-data-conditional; no XP bar or Moments/Activity tabs — those
+  systems don't exist and honesty wins over the mockup). Board screen 6
+  (club room) still open — see the agent handoff ledger.
 
 - Rooms 2.0 — M1/M2/M3/M8 (2026-08-09): LiveKit-authoritative MicState
   + mute-race fix; Podcast rename (ADR-029); scalable stage system

@@ -301,6 +301,7 @@ class _ProfileContent extends StatelessWidget {
               _CommunitiesCard(
                 communities: communities,
                 clubs: clubs,
+                currentUid: profile.uid,
                 isLoading: communitiesLoading,
                 onOpen: onOpenCommunity,
                 onOpenClub: onOpenClub,
@@ -370,6 +371,18 @@ class _Stat extends StatelessWidget {
   final String label;
   final VoidCallback? onTap;
 
+  /// Compact display for large counts (1.8K / 1.2M) — board screen 5.
+  static String compact(int value) {
+    String fmt(double v) {
+      final d = (v * 10).truncate() / 10;
+      return d == d.truncateToDouble() ? '${d.truncate()}' : '$d';
+    }
+
+    if (value >= 1000000) return '${fmt(value / 1000000)}M';
+    if (value >= 1000) return '${fmt(value / 1000)}K';
+    return '$value';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Expanded(
@@ -381,7 +394,7 @@ class _Stat extends StatelessWidget {
           child: Column(
             children: [
               Text(
-                '$value',
+                compact(value),
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 24,
@@ -446,6 +459,8 @@ class _VoiceIdentity extends StatelessWidget {
               children: [
                 if (profile.country.isNotEmpty)
                   _Chip(profile.country, Icons.public_rounded),
+                if (profile.website.isNotEmpty)
+                  _Chip(profile.website, Icons.link_rounded),
                 if (profile.nativeLanguage.isNotEmpty)
                   _Chip(
                     'Native: ${profile.nativeLanguage}',
@@ -574,6 +589,7 @@ class _CommunitiesCard extends StatelessWidget {
   const _CommunitiesCard({
     required this.communities,
     required this.clubs,
+    required this.currentUid,
     required this.isLoading,
     required this.onOpen,
     required this.onOpenClub,
@@ -581,6 +597,7 @@ class _CommunitiesCard extends StatelessWidget {
 
   final List<VoiceRoom> communities;
   final List<Club> clubs;
+  final String currentUid;
   final bool isLoading;
   final ValueChanged<VoiceRoom> onOpen;
   final ValueChanged<Club> onOpenClub;
@@ -622,8 +639,11 @@ class _CommunitiesCard extends StatelessWidget {
                       child: _CommunityTile(
                         name: club.name,
                         imageUrl: club.avatarUrl,
-                        subtitle: '${club.memberCount} members',
+                        subtitle:
+                            '${club.memberCount} members'
+                            '${club.ownerId == currentUid ? ' · Owner' : ''}',
                         badge: 'CLUB',
+                        isOwner: club.ownerId == currentUid,
                         onTap: () => onOpenClub(club),
                       ),
                     ),
@@ -658,6 +678,7 @@ class _CommunityTile extends StatelessWidget {
     required this.subtitle,
     required this.badge,
     required this.onTap,
+    this.isOwner = false,
   });
 
   final String name;
@@ -665,6 +686,10 @@ class _CommunityTile extends StatelessWidget {
   final String subtitle;
   final String badge;
   final VoidCallback onTap;
+
+  /// Marks a club the member OWNS (board screen 5's crown) — driven by
+  /// the club's real ownerId, never a guess.
+  final bool isOwner;
 
   @override
   Widget build(BuildContext context) {
@@ -700,6 +725,15 @@ class _CommunityTile extends StatelessWidget {
                         ),
                 ),
                 const Spacer(),
+                if (isOwner)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 5),
+                    child: Icon(
+                      Icons.workspace_premium_rounded,
+                      size: 15,
+                      color: Color(0xFFFFC24D),
+                    ),
+                  ),
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 7,

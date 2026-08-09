@@ -48,6 +48,7 @@ UserProfile get _fakeProfile => UserProfile(
   bannerUrl: null,
   website: 'https://yovoice.app',
   accountType: AccountType.creator,
+  premiumIdentity: true,
   friendCount: 12,
   followerCount: 340,
   followingCount: 51,
