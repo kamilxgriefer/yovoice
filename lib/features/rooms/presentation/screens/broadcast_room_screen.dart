@@ -51,6 +51,10 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
   bool _wasSeenAsParticipant = false;
 
   bool _ending = false;
+
+  /// Guards the server removal-confirmation against re-entry while an
+  /// in-flight check is pending (the roster stream keeps emitting).
+  bool _confirmingRemoval = false;
   bool _roomOver = false;
 
   String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -179,17 +183,33 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
       return;
     }
 
-    if (!_wasSeenAsParticipant || _isHost || _ending) {
+    if (!_wasSeenAsParticipant || _isHost || _ending || _confirmingRemoval) {
       return;
     }
 
-    // Removed by a moderator, or the room ended and deleted every
-    // participant doc: cut the audio and show the ended state.
-    _ending = true;
-    unawaited(_voice.disconnect());
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() => _roomOver = true);
-    });
+    // The roster stream can emit CACHE-sourced snapshots, so a missing
+    // own-document is only a HINT — confirm with the server before
+    // ejecting (docs/Bugs.md: a false ended-state on a live room).
+    _confirmingRemoval = true;
+    unawaited(
+      _rooms
+          .isParticipantRemovedOnServer(
+            roomId: widget.room.id,
+            userId: _uid,
+          )
+          .then((removed) {
+            _confirmingRemoval = false;
+            if (!removed || !mounted || _ending) return;
+
+            // Removed by a moderator, or the room ended and deleted
+            // every participant doc: cut audio, show the ended state.
+            _ending = true;
+            unawaited(_voice.disconnect());
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) setState(() => _roomOver = true);
+            });
+          }),
+    );
   }
 
   Future<void> _toggleHand(RoomParticipant? me) async {

@@ -53,6 +53,10 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   bool _leaving = false;
   bool _roomOver = false;
 
+  /// Guards the server confirmation below against re-entry while an
+  /// in-flight check is pending (the roster stream keeps emitting).
+  bool _confirmingRemoval = false;
+
   String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
   bool get _isHost => _uid == widget.room.hostId;
   bool get _isClubRoom => widget.room.isClubRoom;
@@ -120,7 +124,19 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
       return;
     }
 
-    if (_joinedDocumentSeen && mounted && !_leaving) {
+    if (_joinedDocumentSeen && mounted && !_leaving && !_confirmingRemoval) {
+      // The roster stream can emit CACHE-sourced snapshots, so a missing
+      // own-document is only a HINT that we were removed — confirm with
+      // the server before ejecting anyone (docs/Bugs.md: a host was
+      // ejected from a still-live room on a transient snapshot).
+      _confirmingRemoval = true;
+      final removed = await _rooms.isParticipantRemovedOnServer(
+        roomId: widget.room.id,
+        userId: _uid,
+      );
+      _confirmingRemoval = false;
+      if (!removed || !mounted || _leaving) return;
+
       // Removed by the host, or the room ended: cut the audio and show
       // the ended state instead of ejecting with a snackbar.
       _leaving = true;

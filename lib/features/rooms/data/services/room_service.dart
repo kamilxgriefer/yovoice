@@ -238,6 +238,38 @@ class RoomService {
     });
   }
 
+  /// Authoritative check that [userId] really is gone from [roomId]'s
+  /// roster, asked of the SERVER.
+  ///
+  /// `watchParticipants` is a `snapshots()` stream, which also emits
+  /// CACHE-sourced snapshots (listener re-establishment after a network
+  /// blip, cold-cache re-targeting). A transient snapshot that happens
+  /// not to contain the caller's own participant document is
+  /// indistinguishable, at the stream level, from "a moderator removed
+  /// me" — and the room screens ejected the user to the ended state on
+  /// that basis. Observed once in production: a host was ejected ~80s
+  /// after creating a room, with no moderation action and the room
+  /// still live (docs/Bugs.md).
+  ///
+  /// Returns true only when the server confirms the document is absent.
+  /// On any error it returns FALSE (still present): a failed check must
+  /// never eject someone from a room they are legitimately in.
+  Future<bool> isParticipantRemovedOnServer({
+    required String roomId,
+    required String userId,
+  }) async {
+    try {
+      final snapshot = await _rooms
+          .doc(roomId)
+          .collection('participants')
+          .doc(userId)
+          .get(const GetOptions(source: Source.server));
+      return !snapshot.exists;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Stream<List<RoomMessage>> watchRoomMessages(String roomId) {
     return _rooms
         .doc(roomId)

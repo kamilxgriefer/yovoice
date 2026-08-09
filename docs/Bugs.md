@@ -72,16 +72,24 @@ permission flags).
   route through `RoomEntryScreen` into the shared room shell, whose
   leave is lounge-aware. (Part of the board-screen-6 club room rebuild,
   ADR-032.)
-- **Open (observed once, 2026-08-09): own-participant ended-state
-  false(?) positive.** ~80 seconds after creating a fresh community room
-  (while a second session of the same human was active in another room
-  on another account), the host's screen flipped to "This room has
-  ended" — meaning the own-participant doc vanished from the roster
-  stream, without any leave/moderation action on the device. Not yet
-  reproduced or root-caused (candidate suspects: cross-session activity
-  on the same account from the deployed web build, or a listener
-  emitting an incomplete snapshot). The room itself stayed live.
-  Investigate before treating roster-driven eviction as reliable.
+- **Fixed (2026-08-09): false "This room has ended" ejection from a
+  still-live room.** Observed once: ~80s after creating a community
+  room, the host's screen flipped to the ended state with no
+  leave/moderation action, while the room stayed live. Root cause:
+  both room screens treated "my participant doc is missing from the
+  roster snapshot" as proof of removal, but `watchParticipants` is a
+  `snapshots()` stream that ALSO emits cache-sourced snapshots (listener
+  re-establishment after a network blip, cold-cache re-targeting) — a
+  transient snapshot without the own document is indistinguishable at
+  the stream level from a moderator removal. The ended state is now
+  gated on `RoomService.isParticipantRemovedOnServer()`, an explicit
+  `Source.server` read that fails CLOSED (any error ⇒ "still present",
+  never an ejection); both screens guard against re-entry while the
+  check is in flight. Applies to Community AND Podcast rooms.
+  Regression tests: `test/room_removal_confirmation_test.dart`.
+  NOTE: the original sighting was never reproduced on demand, so this
+  is a root-cause fix for a mechanism that can produce exactly the
+  observed symptom, not a confirmed reproduction of that one event.
 
 - **Fixed (P0, 2026-08-08): raw Dart exception text shown to users when
   opening a chat.** Tapping the message icon on a friend could render
@@ -309,6 +317,19 @@ permission flags).
   screen's own. Settings only doubled its title text; Achievements showed
   two full stacked Material app bars. See
   [ADR-019](Decisions.md#adr-019-more-menu-destinations-own-their-full-chrome-no-wrapper-scaffold).
+
+## Test reliability
+
+- **Open (2026-08-09): `profile_save_e2e_test.dart`'s "full save
+  pipeline" case is FLAKY under full-suite parallelism.** It passes
+  reliably in isolation (`flutter test test/profile_save_e2e_test.dart`)
+  and passes on most full-suite runs, but failed twice in a row during
+  the 2026-08-09 session and then passed again with the identical tree —
+  so it is timing/scheduling sensitive, not a real regression, and NOT
+  caused by the room-eviction change it appeared alongside (verified by
+  running the same tree both ways). Worth stabilizing before it erodes
+  trust in a red CI run: the likely culprit is the test's real-async
+  Storage/Firestore fakes racing the shared-profile stream assertion.
 
 ## Code quality / consolidation
 
