@@ -228,15 +228,8 @@ class _PlanToggle extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _segment(
-            label: 'Monthly',
-            plan: PremiumPlan.monthly,
-          ),
-          _segment(
-            label: 'Yearly',
-            plan: PremiumPlan.yearly,
-            chip: '-25%',
-          ),
+          _segment(label: 'Monthly', plan: PremiumPlan.monthly),
+          _segment(label: 'Yearly', plan: PremiumPlan.yearly, chip: '-25%'),
         ],
       ),
     );
@@ -263,41 +256,49 @@ class _PlanToggle extends StatelessWidget {
                   : Colors.transparent,
             ),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  color: active ? Colors.white : AppColors.textSecondary,
-                  fontSize: 13.5,
-                  fontWeight: active ? FontWeight.w800 : FontWeight.w600,
-                ),
-              ),
-              if (chip != null) ...[
-                const SizedBox(width: 7),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 2.5,
-                  ),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(999),
-                    gradient: const LinearGradient(
-                      colors: [AppColors.primary, AppColors.secondary],
-                    ),
-                  ),
-                  child: const Text(
-                    '-25%',
+          // scaleDown only engages on very narrow phones (<=390pt), where
+          // "Yearly" + the -25% chip outgrow half the toggle — caught by
+          // the 320-1440 layout matrix.
+          child: Center(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label,
                     style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w800,
+                      color: active ? Colors.white : AppColors.textSecondary,
+                      fontSize: 13.5,
+                      fontWeight: active ? FontWeight.w800 : FontWeight.w600,
                     ),
                   ),
-                ),
-              ],
-            ],
+                  if (chip != null) ...[
+                    const SizedBox(width: 7),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2.5,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        gradient: const LinearGradient(
+                          colors: [AppColors.primary, AppColors.secondary],
+                        ),
+                      ),
+                      child: const Text(
+                        '-25%',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -502,41 +503,46 @@ class _PlanCard extends StatelessWidget {
             left: 0,
             right: 0,
             child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 5,
-                ),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(999),
-                  gradient: const LinearGradient(
-                    colors: [AppColors.primary, AppColors.secondary],
+              // Half-width cards on narrow phones can't always fit the
+              // pill at full size — scale it rather than overflow.
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 5,
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.secondary.withValues(alpha: .45),
-                      blurRadius: 14,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(999),
+                    gradient: const LinearGradient(
+                      colors: [AppColors.primary, AppColors.secondary],
                     ),
-                  ],
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.workspace_premium_rounded,
-                      size: 12,
-                      color: Colors.white,
-                    ),
-                    SizedBox(width: 5),
-                    Text(
-                      'Best value',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.secondary.withValues(alpha: .45),
+                        blurRadius: 14,
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.workspace_premium_rounded,
+                        size: 12,
+                        color: Colors.white,
+                      ),
+                      SizedBox(width: 5),
+                      Text(
+                        'Best value',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -674,27 +680,36 @@ class _TrustFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(
-          Icons.verified_user_outlined,
-          size: 13,
-          color: AppColors.textSecondary,
+    return const Center(
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.verified_user_outlined,
+              size: 13,
+              color: AppColors.textSecondary,
+            ),
+            SizedBox(width: 5),
+            Text(
+              'Secure checkout',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+            ),
+            SizedBox(width: 16),
+            Icon(
+              Icons.schedule_rounded,
+              size: 13,
+              color: AppColors.textSecondary,
+            ),
+            SizedBox(width: 5),
+            Text(
+              'Cancel anytime',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+            ),
+          ],
         ),
-        SizedBox(width: 5),
-        Text(
-          'Secure checkout',
-          style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
-        ),
-        SizedBox(width: 16),
-        Icon(Icons.schedule_rounded, size: 13, color: AppColors.textSecondary),
-        SizedBox(width: 5),
-        Text(
-          'Cancel anytime',
-          style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
-        ),
-      ],
+      ),
     );
   }
 }
