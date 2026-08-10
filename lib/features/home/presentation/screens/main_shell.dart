@@ -160,11 +160,9 @@ class _MainShellState extends State<MainShell>
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(intentionalOrFriendly(error)),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(intentionalOrFriendly(error))));
     }
   }
 
@@ -346,8 +344,7 @@ class _MainShellState extends State<MainShell>
   Future<void> _openMoreMenu() async {
     final MoreDestination? destination;
     if (MediaQuery.sizeOf(context).width >= _desktopBreakpoint) {
-      final box =
-          _moreItemKey.currentContext?.findRenderObject() as RenderBox?;
+      final box = _moreItemKey.currentContext?.findRenderObject() as RenderBox?;
       final anchor = box == null
           ? const Offset(16, 320)
           : box.localToGlobal(Offset(box.size.width - 8, 0));
@@ -385,7 +382,6 @@ class _MainShellState extends State<MainShell>
           onDesktopNavSelected: (item) =>
               unawaited(_onDesktopNavSelected(item)),
           onCreateRoom: () => unawaited(_openCreateRoom()),
-          onCreateMoment: () => unawaited(_openCreateMoment()),
           onOpenProfile: () => unawaited(_openProfile()),
           onOpenProfileSettings: () => unawaited(_openProfileSettings()),
         ),
@@ -398,10 +394,11 @@ class _MainShellState extends State<MainShell>
   static DesktopNavItem? _desktopItemFor(MoreDestination destination) {
     return switch (destination) {
       MoreDestination.discover => DesktopNavItem.discover,
-      MoreDestination.moments => DesktopNavItem.moments,
-      MoreDestination.clubs => DesktopNavItem.clubs,
-      MoreDestination.creatorStudio => DesktopNavItem.creatorStudio,
       MoreDestination.friends => DesktopNavItem.friends,
+      // Everything reached THROUGH the More popover keeps More lit.
+      MoreDestination.moments ||
+      MoreDestination.clubs ||
+      MoreDestination.creatorStudio ||
       MoreDestination.achievements ||
       MoreDestination.notifications ||
       MoreDestination.settings => DesktopNavItem.more,
@@ -437,21 +434,9 @@ class _MainShellState extends State<MainShell>
         await Navigator.of(context).push<void>(
           MaterialPageRoute<void>(builder: (_) => const NotificationsScreen()),
         );
-      case DesktopNavItem.moments:
-        await _openMoreDestination(MoreDestination.moments);
-      case DesktopNavItem.clubs:
-        await _openMoreDestination(MoreDestination.clubs);
-      case DesktopNavItem.creatorStudio:
-        await _openMoreDestination(MoreDestination.creatorStudio);
       case DesktopNavItem.more:
         await _openMoreMenu();
     }
-  }
-
-  Future<void> _openCreateMoment() async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(builder: (_) => const RecordVoiceMomentScreen()),
-    );
   }
 
   Future<void> _openProfile() async {
@@ -494,8 +479,7 @@ class _MainShellState extends State<MainShell>
       unawaited(_openMoreDestination(MoreDestination.discover));
     };
 
-    final isDesktop =
-        MediaQuery.sizeOf(context).width >= _desktopBreakpoint;
+    final isDesktop = MediaQuery.sizeOf(context).width >= _desktopBreakpoint;
 
     if (isDesktop) {
       return Scaffold(
@@ -514,7 +498,6 @@ class _MainShellState extends State<MainShell>
                     unreadNotificationCount: _unreadNotificationCount,
                     onSelect: (item) => unawaited(_onDesktopNavSelected(item)),
                     onCreateRoom: () => unawaited(_openCreateRoom()),
-                    onCreateMoment: () => unawaited(_openCreateMoment()),
                     onOpenProfile: () => unawaited(_openProfile()),
                     onOpenProfileSettings: () =>
                         unawaited(_openProfileSettings()),
@@ -634,7 +617,6 @@ class MoreDestinationHost extends StatelessWidget {
     this.activeDesktopItem,
     this.onDesktopNavSelected,
     this.onCreateRoom,
-    this.onCreateMoment,
     this.onOpenProfile,
     this.onOpenProfileSettings,
     super.key,
@@ -654,7 +636,6 @@ class MoreDestinationHost extends StatelessWidget {
   final DesktopNavItem? activeDesktopItem;
   final ValueChanged<DesktopNavItem>? onDesktopNavSelected;
   final VoidCallback? onCreateRoom;
-  final VoidCallback? onCreateMoment;
   final VoidCallback? onOpenProfile;
   final VoidCallback? onOpenProfileSettings;
 
@@ -686,7 +667,6 @@ class MoreDestinationHost extends StatelessWidget {
                     onSelect: (item) =>
                         popThen(() => onDesktopNavSelected!(item)),
                     onCreateRoom: () => popThen(onCreateRoom ?? () {}),
-                    onCreateMoment: () => popThen(onCreateMoment ?? () {}),
                     onOpenProfile: () => popThen(onOpenProfile ?? () {}),
                     onOpenProfileSettings: () =>
                         popThen(onOpenProfileSettings ?? () {}),
@@ -709,20 +689,20 @@ class MoreDestinationHost extends StatelessWidget {
         children: [
           const RoomMiniBar(),
           _BottomNavigation(
-        selectedIndex: selectedIndex,
-        unreadConversationCount: unreadConversationCount,
-        onDestinationSelected: (index) {
-          Navigator.of(context).pop();
-          onDestinationSelected(index);
-        },
-        onVoicePressed: () {
-          Navigator.of(context).pop();
-          onVoicePressed();
-        },
-        onMorePressed: () {
-          Navigator.of(context).pop();
-          onMorePressed();
-        },
+            selectedIndex: selectedIndex,
+            unreadConversationCount: unreadConversationCount,
+            onDestinationSelected: (index) {
+              Navigator.of(context).pop();
+              onDestinationSelected(index);
+            },
+            onVoicePressed: () {
+              Navigator.of(context).pop();
+              onVoicePressed();
+            },
+            onMorePressed: () {
+              Navigator.of(context).pop();
+              onMorePressed();
+            },
           ),
         ],
       ),
@@ -1015,9 +995,7 @@ class _BottomNavigation extends StatelessWidget {
                     onPressed: () => onDestinationSelected(1),
                   ),
                 ),
-                Expanded(
-                  child: _VoiceActionButton(onPressed: onVoicePressed),
-                ),
+                Expanded(child: _VoiceActionButton(onPressed: onVoicePressed)),
                 Expanded(
                   child: _NavigationItem(
                     icon: Icons.people_outline_rounded,
@@ -1092,7 +1070,9 @@ class _NavigationItem extends StatelessWidget {
                       AnimatedSlide(
                         duration: const Duration(milliseconds: 200),
                         curve: Curves.easeOutCubic,
-                        offset: isSelected ? const Offset(0, -.06) : Offset.zero,
+                        offset: isSelected
+                            ? const Offset(0, -.06)
+                            : Offset.zero,
                         child: AnimatedScale(
                           duration: const Duration(milliseconds: 200),
                           curve: Curves.easeOutBack,

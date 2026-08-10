@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
+import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
@@ -32,10 +33,8 @@ void main() {
   }
 
   group('DesktopSidebar', () {
-    testWidgets('shows every primary destination (incl. the promoted '
-        'Moments/Clubs/Creator Studio) and NO Profile nav item', (
-      tester,
-    ) async {
+    testWidgets('shows exactly the six primary destinations and NO '
+        'Profile/Moments/Clubs/Creator Studio rail items', (tester) async {
       useDesktopWindow(tester);
       await tester.pumpWidget(
         host(
@@ -45,7 +44,6 @@ void main() {
             unreadNotificationCount: 0,
             onSelect: (_) {},
             onCreateRoom: () {},
-            onCreateMoment: () {},
             onOpenProfile: () {},
             onOpenProfileSettings: () {},
           ),
@@ -59,49 +57,21 @@ void main() {
         'Chats',
         'Notifications',
         'Friends',
-        'Moments',
-        'Clubs',
-        'Creator Studio',
         'More',
       ]) {
         expect(find.text(label), findsOneWidget, reason: '$label missing');
       }
-      // Profile is represented by the bottom card, never a nav item.
-      expect(find.text('Profile'), findsNothing);
+      // Profile is the bottom card; these three live in the More popover.
+      for (final absent in ['Profile', 'Moments', 'Clubs', 'Creator Studio']) {
+        expect(
+          find.text(absent),
+          findsNothing,
+          reason: '$absent must not be a rail item',
+        );
+      }
+      // Create Room is the ONLY creation action in the rail.
       expect(find.text('Create Room'), findsOneWidget);
-      expect(find.text('Create your Moment'), findsOneWidget);
-    });
-
-    testWidgets('Create your Moment is a distinct action from Create Room', (
-      tester,
-    ) async {
-      var rooms = 0;
-      var moments = 0;
-      useDesktopWindow(tester);
-      await tester.pumpWidget(
-        host(
-          DesktopSidebar(
-            active: DesktopNavItem.home,
-            unreadConversationCount: 0,
-            unreadNotificationCount: 0,
-            onSelect: (_) {},
-            onCreateRoom: () => rooms++,
-            onCreateMoment: () => moments++,
-            onOpenProfile: () {},
-            onOpenProfileSettings: () {},
-          ),
-        ),
-      );
-      await tester.pump();
-
-      await tester.tap(find.text('Create your Moment'));
-      await tester.pump();
-      expect(moments, 1);
-      expect(rooms, 0);
-
-      await tester.tap(find.text('Create Room'));
-      await tester.pump();
-      expect(rooms, 1);
+      expect(find.text('Create your Moment'), findsNothing);
     });
 
     testWidgets('the gear opens profile settings; the card body opens the '
@@ -117,7 +87,6 @@ void main() {
             unreadNotificationCount: 0,
             onSelect: (_) {},
             onCreateRoom: () {},
-            onCreateMoment: () {},
             onOpenProfile: () => profile++,
             onOpenProfileSettings: () => settings++,
           ),
@@ -144,7 +113,6 @@ void main() {
             unreadNotificationCount: 0,
             onSelect: tapped.add,
             onCreateRoom: () {},
-            onCreateMoment: () {},
             onOpenProfile: () {},
             onOpenProfileSettings: () {},
           ),
@@ -157,9 +125,6 @@ void main() {
         'Chats',
         'Notifications',
         'Friends',
-        'Moments',
-        'Clubs',
-        'Creator Studio',
         'More',
       ]) {
         await tester.tap(find.text(label));
@@ -171,9 +136,6 @@ void main() {
         DesktopNavItem.chats,
         DesktopNavItem.notifications,
         DesktopNavItem.friends,
-        DesktopNavItem.moments,
-        DesktopNavItem.clubs,
-        DesktopNavItem.creatorStudio,
         DesktopNavItem.more,
       ]);
     });
@@ -189,7 +151,6 @@ void main() {
             unreadNotificationCount: 0,
             onSelect: (_) {},
             onCreateRoom: () {},
-            onCreateMoment: () {},
             onOpenProfile: () {},
             onOpenProfileSettings: () {},
           ),
@@ -212,7 +173,6 @@ void main() {
             unreadNotificationCount: 6,
             onSelect: (_) {},
             onCreateRoom: () {},
-            onCreateMoment: () {},
             onOpenProfile: () {},
             onOpenProfileSettings: () {},
           ),
@@ -222,6 +182,59 @@ void main() {
 
       expect(find.text('3'), findsOneWidget);
       expect(find.text('6'), findsOneWidget);
+    });
+  });
+
+  group('desktop information architecture', () {
+    test('every destination is reachable: the rail owns Discover and '
+        'Friends, everything else is in More or the profile card', () {
+      // The rail's own primary items (Home/Chats live in the shell's
+      // IndexedStack; Notifications pushes the bell feed).
+      const railOwned = desktopRailDestinations;
+      expect(railOwned, {MoreDestination.discover, MoreDestination.friends});
+
+      // Reached from the profile card at the bottom of the rail.
+      const profileCardOwned = {
+        MoreDestination.profile,
+        MoreDestination.settings,
+      };
+
+      // Anything else MUST be listed in the desktop More popover, or it
+      // would become unreachable at desktop width.
+      const inMorePopover = {
+        MoreDestination.moments,
+        MoreDestination.clubs,
+        MoreDestination.creatorStudio,
+        MoreDestination.achievements,
+        MoreDestination.notifications,
+        MoreDestination.settings,
+      };
+
+      final unreachable = MoreDestination.values
+          .where(
+            (destination) =>
+                !railOwned.contains(destination) &&
+                !profileCardOwned.contains(destination) &&
+                !inMorePopover.contains(destination),
+          )
+          .toList();
+
+      expect(
+        unreachable,
+        isEmpty,
+        reason: 'no destination may be orphaned by the desktop rail',
+      );
+    });
+
+    test('every destination still resolves to its real screen — moving '
+        'items between rail and More changes no routes', () {
+      for (final destination in MoreDestination.values) {
+        expect(
+          moreDestinationScreen(destination),
+          isNotNull,
+          reason: '$destination lost its screen',
+        );
+      }
     });
   });
 
@@ -242,7 +255,6 @@ void main() {
             onMorePressed: () {},
             onDesktopNavSelected: (_) {},
             onCreateRoom: () {},
-            onCreateMoment: () {},
             onOpenProfile: () {},
             onOpenProfileSettings: () {},
           ),

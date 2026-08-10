@@ -16,6 +16,18 @@ someone decide what to pick up next.
 
 ## Done
 
+- Post-landing entry transition (2026-08-09, uncommitted): the jump from
+  `yovoice.app` into the Flutter web app is now a ~2.8s animated launch
+  screen on a single route (`yovoice-website` `/app`) instead of seven
+  scattered instant cross-origin links and a bare `Loading…`. Reuses the
+  shipped mark unaltered, existing Framer Motion, existing theme tokens;
+  progress is bound to real initialization (auth resolution, mark decode,
+  webfonts) and parks at 92% rather than inventing a percentage. Hands
+  off with `location.replace()` so it never becomes a back-button trap.
+  `web/index.html` in this repo now paints `AppColors.background` so the
+  hand-off no longer flashes white — **this half only takes effect on the
+  next Flutter web deploy**
+  ([ADR-035](Decisions.md#adr-035-one-launch-route-app-owns-the-hand-off-into-the-application-the-flutter-host-page-paints-the-apps-background)).
 - Mockup visual overhaul — Home + rooms + Premium (2026-08-09): M1 Home
   Live Social Hub (real-data VoiceCore hero, Your People status row,
   `c979d20`); M2 room chat + reactions in both room types and From your

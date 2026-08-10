@@ -22,14 +22,15 @@ enum MoreDestination {
 }
 
 /// Destinations the DESKTOP rail shows directly, so the desktop "More"
-/// menu can drop them and stay free of duplicates. Mobile keeps showing
-/// all of them in its sheet — its dock has no room for them, and that
-/// layout is deliberately untouched.
+/// menu drops them and stays free of duplicates. Mobile keeps showing
+/// them in its sheet — its dock has no room for them, and that layout is
+/// deliberately untouched.
+///
+/// Everything NOT listed here is reachable from the desktop More
+/// popover (Moments, Clubs, Creator Studio, Awards, Alerts, Settings) or
+/// from the rail's profile card (Profile, and its gear → Settings).
 const Set<MoreDestination> desktopRailDestinations = {
   MoreDestination.discover,
-  MoreDestination.moments,
-  MoreDestination.clubs,
-  MoreDestination.creatorStudio,
   MoreDestination.friends,
 };
 
@@ -66,6 +67,24 @@ Future<MoreDestination?> showDesktopMoreMenu(
   required Offset anchor,
 }) {
   const items = <(MoreDestination, IconData, String, String)>[
+    (
+      MoreDestination.moments,
+      Icons.graphic_eq_rounded,
+      'Moments',
+      'Your voice posts and feed',
+    ),
+    (
+      MoreDestination.clubs,
+      Icons.groups_2_rounded,
+      'Clubs',
+      'Communities you belong to',
+    ),
+    (
+      MoreDestination.creatorStudio,
+      Icons.auto_graph_rounded,
+      'Creator Studio',
+      'Your rooms, clubs and Moments',
+    ),
     (
       MoreDestination.achievements,
       Icons.emoji_events_rounded,

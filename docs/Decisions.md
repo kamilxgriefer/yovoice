@@ -1796,3 +1796,76 @@ Pro" card and no desktop Profile item to remove.
 - Voice Trending's populated state is covered by widget tests; its live
   populated state in the real app still depends on real live rooms and
   real suggestions existing for the signed-in account.
+
+---
+
+## ADR-035: One launch route (`/app`) owns the hand-off into the application; the Flutter host page paints the app's background
+
+**Repos:** `yovoice-website` (the transition), this repo (`web/index.html`).
+
+### Context
+
+There was no post-landing transition screen. "Open YO Voice" was a
+`<Link href={getAppUrl()}>` scattered across seven call sites (header,
+hero, download section, platform selector, mobile download, premium
+plans, account profile), plus a `window.location.href = APP_URL` inside
+the login form. Every one of them was an instant cross-origin jump from
+`yovoice.app` to the Flutter web build, and because `web/index.html`
+declared no background colour, the browser painted its default white
+canvas for everything between navigation and Flutter's first frame — a
+white flash at the end of every entry into the product. The auth-gated
+pages filled the same moment with a bare `<p>Loading…</p>`.
+
+### Decision
+
+- A single client route, `/app`, plays a ~2.8s entry sequence (mark
+  reveal + glow, `YO VOICE`, three rotating phrases, a segmented
+  progress indicator) and is the **only** place that navigates to
+  `NEXT_PUBLIC_APP_URL`. Every other affordance links to
+  `APP_ENTRY_PATH` (`/app`). `getAppUrl()` still exists but is now
+  private to the launch route by convention.
+- `resolveAuthRedirect()` returns a same-site path in every case
+  (`/app` when there is no `?redirect`), so callers use the Next router
+  and no longer need a `startsWith("http")` branch.
+- Progress is bound to this page's *real* initialization — Firebase auth
+  resolving, the mark decoding, `document.fonts.ready` — with a 6s cap.
+  Where no measurable signal exists (the destination is a different
+  origin and cannot be probed), the three phases act purely as a
+  **minimum** timeline. If initialization is slow the bar parks at 92%
+  and holds; it never shows an invented percentage.
+- The hand-off uses `location.replace()`, not `assign()`.
+- `web/index.html` declares `html, body { background: #0D0618 }` plus
+  `<meta name="color-scheme" content="dark">` — `AppColors.background`,
+  the colour Flutter is about to paint anyway.
+
+### Reasoning
+
+- Seven call sites meant seven chances for the entry experience to
+  differ. One route is one behaviour, and moving the destination (e.g.
+  to `app.yovoice.app`) stays a single env var change.
+- `replace()` rather than `assign()` is what keeps `/app` out of
+  history. With `assign()`, Back out of the app lands on `/app`, which
+  immediately relaunches and throws the user forward — a back-button
+  trap. Verified over CDP: after the hand-off the history is
+  `[…, yovoice.app/, app]` with no `/app` entry, and Back returns to the
+  landing page.
+- The white flash is not fixable from the website side; the destination
+  document has to declare its own background. That is why this ADR spans
+  both repos.
+- The login form and the verify-email success path were switched from
+  `router.push` to `router.replace` for the same reason: a consumed
+  login/verification screen should not be a Back target.
+
+### Consequences
+
+- `/app` is `noindex` and disallowed in `robots.txt` — it is a hand-off,
+  not a page with content.
+- `/app` deliberately does **not** gate on authentication. The mobile
+  download page could always open the web app while signed out, and the
+  Flutter app authenticates independently; gating here would have
+  removed working behaviour.
+- The `web/index.html` change only takes effect on the next Flutter web
+  build + deploy. Until then the flash remains in production.
+- Reduced motion renders the final composition statically (mark,
+  wordmark, "Create your space") with a plain segmented fill — no phrase
+  rotation, no blur, no expanding glow.
