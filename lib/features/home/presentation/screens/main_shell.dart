@@ -8,6 +8,7 @@ import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
 import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
@@ -116,13 +117,32 @@ class _MainShellState extends State<MainShell>
     return moreDestinationScreen(destination, isRootTab: true);
   }
 
-  List<Widget> get _slotChildren => [
+  List<Widget> _slotChildren({required bool isDesktop}) => [
     for (var index = 0; index < _slotCount; index++)
-      if (index < _screens.length)
+      if (index == 0)
+        // Desktop gets "Pulse Home"; the mobile Home composition is
+        // untouched and still rendered by HomeScreen below 1100.
+        (isDesktop ? _desktopHome : _screens[0])
+      else if (index < _screens.length)
         _screens[index]
       else
         _builtSlots[index] ?? const SizedBox.shrink(),
   ];
+
+  Widget get _desktopHome => DesktopHome(
+    onOpenRoom: (room) => unawaited(_openRoom(room)),
+    onSeeAllRooms: () => _onDestinationSelected(_discoverSlot),
+    onViewAllFriends: () => _onDestinationSelected(2),
+    onStartRoom: () => unawaited(_openCreateRoom()),
+  );
+
+  /// Entering a room is the existing full-screen room flow (identical to
+  /// every other entry point); Home's own navigation never pushes.
+  Future<void> _openRoom(VoiceRoom room) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
+    );
+  }
 
   /// Maps a More destination to its desktop slot, or null when it has
   /// none (Profile stays a pushed route: it has a real Back button and
@@ -537,7 +557,7 @@ class _MainShellState extends State<MainShell>
     );
   }
 
-  Widget _tabContent({required int index}) {
+  Widget _tabContent({required int index, required bool isDesktop}) {
     return AnimatedBuilder(
       animation: _tabTransition,
       builder: (context, child) {
@@ -551,7 +571,10 @@ class _MainShellState extends State<MainShell>
           ),
         );
       },
-      child: IndexedStack(index: index, children: _slotChildren),
+      child: IndexedStack(
+        index: index,
+        children: _slotChildren(isDesktop: isDesktop),
+      ),
     );
   }
 
@@ -588,7 +611,9 @@ class _MainShellState extends State<MainShell>
                     onOpenProfileSettings: () =>
                         unawaited(_openProfileSettings()),
                   ),
-                  Expanded(child: _tabContent(index: _selectedIndex)),
+                  Expanded(
+                    child: _tabContent(index: _selectedIndex, isDesktop: true),
+                  ),
                   // The right column belongs to Home, exactly as in the
                   // desktop reference.
                   if (_selectedIndex == 0)
@@ -626,7 +651,7 @@ class _MainShellState extends State<MainShell>
         children: [
           if (_showVerificationBanner)
             _VerificationBanner(onTap: _openVerifyEmail),
-          Expanded(child: _tabContent(index: _mobileIndex)),
+          Expanded(child: _tabContent(index: _mobileIndex, isDesktop: false)),
         ],
       ),
       bottomNavigationBar: Column(
