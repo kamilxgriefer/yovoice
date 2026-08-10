@@ -13,7 +13,12 @@ import 'package:yovoice/features/notifications/data/services/notification_servic
 import 'package:yovoice/features/notifications/presentation/notification_router.dart';
 
 class NotificationsScreen extends StatefulWidget {
-  const NotificationsScreen({super.key});
+  const NotificationsScreen({this.isRootTab = false, super.key});
+
+  /// True when this screen IS the shell's current content (the desktop
+  /// rail's Notifications slot) rather than a pushed route — same flag
+  /// FriendsScreen uses, so a root tab shows no dead back button.
+  final bool isRootTab;
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -199,16 +204,18 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       padding: const EdgeInsets.fromLTRB(10, 10, 18, 10),
       child: Row(
         children: [
-          IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            tooltip: 'Back',
-            icon: const Icon(
-              Icons.arrow_back_ios_new_rounded,
-              color: Colors.white,
-              size: 21,
+          if (!widget.isRootTab) ...[
+            IconButton(
+              onPressed: () => Navigator.of(context).pop(),
+              tooltip: 'Back',
+              icon: const Icon(
+                Icons.arrow_back_ios_new_rounded,
+                color: Colors.white,
+                size: 21,
+              ),
             ),
-          ),
-          const SizedBox(width: 4),
+            const SizedBox(width: 4),
+          ],
           const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

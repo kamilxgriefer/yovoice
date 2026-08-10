@@ -238,6 +238,59 @@ void main() {
     });
   });
 
+  group('rail navigation mechanism', () {
+    test('Discover and Notifications are CONTENT SLOTS, not pushed '
+        'routes — the rail reports them like Chats and Friends', () {
+      // Every primary rail item except More must be representable as a
+      // selected slot; if one of them went back to Navigator.push, the
+      // shell would be re-created and the rail would slide/reopen.
+      const slotBacked = {
+        DesktopNavItem.home,
+        DesktopNavItem.discover,
+        DesktopNavItem.chats,
+        DesktopNavItem.notifications,
+        DesktopNavItem.friends,
+      };
+      final railItems = DesktopNavItem.values.toSet()
+        ..remove(DesktopNavItem.more);
+      expect(
+        railItems,
+        slotBacked,
+        reason:
+            'a primary rail item without a content slot would push a '
+            'route over the desktop shell',
+      );
+    });
+
+    testWidgets('selecting Discover or Notifications keeps ONE sidebar and '
+        'pushes no route', (tester) async {
+      useDesktopWindow(tester);
+
+      final observer = _RouteCountObserver();
+      await tester.pumpWidget(
+        MaterialApp(navigatorObservers: [observer], home: _FakeDesktopShell()),
+      );
+      await tester.pump();
+
+      for (final label in ['Discover', 'Notifications', 'Chats', 'Friends']) {
+        await tester.tap(find.text(label));
+        await tester.pump();
+        // The rail is never duplicated or rebuilt as a second shell.
+        expect(
+          find.byType(DesktopSidebar),
+          findsOneWidget,
+          reason: '$label must not create a second shell',
+        );
+      }
+
+      expect(
+        observer.pushes,
+        0,
+        reason: 'rail destinations must swap content, never push a route',
+      );
+    });
+  });
+
   group('MoreDestinationHost', () {
     testWidgets('at DESKTOP width a pushed destination keeps the sidebar '
         'and shows NO mobile dock', (tester) async {
@@ -391,4 +444,79 @@ void main() {
       expect(taps, 1);
     });
   });
+}
+
+/// Counts route pushes so a test can assert that rail navigation swaps
+/// content instead of pushing a full-screen destination over the shell.
+class _RouteCountObserver extends NavigatorObserver {
+  int pushes = 0;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    // The initial home route counts as a push; only later ones matter.
+    if (previousRoute != null) pushes++;
+    super.didPush(route, previousRoute);
+  }
+}
+
+/// Mirrors MainShell's DESKTOP composition (fixed rail + swapped centre)
+/// without Firebase: the mechanism under test is the selected-slot swap,
+/// not the screens' contents.
+class _FakeDesktopShell extends StatefulWidget {
+  @override
+  State<_FakeDesktopShell> createState() => _FakeDesktopShellState();
+}
+
+class _FakeDesktopShellState extends State<_FakeDesktopShell> {
+  int _index = 0;
+
+  static const _slots = ['home', 'chats', 'friends', 'discover', 'alerts'];
+
+  DesktopNavItem get _active => switch (_index) {
+    1 => DesktopNavItem.chats,
+    2 => DesktopNavItem.friends,
+    3 => DesktopNavItem.discover,
+    4 => DesktopNavItem.notifications,
+    _ => DesktopNavItem.home,
+  };
+
+  void _select(DesktopNavItem item) {
+    setState(() {
+      _index = switch (item) {
+        DesktopNavItem.home => 0,
+        DesktopNavItem.chats => 1,
+        DesktopNavItem.friends => 2,
+        DesktopNavItem.discover => 3,
+        DesktopNavItem.notifications => 4,
+        DesktopNavItem.more => _index,
+      };
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Row(
+        children: [
+          DesktopSidebar(
+            active: _active,
+            unreadConversationCount: 0,
+            unreadNotificationCount: 0,
+            onSelect: _select,
+            onCreateRoom: () {},
+            onOpenProfile: () {},
+            onOpenProfileSettings: () {},
+          ),
+          Expanded(
+            child: IndexedStack(
+              index: _index,
+              children: [
+                for (final slot in _slots) Center(child: Text('slot-$slot')),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -9,7 +9,13 @@ import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.da
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 
 class DiscoverScreen extends StatefulWidget {
-  const DiscoverScreen({super.key});
+  const DiscoverScreen({this.isRootTab = false, super.key});
+
+  /// True when this screen IS the shell's current content (the desktop
+  /// rail's Discover slot) rather than a pushed route — the same flag
+  /// FriendsScreen uses, so a root tab never shows a back button that
+  /// would have nothing to pop.
+  final bool isRootTab;
 
   @override
   State<DiscoverScreen> createState() => _DiscoverScreenState();
@@ -342,6 +348,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                           searchController: _searchController,
                           onSearchChanged: _onSearchChanged,
                           liveRoomCount: allRooms.length,
+                          isRootTab: widget.isRootTab,
                         ),
                       ),
                     ),
@@ -561,11 +568,13 @@ class _DiscoverHeader extends StatelessWidget {
     required this.searchController,
     required this.onSearchChanged,
     required this.liveRoomCount,
+    this.isRootTab = false,
   });
 
   final TextEditingController searchController;
   final ValueChanged<String> onSearchChanged;
   final int liveRoomCount;
+  final bool isRootTab;
 
   @override
   Widget build(BuildContext context) {
@@ -574,15 +583,17 @@ class _DiscoverHeader extends StatelessWidget {
       children: [
         Row(
           children: [
-            YoIconButton(
-              icon: Icons.arrow_back_ios_new_rounded,
-              iconSize: 18,
-              size: 40,
-              backgroundColor: _DiscoverScreenState._surface,
-              borderColor: _DiscoverScreenState._border,
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-            const SizedBox(width: 10),
+            if (!isRootTab) ...[
+              YoIconButton(
+                icon: Icons.arrow_back_ios_new_rounded,
+                iconSize: 18,
+                size: 40,
+                backgroundColor: _DiscoverScreenState._surface,
+                borderColor: _DiscoverScreenState._border,
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+              const SizedBox(width: 10),
+            ],
             const Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

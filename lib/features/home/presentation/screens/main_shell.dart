@@ -21,6 +21,7 @@ import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
@@ -69,11 +70,27 @@ class _MainShellState extends State<MainShell>
   // Friends replaced Profile as the third primary tab: it's the
   // higher-frequency social destination. Profile lives in More and
   // behind every own-avatar tap instead.
+  // Indices 0-2 are the shared primary tabs the mobile dock also drives.
+  // 3-4 are DESKTOP-ONLY slots: the rail selects them so Discover and
+  // Notifications swap the centre content exactly like Chats/Friends,
+  // instead of pushing a route over the shell. The mobile dock never
+  // selects them (it only sets 0-2), and the mobile branch clamps, so
+  // mobile navigation is unchanged.
   static const List<Widget> _screens = [
     HomeScreen(),
     MessagesScreen(),
     FriendsScreen(isRootTab: true),
+    DiscoverScreen(isRootTab: true),
+    NotificationsScreen(isRootTab: true),
   ];
+
+  static const int _discoverSlot = 3;
+  static const int _notificationsSlot = 4;
+
+  /// Mobile only ever shows the three dock tabs; if the window is
+  /// resized down while a desktop-only slot is selected, fall back to
+  /// Home rather than showing a tab the dock cannot represent.
+  int get _mobileIndex => _selectedIndex > 2 ? 0 : _selectedIndex;
 
   String get _currentUserId => FirebaseAuth.instance.currentUser?.uid ?? '';
 
@@ -417,6 +434,8 @@ class _MainShellState extends State<MainShell>
   DesktopNavItem get _activeDesktopItem => switch (_selectedIndex) {
     1 => DesktopNavItem.chats,
     2 => DesktopNavItem.friends,
+    _discoverSlot => DesktopNavItem.discover,
+    _notificationsSlot => DesktopNavItem.notifications,
     _ => DesktopNavItem.home,
   };
 
@@ -429,11 +448,9 @@ class _MainShellState extends State<MainShell>
       case DesktopNavItem.friends:
         _onDestinationSelected(2);
       case DesktopNavItem.discover:
-        await _openMoreDestination(MoreDestination.discover);
+        _onDestinationSelected(_discoverSlot);
       case DesktopNavItem.notifications:
-        await Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(builder: (_) => const NotificationsScreen()),
-        );
+        _onDestinationSelected(_notificationsSlot);
       case DesktopNavItem.more:
         await _openMoreMenu();
     }
@@ -455,7 +472,7 @@ class _MainShellState extends State<MainShell>
     );
   }
 
-  Widget _tabContent() {
+  Widget _tabContent({required int index}) {
     return AnimatedBuilder(
       animation: _tabTransition,
       builder: (context, child) {
@@ -469,14 +486,18 @@ class _MainShellState extends State<MainShell>
           ),
         );
       },
-      child: IndexedStack(index: _selectedIndex, children: _screens),
+      child: IndexedStack(index: index, children: _screens),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     HomeScreen.openDiscoverTab = () {
-      unawaited(_openMoreDestination(MoreDestination.discover));
+      if (MediaQuery.sizeOf(context).width >= _desktopBreakpoint) {
+        _onDestinationSelected(_discoverSlot);
+      } else {
+        unawaited(_openMoreDestination(MoreDestination.discover));
+      }
     };
 
     final isDesktop = MediaQuery.sizeOf(context).width >= _desktopBreakpoint;
@@ -502,7 +523,7 @@ class _MainShellState extends State<MainShell>
                     onOpenProfileSettings: () =>
                         unawaited(_openProfileSettings()),
                   ),
-                  Expanded(child: _tabContent()),
+                  Expanded(child: _tabContent(index: _selectedIndex)),
                   // The right column belongs to Home, exactly as in the
                   // desktop reference.
                   if (_selectedIndex == 0)
@@ -540,7 +561,7 @@ class _MainShellState extends State<MainShell>
         children: [
           if (_showVerificationBanner)
             _VerificationBanner(onTap: _openVerifyEmail),
-          Expanded(child: _tabContent()),
+          Expanded(child: _tabContent(index: _mobileIndex)),
         ],
       ),
       bottomNavigationBar: Column(
@@ -550,7 +571,7 @@ class _MainShellState extends State<MainShell>
           // connection is active, so it can sit here unconditionally.
           const RoomMiniBar(),
           _BottomNavigation(
-            selectedIndex: _selectedIndex,
+            selectedIndex: _mobileIndex,
             unreadConversationCount: _unreadConversationCount,
             onDestinationSelected: _onDestinationSelected,
             onVoicePressed: _openVoiceAction,
