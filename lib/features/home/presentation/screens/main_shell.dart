@@ -9,6 +9,8 @@ import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
 import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
+import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
+import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
@@ -120,14 +122,45 @@ class _MainShellState extends State<MainShell>
   List<Widget> _slotChildren({required bool isDesktop}) => [
     for (var index = 0; index < _slotCount; index++)
       if (index == 0)
-        // Desktop gets "Pulse Home"; the mobile Home composition is
-        // untouched and still rendered by HomeScreen below 1100.
-        (isDesktop ? _desktopHome : _screens[0])
+        // Each platform gets its own Home composition; everything else
+        // in the shell is shared.
+        (isDesktop ? _desktopHome : _mobileHome)
       else if (index < _screens.length)
         _screens[index]
       else
         _builtSlots[index] ?? const SizedBox.shrink(),
   ];
+
+  /// Mobile Home — the same hierarchy as the desktop Pulse Home at phone
+  /// proportions. The hub bar, its five destinations and every callback
+  /// below are the shell's existing ones; this only changes what Home
+  /// renders inside slot 0.
+  Widget get _mobileHome => MobileHome(
+    onOpenRoom: (room) => unawaited(_openRoom(room)),
+    onOpenDiscover: () =>
+        unawaited(_openMoreDestination(MoreDestination.discover)),
+    onOpenFriends: () => _onDestinationSelected(2),
+    onOpenNotifications: () => unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(builder: (_) => const NotificationsScreen()),
+      ),
+    ),
+    onOpenProfile: () => unawaited(_openProfile()),
+    onCreateMoment: () => unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => const RecordVoiceMomentScreen(),
+        ),
+      ),
+    ),
+    onOpenComments: (moment) => unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => MomentCommentsScreen(moment: moment),
+        ),
+      ),
+    ),
+  );
 
   Widget get _desktopHome => DesktopHome(
     onOpenRoom: (room) => unawaited(_openRoom(room)),
