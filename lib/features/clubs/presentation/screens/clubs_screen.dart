@@ -12,7 +12,13 @@ import 'package:yovoice/features/clubs/presentation/screens/create_club_screen.d
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 
 class ClubsScreen extends StatefulWidget {
-  const ClubsScreen({super.key});
+  const ClubsScreen({this.isRootTab = false, super.key});
+
+  /// True when this screen IS the shell's current content (a desktop
+  /// content slot) rather than a pushed route — the same flag
+  /// FriendsScreen uses, so a root tab never renders a back button that
+  /// has nothing to pop.
+  final bool isRootTab;
 
   @override
   State<ClubsScreen> createState() => _ClubsScreenState();
@@ -87,7 +93,10 @@ class _ClubsScreenState extends State<ClubsScreen> {
         bottom: false,
         child: Column(
           children: [
-            _Header(onCreatePressed: _openCreateClub),
+            _Header(
+              onCreatePressed: _openCreateClub,
+              isRootTab: widget.isRootTab,
+            ),
             Expanded(
               child: StreamBuilder<List<ClubInvite>>(
                 stream: _clubService.watchMyClubInvites(),
@@ -289,9 +298,10 @@ class _ClubInviteCard extends StatelessWidget {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.onCreatePressed});
+  const _Header({required this.onCreatePressed, this.isRootTab = false});
 
   final VoidCallback onCreatePressed;
+  final bool isRootTab;
 
   @override
   Widget build(BuildContext context) {
@@ -299,15 +309,17 @@ class _Header extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(14, 18, 16, 8),
       child: Row(
         children: [
-          YoIconButton(
-            icon: Icons.arrow_back_ios_new_rounded,
-            iconSize: 18,
-            size: 40,
-            backgroundColor: _ClubsScreenState._surface,
-            borderColor: _ClubsScreenState._surfaceLight,
-            onPressed: () => Navigator.of(context).pop(),
-          ),
-          const SizedBox(width: 10),
+          if (!isRootTab) ...[
+            YoIconButton(
+              icon: Icons.arrow_back_ios_new_rounded,
+              iconSize: 18,
+              size: 40,
+              backgroundColor: _ClubsScreenState._surface,
+              borderColor: _ClubsScreenState._surfaceLight,
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            const SizedBox(width: 10),
+          ],
           const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

@@ -69,7 +69,13 @@ String _labelFor(NotificationType type) {
 }
 
 class NotificationPreferencesScreen extends StatefulWidget {
-  const NotificationPreferencesScreen({super.key});
+  const NotificationPreferencesScreen({this.isRootTab = false, super.key});
+
+  /// True when this screen IS the shell's current content (a desktop
+  /// content slot) rather than a pushed route — the same flag
+  /// FriendsScreen uses, so a root tab never renders a back button that
+  /// has nothing to pop.
+  final bool isRootTab;
 
   @override
   State<NotificationPreferencesScreen> createState() =>
@@ -127,16 +133,18 @@ class _NotificationPreferencesScreenState
               padding: const EdgeInsets.fromLTRB(10, 10, 18, 10),
               child: Row(
                 children: [
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    tooltip: 'Back',
-                    icon: const Icon(
-                      Icons.arrow_back_ios_new_rounded,
-                      color: Colors.white,
-                      size: 21,
+                  if (!widget.isRootTab) ...[
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      tooltip: 'Back',
+                      icon: const Icon(
+                        Icons.arrow_back_ios_new_rounded,
+                        color: Colors.white,
+                        size: 21,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 4),
+                    const SizedBox(width: 4),
+                  ],
                   const Expanded(
                     child: Text(
                       'Notification preferences',

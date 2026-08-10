@@ -29,7 +29,13 @@ const _muted = Color(0xFFA99DB3);
 const _accent = Color(0xFFB932FF);
 
 class CreatorStudioScreen extends StatefulWidget {
-  const CreatorStudioScreen({super.key});
+  const CreatorStudioScreen({this.isRootTab = false, super.key});
+
+  /// True when this screen IS the shell's current content (a desktop
+  /// content slot) rather than a pushed route — the same flag
+  /// FriendsScreen uses, so a root tab never renders a back button that
+  /// has nothing to pop.
+  final bool isRootTab;
 
   @override
   State<CreatorStudioScreen> createState() => _CreatorStudioScreenState();
@@ -93,6 +99,7 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
                           rooms: rooms,
                           clubs: clubs,
                           moments: moments,
+                          isRootTab: widget.isRootTab,
                         );
                       },
                     );
@@ -113,12 +120,14 @@ class _CreatorStudioContent extends StatelessWidget {
     required this.rooms,
     required this.clubs,
     required this.moments,
+    this.isRootTab = false,
   });
 
   final UserProfile profile;
   final List<VoiceRoom> rooms;
   final List<Club> clubs;
   final List<VoiceMoment> moments;
+  final bool isRootTab;
 
   @override
   Widget build(BuildContext context) {
@@ -137,15 +146,17 @@ class _CreatorStudioContent extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
           child: Row(
             children: [
-              YoIconButton(
-                icon: Icons.arrow_back_ios_new_rounded,
-                iconSize: 18,
-                size: 40,
-                backgroundColor: _surface,
-                borderColor: _border,
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-              const SizedBox(width: 12),
+              if (!isRootTab) ...[
+                YoIconButton(
+                  icon: Icons.arrow_back_ios_new_rounded,
+                  iconSize: 18,
+                  size: 40,
+                  backgroundColor: _surface,
+                  borderColor: _border,
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+                const SizedBox(width: 12),
+              ],
               const Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,

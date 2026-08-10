@@ -21,7 +21,6 @@ import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
-import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
@@ -80,12 +79,60 @@ class _MainShellState extends State<MainShell>
     HomeScreen(),
     MessagesScreen(),
     FriendsScreen(isRootTab: true),
-    DiscoverScreen(isRootTab: true),
-    NotificationsScreen(isRootTab: true),
   ];
 
   static const int _discoverSlot = 3;
   static const int _notificationsSlot = 4;
+
+  /// DESKTOP content slots beyond the three shared dock tabs. Every
+  /// desktop destination — rail items AND everything chosen from the
+  /// More popover — is one of these, so selecting any of them swaps the
+  /// centre of the SAME shell instead of pushing a route over it.
+  static const Map<int, MoreDestination> _slotDestinations = {
+    _discoverSlot: MoreDestination.discover,
+    _notificationsSlot: MoreDestination.notifications,
+    5: MoreDestination.moments,
+    6: MoreDestination.clubs,
+    7: MoreDestination.creatorStudio,
+    8: MoreDestination.achievements,
+    9: MoreDestination.settings,
+  };
+
+  /// The notifications FEED (the bell) is its own screen rather than a
+  /// MoreDestination — Alerts (preferences) is the one in the popover.
+  static const int _slotCount = 10;
+
+  /// Slots are built on FIRST visit and then kept alive, so switching
+  /// back is instant and scroll position survives — without mounting
+  /// ten screens (and their Firestore listeners) at startup.
+  final Map<int, Widget> _builtSlots = <int, Widget>{};
+
+  Widget _buildSlot(int index) {
+    if (index == _notificationsSlot) {
+      return const NotificationsScreen(isRootTab: true);
+    }
+    final destination = _slotDestinations[index];
+    if (destination == null) return const SizedBox.shrink();
+    return moreDestinationScreen(destination, isRootTab: true);
+  }
+
+  List<Widget> get _slotChildren => [
+    for (var index = 0; index < _slotCount; index++)
+      if (index < _screens.length)
+        _screens[index]
+      else
+        _builtSlots[index] ?? const SizedBox.shrink(),
+  ];
+
+  /// Maps a More destination to its desktop slot, or null when it has
+  /// none (Profile stays a pushed route: it has a real Back button and
+  /// is opened from the profile card, not the rail).
+  static int? _slotForDestination(MoreDestination destination) {
+    for (final entry in _slotDestinations.entries) {
+      if (entry.value == destination) return entry.key;
+    }
+    return null;
+  }
 
   /// Mobile only ever shows the three dock tabs; if the window is
   /// resized down while a desktop-only slot is selected, fall back to
@@ -333,6 +380,10 @@ class _MainShellState extends State<MainShell>
       return;
     }
 
+    if (index >= _screens.length) {
+      _builtSlots.putIfAbsent(index, () => _buildSlot(index));
+    }
+
     _removeMessageOverlay();
 
     setState(() {
@@ -383,6 +434,18 @@ class _MainShellState extends State<MainShell>
   // "More" destination: two stacked titles at best (Settings), a second
   // full Material AppBar at worst (Awards) -- see ADR-019.
   Future<void> _openMoreDestination(MoreDestination destination) async {
+    // DESKTOP: every destination that owns a content slot swaps the
+    // centre of the existing shell — same mechanism as Chats/Friends —
+    // so the rail, the profile card and the layout never move. Only
+    // Profile (no slot: it keeps a real Back button) still pushes.
+    if (MediaQuery.sizeOf(context).width >= _desktopBreakpoint) {
+      final slot = _slotForDestination(destination);
+      if (slot != null) {
+        _onDestinationSelected(slot);
+        return;
+      }
+    }
+
     final screen = moreDestinationScreen(destination);
 
     await Navigator.of(context).push<void>(
@@ -436,6 +499,8 @@ class _MainShellState extends State<MainShell>
     2 => DesktopNavItem.friends,
     _discoverSlot => DesktopNavItem.discover,
     _notificationsSlot => DesktopNavItem.notifications,
+    // Slots reached through the popover keep More lit.
+    >= 5 => DesktopNavItem.more,
     _ => DesktopNavItem.home,
   };
 
@@ -486,7 +551,7 @@ class _MainShellState extends State<MainShell>
           ),
         );
       },
-      child: IndexedStack(index: index, children: _screens),
+      child: IndexedStack(index: index, children: _slotChildren),
     );
   }
 

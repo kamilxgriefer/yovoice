@@ -29,7 +29,13 @@ const _danger = Color(0xFFFF6F9C);
 const _success = Color(0xFF3FDA8E);
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({this.isRootTab = false, super.key});
+
+  /// True when this screen IS the shell's current content (a desktop
+  /// content slot) rather than a pushed route — the same flag
+  /// FriendsScreen uses, so a root tab never renders a back button that
+  /// has nothing to pop.
+  final bool isRootTab;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -280,15 +286,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: const EdgeInsets.fromLTRB(6, 10, 18, 6),
               child: Row(
                 children: [
-                  YoIconButton(
-                    icon: Icons.arrow_back_ios_new_rounded,
-                    iconSize: 18,
-                    size: 40,
-                    backgroundColor: _surface,
-                    borderColor: _border,
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                  const SizedBox(width: 6),
+                  if (!widget.isRootTab) ...[
+                    YoIconButton(
+                      icon: Icons.arrow_back_ios_new_rounded,
+                      iconSize: 18,
+                      size: 40,
+                      backgroundColor: _surface,
+                      borderColor: _border,
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
                   const Text(
                     'Settings',
                     style: TextStyle(

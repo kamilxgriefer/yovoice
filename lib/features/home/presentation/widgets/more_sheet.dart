@@ -45,16 +45,30 @@ Future<MoreDestination?> showMoreSheet(BuildContext context) {
   );
 }
 
-Widget moreDestinationScreen(MoreDestination destination) {
+/// Builds a destination's screen.
+///
+/// [isRootTab] is true when the screen is rendered as the DESKTOP
+/// shell's fixed content slot rather than pushed as a route — the
+/// screens then hide their own back button, which would have nothing to
+/// pop (Awards uses a Material AppBar, whose leading button already
+/// appears only when `Navigator.canPop()`).
+Widget moreDestinationScreen(
+  MoreDestination destination, {
+  bool isRootTab = false,
+}) {
   return switch (destination) {
-    MoreDestination.friends => const FriendsScreen(),
-    MoreDestination.discover => const DiscoverScreen(),
-    MoreDestination.clubs => const ClubsScreen(),
+    MoreDestination.friends => FriendsScreen(isRootTab: isRootTab),
+    MoreDestination.discover => DiscoverScreen(isRootTab: isRootTab),
+    MoreDestination.clubs => ClubsScreen(isRootTab: isRootTab),
     MoreDestination.moments => const MomentsScreen(),
-    MoreDestination.notifications => const NotificationPreferencesScreen(),
+    MoreDestination.notifications => NotificationPreferencesScreen(
+      isRootTab: isRootTab,
+    ),
     MoreDestination.achievements => const AwardsHubScreen(),
-    MoreDestination.creatorStudio => const CreatorStudioScreen(),
-    MoreDestination.settings => const SettingsScreen(),
+    MoreDestination.creatorStudio => CreatorStudioScreen(
+      isRootTab: isRootTab,
+    ),
+    MoreDestination.settings => SettingsScreen(isRootTab: isRootTab),
     MoreDestination.profile => const ProfileScreen(),
   };
 }

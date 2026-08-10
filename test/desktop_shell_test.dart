@@ -291,6 +291,58 @@ void main() {
     });
   });
 
+  group('More destinations on desktop', () {
+    test('every popover destination renders a ROOT-TAB screen (no back '
+        'button with nothing to pop)', () {
+      // The six items the desktop More popover lists.
+      const popoverItems = [
+        MoreDestination.moments,
+        MoreDestination.clubs,
+        MoreDestination.creatorStudio,
+        MoreDestination.achievements,
+        MoreDestination.notifications,
+        MoreDestination.settings,
+      ];
+
+      for (final destination in popoverItems) {
+        final asRoot = moreDestinationScreen(destination, isRootTab: true);
+        final asPushed = moreDestinationScreen(destination);
+        expect(asRoot, isNotNull, reason: '$destination lost its screen');
+        expect(asPushed, isNotNull);
+        expect(
+          asRoot.runtimeType,
+          asPushed.runtimeType,
+          reason:
+              '$destination must be the SAME screen either way — the '
+              'root-tab flag only hides its back affordance',
+        );
+      }
+    });
+
+    testWidgets('selecting a More destination swaps content in place: one '
+        'sidebar, no route pushed', (tester) async {
+      useDesktopWindow(tester);
+
+      final observer = _RouteCountObserver();
+      await tester.pumpWidget(
+        MaterialApp(navigatorObservers: [observer], home: _FakeDesktopShell()),
+      );
+      await tester.pump();
+
+      // Slots 5+ stand in for the popover destinations; selecting one
+      // must behave exactly like selecting Chats.
+      await tester.tap(find.text('More'));
+      await tester.pump();
+      expect(find.byType(DesktopSidebar), findsOneWidget);
+
+      expect(
+        observer.pushes,
+        0,
+        reason: 'a More destination must not push a route on desktop',
+      );
+    });
+  });
+
   group('MoreDestinationHost', () {
     testWidgets('at DESKTOP width a pushed destination keeps the sidebar '
         'and shows NO mobile dock', (tester) async {
