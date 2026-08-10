@@ -16,7 +16,8 @@ someone decide what to pick up next.
 
 ## Done
 
-- Post-landing entry transition (2026-08-09, uncommitted): the jump from
+- Post-landing entry transition (2026-08-09, `yovoice-website` `7c623f1`;
+  the `web/index.html` half landed here in `8115f56`): the jump from
   `yovoice.app` into the Flutter web app is now a ~2.8s animated launch
   screen on a single route (`yovoice-website` `/app`) instead of seven
   scattered instant cross-origin links and a bare `Loading…`. Reuses the
