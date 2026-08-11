@@ -2220,3 +2220,94 @@ of them holes in the *assumptions* rather than the design:
   `globalMessage_<eventId>` audit document.
 - App Check enforcement stays off; `docs/DEPLOYMENT.md` now carries the
   staged rollout.
+
+---
+
+## ADR-039: The Moderation Center is a staff-gated More destination; triage is a callable, and staff authority is claim + server record
+
+**Status**: Accepted
+**Date**: 2026-08-11
+
+### Context
+
+ADR-037/038 gave Global Chat a `reports` collection that only staff can
+read and nobody can triage — there was no surface for acting on a
+report, and no workflow to act with. Reports accumulated with no way to
+resolve them.
+
+Three constraints shaped the design. The desktop navigation contract
+(ADR-034) is six rail items and must not grow. Staff roles already exist
+as custom claims assigned by `assignUserRole`. And `setUserBan` is gated
+to `requireUserManager` — **admin and superAdmin only** — so moderators
+have never had the authority to ban.
+
+### Decision
+
+- **Placement**: `MoreDestination.moderation`, listed in the desktop
+  More popover ONLY when the account passes the staff check, opening in
+  desktop content slot 10 like every other More destination. The rail
+  keeps its six items. Nothing pushes a route.
+- **Authority is two-factor**: the signed `role` custom claim AND the
+  server-written `users/{uid}.role` mirror AND `banned != true`. Both
+  are checked by `isActiveStaff()` in rules, by the callable
+  server-side, and by the client before it queries anything.
+- **Triage is a callable** (`moderateReport`), not a client write.
+  `firestore.rules` denies `update`/`delete` on `reports` to everyone,
+  staff included, so there is exactly one path that can move a status —
+  the one that checks the role, enforces the state machine, detects a
+  competing claim, and writes the audit entry.
+- **Workflow**: `open → inReview → (resolved | dismissed)`, with
+  `resolve`/`dismiss` also legal directly from `open`. Terminal states
+  are terminal. A client may write exactly one workflow field on
+  create — `status: 'open'`, pinned by rules.
+- **Idempotency** is a caller-supplied `requestId`, stored on the report
+  as `lastRequestId`. A replay returns the original outcome and writes
+  nothing; the audit id is `report_{reportId}_{requestId}`.
+- **Remove-and-resolve** soft-deletes the message and resolves the
+  report in ONE transaction, and refuses if the message is gone rather
+  than half-applying.
+- **Banning stays admin-only.** Moderators get an explicit escalation
+  note instead of a button that would be refused.
+
+### Reasoning
+
+- **Why the claim is not enough on its own.** A custom claim lives in an
+  ID token that stays valid for up to an hour. A moderator removed for
+  cause would keep reading the queue for that hour. `assignUserRole`
+  already writes the role to the user document synchronously, and that
+  field is absent from the self-write allowlist — so requiring both
+  makes revocation effective on the next request while keeping the
+  unforgeable claim as the primary check. Neither half alone is enough:
+  the document is only trustworthy because it is server-written, and
+  the claim is only timely because the document backs it.
+- **Why a callable here but rules for chat sends.** ADR-013's second and
+  fourth conditions both apply: enforcing a state machine, detecting
+  that another moderator already claimed the report, and making a retry
+  idempotent all need read-then-write atomicity over state the caller
+  does not control; and "remove the message AND resolve the report" is
+  one decision across two collections that must not half-apply. Unlike a
+  chat send, a moderator clicking Resolve can afford a round trip — and
+  gets a real answer instead of a permission error.
+- **Two audit records per removal, deliberately.** `report_{id}_{req}`
+  says "this report was resolved this way by this moderator";
+  `globalMessage_{eventId}` (the existing trigger) says "this message
+  was removed, and here is what it said". They key on different targets
+  and answer different questions; neither duplicates the other.
+
+### Consequences
+
+- Every queue read costs two extra rules `get()`s (ban status + role).
+  Acceptable for a staff-only surface with a bounded audience.
+- A newly promoted moderator whose token has not refreshed fails
+  CLOSED — no access until the claim propagates. That is the safe
+  direction, and sign-out/in fixes it immediately.
+- Reports created before workflow fields existed are treated as Open by
+  both the model and the Function (`report.status ?? 'open'`). The
+  collection has never existed in production, so no migration is
+  required and none was written.
+- One composite index is added: `reports` on `(status ASC, createdAt
+  DESC)`. Target and reason are narrowed in memory over one bounded
+  page rather than multiplying index combinations.
+- Report triage still has no mobile surface, and there is no
+  staff-facing view of `adminAuditLogs` — both deliberate for this
+  milestone.

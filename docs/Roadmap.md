@@ -16,6 +16,25 @@ someone decide what to pick up next.
 
 ## Done
 
+- Staff Moderation Center (2026-08-11): desktop-only report triage,
+  reached from the existing More popover — listed only for accounts that
+  pass the staff check, opening in a fixed-shell content slot. The rail
+  keeps its six items. Staff authority is the signed `role` claim AND the
+  server-written `users/{uid}.role` mirror AND an unrestricted account,
+  so a revoked role stops working on the next request instead of
+  whenever the ID token expires. Triage runs through a new
+  `moderateReport` callable — `firestore.rules` denies client writes to
+  report workflow fields outright, so one path enforces the state
+  machine (`open → inReview → resolved|dismissed`), refuses to overwrite
+  another moderator's active claim, is idempotent on a caller-supplied
+  requestId, soft-deletes a reported message and resolves its report in
+  one transaction, and writes a deterministic audit entry. Banning stays
+  admin-only, as `setUserBan` always was; moderators get an escalation
+  note rather than a button that would be refused. 203 Flutter tests,
+  170 rules tests, 30 Functions tests and two emulator smoke tests pass.
+  **Needs a rules + indexes + functions deploy**
+  ([ADR-039](Decisions.md#adr-039-the-moderation-center-is-a-staff-gated-more-destination-triage-is-a-callable-and-staff-authority-is-claim--server-record)).
+
 - Global Chat + the rail's Voice Moment action (2026-08-11): the
   Conversations module's `All` tab is gone — merging a public channel
   into someone's private chats presented the two as the same kind of

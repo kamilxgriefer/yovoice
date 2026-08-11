@@ -4,6 +4,7 @@ import 'package:yovoice/features/clubs/presentation/screens/clubs_screen.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_studio_screen.dart';
 import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
+import 'package:yovoice/features/moderation/presentation/screens/moderation_center_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notification_preferences_screen.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
@@ -19,6 +20,12 @@ enum MoreDestination {
   creatorStudio,
   settings,
   profile,
+
+  /// DESKTOP + STAFF ONLY. Listed in the desktop More popover only when
+  /// the signed-in account passes the staff check, and absent from the
+  /// mobile sheet entirely — this milestone is desktop-only, and no
+  /// mobile file was touched to add it.
+  moderation,
 }
 
 /// Destinations the DESKTOP rail shows directly, so the desktop "More"
@@ -70,6 +77,12 @@ Widget moreDestinationScreen(
     ),
     MoreDestination.settings => SettingsScreen(isRootTab: isRootTab),
     MoreDestination.profile => const ProfileScreen(),
+    // Re-checks staff authority on mount and renders an access-denied
+    // state without querying anything if it fails. Menu visibility is
+    // presentation; this and firestore.rules are the boundary.
+    MoreDestination.moderation => ModerationCenterScreen(
+      isRootTab: isRootTab,
+    ),
   };
 }
 
@@ -79,8 +92,13 @@ Widget moreDestinationScreen(
 Future<MoreDestination?> showDesktopMoreMenu(
   BuildContext context, {
   required Offset anchor,
+  // Staff-only entries are appended rather than always present: an
+  // ordinary account never sees Moderation listed. That is a
+  // presentation choice — the destination itself, firestore.rules and
+  // the moderateReport callable each re-check authority.
+  bool isStaff = false,
 }) {
-  const items = <(MoreDestination, IconData, String, String)>[
+  final items = <(MoreDestination, IconData, String, String)>[
     (
       MoreDestination.moments,
       Icons.graphic_eq_rounded,
@@ -117,6 +135,13 @@ Future<MoreDestination?> showDesktopMoreMenu(
       'Settings',
       'Privacy, account and app',
     ),
+    if (isStaff)
+      (
+        MoreDestination.moderation,
+        Icons.shield_rounded,
+        'Moderation',
+        'Review reported content',
+      ),
   ];
 
   return showMenu<MoreDestination>(

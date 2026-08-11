@@ -182,6 +182,47 @@ model in one place. Full reasoning:
   floor rather than abuse prevention, and report triage with no UI. See
   [Bugs.md](Bugs.md#moderation--safety).
 
+## Staff moderation (privileged surface)
+
+The Moderation Center reads `reports` and mutates them through one
+callable. Full reasoning:
+[ADR-039](Decisions.md#adr-039-the-moderation-center-is-a-staff-gated-more-destination-triage-is-a-callable-and-staff-authority-is-claim--server-record).
+
+- **Who is staff**: `isActiveStaff()` requires ALL THREE — the signed
+  `role` custom claim in `['moderator','admin','superAdmin']`, the same
+  value in the server-written `users/{uid}.role` mirror, and
+  `banned != true`. `assignUserRole` writes both the claim and the
+  mirror; `role` is absent from the self-write allowlist, so no account
+  can promote itself.
+- **Why both**: the claim cannot be forged but can be an hour stale, so
+  a revoked moderator would keep access until their token expired. The
+  document is written synchronously on revocation, so the next request
+  fails. Requiring both also means a freshly promoted moderator fails
+  CLOSED until their claim refreshes.
+- **Reads**: `reports` is readable only by active staff. Ordinary users —
+  including a reporter reading their own report — are denied.
+- **Writes**: `allow update, delete: if false` on `reports` for
+  everyone. Triage goes through `moderateReport`, which re-checks the
+  full staff test server-side, validates the report id and action,
+  enforces `open → inReview → resolved|dismissed`, refuses to overwrite
+  another moderator's active claim (`aborted`), is idempotent on a
+  caller-supplied `requestId`, sets the acting uid and all timestamps
+  server-side, and never touches reporter-created evidence.
+- **Content removal** reuses the Global Chat soft-delete: the message is
+  never hard-deleted, authorship survives, and the removal happens in
+  the same transaction that resolves the report.
+- **Banning is admin-only** and unchanged — `setUserBan` is gated to
+  `requireUserManager` (admin/superAdmin). Moderators are shown an
+  escalation note rather than an action that would be refused.
+- **Audit**: `adminAuditLogs` is `if false` for every client. Report
+  actions write `report_{reportId}_{requestId}`; message removals write
+  `globalMessage_{eventId}` from the existing trigger. Both ids are
+  deterministic, so retries overwrite rather than duplicate.
+- **Privacy**: the panel shows only public profile fields
+  (display name, avatar). No email, phone, provider data or internal
+  field is read. The reporter's identity is not shown to the reported
+  account or any ordinary client — reports are unreadable outside staff.
+
 ## Current status
 
 **No known critical open vulnerabilities.** A full audit found 13 issues

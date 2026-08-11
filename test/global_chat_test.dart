@@ -385,9 +385,13 @@ void main() {
       expect(filed.data()!['note'], 'kept it up all evening');
       expect(filed.data()!['reporterId'], uid);
       expect(filed.data()!['reportedUserId'], 'rude-1');
-      // Staff workflow fields are never written by the client.
-      expect(filed.data()!.containsKey('status'), isFalse);
+      // The ONE workflow field a client may write, pinned to 'open' by
+      // rules. Everything else about triage belongs to the
+      // moderateReport Function.
+      expect(filed.data()!['status'], 'open');
       expect(filed.data()!.containsKey('assignedTo'), isFalse);
+      expect(filed.data()!.containsKey('resolution'), isFalse);
+      expect(filed.data()!.containsKey('resolvedBy'), isFalse);
     });
 
     testWidgets('cancelling files nothing', (tester) async {

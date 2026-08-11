@@ -287,6 +287,10 @@ void main() {
         MoreDestination.achievements,
         MoreDestination.notifications,
         MoreDestination.settings,
+        // Listed in the SAME popover, but only for accounts that pass
+        // the staff check — an ordinary user never sees it. It is not
+        // orphaned: for staff it is one popover entry like the rest.
+        MoreDestination.moderation,
       };
 
       final unreachable = MoreDestination.values
@@ -574,6 +578,65 @@ void main() {
       await tester.tap(find.text('Check plans'));
       await tester.pump();
       expect(taps, 1);
+    });
+  });
+
+  group('desktop More popover — Moderation gating', () {
+    Future<void> openPopover(WidgetTester tester, {required bool isStaff}) async {
+      useDesktopWindow(tester);
+      await tester.pumpWidget(
+        host(
+          Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showDesktopMoreMenu(
+                context,
+                anchor: const Offset(80, 200),
+                isStaff: isStaff,
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('an ordinary user never sees Moderation listed', (
+      tester,
+    ) async {
+      await openPopover(tester, isStaff: false);
+
+      expect(find.text('Moderation'), findsNothing);
+      // Every existing entry is still there.
+      for (final label in [
+        'Moments',
+        'Clubs',
+        'Creator Studio',
+        'Awards',
+        'Alerts',
+        'Settings',
+      ]) {
+        expect(find.text(label), findsOneWidget, reason: '$label went missing');
+      }
+    });
+
+    testWidgets('staff see Moderation alongside — never instead of — the '
+        'existing entries', (tester) async {
+      await openPopover(tester, isStaff: true);
+
+      expect(find.text('Moderation'), findsOneWidget);
+      expect(find.text('Review reported content'), findsOneWidget);
+      for (final label in [
+        'Moments',
+        'Clubs',
+        'Creator Studio',
+        'Awards',
+        'Alerts',
+        'Settings',
+      ]) {
+        expect(find.text(label), findsOneWidget, reason: '$label went missing');
+      }
     });
   });
 

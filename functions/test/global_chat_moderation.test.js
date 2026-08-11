@@ -72,8 +72,15 @@ function moderationEvent({ before: beforeData, after: afterData, id }) {
   };
 }
 
+/// Scoped to THIS suite's target. adminAuditLogs is shared with the
+/// moderateReport suite against the same emulator, so neither may
+/// assert on — or delete — the whole collection.
+async function auditsForMessage() {
+  return db.collection(AUDIT).where("targetId", "==", "msg-1").get();
+}
+
 async function clearAudit() {
-  const snapshot = await db.collection(AUDIT).get();
+  const snapshot = await auditsForMessage();
   await Promise.all(snapshot.docs.map((entry) => entry.ref.delete()));
 }
 
@@ -125,7 +132,7 @@ describe("onGlobalMessageModerated", () => {
       }),
     );
 
-    const entries = await db.collection(AUDIT).get();
+    const entries = await auditsForMessage();
     assert.equal(entries.size, 0);
   });
 
@@ -144,7 +151,7 @@ describe("onGlobalMessageModerated", () => {
       }),
     );
 
-    const entries = await db.collection(AUDIT).get();
+    const entries = await auditsForMessage();
     assert.equal(entries.size, 1);
 
     const entry = entries.docs[0].data();
@@ -172,7 +179,7 @@ describe("onGlobalMessageModerated", () => {
         }),
       );
 
-      assert.equal((await db.collection(AUDIT).get()).size, 0);
+      assert.equal((await auditsForMessage()).size, 0);
     });
 
   test("re-touching an ALREADY deleted message creates no second entry",
@@ -191,7 +198,7 @@ describe("onGlobalMessageModerated", () => {
         }),
       );
 
-      assert.equal((await db.collection(AUDIT).get()).size, 0);
+      assert.equal((await auditsForMessage()).size, 0);
     });
 
   test("a RETRIED delivery of the same event cannot duplicate the audit "
@@ -213,7 +220,7 @@ describe("onGlobalMessageModerated", () => {
     await wrapped(event);
     await wrapped(event);
 
-    const entries = await db.collection(AUDIT).get();
+    const entries = await auditsForMessage();
     assert.equal(entries.size, 1, "one removal, one record");
     assert.equal(entries.docs[0].id, "globalMessage_event-retried");
   });
@@ -234,6 +241,6 @@ describe("onGlobalMessageModerated", () => {
       );
     }
 
-    assert.equal((await db.collection(AUDIT).get()).size, 2);
+    assert.equal((await auditsForMessage()).size, 2);
   });
 });

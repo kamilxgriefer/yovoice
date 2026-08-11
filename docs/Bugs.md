@@ -51,7 +51,20 @@ permission flags).
 
 ## Moderation & safety
 
-- **Global Chat has no report-triage UI.** Reports land in `reports`
+- **Moderation has no mobile surface.** The Moderation Center is
+  desktop-only by design in this milestone; a moderator on a phone
+  cannot triage. Deliberate, not an oversight.
+- **`adminAuditLogs` has no staff-facing view.** Entries are written
+  deterministically and are unreadable by every client, staff included —
+  reviewing them means the Firestore Console or the existing
+  `listAdminAuditLogs` callable.
+- **A newly promoted moderator must refresh their token.** Staff access
+  requires the signed claim as well as the server record, so promotion
+  takes effect when the ID token refreshes (up to an hour, or instantly
+  on sign-out/in). Revocation is immediate. This asymmetry is deliberate:
+  it fails closed.
+- **Global Chat had no report-triage UI** — now addressed by the
+  Moderation Center; the note below covers what is still missing. Reports land in `reports`
   and are readable only by accounts holding a `moderator`/`admin`/
   `superAdmin` role claim — through the Firestore Console, because no
   Admin Center screen lists them yet. Filing one records it; nothing is

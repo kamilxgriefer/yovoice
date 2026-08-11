@@ -143,6 +143,28 @@ The trigger is what writes an `adminAuditLogs` entry when a moderator
 removes someone else's message. Rules alone cannot log, so skipping the
 functions deploy means moderator removals happen with no audit trail.
 
+## Staff Moderation Center
+
+Three targets, and the index must land before the queue is opened or
+its first query fails:
+
+```bash
+firebase deploy --only firestore:indexes
+firebase deploy --only firestore:rules
+firebase deploy --only functions:moderateReport
+```
+
+No Console step and no data migration: `reports` gained workflow fields,
+and a report without them is treated as Open by both the client model
+and the Function. Staff access needs a role assigned through the
+existing `assignUserRole` flow — it writes both the custom claim and the
+`users/{uid}.role` mirror that rules check.
+
+Note the claim propagation direction: a newly promoted moderator sees
+the Moderation entry once their ID token refreshes (sign out and in
+forces it), while a REVOKED moderator loses access on their next
+request, because the server record is checked too.
+
 ## App Check rollout (not enabled — staged plan)
 
 App Check enforcement is **off** on every Cloud Function

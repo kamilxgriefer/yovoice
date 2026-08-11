@@ -184,8 +184,10 @@ exports.onProfileIdentityChanged = onProfileIdentityChanged;
 */
 
 const { onGlobalMessageModerated } = require("./moderation/global_chat");
+const { moderateReport } = require("./moderation/reports");
 
 exports.onGlobalMessageModerated = onGlobalMessageModerated;
+exports.moderateReport = moderateReport;
 
 /*
 |--------------------------------------------------------------------------

@@ -1565,6 +1565,9 @@ async function main() {
       uid: "mod-uid",
       displayName: "Mod",
       accountType: "personal",
+      // isActiveStaff() requires BOTH the signed claim and this
+      // server-written mirror, which is what assignUserRole maintains.
+      role: "moderator",
     });
   });
 
@@ -1979,6 +1982,8 @@ async function main() {
       contextPath: `${GLOBAL}/g-ok-1`,
       reason: "spam",
       note: "",
+      // The one workflow field a client may write, pinned by rules.
+      status: "open",
       ...overrides,
     };
     const id =
@@ -2244,16 +2249,17 @@ async function main() {
     },
   );
 
-  await check("REPORTS: staff can read and triage them", async () => {
-    const filed = `reports/${reportId("attacker-uid", "globalMessage", "g-ok-1")}`;
-    await assertSucceeds(getDoc(doc(moderator.firestore(), filed)));
-    await assertSucceeds(
-      updateDoc(doc(moderator.firestore(), filed), {
-        status: "closed",
-        assignedTo: "mod-uid",
-      }),
-    );
-  });
+  await check(
+    "REPORTS: staff can READ a filed report — triage itself is not a " +
+      "client write, it goes through the moderateReport callable",
+    async () => {
+      const filed = `reports/${reportId("attacker-uid", "globalMessage", "g-ok-1")}`;
+      await assertSucceeds(getDoc(doc(moderator.firestore(), filed)));
+      await assertFails(
+        updateDoc(doc(moderator.firestore(), filed), { status: "resolved" }),
+      );
+    },
+  );
 
   await check(
     "SECURITY: adminAuditLogs is invisible to every client, staff included",
@@ -2706,6 +2712,248 @@ async function main() {
         fileReport(unverified.firestore(), "unverified-uid", {
           targetId: "g-ok-1",
           reportedUserId: "host-uid",
+        }),
+      );
+    },
+  );
+
+
+  // ==================================================================
+  // STAFF AUTHORITY + THE MODERATION QUEUE.
+  //
+  // Reports are readable only by active staff, and their workflow is
+  // NOT client-writable at all — triage goes through the moderateReport
+  // callable, which uses the Admin SDK.
+  // ==================================================================
+
+  // A claim that says moderator over a server record that does not.
+  // This is a revoked moderator still holding a valid ID token.
+  const revokedMod = testEnv.authenticatedContext("revoked-mod-uid", {
+    email_verified: true,
+    role: "moderator",
+  });
+  // Claim and record agree, but the account is restricted.
+  const bannedMod = testEnv.authenticatedContext("banned-mod-uid", {
+    email_verified: true,
+    role: "moderator",
+  });
+  const adminStaff = testEnv.authenticatedContext("admin-uid", {
+    email_verified: true,
+    role: "admin",
+  });
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, "users/revoked-mod-uid"), {
+      uid: "revoked-mod-uid",
+      displayName: "Revoked",
+      role: "user",
+    });
+    await setDoc(doc(db, "users/banned-mod-uid"), {
+      uid: "banned-mod-uid",
+      displayName: "Banned mod",
+      role: "moderator",
+      banned: true,
+    });
+    await setDoc(doc(db, "users/admin-uid"), {
+      uid: "admin-uid",
+      displayName: "Admin",
+      role: "admin",
+    });
+  });
+
+  const QUEUE = query(
+    collection(moderator.firestore(), "reports"),
+    where("status", "==", "open"),
+    orderBy("createdAt", "desc"),
+    limit(20),
+  );
+
+  await check(
+    "MODERATION: an active moderator can read the report queue",
+    async () => {
+      await assertSucceeds(getDocs(QUEUE));
+    },
+  );
+
+  await check("MODERATION: an admin can read the report queue", async () => {
+    await assertSucceeds(
+      getDocs(
+        query(
+          collection(adminStaff.firestore(), "reports"),
+          where("status", "==", "open"),
+          orderBy("createdAt", "desc"),
+          limit(20),
+        ),
+      ),
+    );
+  });
+
+  await check(
+    "SECURITY MODERATION: an ordinary user cannot read the queue",
+    async () => {
+      await assertFails(
+        getDocs(
+          query(
+            collection(attacker.firestore(), "reports"),
+            where("status", "==", "open"),
+            orderBy("createdAt", "desc"),
+            limit(20),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY MODERATION: an unverified ordinary user cannot read the queue",
+    async () => {
+      await assertFails(
+        getDocs(
+          query(
+            collection(unverified.firestore(), "reports"),
+            where("status", "==", "open"),
+            orderBy("createdAt", "desc"),
+            limit(20),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY MODERATION: a REVOKED moderator holding a stale token is " +
+      "denied — the server record, not the claim, decides",
+    async () => {
+      await assertFails(
+        getDocs(
+          query(
+            collection(revokedMod.firestore(), "reports"),
+            where("status", "==", "open"),
+            orderBy("createdAt", "desc"),
+            limit(20),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY MODERATION: a BANNED moderator is denied",
+    async () => {
+      await assertFails(
+        getDocs(
+          query(
+            collection(bannedMod.firestore(), "reports"),
+            where("status", "==", "open"),
+            orderBy("createdAt", "desc"),
+            limit(20),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY MODERATION: a client cannot promote itself by writing its " +
+      "own role field",
+    async () => {
+      await assertFails(
+        updateDoc(doc(attacker.firestore(), "users/attacker-uid"), {
+          role: "moderator",
+        }),
+      );
+      await assertFails(
+        setDoc(
+          doc(attacker.firestore(), "users/attacker-uid"),
+          { role: "admin" },
+          { merge: true },
+        ),
+      );
+      // And the queue is still closed to them.
+      await assertFails(
+        getDocs(
+          query(
+            collection(attacker.firestore(), "reports"),
+            where("status", "==", "open"),
+            orderBy("createdAt", "desc"),
+            limit(20),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY MODERATION: NOBODY writes report workflow fields directly " +
+      "— not an ordinary user, and not staff",
+    async () => {
+      const filed = `reports/${reportId("attacker-uid", "globalMessage", "g-ok-1")}`;
+      for (const context of [attacker, moderator, adminStaff]) {
+        await assertFails(
+          updateDoc(doc(context.firestore(), filed), { status: "resolved" }),
+        );
+        await assertFails(
+          updateDoc(doc(context.firestore(), filed), {
+            assignedTo: "mod-uid",
+          }),
+        );
+        await assertFails(
+          updateDoc(doc(context.firestore(), filed), {
+            resolution: "noActionNeeded",
+            resolvedBy: "mod-uid",
+          }),
+        );
+        await assertFails(deleteDoc(doc(context.firestore(), filed)));
+      }
+    },
+  );
+
+  await check(
+    "SECURITY MODERATION: a report cannot be filed pre-claimed, " +
+      "pre-resolved or attributed to a moderator",
+    async () => {
+      for (const extra of [
+        { status: "inReview" },
+        { status: "resolved" },
+        { assignedTo: "mod-uid" },
+        { resolvedBy: "mod-uid" },
+        { resolution: "noActionNeeded" },
+        { contentRemoved: true },
+      ]) {
+        await assertFails(
+          fileReport(adminStaff.firestore(), "admin-uid", {
+            targetId: "g-ok-1",
+            reportedUserId: "host-uid",
+            ...extra,
+          }),
+        );
+      }
+    },
+  );
+
+  await check(
+    "MODERATION: a report filed with the pinned status:open is accepted",
+    async () => {
+      await assertSucceeds(
+        fileReport(adminStaff.firestore(), "admin-uid", {
+          targetId: "g-ok-1",
+          reportedUserId: "host-uid",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY MODERATION: moderation audit records stay invisible to " +
+      "staff clients too — they are Admin SDK only",
+    async () => {
+      await assertFails(
+        getDoc(doc(moderator.firestore(), "adminAuditLogs/report_x")),
+      );
+      await assertFails(
+        setDoc(doc(moderator.firestore(), "adminAuditLogs/report_x"), {
+          actorId: "mod-uid",
         }),
       );
     },

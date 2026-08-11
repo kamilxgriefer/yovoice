@@ -183,3 +183,70 @@ button mounted.
 tests** · **7 Functions tests** + the binding smoke test (real emulator,
 one deterministic audit document) · Functions syntax clean ·
 `flutter build web --release` succeeded.
+
+---
+
+# Staff Moderation Center (next milestone, same day)
+
+Reports had nowhere to go. This adds the desktop surface for acting on
+them — see
+[ADR-039](../Decisions.md#adr-039-the-moderation-center-is-a-staff-gated-more-destination-triage-is-a-callable-and-staff-authority-is-claim--server-record).
+
+## Placement
+
+`MoreDestination.moderation`, in the existing desktop More popover,
+listed only for staff, opening in content slot 10. The rail keeps its
+six items; nothing pushes a route; the profile card and both creation
+actions are untouched. Menu visibility is presentation — the screen
+re-checks on mount and renders access-denied **without querying the
+queue**, rules deny the reads, and the callable checks again.
+
+## Staff authority is two-factor
+
+`assignUserRole` already wrote the role to `users/{uid}.role` as well as
+the custom claim, and that field was never in the self-write allowlist.
+So `isActiveStaff()` requires the signed claim AND the server record AND
+an unrestricted account:
+
+- the claim cannot be forged, but can be an hour stale — a revoked
+  moderator would otherwise keep reading the queue for that hour;
+- the record is written synchronously on revocation, so the next request
+  fails;
+- a newly promoted moderator fails CLOSED until their claim refreshes,
+  which is the safe direction.
+
+## Triage is a callable, not a client write
+
+`allow update, delete: if false` on `reports` for everyone, staff
+included. `moderateReport` is the only path: it re-checks authority,
+validates the id and action, enforces `open → inReview →
+resolved|dismissed`, refuses to overwrite another moderator's active
+claim, is idempotent on a caller-supplied `requestId`, sets the acting
+uid and every timestamp server-side, never touches reporter evidence,
+and soft-deletes a reported message and resolves its report in ONE
+transaction.
+
+Banning stays admin-only — `setUserBan` always was gated to
+`requireUserManager`. Moderators get an escalation note, not a button
+that would be refused.
+
+## Two audit records per removal, on purpose
+
+`report_{reportId}_{requestId}` answers "how was this report handled";
+`globalMessage_{eventId}` answers "what did the removed message say".
+Different targets, different questions, both deterministic so retries
+overwrite rather than duplicate.
+
+## Verification
+
+`flutter analyze` clean · **203 Flutter tests** · **170 rules tests** ·
+**30 Functions tests** · two emulator smoke tests (the moderation
+callable end to end over HTTP, and the removal trigger) ·
+`flutter build web --release`. Panel inspected at 1440×820, 1440×620 and
+the 1100px breakpoint.
+
+## Not done
+
+No mobile surface, no staff view of `adminAuditLogs`, no automated
+moderation. Not deployed: needs `firestore:indexes`, `firestore:rules`
+and `functions:moderateReport`.

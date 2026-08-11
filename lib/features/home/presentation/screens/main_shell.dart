@@ -28,6 +28,7 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
+import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
@@ -105,11 +106,12 @@ class _MainShellState extends State<MainShell>
     7: MoreDestination.creatorStudio,
     8: MoreDestination.achievements,
     9: MoreDestination.settings,
+    10: MoreDestination.moderation,
   };
 
   /// The notifications FEED (the bell) is its own screen rather than a
   /// MoreDestination — Alerts (preferences) is the one in the popover.
-  static const int _slotCount = 10;
+  static const int _slotCount = 11;
 
   /// Slots are built on FIRST visit and then kept alive, so switching
   /// back is instant and scroll position survives — without mounting
@@ -268,6 +270,8 @@ class _MainShellState extends State<MainShell>
             // A badge is not worth surfacing an error for.
           },
         );
+
+    unawaited(_resolveStaffAccess());
 
     if (_showVerificationBanner) {
       // Soft reminder, not the active "waiting room" VerifyEmailScreen is —
@@ -505,6 +509,22 @@ class _MainShellState extends State<MainShell>
 
   final GlobalKey _moreItemKey = GlobalKey();
 
+  /// Whether the signed-in account is staff by BOTH measures the server
+  /// requires (signed role claim AND the server-written users/{uid}.role
+  /// mirror AND an unrestricted account). Only decides whether the
+  /// desktop More popover LISTS Moderation — the destination itself,
+  /// firestore.rules and the moderateReport callable each re-check.
+  bool _isStaff = false;
+
+  Future<void> _resolveStaffAccess() async {
+    try {
+      final staff = await ModerationService().isActiveStaff();
+      if (mounted && staff != _isStaff) setState(() => _isStaff = staff);
+    } catch (_) {
+      // No session or no Firebase: not staff, which is the safe default.
+    }
+  }
+
   /// Mobile keeps its bottom sheet; desktop gets an anchored popover
   /// beside the rail item — no dimmed page, no drag handle.
   Future<void> _openMoreMenu() async {
@@ -514,7 +534,11 @@ class _MainShellState extends State<MainShell>
       final anchor = box == null
           ? const Offset(16, 320)
           : box.localToGlobal(Offset(box.size.width - 8, 0));
-      destination = await showDesktopMoreMenu(context, anchor: anchor);
+      destination = await showDesktopMoreMenu(
+        context,
+        anchor: anchor,
+        isStaff: _isStaff,
+      );
     } else {
       destination = await showMoreSheet(context);
     }
@@ -580,7 +604,8 @@ class _MainShellState extends State<MainShell>
       MoreDestination.creatorStudio ||
       MoreDestination.achievements ||
       MoreDestination.notifications ||
-      MoreDestination.settings => DesktopNavItem.more,
+      MoreDestination.settings ||
+      MoreDestination.moderation => DesktopNavItem.more,
       MoreDestination.profile => null,
     };
   }

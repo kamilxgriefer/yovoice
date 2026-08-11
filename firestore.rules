@@ -36,16 +36,11 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
-    // Platform staff, read from the ID token's custom claim — the same
-    // claim functions/utils/auth.js checks and that only assignUserRole
-    // (itself admin-gated, audited) can set. Deliberately NOT a Firestore
-    // field: a role read from a document the affected user can write is
-    // the exact bug docs/SECURITY.md's checklist forbids. .get() with a
-    // default because most accounts carry no role claim at all.
+    // Kept as the name the rest of this file uses for "is this account
+    // staff right now". See isActiveStaff() below for why it is both the
+    // signed claim and the server-written mirror.
     function isStaff() {
-      return isSignedIn() &&
-          request.auth.token.get('role', 'user') in
-              ['moderator', 'admin', 'superAdmin'];
+      return isActiveStaff();
     }
 
     // AUTHORITATIVE ACCOUNT STATUS.
@@ -75,6 +70,42 @@ service cloud.firestore {
 
     function isActiveAccount() {
       return isSignedIn() && !isRestrictedAccount(request.auth.uid);
+    }
+
+    // STAFF AUTHORITY — the token claim AND the server-written mirror.
+    //
+    // `assignUserRole` (functions/admin/users.js) does two things: it
+    // sets the `role` custom claim, and it writes the same value to
+    // `users/{uid}.role` through the Admin SDK. `role` is absent from
+    // the self-write allowlist on users/{userId}, so the affected
+    // account cannot grant itself one.
+    //
+    // Requiring BOTH closes the staleness hole in each direction:
+    //  - the claim is signed, so a client cannot forge staff access even
+    //    by writing its own profile document;
+    //  - the document is written synchronously when a role changes, so a
+    //    REVOKED role stops working on the very next request instead of
+    //    surviving up to an hour inside an already-issued ID token.
+    // A freshly promoted moderator whose token has not refreshed yet
+    // fails closed (no access) rather than open.
+    function isStaffClaim() {
+      return isSignedIn() &&
+          request.auth.token.get('role', 'user') in
+              ['moderator', 'admin', 'superAdmin'];
+    }
+
+    function staffRoleOf(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId))
+          ? get(/databases/$(database)/documents/users/$(userId))
+              .data.get('role', 'user')
+          : 'user';
+    }
+
+    function isActiveStaff() {
+      return isStaffClaim() &&
+          !isRestrictedAccount(request.auth.uid) &&
+          staffRoleOf(request.auth.uid) in
+              ['moderator', 'admin', 'superAdmin'];
     }
 
     function isBlockedPair(userA, userB) {
@@ -709,7 +740,15 @@ service cloud.firestore {
     // so a reporter can never pre-close or self-assign a report.
     // ---------------------------------------------------------------
     match /reports/{reportId} {
-      allow read, update, delete: if isStaff();
+      // Staff read the queue. Workflow mutations are NOT client writes:
+      // triage is a privileged staff action, so it goes through the
+      // `moderateReport` callable, which uses the Admin SDK and bypasses
+      // these rules. Denying update/delete here means there is exactly
+      // one path that can move a report's status, and it is the one that
+      // checks the role, enforces transitions and writes the audit
+      // record. Reporter-created evidence is immutable by construction.
+      allow read: if isActiveStaff();
+      allow update, delete: if false;
 
       // NOT gated on isVerified(), deliberately. isVerified() gates
       // outbound/spam-prone publishing (see its definition above);
@@ -725,10 +764,17 @@ service cloud.firestore {
               request.resource.data.targetId &&
           request.resource.data.keys().hasOnly([
             'reporterId', 'targetType', 'targetId', 'reportedUserId',
-            'contextPath', 'reason', 'note', 'createdAt'
+            'contextPath', 'reason', 'note', 'createdAt', 'status'
           ]) &&
           request.resource.data.reporterId == request.auth.uid &&
           request.resource.data.createdAt == request.time &&
+          // The ONLY workflow field a client may supply, pinned to the
+          // one legal opening value. Assignment, resolution, the acting
+          // moderator and every review timestamp are added later by
+          // `moderateReport` through the Admin SDK — a reporter cannot
+          // file something pre-claimed, pre-resolved or attributed to a
+          // moderator who never touched it.
+          request.resource.data.status == 'open' &&
           request.resource.data.reason in [
             'spam', 'harassment', 'hate', 'sexual', 'violence',
             'selfHarm', 'impersonation', 'other'

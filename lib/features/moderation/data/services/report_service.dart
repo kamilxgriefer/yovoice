@@ -49,10 +49,12 @@ enum ReportReason {
 ///    collection cannot be used to attach arbitrary uids to complaints.
 ///  - **Shape**: exact field allowlist, `reason` from the enum above, a
 ///    note of at most [maxNoteLength] characters.
-///  - **No workflow fields**: `status`, assignment and resolution are not
-///    accepted on create; staff add them later through the staff-only
-///    update rule, so nobody can file a pre-closed or self-assigned
-///    report.
+///  - **Workflow**: the only workflow field a client may write is
+///    `status`, pinned by rules to `'open'`. Assignment, resolution, the
+///    acting moderator and every review timestamp are written by the
+///    `moderateReport` Cloud Function through the Admin SDK, so nobody
+///    can file a pre-closed or self-assigned report — and no client,
+///    staff included, can move a report's status directly.
 ///  - **Rate limit**: [reportCooldown] between reports and
 ///    [dailyLimit] per FIXED 24-hour window, enforced atomically through
 ///    `reportLimits/{uid}` exactly like Global Chat's sender state.
@@ -194,6 +196,10 @@ class ReportService {
           ? trimmed.substring(0, maxNoteLength)
           : trimmed,
       'createdAt': FieldValue.serverTimestamp(),
+      // The one workflow field a client may write, pinned by rules to
+      // this exact value. Everything else about triage is set by the
+      // moderateReport Function.
+      'status': 'open',
     });
     batch.set(limits, {
       'lastReportAt': FieldValue.serverTimestamp(),

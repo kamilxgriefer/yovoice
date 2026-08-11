@@ -36,6 +36,8 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/premium_deskt
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
 import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
+import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
+import 'package:yovoice/features/moderation/presentation/screens/moderation_center_screen.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
@@ -57,6 +59,52 @@ Future<FakeFirebaseFirestore> _seed() async {
   // ?empty=1 seeds nothing else: the brand-new account view, where every
   // module has to hold its own with an empty state instead of a gap.
   if (Uri.base.queryParameters['empty'] == '1') return db;
+
+  // ?moderation=1 renders the staff Moderation Center instead of Home.
+  if (Uri.base.queryParameters['moderation'] == '1') {
+    await db.collection('users').doc(_uid).set({
+      'uid': _uid,
+      'displayName': 'CeoGriefer',
+      'username': 'ceogriefer',
+      'email': 'preview@yovoice.app',
+      'role': 'moderator',
+    });
+    for (var i = 0; i < 7; i++) {
+      final reasons = [
+        'harassment', 'spam', 'hate', 'impersonation',
+        'violence', 'sexual', 'other',
+      ];
+      await db.collection('reports').doc('reporter-${i}_globalMessage_m$i').set({
+        'reporterId': 'reporter-$i',
+        'targetType': i == 6 ? 'user' : 'globalMessage',
+        'targetId': i == 6 ? 'ola' : 'gm$i',
+        'reportedUserId': i == 6 ? 'ola' : 'jonas',
+        'contextPath': 'globalChat/main/messages/gm$i',
+        'reason': reasons[i],
+        'note': i.isEven ? 'They kept going after being asked to stop.' : '',
+        'createdAt': Timestamp.fromDate(ago(Duration(minutes: 4 + i * 37))),
+        'status': 'open',
+      });
+    }
+    await db.collection('globalChat').doc('main').collection('messages')
+        .doc('gm0').set({
+      'senderId': 'jonas',
+      'senderName': 'Jonas',
+      'senderPhotoUrl': null,
+      'senderIsCreator': false,
+      'senderIsStaff': false,
+      'content': 'The reported message content sits here for review.',
+      'sentAt': Timestamp.fromDate(ago(const Duration(minutes: 6))),
+      'isDeleted': false,
+      'deletedBy': null,
+      'deletedAt': null,
+    });
+    await db.collection('users').doc('jonas').set({
+      'uid': 'jonas',
+      'displayName': 'Jonas',
+    });
+    return db;
+  }
 
   Future<void> person(String id, String name, {bool online = false}) =>
       db.collection('users').doc(id).set({
@@ -337,12 +385,18 @@ class _PreviewApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final moderationPreview =
+        Uri.base.queryParameters['moderation'] == '1';
     final auth = MockFirebaseAuth(
       signedIn: true,
       mockUser: MockUser(
         uid: _uid,
         email: 'preview@yovoice.app',
         displayName: 'CeoGriefer',
+        // Staff access needs the signed claim AND the server record; the
+        // moderation preview supplies both so the populated panel can be
+        // looked at. Without the claim it correctly shows access-denied.
+        customClaim: moderationPreview ? {'role': 'moderator'} : null,
       ),
     );
     final notifications = NotificationService(firestore: db, auth: auth);
@@ -367,7 +421,15 @@ class _PreviewApp extends StatelessWidget {
               profileService: ProfileService(firestore: db, auth: auth),
             ),
             Expanded(
-              child: DesktopHome(
+              child: moderationPreview
+                  ? ModerationCenterScreen(
+                      isRootTab: true,
+                      moderationService: ModerationService(
+                        firestore: db,
+                        auth: auth,
+                      ),
+                    )
+                  : DesktopHome(
                 currentUserId: _uid,
                 onOpenRoom: (_) {},
                 onSeeAllRooms: () {},
@@ -403,6 +465,11 @@ class _PreviewApp extends StatelessWidget {
                 firebaseAuth: auth,
               ),
             ),
+            // Production renders Home's right column only for slot 0, so
+            // the moderation preview must not either — otherwise the
+            // centre is 344px narrower than the real thing and the panel
+            // takes its narrow branch when it would not.
+            if (!moderationPreview)
             SizedBox(
               width: 344,
               child: ListView(
