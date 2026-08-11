@@ -36,6 +36,47 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
+    // Platform staff, read from the ID token's custom claim — the same
+    // claim functions/utils/auth.js checks and that only assignUserRole
+    // (itself admin-gated, audited) can set. Deliberately NOT a Firestore
+    // field: a role read from a document the affected user can write is
+    // the exact bug docs/SECURITY.md's checklist forbids. .get() with a
+    // default because most accounts carry no role claim at all.
+    function isStaff() {
+      return isSignedIn() &&
+          request.auth.token.get('role', 'user') in
+              ['moderator', 'admin', 'superAdmin'];
+    }
+
+    // AUTHORITATIVE ACCOUNT STATUS.
+    //
+    // `users/{uid}.banned` is written only by functions/admin/users.js's
+    // setUserBan through the Admin SDK. It is deliberately absent from
+    // the self-write allowlist on users/{userId} below, so the affected
+    // account can neither set nor clear it.
+    //
+    // Why rules check a DOCUMENT and not just request.auth: disabling an
+    // account in Firebase Auth stops it minting NEW ID tokens, but an ID
+    // token already in the client's hands stays cryptographically valid
+    // until it expires (up to one hour). For that window `request.auth`
+    // is still populated and `isSignedIn()` is still true. Reading the
+    // status document makes a ban effective on the very next request
+    // instead. setUserBan also revokes refresh tokens, which shortens the
+    // token's own remaining life — see docs/SECURITY.md.
+    //
+    // `bannedUntil` records the INTENDED duration; nothing expires it
+    // automatically today, so `banned` staying true is what gates access
+    // until an administrator lifts it.
+    function isRestrictedAccount(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId)) &&
+          get(/databases/$(database)/documents/users/$(userId))
+            .data.get('banned', false) == true;
+    }
+
+    function isActiveAccount() {
+      return isSignedIn() && !isRestrictedAccount(request.auth.uid);
+    }
+
     function isBlockedPair(userA, userB) {
       return exists(
         /databases/$(database)/documents/users/$(userA)/blocked/$(userB)
@@ -474,6 +515,316 @@ service cloud.firestore {
     match /entitlements/{userId} {
       allow read: if isOwner(userId);
       allow write: if false;
+    }
+
+    // ---------------------------------------------------------------
+    // GLOBAL CHAT — the single public channel shared by the whole
+    // authenticated community. Deliberately a separate top-level
+    // collection from `conversations` (private DMs) and from
+    // clubs/*/channels/* (member-only), so a public message can never be
+    // confused with, or queried alongside, a private one.
+    //
+    // There is exactly one channel, `main`, pinned by these rules rather
+    // than left open, so nobody can create a parallel "global" channel
+    // and pass it off as the real one. The `globalChat/main` PARENT
+    // DOCUMENT is never required to exist: Firestore addresses a
+    // subcollection independently of its parent, and nothing here reads
+    // channel metadata. There is no manual provisioning step.
+    // ---------------------------------------------------------------
+    match /globalChat/{channelId} {
+      // The channel document holds nothing and is never written. Reading
+      // it is harmless; creating one is not, because a second channel id
+      // would be indistinguishable from the canonical one in a URL or a
+      // screenshot.
+      allow read: if isActiveAccount();
+      allow write: if false;
+
+      // Per-sender rate-limit state. This is the ONLY document a sender
+      // may write besides the message itself, both must land in the same
+      // commit, and the message rule verifies this document's
+      // post-commit contents with getAfter(). Sending therefore REQUIRES
+      // advancing this document, and advancing it requires both limits
+      // below to allow it — every comparison against request.time, the
+      // server's clock, never a client-supplied value.
+      //
+      //   floor    3s between messages   — stops flooding
+      //   window   200 messages per FIXED one-hour window — stops a
+      //            valid account sustaining 1,200/h (the floor's
+      //            theoretical max)
+      //
+      // The window is FIXED (tumbling), not rolling: `windowStartAt` is
+      // pinned at the first message of a window and stays put until a
+      // full hour has passed from THAT instant, at which point the next
+      // message opens a fresh window at a count of one. Nothing decays
+      // continuously. The honest consequence is a boundary case — an
+      // account may send 200 late in one window and 200 early in the
+      // next, i.e. up to 400 across two adjacent hours — which is still
+      // a 3x reduction on the floor's 1,200/h and costs far less than
+      // the per-message bookkeeping a true sliding window would need.
+      //
+      // 200/h is ~3.3 a minute sustained, far above real conversation
+      // and far below a useful spam volume; a human hitting it is
+      // extraordinary, a script hitting it is the point.
+      match /senders/{senderId} {
+        allow read: if isOwner(senderId);
+
+        allow create: if isOwner(senderId) &&
+            isActiveAccount() &&
+            channelId == 'main' &&
+            request.resource.data.keys().hasOnly([
+              'lastMessageAt', 'lastMessageId', 'windowStartAt', 'windowCount'
+            ]) &&
+            request.resource.data.lastMessageAt == request.time &&
+            request.resource.data.lastMessageId is string &&
+            // A first-ever send opens the window at exactly one message.
+            request.resource.data.windowStartAt == request.time &&
+            request.resource.data.windowCount == 1;
+
+        allow update: if isOwner(senderId) &&
+            isActiveAccount() &&
+            channelId == 'main' &&
+            request.resource.data.keys().hasOnly([
+              'lastMessageAt', 'lastMessageId', 'windowStartAt', 'windowCount'
+            ]) &&
+            request.resource.data.lastMessageAt == request.time &&
+            request.resource.data.lastMessageId is string &&
+            // 1. the per-message floor
+            request.time > resource.data.lastMessageAt +
+                duration.value(3, 's') &&
+            // 2. the fixed window: either it is still running, in
+            //    which case the count advances by exactly one and stays
+            //    within the cap, or the hour has fully elapsed and the
+            //    next message opens a new window at one.
+            (
+              request.time < resource.data.windowStartAt +
+                      duration.value(1, 'h')
+                ? (
+                    request.resource.data.windowStartAt ==
+                        resource.data.windowStartAt &&
+                    request.resource.data.windowCount ==
+                        resource.data.windowCount + 1 &&
+                    request.resource.data.windowCount <= 200
+                  )
+                : (
+                    request.resource.data.windowStartAt == request.time &&
+                    request.resource.data.windowCount == 1
+                  )
+            );
+
+        // Deleting would reset both limits, so it is never allowed.
+        allow delete: if false;
+      }
+
+      match /messages/{messageId} {
+        // Public to every ACTIVE signed-in account, and to nobody else.
+        // Restriction is enforced on the account document rather than on
+        // request.auth alone, because a banned user can still hold a
+        // valid ID token for up to an hour.
+        allow read: if isActiveAccount();
+
+        // isVerified() reads request.auth.token.email_verified — the ID
+        // token's own claim, which Firebase Auth sets and refreshes, so
+        // it cannot be forged from a modified client the way a Firestore
+        // profile field could. Publishing to the whole community is the
+        // most outbound action in the product, so it follows the same
+        // policy as DMs, rooms and Moments. READING stays open to
+        // unverified accounts (see the read rule above): a new account
+        // should be able to see the room it is joining.
+        allow create: if isVerified() &&
+            isActiveAccount() &&
+            channelId == 'main' &&
+            // Exactly these fields, nothing smuggled alongside.
+            request.resource.data.keys().hasOnly([
+              'senderId', 'senderName', 'senderPhotoUrl', 'senderIsCreator',
+              'senderIsStaff', 'content', 'sentAt', 'isDeleted', 'deletedBy',
+              'deletedAt'
+            ]) &&
+            // Authorship and time are the server's, not the client's.
+            request.resource.data.senderId == request.auth.uid &&
+            request.resource.data.sentAt == request.time &&
+            // Denormalised identity must match the sender's real profile
+            // document, so a public feed cannot be used to impersonate
+            // another member (or "YO Voice Support") by typing a name.
+            request.resource.data.senderName ==
+                get(/databases/$(database)/documents/users/$(request.auth.uid))
+                  .data.displayName &&
+            request.resource.data.senderIsCreator ==
+                (get(/databases/$(database)/documents/users/$(request.auth.uid))
+                  .data.get('accountType', 'personal') == 'creator') &&
+            // Staff badge is the token claim, so it cannot be self-awarded.
+            request.resource.data.senderIsStaff == isStaff() &&
+            // Content: present, non-blank after trimming, bounded.
+            request.resource.data.content is string &&
+            request.resource.data.content.size() <= 500 &&
+            request.resource.data.content.trim().size() > 0 &&
+            // Nothing arrives pre-deleted.
+            request.resource.data.isDeleted == false &&
+            request.resource.data.deletedBy == null &&
+            request.resource.data.deletedAt == null &&
+            // Both rate limits: the sender's state must, after this same
+            // commit, point at THIS message and THIS request's time. One
+            // commit can only leave the document in one state, so a batch
+            // of many messages can satisfy it for at most one of them.
+            getAfter(
+              /databases/$(database)/documents/globalChat/$(channelId)/senders/$(request.auth.uid)
+            ).data.lastMessageAt == request.time &&
+            getAfter(
+              /databases/$(database)/documents/globalChat/$(channelId)/senders/$(request.auth.uid)
+            ).data.lastMessageId == messageId;
+
+        // Soft delete only, by the author or by platform staff. Content
+        // and authorship are frozen: an author cannot rewrite history
+        // after the fact, and a moderator cannot re-attribute a message.
+        allow update: if isActiveAccount() &&
+            (resource.data.senderId == request.auth.uid || isStaff()) &&
+            request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['isDeleted', 'deletedBy', 'deletedAt', 'content']) &&
+            request.resource.data.isDeleted == true &&
+            request.resource.data.deletedBy == request.auth.uid &&
+            request.resource.data.deletedAt == request.time &&
+            request.resource.data.content == '' &&
+            request.resource.data.senderId == resource.data.senderId &&
+            request.resource.data.sentAt == resource.data.sentAt;
+
+        // Hard delete is reserved for the Admin SDK (which bypasses
+        // rules), so the public record always shows that something was
+        // removed rather than silently losing it.
+        allow delete: if false;
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // ABUSE REPORTS. Write-only for members: you can file one, you can
+    // never read, edit or withdraw one, and you cannot enumerate what
+    // anyone else has reported. Staff read and triage them.
+    //
+    // UNIQUENESS is structural rather than checked: the document id must
+    // be `{reporterId}_{targetType}_{targetId}`, so a second report of
+    // the same thing by the same person is a create against an existing
+    // document, which Firestore rejects on its own. No counter, no query,
+    // nothing to race.
+    //
+    // Workflow fields (status, assignee, resolution) are NOT accepted on
+    // create — staff add them later through the staff-only update rule,
+    // so a reporter can never pre-close or self-assign a report.
+    // ---------------------------------------------------------------
+    match /reports/{reportId} {
+      allow read, update, delete: if isStaff();
+
+      // NOT gated on isVerified(), deliberately. isVerified() gates
+      // outbound/spam-prone publishing (see its definition above);
+      // reporting is a SAFETY action and sits with blocking, which that
+      // policy explicitly leaves available to a freshly-registered
+      // account. Someone being harassed on their first day must be able
+      // to say so. Volume is bounded by the deterministic id, the 30s
+      // cooldown and the 20-per-window cap instead.
+      allow create: if isActiveAccount() &&
+          // The id is the uniqueness mechanism.
+          reportId == request.auth.uid + '_' +
+              request.resource.data.targetType + '_' +
+              request.resource.data.targetId &&
+          request.resource.data.keys().hasOnly([
+            'reporterId', 'targetType', 'targetId', 'reportedUserId',
+            'contextPath', 'reason', 'note', 'createdAt'
+          ]) &&
+          request.resource.data.reporterId == request.auth.uid &&
+          request.resource.data.createdAt == request.time &&
+          request.resource.data.reason in [
+            'spam', 'harassment', 'hate', 'sexual', 'violence',
+            'selfHarm', 'impersonation', 'other'
+          ] &&
+          request.resource.data.note is string &&
+          request.resource.data.note.size() <= 300 &&
+          request.resource.data.targetId is string &&
+          request.resource.data.targetId.size() > 0 &&
+          request.resource.data.targetId.size() <= 128 &&
+          request.resource.data.reportedUserId is string &&
+          request.resource.data.reportedUserId != request.auth.uid &&
+          (
+            request.resource.data.contextPath == null ||
+            (
+              request.resource.data.contextPath is string &&
+              request.resource.data.contextPath.size() <= 300
+            )
+          ) &&
+          // The target must EXIST, and reportedUserId must be the person
+          // who actually owns it — otherwise the collection becomes a
+          // free-text channel for naming arbitrary uids.
+          (
+            (
+              request.resource.data.targetType == 'globalMessage' &&
+              exists(/databases/$(database)/documents/globalChat/main/messages/$(request.resource.data.targetId)) &&
+              request.resource.data.reportedUserId ==
+                  get(/databases/$(database)/documents/globalChat/main/messages/$(request.resource.data.targetId))
+                    .data.senderId
+            ) ||
+            (
+              request.resource.data.targetType == 'user' &&
+              exists(/databases/$(database)/documents/users/$(request.resource.data.targetId)) &&
+              request.resource.data.reportedUserId ==
+                  request.resource.data.targetId
+            )
+          ) &&
+          // Rate limit, same shape as Global Chat's sender state.
+          getAfter(
+            /databases/$(database)/documents/reportLimits/$(request.auth.uid)
+          ).data.lastReportAt == request.time &&
+          getAfter(
+            /databases/$(database)/documents/reportLimits/$(request.auth.uid)
+          ).data.lastReportId == reportId;
+    }
+
+    // Reporter rate-limit state: 30s between reports, and at most 20
+    // inside each FIXED 24-hour window. Owner-writable only through
+    // these exact shapes, never readable by anyone else, never
+    // deletable. Same tumbling-window semantics as the sender state —
+    // see there for the boundary behaviour.
+    match /reportLimits/{userId} {
+      allow read: if isOwner(userId);
+
+      allow create: if isOwner(userId) &&
+          isActiveAccount() &&
+          request.resource.data.keys().hasOnly([
+            'lastReportAt', 'lastReportId', 'windowStartAt', 'windowCount'
+          ]) &&
+          request.resource.data.lastReportAt == request.time &&
+          request.resource.data.lastReportId is string &&
+          request.resource.data.windowStartAt == request.time &&
+          request.resource.data.windowCount == 1;
+
+      allow update: if isOwner(userId) &&
+          isActiveAccount() &&
+          request.resource.data.keys().hasOnly([
+            'lastReportAt', 'lastReportId', 'windowStartAt', 'windowCount'
+          ]) &&
+          request.resource.data.lastReportAt == request.time &&
+          request.resource.data.lastReportId is string &&
+          request.time > resource.data.lastReportAt +
+              duration.value(30, 's') &&
+          (
+            request.time < resource.data.windowStartAt +
+                    duration.value(24, 'h')
+              ? (
+                  request.resource.data.windowStartAt ==
+                      resource.data.windowStartAt &&
+                  request.resource.data.windowCount ==
+                      resource.data.windowCount + 1 &&
+                  request.resource.data.windowCount <= 20
+                )
+              : (
+                  request.resource.data.windowStartAt == request.time &&
+                  request.resource.data.windowCount == 1
+                )
+          );
+
+      allow delete: if false;
+    }
+
+    // Moderation history. Written only by Cloud Functions through the
+    // Admin SDK (which bypasses rules); no client may read it, because
+    // it records who moderated whom and quotes removed content.
+    match /adminAuditLogs/{entryId} {
+      allow read, write: if false;
     }
 
     match /clubs/{clubId} {

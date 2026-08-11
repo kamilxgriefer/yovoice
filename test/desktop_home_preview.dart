@@ -34,6 +34,7 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sideb
 import 'package:yovoice/features/home/presentation/widgets/desktop/followed_creators_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
+import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
@@ -276,6 +277,51 @@ Future<FakeFirebaseFirestore> _seed() async {
   await club('club-1', 'Night Owls', 'Welcome everyone 👋',
       const Duration(minutes: 40));
 
+  Future<void> globalMessage(
+    String id,
+    String senderId,
+    String senderName,
+    String content,
+    Duration age, {
+    bool creator = false,
+    bool staff = false,
+    bool deleted = false,
+  }) => db
+      .collection('globalChat')
+      .doc(GlobalChatService.channelId)
+      .collection('messages')
+      .doc(id)
+      .set({
+        'senderId': senderId,
+        'senderName': senderName,
+        'senderPhotoUrl': null,
+        'senderIsCreator': creator,
+        'senderIsStaff': staff,
+        'content': deleted ? '' : content,
+        'sentAt': Timestamp.fromDate(ago(age)),
+        'isDeleted': deleted,
+        'deletedBy': deleted ? 'mod-1' : null,
+        'deletedAt': null,
+      });
+
+  await globalMessage('gm1', 'marta', 'Marta Nowak',
+      'Doors open in ten minutes — bring your work.',
+      const Duration(minutes: 2), creator: true);
+  await globalMessage('gm2', 'ola', 'Ola Kwiatkowska',
+      'Just posted a Moment about the redesign, would love notes.',
+      const Duration(minutes: 9));
+  await globalMessage('gm3', 'sieeema', 'Sieeema',
+      'Keep it kind in here, everyone.',
+      const Duration(minutes: 21), staff: true);
+  await globalMessage('gm4', 'spammer', 'Spammer', '',
+      const Duration(minutes: 34), deleted: true);
+  await globalMessage('gm5', 'jonas', 'Jonas',
+      'Anyone up for a freestyle room tonight?',
+      const Duration(hours: 2));
+  await globalMessage('gm6', _uid, 'CeoGriefer',
+      'Shipping the new desktop Home today.',
+      const Duration(hours: 3));
+
   return db;
 }
 
@@ -315,6 +361,7 @@ class _PreviewApp extends StatelessWidget {
               unreadNotificationCount: 2,
               onSelect: (_) {},
               onCreateRoom: () {},
+            onCreateMoment: () {},
               onOpenProfile: () {},
               onOpenProfileSettings: () {},
               profileService: ProfileService(firestore: db, auth: auth),
@@ -349,6 +396,11 @@ class _PreviewApp extends StatelessWidget {
                   notificationService: notifications,
                 ),
                 clubChatService: ClubChatService(firestore: db, auth: auth),
+                globalChatService: GlobalChatService(
+                  firestore: db,
+                  auth: auth,
+                ),
+                firebaseAuth: auth,
               ),
             ),
             SizedBox(

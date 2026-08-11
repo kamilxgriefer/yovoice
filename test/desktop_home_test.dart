@@ -10,8 +10,10 @@ import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_conversations.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
+import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
@@ -196,6 +198,36 @@ void main() {
     }
   }
 
+  /// Writes straight into the canonical channel the app reads, so these
+  /// tests exercise the same path production uses.
+  Future<void> seedGlobalMessage({
+    required String id,
+    required String senderId,
+    required String senderName,
+    required String content,
+    Duration age = const Duration(minutes: 2),
+    bool isDeleted = false,
+    String? deletedBy,
+  }) async {
+    await db
+        .collection('globalChat')
+        .doc(GlobalChatService.channelId)
+        .collection('messages')
+        .doc(id)
+        .set({
+          'senderId': senderId,
+          'senderName': senderName,
+          'senderPhotoUrl': null,
+          'senderIsCreator': false,
+          'senderIsStaff': false,
+          'content': content,
+          'sentAt': Timestamp.fromDate(DateTime.now().subtract(age)),
+          'isDeleted': isDeleted,
+          'deletedBy': deletedBy,
+          'deletedAt': null,
+        });
+  }
+
   setUp(() async {
     db = FakeFirebaseFirestore();
     await db.collection('users').doc(uid).set({
@@ -254,6 +286,11 @@ void main() {
         notificationService: notifications,
       ),
       clubChatService: ClubChatService(firestore: db, auth: firebaseAuth),
+      globalChatService: GlobalChatService(
+        firestore: db,
+        auth: firebaseAuth,
+      ),
+      firebaseAuth: firebaseAuth,
     );
   }
 
@@ -524,8 +561,137 @@ void main() {
   });
 
   group('Conversations', () {
-    testWidgets('All merges real club and direct conversations; each filter '
-        'narrows to its own real records', (tester) async {
+    testWidgets('Global is the FIRST tab and the default view — the module '
+        'opens on the community channel, and there is no "All" tab merging '
+        'public messages into private ones', (tester) async {
+      useDesktop(tester, const Size(1440, 1700));
+      await seedConversation(
+        id: 'c1',
+        otherId: 'friend-1',
+        otherName: 'Ola',
+        lastMessage: 'See you tonight',
+      );
+      await seedGlobalMessage(
+        id: 'g1',
+        senderId: 'stranger-1',
+        senderName: 'Marek',
+        content: 'Anyone up for a room tonight?',
+      );
+
+      await tester.pumpWidget(host(buildHome()));
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('Conversations'), findsOneWidget);
+      expect(find.text('Global'), findsOneWidget);
+      expect(find.text('All'), findsNothing);
+      // The community indicator, and the shared channel's real content.
+      expect(find.text('YO Voice community'), findsOneWidget);
+      expect(find.text('Anyone up for a room tonight?'), findsOneWidget);
+      expect(find.text('Marek'), findsOneWidget);
+      // A composer, not a list of conversation previews.
+      expect(find.text('Message the YO Voice community'), findsOneWidget);
+      // The user's private conversation is NOT on this tab.
+      expect(find.text('Ola'), findsNothing);
+    });
+
+    testWidgets('Global renders the same canonical channel for a DIFFERENT '
+        'signed-in account — it is one shared conversation, not a per-user '
+        'feed', (tester) async {
+      useDesktop(tester, const Size(1440, 1700));
+      await seedGlobalMessage(
+        id: 'g1',
+        senderId: uid,
+        senderName: 'Kamil',
+        content: 'First message in the community',
+      );
+
+      // A second, unrelated account reading the same collection.
+      const otherUid = 'other-uid';
+      await db.collection('users').doc(otherUid).set({
+        'uid': otherUid,
+        'displayName': 'Ola',
+        'email': 'ola@yovoice.app',
+      });
+      final otherAuth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: otherUid, email: 'ola@yovoice.app'),
+      );
+
+      await tester.pumpWidget(
+        host(
+          SizedBox(
+            width: 900,
+            child: DesktopConversations(
+              currentUserId: otherUid,
+              onOpenConversation: (_) {},
+              onOpenClub: (_) {},
+              onSeeAllChats: () {},
+              onFindFriends: () {},
+              onOpenClubs: () {},
+              messageService: MessageService(
+                firestore: db,
+                auth: otherAuth,
+                notificationService: NotificationService(
+                  firestore: db,
+                  auth: otherAuth,
+                ),
+              ),
+              friendService: FriendService(firestore: db, auth: otherAuth),
+              globalChatService: GlobalChatService(
+                firestore: db,
+                auth: otherAuth,
+              ),
+              firebaseAuth: otherAuth,
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('First message in the community'), findsOneWidget);
+      expect(find.text('Kamil'), findsOneWidget);
+    });
+
+    testWidgets('Global messages never leak into the direct-message unread '
+        'count', (tester) async {
+      useDesktop(tester, const Size(1440, 1700));
+      await seedConversation(
+        id: 'c1',
+        otherId: 'friend-1',
+        otherName: 'Ola',
+        lastMessage: 'See you tonight',
+        unread: 2,
+      );
+      for (var i = 0; i < 5; i++) {
+        await seedGlobalMessage(
+          id: 'g$i',
+          senderId: 'stranger-$i',
+          senderName: 'Stranger $i',
+          content: 'Global message $i',
+        );
+      }
+
+      var unread = 0;
+      MessageService(
+        firestore: db,
+        auth: auth(),
+        notificationService: NotificationService(firestore: db, auth: auth()),
+      ).watchConversations().listen((conversations) {
+        unread = conversations
+            .where((conversation) => conversation.unreadCountFor(uid) > 0)
+            .length;
+      });
+      await tester.pumpWidget(host(buildHome()));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // One unread DM, five global messages, and the count still says one:
+      // the two live in different collections and are never summed.
+      expect(unread, 1);
+    });
+
+    testWidgets('the three personal tabs still show only their own real '
+        'conversation types', (tester) async {
       useDesktop(tester, const Size(1440, 1700));
       await seedFriend('friend-1', 'Ola');
       await seedConversation(
@@ -542,16 +708,16 @@ void main() {
         lastMessage: 'Hello there',
       );
       await seedClub(id: 'club-1', name: 'Night Owls', lastMessage: 'Welcome');
+      await seedGlobalMessage(
+        id: 'g1',
+        senderId: 'stranger-9',
+        senderName: 'Marek',
+        content: 'Public message',
+      );
 
       await tester.pumpWidget(host(buildHome()));
       await tester.pump(const Duration(milliseconds: 200));
       await tester.pump(const Duration(milliseconds: 200));
-
-      // All: everything real, nothing invented.
-      expect(find.text('Ola'), findsWidgets);
-      expect(find.text('Piotr'), findsWidgets);
-      expect(find.text('Night Owls'), findsOneWidget);
-      expect(find.text('3'), findsWidgets, reason: 'real unread count');
 
       // Clubs: only the club conversation.
       await tester.tap(find.text('Clubs'));
@@ -572,6 +738,10 @@ void main() {
       expect(find.text('Ola'), findsWidgets);
       expect(find.text('Piotr'), findsWidgets);
       expect(find.text('Night Owls'), findsNothing);
+
+      // And no personal tab ever shows a public message.
+      expect(find.text('Public message'), findsNothing);
+      expect(find.text('Marek'), findsNothing);
     });
 
     testWidgets('a row opens the existing chat / club surface and See all '
@@ -602,9 +772,15 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
       await tester.pump(const Duration(milliseconds: 200));
 
+      // Rows live on the personal tabs; Global is a live channel.
+      await tester.tap(find.text('Private'));
+      await tester.pump();
       await tester.tap(find.text('Ola'));
       await tester.pump();
       expect(openedConversation?.id, 'c1');
+
+      await tester.tap(find.text('Clubs'));
+      await tester.pump();
 
       await tester.tap(find.text('Night Owls'));
       await tester.pump();
@@ -621,10 +797,16 @@ void main() {
       await tester.pumpWidget(host(buildHome()));
       await tester.pump(const Duration(milliseconds: 200));
 
+      // Global: an empty community channel invites the first message
+      // rather than showing a conversation-list empty state.
       expect(
-        find.text('No conversations yet — start one with a friend.'),
+        find.text('No one has said anything yet. Start the conversation.'),
         findsOneWidget,
       );
+
+      await tester.tap(find.text('Friends'));
+      await tester.pump();
+      expect(find.text('No chats with your friends yet.'), findsOneWidget);
 
       await tester.tap(find.text('Clubs'));
       await tester.pump();

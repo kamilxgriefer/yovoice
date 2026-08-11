@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'package:firebase_auth/firebase_auth.dart';
+
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
@@ -12,6 +14,7 @@ import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_conversations.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_moments_strip.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
+import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
@@ -63,6 +66,8 @@ class DesktopHome extends StatefulWidget {
     this.messageService,
     this.clubService,
     this.clubChatService,
+    this.globalChatService,
+    this.firebaseAuth,
     super.key,
   });
 
@@ -94,6 +99,8 @@ class DesktopHome extends StatefulWidget {
   final MessageService? messageService;
   final ClubService? clubService;
   final ClubChatService? clubChatService;
+  final GlobalChatService? globalChatService;
+  final FirebaseAuth? firebaseAuth;
 
   @override
   State<DesktopHome> createState() => _DesktopHomeState();
@@ -269,6 +276,8 @@ class _DesktopHomeState extends State<DesktopHome> {
                   clubService: widget.clubService,
                   clubChatService: widget.clubChatService,
                   friendService: widget.friendService,
+                  globalChatService: widget.globalChatService,
+                  firebaseAuth: widget.firebaseAuth,
                   onOpenConversation: widget.onOpenConversation,
                   onOpenClub: widget.onOpenClub,
                   onSeeAllChats: widget.onSeeAllChats,

@@ -152,13 +152,7 @@ class _MainShellState extends State<MainShell>
       ),
     ),
     onOpenProfile: () => unawaited(_openProfile()),
-    onCreateMoment: () => unawaited(
-      Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => const RecordVoiceMomentScreen(),
-        ),
-      ),
-    ),
+    onCreateMoment: _openCreateMoment,
     onOpenComments: (moment) => unawaited(
       Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
@@ -186,13 +180,7 @@ class _MainShellState extends State<MainShell>
         ),
       ),
     ),
-    onCreateMoment: () => unawaited(
-      Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => const RecordVoiceMomentScreen(),
-        ),
-      ),
-    ),
+    onCreateMoment: _openCreateMoment,
     onSeeAllMoments: () =>
         unawaited(_openMoreDestination(MoreDestination.moments)),
     onOpenConversation: (conversation) =>
@@ -572,6 +560,7 @@ class _MainShellState extends State<MainShell>
           onDesktopNavSelected: (item) =>
               unawaited(_onDesktopNavSelected(item)),
           onCreateRoom: () => unawaited(_openCreateRoom()),
+          onCreateMoment: _openCreateMoment,
           onOpenProfile: () => unawaited(_openProfile()),
           onOpenProfileSettings: () => unawaited(_openProfileSettings()),
         ),
@@ -647,6 +636,21 @@ class _MainShellState extends State<MainShell>
     );
   }
 
+  /// The ONE Voice Moment recorder entry point. The desktop rail's
+  /// "Create Voice Moment" button, Home's "Your Moment" tile and mobile
+  /// Home all call this, so there is a single recording screen, a single
+  /// permission prompt, a single upload path and one navigation
+  /// behaviour — not a desktop copy of any of them.
+  void _openCreateMoment() {
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => const RecordVoiceMomentScreen(),
+        ),
+      ),
+    );
+  }
+
   Widget _tabContent({required int index, required bool isDesktop}) {
     return AnimatedBuilder(
       animation: _tabTransition,
@@ -697,6 +701,7 @@ class _MainShellState extends State<MainShell>
                     unreadNotificationCount: _unreadNotificationCount,
                     onSelect: (item) => unawaited(_onDesktopNavSelected(item)),
                     onCreateRoom: () => unawaited(_openCreateRoom()),
+                    onCreateMoment: _openCreateMoment,
                     onOpenProfile: () => unawaited(_openProfile()),
                     onOpenProfileSettings: () =>
                         unawaited(_openProfileSettings()),
@@ -854,6 +859,7 @@ class MoreDestinationHost extends StatelessWidget {
     this.activeDesktopItem,
     this.onDesktopNavSelected,
     this.onCreateRoom,
+    this.onCreateMoment,
     this.onOpenProfile,
     this.onOpenProfileSettings,
     super.key,
@@ -873,6 +879,7 @@ class MoreDestinationHost extends StatelessWidget {
   final DesktopNavItem? activeDesktopItem;
   final ValueChanged<DesktopNavItem>? onDesktopNavSelected;
   final VoidCallback? onCreateRoom;
+  final VoidCallback? onCreateMoment;
   final VoidCallback? onOpenProfile;
   final VoidCallback? onOpenProfileSettings;
 
@@ -904,6 +911,7 @@ class MoreDestinationHost extends StatelessWidget {
                     onSelect: (item) =>
                         popThen(() => onDesktopNavSelected!(item)),
                     onCreateRoom: () => popThen(onCreateRoom ?? () {}),
+                    onCreateMoment: () => popThen(onCreateMoment ?? () {}),
                     onOpenProfile: () => popThen(onOpenProfile ?? () {}),
                     onOpenProfileSettings: () =>
                         popThen(onOpenProfileSettings ?? () {}),

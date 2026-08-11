@@ -17,6 +17,12 @@ async function writeAuditLog({
   targetId,
   targetLabel = null,
   details = {},
+  // Optional deterministic document id. Callables run once per user
+  // action and keep the default auto-id, but Firestore TRIGGERS are
+  // at-least-once: a redelivered event must overwrite its own entry
+  // rather than append a duplicate. Pass a value derived from something
+  // stable across retries (the CloudEvent id).
+  entryId = null,
 }) {
   if (!caller?.uid) {
     throw new Error("Audit log requires a valid caller.");
@@ -56,6 +62,12 @@ async function writeAuditLog({
 
     createdAt: FieldValue.serverTimestamp(),
   };
+
+  if (entryId) {
+    const reference = db.collection("adminAuditLogs").doc(entryId);
+    await reference.set(auditEntry);
+    return { id: reference.id, ...auditEntry };
+  }
 
   const reference = await db.collection("adminAuditLogs").add(auditEntry);
 

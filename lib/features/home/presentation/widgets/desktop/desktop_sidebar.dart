@@ -22,6 +22,7 @@ class DesktopSidebar extends StatelessWidget {
     required this.unreadNotificationCount,
     required this.onSelect,
     required this.onCreateRoom,
+    required this.onCreateMoment,
     required this.onOpenProfile,
     required this.onOpenProfileSettings,
     this.profileService,
@@ -35,6 +36,12 @@ class DesktopSidebar extends StatelessWidget {
   final int unreadNotificationCount;
   final ValueChanged<DesktopNavItem> onSelect;
   final VoidCallback onCreateRoom;
+
+  /// The SAME Voice Moment recorder the Moments strip's "Your Moment"
+  /// tile and the Moments destination open — MainShell passes one
+  /// callback to all of them, so there is exactly one recorder in the app.
+  final VoidCallback onCreateMoment;
+
   final VoidCallback onOpenProfile;
   final VoidCallback onOpenProfileSettings;
   final ProfileService? profileService;
@@ -114,6 +121,8 @@ class DesktopSidebar extends StatelessWidget {
                   ),
                   const SizedBox(height: 18),
                   _CreateRoomButton(onTap: onCreateRoom),
+                  const SizedBox(height: 10),
+                  _CreateMomentButton(onTap: onCreateMoment),
                 ],
               ),
             ),
@@ -316,6 +325,81 @@ class _CreateRoomButton extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The rail's SECOND creation action, under the gradient Create Room.
+///
+/// Deliberately quieter than Create Room — outlined rather than filled,
+/// shorter, violet text on the rail's own surface — because room creation
+/// is the primary act and this is the one-tap alternative beside it. It
+/// opens the existing recorder; there is no second recording screen.
+class _CreateMomentButton extends StatefulWidget {
+  const _CreateMomentButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  State<_CreateMomentButton> createState() => _CreateMomentButtonState();
+}
+
+class _CreateMomentButtonState extends State<_CreateMomentButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          width: double.infinity,
+          height: 44,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            color: _hovered
+                ? AppColors.primary.withValues(alpha: .16)
+                : Colors.white.withValues(alpha: .03),
+            border: Border.all(
+              color: _hovered
+                  ? AppColors.primary.withValues(alpha: .55)
+                  : const Color(0xFF2E2140),
+            ),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: const Center(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.mic_none_rounded,
+                  color: Color(0xFFD3A5FF),
+                  size: 18,
+                ),
+                SizedBox(width: 8),
+                // Flexible so the label ellipsises rather than overflowing
+                // if the rail ever gets narrower (or the font wider) than
+                // the 264px this is designed against.
+                Flexible(
+                  child: Text(
+                    'Create Voice Moment',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Color(0xFFD3A5FF),
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),

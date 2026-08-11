@@ -179,6 +179,16 @@ exports.onProfileIdentityChanged = onProfileIdentityChanged;
 
 /*
 |--------------------------------------------------------------------------
+| Moderation
+|--------------------------------------------------------------------------
+*/
+
+const { onGlobalMessageModerated } = require("./moderation/global_chat");
+
+exports.onGlobalMessageModerated = onGlobalMessageModerated;
+
+/*
+|--------------------------------------------------------------------------
 | Premium
 |--------------------------------------------------------------------------
 */

@@ -88,6 +88,17 @@ prematurely risks silently breaking any room a real user created before
 the rename. When in doubt, the safer failure mode is "the old code path
 still runs," not "the old data becomes unreadable."
 
+### A bug the tests caught
+
+Writing the reason-picker test surfaced a real defect in the shipped
+panel: the message menu was rendered only while the row was hovered, but
+opening its popup moves the pointer onto the overlay, which fires the
+row's `MouseRegion.onExit` and unmounts the `PopupMenuButton` — and
+`PopupMenuButton` silently drops `onSelected` when its State is gone. In
+the running app, Report and Delete on a Global message did nothing at
+all. The row now tracks `_menuOpen` via `onOpened`/`onCanceled` and keeps
+the button mounted while its own menu is open.
+
 ### Consequences
 
 `room_experience.dart` carries a permanent-feeling piece of legacy logic
@@ -1971,3 +1982,241 @@ conversation type, and creator activity in rooms they do not host.
   `flutter run -d web-server -t test/desktop_home_preview.dart`
   (`?empty=1` for the new-account view). It lives under `test/` because
   the fakes are dev_dependencies and must not be importable from `lib/`.
+
+---
+
+## ADR-037: Global Chat is one canonical public channel, written directly under Security Rules with a rules-enforced rate limit
+
+**Status**: Accepted
+**Date**: 2026-08-11
+
+### Context
+
+Desktop Home's Conversations module shipped with an `All` tab that
+merged the signed-in user's club and direct conversations into one list.
+That is not a community chat — it is a per-user aggregation of private
+material, and presenting it as "all" invites exactly the confusion
+between public and private messages that a voice-social product cannot
+afford. The requirement is a real shared channel: a message one
+authenticated member sends appears, in the same conversation, for
+everyone else.
+
+Nothing in the data model supported that. `conversations` is strictly
+1:1; `clubs/*/channels/*/messages` is member-gated. Neither can be
+widened into a public channel without weakening it.
+
+Before designing, the existing safety architecture was audited:
+blocking exists (`users/{uid}/blocked/{id}`, enforced pairwise in
+rules); platform roles exist as **custom claims** (`request.auth.token
+.role`, set only by the admin-gated, audited `assignUserRole`); bans
+exist and disable the Firebase Auth account outright; every admin action
+writes `adminAuditLogs`. Reporting did **not** exist anywhere, and
+neither did any rate limiting.
+
+### Decision
+
+- A new top-level collection, `globalChat/{channelId}/messages`, with
+  the channel id **pinned to `main` by the rules themselves** so nobody
+  can stand up a parallel "global" channel. It is deliberately not a
+  subcollection of anything existing: a public message must not be
+  reachable by, or confusable with, the private-message code paths.
+- The `All` tab is **removed**. The tabs are `Global` (first, default),
+  `Friends`, `Clubs`, `Private`.
+- **Sends are direct client writes enforced by Security Rules, not a
+  Cloud Function.** Rules require: `senderId == request.auth.uid`;
+  `sentAt == request.time`; `senderName` / `senderIsCreator` equal to
+  the sender's real `users/{uid}` document; `senderIsStaff` equal to
+  the ID token's role claim; content non-blank after `trim()` and
+  ≤ 500 characters; `isDeleted == false` on arrival; and an exact
+  `keys().hasOnly([...])` allowlist.
+- **The rate limiter is also in rules.** Each send is a two-document
+  batch: the message plus `globalChat/main/senders/{uid}` set to
+  `{lastMessageAt: request.time, lastMessageId: <that message's id>}`.
+  The message rule verifies that document *after the same commit* with
+  `getAfter()`, and the sender-document rule refuses an update until
+  3 s have passed since its previous `lastMessageAt`. Deleting it is
+  never allowed, and neither is reading or writing anyone else's.
+- Deletion is **soft only**, by the author or by a role-claim
+  moderator, with content and authorship frozen by the update rule.
+  Hard delete is `if false` for everyone. A new Firestore trigger,
+  `onGlobalMessageModerated`, writes an `adminAuditLogs` entry whenever
+  the remover is not the author.
+- A new `reports` collection: create-only for verified members with
+  their own uid, server timestamp and `status: 'open'`; unreadable and
+  unmodifiable by members (including their own reports); read and
+  triage gated to the role claim.
+
+### Reasoning
+
+- **Why rules and not a callable.** ADR-013 reserves Cloud Functions
+  for work rules structurally cannot do, and names "typing a chat
+  message" as precisely the interaction where a cold start is felt by a
+  person waiting. None of its four conditions apply here: no secret, no
+  capability rules cannot compute, no fan-out, no cross-document
+  choreography. The usual argument for a callable is rate limiting —
+  and the `getAfter()` cooldown removes it. `request.time` is the
+  server's clock, so the client never supplies the value being checked.
+- **Why `lastMessageId` and not just `lastMessageAt`.** With only a
+  timestamp, one batch containing 500 messages plus a single cooldown
+  update would satisfy the check for all 500 — each create sees the
+  same post-commit state. Binding the cooldown document to one specific
+  message id means a commit can satisfy it for at most one message.
+  This is covered by a dedicated burst-spam test.
+- **Why validate the display name against the profile document.**
+  A public feed is an impersonation surface in a way a 1:1 chat is not;
+  without the check, any client could post as another member's name or
+  as "YO Voice Support". The staff badge is compared to the token claim
+  for the same reason, and because SECURITY.md's checklist forbids
+  reading a role from a document the affected user can write.
+- **Why reporting had to be built.** Shipping a channel open to the
+  whole community with block-only tooling would have been shipping an
+  abuse surface. This is the smallest secure version consistent with
+  the existing patterns, not a moderation product.
+
+### Consequences
+
+- **Blocking is reader-side and one-directional on this channel.** Rules
+  cannot filter one shared query differently per reader, and another
+  user's blocked list is deliberately unreadable. You never see messages
+  from someone you blocked; someone who blocked you can still see yours.
+  Making it symmetrical would need a mirrored `blockedBy` edge, i.e. a
+  change to the blocking schema, which this change deliberately did not
+  touch.
+- **Global has no unread badge.** No per-user last-seen marker exists
+  for it, and one was not invented. Global messages live in their own
+  collection and are never summed into the direct-message unread count.
+- **Rate limiting is a floor, not a shield.** 3 s between messages
+  (20/min) stops flooding; it does not stop a determined, distributed
+  abuser, and there is no content filtering. Combined with
+  ADR-004's open App Check gap, a script holding a valid ID token can
+  post at that rate.
+- **Report triage has no UI.** Reports are recorded and readable only by
+  staff — through the Firestore Console until an Admin Center screen
+  exists.
+- Deploying this needs `firebase deploy --only firestore:rules,functions`
+  and one manually created `globalChat/main` document. Until the rules
+  ship, every client read of the channel is denied.
+
+---
+
+## ADR-038: Global Chat hardening — account status in rules, no manual channel, structural report uniqueness, two-tier rate limits
+
+**Status**: Accepted (amends ADR-037)
+**Date**: 2026-08-11
+
+### Context
+
+ADR-037 shipped Global Chat with rules-enforced direct writes. A
+production review found five things that made it unsafe to enable, all
+of them holes in the *assumptions* rather than the design:
+
+1. It gated access on `isSignedIn()`, reasoning that a banned account is
+   disabled in Firebase Auth and therefore holds no token. That is only
+   true for *new* tokens: an ID token already in the client's hands
+   stays valid until it expires, so a banned user kept full read/write
+   access for up to an hour.
+2. It documented "create `globalChat/main` by hand before launch" as a
+   deploy step — a production feature depending on someone remembering.
+3. `reports` was create-only but otherwise open to flooding: random ids,
+   arbitrary target ids, free-text reasons, a client-supplied `status`.
+4. The audit trigger called `add()` unconditionally, so an at-least-once
+   redelivery would record the same removal twice, and had no tests.
+5. The 3 s send floor still allowed 1,200 messages an hour per account.
+
+### Decision
+
+- **Account status is read from a document, not inferred from the
+  token.** New rules helpers `isRestrictedAccount(uid)` /
+  `isActiveAccount()` read `users/{uid}.banned` — the field
+  `functions/admin/users.js`'s `setUserBan` already writes through the
+  Admin SDK, and which is absent from the self-write allowlist on
+  `users/{userId}`. No second ban system. It gates Global Chat reads,
+  sends and soft deletes, plus report creation. `setUserBan` now also
+  calls `revokeRefreshTokens`.
+- **The manual channel step is gone**, because it was never real:
+  Firestore addresses a subcollection independently of its parent, so
+  `globalChat/main/messages` works with no `globalChat/main` document.
+  The id stays pinned in rules and `allow write: if false` on the
+  channel document keeps clients from creating one. Option 2 of the
+  brief (a bootstrap script) was not needed and would have added a
+  privileged script for nothing.
+- **Report uniqueness is structural.** The document id must be
+  `{reporterId}_{targetType}_{targetId}`, so a duplicate is a create
+  over an existing document — Firestore rejects it with no counter, no
+  query and nothing to race. Plus: target must exist, `reportedUserId`
+  must be its real owner, `reason` is a closed enum, the note is capped,
+  workflow fields are rejected on create, and `reportLimits/{uid}`
+  enforces 30 s / 20-per-day.
+- **Two-tier send limits.** The sender-state document gained
+  `windowStartAt` / `windowCount`; rules enforce the 3 s floor *and*
+  200 messages per FIXED one-hour window in the same atomic update, with
+  a rollover branch when the hour has fully elapsed. The window tumbles
+  rather than slides — `windowStartAt` is pinned at the first message of
+  a window — so the honest worst case is 400 across two adjacent hours,
+  against 1,200 with the floor alone. The composer reads the
+  state to explain which limit was hit and when it lifts.
+- **The audit entry id is derived from the CloudEvent id**
+  (`globalMessage_${event.id}`), so a redelivery overwrites its own
+  record. `writeAuditLog` gained an optional `entryId`; callables keep
+  auto-ids.
+
+### Reasoning
+
+- Checking a document costs one rules `get()` per request. That is the
+  price of a ban taking effect now instead of within the hour, on a
+  surface where the abusive account is exactly the one being removed.
+- Structural uniqueness beat every alternative considered: a counter
+  races, a query cannot be expressed in rules, and a "has this reporter
+  already reported X" check needs a read the reporter is not allowed to
+  make. Making the id itself the constraint needs no extra state.
+- 200/hour was chosen over something tighter because the limit should be
+  invisible to humans and obvious to scripts. Sustained for a full hour
+  it is 3.3 messages a minute — far beyond conversation, far below
+  useful spam volume. It is a product tradeoff, not a security boundary:
+  a determined abuser spreads across accounts.
+- The trigger is at-least-once by contract. Anything that writes on
+  delivery must be idempotent or it will eventually double-count.
+
+### Consequences
+
+- Every Global Chat read now performs one additional document read for
+  the status check. Acceptable; noted here so it is not a surprise in
+  billing.
+- `bannedUntil` remains informational: nothing expires a ban
+  automatically, so a temporary ban ends when an administrator lifts it.
+  Rules deny while `banned == true`, full stop.
+- Blocking is now documented accurately everywhere: Firestore delivers
+  every public message to every active reader, the panel filters blocked
+  senders locally and holds the first paint until the block list has
+  resolved. It is comfort, not confidentiality.
+- Global Chat sends require a verified email — `isVerified()`, the
+  project's existing publishing policy (the same gate DMs, rooms, clubs
+  and Moments use), reading `request.auth.token.email_verified`. READING
+  stays open to unverified accounts, and **reporting is deliberately
+  ungated**: that helper's own policy note puts safety actions like
+  blocking outside the gate, and someone being harassed on their first
+  day must be able to say so.
+- The send window is FIXED (tumbling), not rolling, and is now named and
+  documented that way everywhere. `windowStartAt` is pinned at the first
+  message of a window; nothing decays continuously. Honest consequence:
+  straddling a boundary allows up to 400 messages across two adjacent
+  hours, versus 1,200 with the 3 s floor alone. A true sliding window
+  would need per-message bookkeeping for a 2x tighter bound — not worth
+  it here.
+- Reporting asks for a reason. The panel previously sent `other` for
+  everything, which makes triage close to useless; the menu now opens a
+  compact required-reason picker over the enum rules already accept,
+  with an optional note bounded to the same 300 characters, and
+  deliberate success / duplicate / cooldown / failure states.
+- Functions gained tests (seven, `npm test` in `functions/`) with **no new
+  dependency**: `functions/node_modules` is tracked in this repository,
+  so `firebase-functions-test` would have added ~200 packages to every
+  future diff. The trigger's handler is exported alongside the
+  `onDocumentUpdated` binding and the tests call it directly against the
+  emulator. It covers this trigger only, on purpose. A separate
+  `test/global_chat_trigger.smoke.js` (run against the functions
+  emulator, outside `npm test`) proves the binding end to end: a real
+  soft delete reaches the handler and produces exactly one
+  `globalMessage_<eventId>` audit document.
+- App Check enforcement stays off; `docs/DEPLOYMENT.md` now carries the
+  staged rollout.

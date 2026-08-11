@@ -383,6 +383,17 @@ exports.setUserBan = onCall(
       disabled: banned,
     });
 
+    // Disabling an account stops it minting NEW ID tokens, but one the
+    // client already holds stays cryptographically valid until it
+    // expires — up to an hour of continued access on a banned account.
+    // Revoking refresh tokens invalidates every outstanding session, so
+    // the client cannot renew, and Firestore rules additionally read the
+    // `banned` field written below, which takes effect on the very next
+    // request rather than at token expiry. See docs/SECURITY.md.
+    if (banned) {
+      await auth.revokeRefreshTokens(targetUid);
+    }
+
     await db
       .collection("users")
       .doc(targetUid)

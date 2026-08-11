@@ -113,6 +113,75 @@ each Cloud Function's own authorization checks (principle 1, above)
 don't already gate — those remain the actual authorization boundary
 regardless of App Check's status.
 
+## Global Chat (public write surface)
+
+`globalChat/main/messages` is the product's only surface where one
+member's write is read by every other member, so it is worth stating its
+model in one place. Full reasoning:
+[ADR-037](Decisions.md#adr-037-global-chat-is-one-canonical-public-channel-written-directly-under-security-rules-with-a-rules-enforced-rate-limit).
+
+- **Reads**: any signed-in account whose `users/{uid}.banned` is not
+  true. `request.auth != null` is deliberately NOT sufficient: disabling
+  an account in Firebase Auth stops it minting new ID tokens, but a
+  token already issued stays cryptographically valid until it expires
+  (up to an hour), during which `isSignedIn()` still passes. Reading the
+  account-status document makes a ban effective on the very next
+  request. `setUserBan` additionally calls `revokeRefreshTokens`, so the
+  session cannot be renewed. The field is written only by the Admin SDK
+  and is absent from the self-write allowlist on `users/{userId}`, so
+  the affected account can neither set nor clear it.
+- **Writes**: rules-enforced direct writes, no Cloud Function. The
+  sender must have a **verified email** (`isVerified()`, i.e.
+  `request.auth.token.email_verified` — the ID token's own claim, not a
+  profile field), the same gate DMs, rooms, clubs and Moments already
+  use. `senderId` must equal the caller's uid, `sentAt` must equal
+  `request.time`, `senderName`/`senderIsCreator` must match the caller's
+  own `users/{uid}` document, `senderIsStaff` must match the ID token's
+  `role` claim, content must be non-blank after `trim()` and ≤ 500
+  characters, and the document must carry exactly the allowed keys.
+- **Rate limit**: two limits, both enforced in rules against
+  `request.time`. Every send is a batch of the message plus
+  `globalChat/main/senders/{uid}`; the message rule verifies that
+  document post-commit with `getAfter()`, and the sender-document rule
+  refuses to advance it unless **3 s** have elapsed since the last
+  message **and** the current one-hour window holds fewer than **200**
+  messages. The 3 s floor alone would still permit 1,200 an hour from
+  one valid account; the window is what caps that. Binding the state to
+  a specific `lastMessageId` is what stops one update authorising a
+  whole batch. The state document cannot be deleted, reset or read by
+  anyone else.
+- **Reports**: `reports/{reportId}` uses a deterministic id
+  (`{reporterId}_{targetType}_{targetId}`), so a duplicate is a create
+  over an existing document and fails without a counter or a query. The
+  reported message or account must exist and `reportedUserId` must be
+  its real owner; `reason` is a closed enum; the note is capped at 300
+  characters; workflow fields are not accepted on create; and
+  `reportLimits/{uid}` enforces 30 s between reports and 20 per fixed
+  24-hour window with the same batched-state mechanism. Reporting is
+  deliberately NOT gated on email verification: it is a safety action and
+  follows the blocking precedent, not the publishing one.
+- **Deletion**: soft only, author or `role`-claim moderator, content and
+  authorship frozen. Hard delete is `if false` for everyone; the Admin
+  SDK remains the only way to purge.
+- **Audit**: `onGlobalMessageModerated` writes an `adminAuditLogs` entry
+  whenever the remover is not the author.
+- **Reports**: `reports` is create-only for verified members with their
+  own uid and a server timestamp; members cannot read, edit or delete
+  reports, including their own.
+- **Blocking is NOT a read boundary.** Global Chat content is public to
+  every active authenticated account. Firestore returns every message in
+  the channel to every such reader, including messages from accounts
+  that reader has blocked; `GlobalChatService` exposes the block list
+  separately and the panel filters those senders out of the rendered
+  list, holding the first paint until the list has resolved so nothing
+  flashes. That is a local UI filter for the blocker's comfort, not
+  per-recipient confidentiality — and it is one-directional: an account
+  that blocked you can still read your public messages. Anyone reading
+  the channel through the SDK directly sees everything.
+- **Known limits**: the blocking behaviour above, rate limits that are a
+  floor rather than abuse prevention, and report triage with no UI. See
+  [Bugs.md](Bugs.md#moderation--safety).
+
 ## Current status
 
 **No known critical open vulnerabilities.** A full audit found 13 issues

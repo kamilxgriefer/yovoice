@@ -16,6 +16,30 @@ someone decide what to pick up next.
 
 ## Done
 
+- Global Chat + the rail's Voice Moment action (2026-08-11): the
+  Conversations module's `All` tab is gone — merging a public channel
+  into someone's private chats presented the two as the same kind of
+  thing. The tabs are now `Global` (first, default), `Friends`, `Clubs`,
+  `Private`, and Global is a REAL shared community channel:
+  `globalChat/main/messages`, one canonical conversation for every
+  authenticated account, embedded in Home as a paginated live feed with
+  a composer, Creator/Team badges validated server-side, and
+  removed-message, empty, loading, offline and error states. Sends are
+  direct client writes under Security Rules (per ADR-013), with a
+  rules-enforced 3s cooldown built on a `getAfter()` cooldown document
+  bound to the specific message id, so a batch cannot buy N sends for
+  one slot. Soft delete only, by the author or a role-claim moderator,
+  with an `adminAuditLogs` entry written by the new
+  `onGlobalMessageModerated` trigger whenever a moderator removes
+  someone else's message. A `reports` collection was added (create-only
+  for members, staff-read) because the product had no reporting at all
+  before opening a public channel. The desktop rail regained
+  `Create Voice Moment` beneath `Create Room`, wired to the same single
+  recorder the Moments strip and mobile Home use. 128 emulator rules
+  tests (28 new) and 174 Flutter tests pass. **Needs a rules + functions
+  deploy and one manually created `globalChat/main` document**
+  ([ADR-037](Decisions.md#adr-037-global-chat-is-one-canonical-public-channel-written-directly-under-security-rules-with-a-rules-enforced-rate-limit)).
+
 - Desktop Home modules + app favicon (2026-08-10): the three empty
   regions of the desktop Home are now real modules — "Moments from your
   circle" between the greeting and Live around you

@@ -121,6 +121,74 @@ app.yovoice.app          → Firebase Hosting — configured, waiting on a
                           add — see Roadmap.md
 ```
 
+## Global Chat
+
+Global Chat needs **no manual Firestore Console step**. The canonical
+channel is `globalChat/main/messages`; Firestore addresses a
+subcollection independently of its parent, so the `globalChat/main`
+document does not have to exist and is never created — by anyone. The
+channel id is pinned to `main` inside `firestore.rules`, and clients are
+denied `write` on `globalChat/{channelId}` entirely, so no second
+"global" channel can be stood up either. A rules test asserts the
+channel works with the parent document absent.
+
+Shipping it is therefore the ordinary two deploys:
+
+```bash
+firebase deploy --only firestore:rules
+firebase deploy --only functions:onGlobalMessageModerated
+```
+
+The trigger is what writes an `adminAuditLogs` entry when a moderator
+removes someone else's message. Rules alone cannot log, so skipping the
+functions deploy means moderator removals happen with no audit trail.
+
+## App Check rollout (not enabled — staged plan)
+
+App Check enforcement is **off** on every Cloud Function
+(`enforceAppCheck: false`) and not enabled for Cloud Firestore. That is
+deliberate: turning it on before clients reliably produce valid tokens
+locks out real users. See
+[ADR-004](Decisions.md#adr-004-firebase-app-check-integrated-client-side-enforcement-deliberately-off).
+
+What App Check does and does not do: it attests that a request comes
+from a genuine instance of **your** app, which raises the cost of
+scripted abuse against a public surface like Global Chat. It is **not**
+authentication, and it replaces none of the layers that actually
+authorize: Firebase Auth, Firestore rules, the account-status check,
+moderation, or the rate limits. A stolen token from a real client still
+passes App Check.
+
+Stages, in order — do not skip ahead:
+
+1. **Register every legitimate app variant** in the Firebase Console:
+   Flutter web (reCAPTCHA Enterprise, on every origin that serves the
+   app, including preview channels), iOS (App Attest, with DeviceCheck
+   as the fallback for older OS versions), and Android (Play Integrity)
+   if and when those ship. A variant that is not registered is a variant
+   that gets locked out at step 4.
+2. **Ship clients that mint tokens.** Activate App Check at startup
+   before any Firebase call, release, and wait for meaningful adoption —
+   old installs keep running until users update, and their requests will
+   count as "outdated" below.
+3. **Monitor**, in Console → App Check → Metrics, per service (Firestore
+   and each Function). Four buckets matter: *verified* (good),
+   *outdated client* (real users on old builds — must fall to near zero
+   before enforcing), *unknown* (usually an unregistered origin or a
+   platform you forgot), and *invalid* (either abuse, or a
+   misconfiguration). Watch for at least one full release cycle so
+   weekly-active users are represented, not just daily-active ones.
+4. **Enable enforcement**, Firestore first, then Functions one at a
+   time, starting with the least critical. Global Chat's send path is
+   pure Firestore, so Firestore enforcement is what covers it.
+5. **Rollback and debug tokens.** Enforcement is a Console toggle and
+   takes effect within minutes — turning it back off is the rollback,
+   and it should be the immediate response to any spike in denied
+   requests from real users. For local development and CI, register
+   **debug tokens** per machine rather than disabling enforcement;
+   treat a debug token as a credential (it bypasses attestation), never
+   commit one, and revoke it when the machine or contributor changes.
+
 ## Rollback
 
 There's no automated rollback pipeline for any of the four manual deploy

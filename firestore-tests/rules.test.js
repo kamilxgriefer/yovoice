@@ -17,6 +17,9 @@ const {
   setDoc,
   updateDoc,
   writeBatch,
+  serverTimestamp,
+  orderBy,
+  limit,
 } = require("firebase/firestore");
 
 const RULES_PATH = path.resolve(__dirname, "../firestore.rules");
@@ -1531,6 +1534,1179 @@ async function main() {
             dedupeKey: null,
           },
         ),
+      );
+    },
+  );
+
+
+  // ==================================================================
+  // GLOBAL CHAT — the public community channel. Every case below is an
+  // attack scenario or a real client path; a public write surface with
+  // no test coverage is not a shippable public write surface.
+  // ==================================================================
+
+  const GLOBAL = "globalChat/main/messages";
+  const SENDER_STATE = (uid) => `globalChat/main/senders/${uid}`;
+
+  // Profiles the create rule validates denormalised identity against.
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, "users/host-uid"), {
+      uid: "host-uid",
+      displayName: "Host",
+      accountType: "personal",
+    });
+    await setDoc(doc(db, "users/attacker-uid"), {
+      uid: "attacker-uid",
+      displayName: "Attacker",
+      accountType: "personal",
+    });
+    await setDoc(doc(db, "users/mod-uid"), {
+      uid: "mod-uid",
+      displayName: "Mod",
+      accountType: "personal",
+    });
+  });
+
+  const moderator = testEnv.authenticatedContext("mod-uid", {
+    email_verified: true,
+    role: "moderator",
+  });
+
+  // A legitimate send: message + cooldown doc in ONE batch, exactly what
+  // GlobalChatService.sendMessage() writes.
+  function sendGlobal(db, uid, name, id, overrides = {}) {
+    const batch = writeBatch(db);
+    batch.set(doc(db, `${GLOBAL}/${id}`), {
+      senderId: uid,
+      senderName: name,
+      senderPhotoUrl: null,
+      senderIsCreator: false,
+      senderIsStaff: false,
+      content: "hello community",
+      sentAt: serverTimestamp(),
+      isDeleted: false,
+      deletedBy: null,
+      deletedAt: null,
+      ...Object.fromEntries(
+        Object.entries(overrides).filter(([key]) => key !== "__state"),
+      ),
+    });
+    batch.set(doc(db, SENDER_STATE(uid)), {
+      lastMessageAt: serverTimestamp(),
+      lastMessageId: id,
+      windowStartAt: serverTimestamp(),
+      windowCount: 1,
+      ...(overrides.__state ?? {}),
+    });
+    return batch.commit();
+  }
+
+  await check(
+    "GLOBAL: a verified member can post to the community channel",
+    async () => {
+      await assertSucceeds(
+        sendGlobal(host.firestore(), "host-uid", "Host", "g-ok-1"),
+      );
+    },
+  );
+
+  await check(
+    "GLOBAL: a DIFFERENT signed-in account reads the SAME canonical " +
+      "message — one shared channel, not a per-user feed",
+    async () => {
+      const snapshot = await assertSucceeds(
+        getDoc(doc(attacker.firestore(), `${GLOBAL}/g-ok-1`)),
+      );
+      if (snapshot.data().content !== "hello community") {
+        throw new Error("second account did not read the same message");
+      }
+    },
+  );
+
+  await check("GLOBAL: unauthenticated users cannot READ the channel", async () => {
+    await assertFails(
+      getDocs(
+        query(
+          collection(testEnv.unauthenticatedContext().firestore(), GLOBAL),
+          orderBy("sentAt", "desc"),
+          limit(25),
+        ),
+      ),
+    );
+  });
+
+  await check("GLOBAL: unauthenticated users cannot SEND", async () => {
+    await assertFails(
+      sendGlobal(
+        testEnv.unauthenticatedContext().firestore(),
+        "host-uid",
+        "Host",
+        "g-anon",
+      ),
+    );
+  });
+
+  await check(
+    "SECURITY GLOBAL: a client cannot post as someone else (senderId spoof)",
+    async () => {
+      await assertFails(
+        sendGlobal(attacker.firestore(), "host-uid", "Host", "g-spoof-id"),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY GLOBAL: a client cannot post under another member's NAME " +
+      "(display name must match their own profile document)",
+    async () => {
+      await assertFails(
+        sendGlobal(attacker.firestore(), "attacker-uid", "Host", "g-spoof-name"),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY GLOBAL: a client cannot award itself the staff badge",
+    async () => {
+      await assertFails(
+        sendGlobal(
+          attacker.firestore(),
+          "attacker-uid",
+          "Attacker",
+          "g-spoof-staff",
+          { senderIsStaff: true },
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY GLOBAL: a client cannot supply its own timestamp",
+    async () => {
+      const db = attacker.firestore();
+      const batch = writeBatch(db);
+      batch.set(doc(db, `${GLOBAL}/g-fake-time`), {
+        senderId: "attacker-uid",
+        senderName: "Attacker",
+        senderPhotoUrl: null,
+        senderIsCreator: false,
+        senderIsStaff: false,
+        content: "backdated",
+        // A client-chosen date instead of the server's clock.
+        sentAt: new Date(2020, 0, 1),
+        isDeleted: false,
+        deletedBy: null,
+        deletedAt: null,
+      });
+      batch.set(doc(db, SENDER_STATE("attacker-uid")), {
+        lastMessageAt: serverTimestamp(),
+        lastMessageId: "g-fake-time",
+      });
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check("GLOBAL: empty and blank-only messages are rejected", async () => {
+    await assertFails(
+      sendGlobal(host.firestore(), "host-uid", "Host", "g-empty", {
+        content: "",
+      }),
+    );
+    await assertFails(
+      sendGlobal(host.firestore(), "host-uid", "Host", "g-blank", {
+        content: "      ",
+      }),
+    );
+  });
+
+  await check("GLOBAL: oversized messages are rejected", async () => {
+    await assertFails(
+      sendGlobal(host.firestore(), "host-uid", "Host", "g-long", {
+        content: "x".repeat(501),
+      }),
+    );
+  });
+
+  await check(
+    "GLOBAL: a message cannot arrive already flagged as deleted",
+    async () => {
+      await assertFails(
+        sendGlobal(host.firestore(), "host-uid", "Host", "g-predeleted", {
+          isDeleted: true,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY GLOBAL: posting WITHOUT advancing the cooldown doc is " +
+      "rejected — the rate limiter cannot be skipped",
+    async () => {
+      await assertFails(
+        setDoc(doc(attacker.firestore(), `${GLOBAL}/g-no-cooldown`), {
+          senderId: "attacker-uid",
+          senderName: "Attacker",
+          senderPhotoUrl: null,
+          senderIsCreator: false,
+          senderIsStaff: false,
+          content: "no cooldown doc",
+          sentAt: serverTimestamp(),
+          isDeleted: false,
+          deletedBy: null,
+          deletedAt: null,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY GLOBAL: a second message inside the cooldown window is " +
+      "rejected (spam floor)",
+    async () => {
+      // host-uid posted g-ok-1 moments ago; 3s cannot have elapsed.
+      await assertFails(
+        sendGlobal(host.firestore(), "host-uid", "Host", "g-too-fast"),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY GLOBAL: a BATCH of many messages sharing one cooldown " +
+      "update is rejected — burst spam cannot buy N sends for one slot",
+    async () => {
+      const db = attacker.firestore();
+      const batch = writeBatch(db);
+      for (const id of ["g-burst-1", "g-burst-2", "g-burst-3"]) {
+        batch.set(doc(db, `${GLOBAL}/${id}`), {
+          senderId: "attacker-uid",
+          senderName: "Attacker",
+          senderPhotoUrl: null,
+          senderIsCreator: false,
+          senderIsStaff: false,
+          content: "burst",
+          sentAt: serverTimestamp(),
+          isDeleted: false,
+          deletedBy: null,
+          deletedAt: null,
+        });
+      }
+      batch.set(doc(db, SENDER_STATE("attacker-uid")), {
+        lastMessageAt: serverTimestamp(),
+        lastMessageId: "g-burst-1",
+      });
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
+    "SECURITY GLOBAL: the cooldown doc cannot be deleted to reset the limit",
+    async () => {
+      await assertFails(
+        deleteDoc(doc(host.firestore(), SENDER_STATE("host-uid"))),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY GLOBAL: nobody can read or write another member's cooldown doc",
+    async () => {
+      await assertFails(
+        getDoc(doc(attacker.firestore(), SENDER_STATE("host-uid"))),
+      );
+      await assertFails(
+        setDoc(doc(attacker.firestore(), SENDER_STATE("host-uid")), {
+          lastMessageAt: serverTimestamp(),
+          lastMessageId: "whatever",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY GLOBAL: an author cannot silently REWRITE a posted message",
+    async () => {
+      await assertFails(
+        updateDoc(doc(host.firestore(), `${GLOBAL}/g-ok-1`), {
+          content: "something else entirely",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY GLOBAL: a member cannot delete someone else's message",
+    async () => {
+      await assertFails(
+        updateDoc(doc(attacker.firestore(), `${GLOBAL}/g-ok-1`), {
+          isDeleted: true,
+          deletedBy: "attacker-uid",
+          deletedAt: serverTimestamp(),
+          content: "",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY GLOBAL: a moderator cannot re-attribute a message while " +
+      "removing it",
+    async () => {
+      await assertFails(
+        updateDoc(doc(moderator.firestore(), `${GLOBAL}/g-ok-1`), {
+          isDeleted: true,
+          deletedBy: "mod-uid",
+          deletedAt: serverTimestamp(),
+          content: "",
+          senderId: "attacker-uid",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "GLOBAL: a moderator (role claim) CAN soft-delete a member's message",
+    async () => {
+      await assertSucceeds(
+        updateDoc(doc(moderator.firestore(), `${GLOBAL}/g-ok-1`), {
+          isDeleted: true,
+          deletedBy: "mod-uid",
+          deletedAt: serverTimestamp(),
+          content: "",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "GLOBAL: an author CAN soft-delete their own message",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), "users/invitee-uid"), {
+          uid: "invitee-uid",
+          displayName: "Invitee",
+          accountType: "personal",
+        });
+      });
+      await assertSucceeds(
+        sendGlobal(invitee.firestore(), "invitee-uid", "Invitee", "g-mine"),
+      );
+      await assertSucceeds(
+        updateDoc(doc(invitee.firestore(), `${GLOBAL}/g-mine`), {
+          isDeleted: true,
+          deletedBy: "invitee-uid",
+          deletedAt: serverTimestamp(),
+          content: "",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "GLOBAL: hard delete is never allowed — removals stay visible as " +
+      "removals, even to staff",
+    async () => {
+      await assertFails(
+        deleteDoc(doc(moderator.firestore(), `${GLOBAL}/g-ok-1`)),
+      );
+    },
+  );
+
+  await check(
+    "GLOBAL: paging the channel is a plain ordered/limited read and is " +
+      "allowed for any member",
+    async () => {
+      await assertSucceeds(
+        getDocs(
+          query(
+            collection(attacker.firestore(), GLOBAL),
+            orderBy("sentAt", "desc"),
+            limit(25),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "GLOBAL: nobody can create a SECOND global channel and pass it off " +
+      "as the community one",
+    async () => {
+      await assertFails(
+        setDoc(doc(attacker.firestore(), "globalChat/fake"), {
+          name: "Global",
+        }),
+      );
+      await assertFails(
+        sendGlobal(
+          attacker.firestore(),
+          "attacker-uid",
+          "Attacker",
+          "g-other-channel",
+        ).then(() =>
+          setDoc(doc(attacker.firestore(), "globalChat/fake/messages/x"), {
+            senderId: "attacker-uid",
+            senderName: "Attacker",
+            senderPhotoUrl: null,
+            senderIsCreator: false,
+            senderIsStaff: false,
+            content: "hi",
+            sentAt: serverTimestamp(),
+            isDeleted: false,
+            deletedBy: null,
+            deletedAt: null,
+          }),
+        ),
+      );
+    },
+  );
+
+  // ==================================================================
+  // REPORTS — write-only for members, staff-readable, and hardened
+  // against being used as a flooding or free-text channel.
+  // ==================================================================
+
+  // The deterministic id rules require. Uniqueness needs no counter:
+  // a duplicate is a create against a document that already exists.
+  const reportId = (uid, targetType, targetId) =>
+    `${uid}_${targetType}_${targetId}`;
+
+  function fileReport(db, uid, overrides = {}) {
+    const fields = {
+      targetType: "globalMessage",
+      targetId: "g-ok-1",
+      reportedUserId: "host-uid",
+      contextPath: `${GLOBAL}/g-ok-1`,
+      reason: "spam",
+      note: "",
+      ...overrides,
+    };
+    const id =
+      overrides.__id ?? reportId(uid, fields.targetType, fields.targetId);
+    delete fields.__id;
+    const state = overrides.__state;
+    delete fields.__state;
+
+    const batch = writeBatch(db);
+    batch.set(doc(db, `reports/${id}`), {
+      reporterId: uid,
+      createdAt: serverTimestamp(),
+      ...fields,
+    });
+    batch.set(doc(db, `reportLimits/${uid}`), {
+      lastReportAt: serverTimestamp(),
+      lastReportId: id,
+      windowStartAt: serverTimestamp(),
+      windowCount: 1,
+      ...(state ?? {}),
+    });
+    return batch.commit();
+  }
+
+  await check("REPORTS: a member can file a report", async () => {
+    await assertSucceeds(fileReport(attacker.firestore(), "attacker-uid"));
+  });
+
+  await check(
+    "SECURITY REPORTS: the SAME reporter cannot report the SAME target " +
+      "twice — the deterministic id makes it a create over an existing doc",
+    async () => {
+      await assertFails(fileReport(attacker.firestore(), "attacker-uid"));
+    },
+  );
+
+  await check(
+    "SECURITY REPORTS: a report cannot be filed under a NON-deterministic " +
+      "id, which would defeat the uniqueness mechanism",
+    async () => {
+      await assertFails(
+        fileReport(attacker.firestore(), "attacker-uid", {
+          __id: "some-random-id",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY REPORTS: the cooldown cannot be bypassed — a second report " +
+      "within 30s is rejected",
+    async () => {
+      // attacker-uid filed one moments ago; a different target, so the
+      // id is fresh and only the cooldown can stop it.
+      await assertFails(
+        fileReport(attacker.firestore(), "attacker-uid", {
+          targetType: "user",
+          targetId: "host-uid",
+          reportedUserId: "host-uid",
+          contextPath: null,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY REPORTS: the fixed 24h window cap rejects the 21st report",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), "reportLimits/invitee-uid"), {
+          lastReportAt: new Date(Date.now() - 5 * 60 * 1000),
+          lastReportId: "earlier",
+          windowStartAt: new Date(Date.now() - 60 * 60 * 1000),
+          windowCount: 20,
+        });
+      });
+      await assertFails(
+        fileReport(invitee.firestore(), "invitee-uid", {
+          __state: {
+            windowStartAt: new Date(Date.now() - 60 * 60 * 1000),
+            windowCount: 21,
+          },
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY REPORTS: a nonexistent target cannot be reported",
+    async () => {
+      await assertFails(
+        fileReport(moderator.firestore(), "mod-uid", {
+          targetId: "no-such-message",
+          reportedUserId: "host-uid",
+        }),
+      );
+      await assertFails(
+        fileReport(moderator.firestore(), "mod-uid", {
+          targetType: "user",
+          targetId: "no-such-user",
+          reportedUserId: "no-such-user",
+          contextPath: null,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY REPORTS: reportedUserId must be the target's REAL owner, " +
+      "not an arbitrary uid attached to a real message",
+    async () => {
+      await assertFails(
+        fileReport(moderator.firestore(), "mod-uid", {
+          targetId: "g-ok-1",
+          // g-ok-1 was written by host-uid.
+          reportedUserId: "invitee-uid",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY REPORTS: a member cannot file one in someone else's name",
+    async () => {
+      const db = attacker.firestore();
+      const id = reportId("host-uid", "globalMessage", "g-ok-1");
+      const batch = writeBatch(db);
+      batch.set(doc(db, `reports/${id}`), {
+        reporterId: "host-uid",
+        targetType: "globalMessage",
+        targetId: "g-ok-1",
+        reportedUserId: "host-uid",
+        contextPath: null,
+        reason: "spam",
+        note: "",
+        createdAt: serverTimestamp(),
+      });
+      batch.set(doc(db, "reportLimits/attacker-uid"), {
+        lastReportAt: serverTimestamp(),
+        lastReportId: id,
+        windowStartAt: serverTimestamp(),
+        windowCount: 1,
+      });
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
+    "SECURITY REPORTS: a client cannot supply its own createdAt",
+    async () => {
+      await assertFails(
+        fileReport(moderator.firestore(), "mod-uid", {
+          createdAt: new Date(2020, 0, 1),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY REPORTS: invalid target types and reasons are rejected",
+    async () => {
+      await assertFails(
+        fileReport(moderator.firestore(), "mod-uid", {
+          targetType: "room",
+        }),
+      );
+      await assertFails(
+        fileReport(moderator.firestore(), "mod-uid", {
+          reason: "because I said so",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY REPORTS: an oversized explanation is rejected",
+    async () => {
+      await assertFails(
+        fileReport(moderator.firestore(), "mod-uid", {
+          note: "x".repeat(301),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY REPORTS: a reporter cannot set staff workflow fields " +
+      "(status, assignee, resolution)",
+    async () => {
+      for (const extra of [
+        { status: "closed" },
+        { assignedTo: "mod-uid" },
+        { resolution: "dismissed" },
+      ]) {
+        await assertFails(
+          fileReport(moderator.firestore(), "mod-uid", extra),
+        );
+      }
+    },
+  );
+
+  await check(
+    "SECURITY REPORTS: nobody can report themselves",
+    async () => {
+      await assertFails(
+        fileReport(moderator.firestore(), "mod-uid", {
+          targetType: "user",
+          targetId: "mod-uid",
+          reportedUserId: "mod-uid",
+          contextPath: null,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY REPORTS: filing without advancing the rate-limit document " +
+      "is rejected",
+    async () => {
+      await assertFails(
+        setDoc(
+          doc(
+            invitee.firestore(),
+            `reports/${reportId("invitee-uid", "globalMessage", "g-ok-1")}`,
+          ),
+          {
+            reporterId: "invitee-uid",
+            targetType: "globalMessage",
+            targetId: "g-ok-1",
+            reportedUserId: "host-uid",
+            contextPath: null,
+            reason: "spam",
+            note: "",
+            createdAt: serverTimestamp(),
+          },
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY REPORTS: the rate-limit document is private and undeletable",
+    async () => {
+      await assertFails(
+        getDoc(doc(host.firestore(), "reportLimits/attacker-uid")),
+      );
+      await assertFails(
+        deleteDoc(doc(attacker.firestore(), "reportLimits/attacker-uid")),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY REPORTS: reports cannot be read, edited or withdrawn by " +
+      "members — not even their own",
+    async () => {
+      const own = `reports/${reportId("attacker-uid", "globalMessage", "g-ok-1")}`;
+      await assertFails(getDoc(doc(attacker.firestore(), own)));
+      await assertFails(
+        updateDoc(doc(attacker.firestore(), own), { status: "closed" }),
+      );
+      await assertFails(deleteDoc(doc(attacker.firestore(), own)));
+    },
+  );
+
+  await check("REPORTS: staff can read and triage them", async () => {
+    const filed = `reports/${reportId("attacker-uid", "globalMessage", "g-ok-1")}`;
+    await assertSucceeds(getDoc(doc(moderator.firestore(), filed)));
+    await assertSucceeds(
+      updateDoc(doc(moderator.firestore(), filed), {
+        status: "closed",
+        assignedTo: "mod-uid",
+      }),
+    );
+  });
+
+  await check(
+    "SECURITY: adminAuditLogs is invisible to every client, staff included",
+    async () => {
+      await assertFails(getDoc(doc(host.firestore(), "adminAuditLogs/x")));
+      await assertFails(getDoc(doc(moderator.firestore(), "adminAuditLogs/x")));
+      await assertFails(
+        setDoc(doc(moderator.firestore(), "adminAuditLogs/x"), { a: 1 }),
+      );
+    },
+  );
+
+  // ==================================================================
+  // ACCOUNT STATUS — a ban must bite immediately, not when the banned
+  // user's ID token happens to expire.
+  // ==================================================================
+
+  const banned = testEnv.authenticatedContext("banned-uid", {
+    email_verified: true,
+  });
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await setDoc(doc(db, "users/banned-uid"), {
+      uid: "banned-uid",
+      displayName: "Banned",
+      accountType: "personal",
+      // Exactly what functions/admin/users.js's setUserBan writes.
+      banned: true,
+      banReason: "Administrative action",
+      bannedUntil: null,
+    });
+  });
+
+  await check(
+    "SECURITY BAN: a banned account holding a still-valid token cannot " +
+      "READ Global Chat",
+    async () => {
+      await assertFails(
+        getDocs(
+          query(
+            collection(banned.firestore(), GLOBAL),
+            orderBy("sentAt", "desc"),
+            limit(25),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check("SECURITY BAN: a banned account cannot SEND", async () => {
+    await assertFails(
+      sendGlobal(banned.firestore(), "banned-uid", "Banned", "g-banned"),
+    );
+  });
+
+  await check(
+    "SECURITY BAN: a banned account cannot soft-delete its own message",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), `${GLOBAL}/g-by-banned`), {
+          senderId: "banned-uid",
+          senderName: "Banned",
+          senderPhotoUrl: null,
+          senderIsCreator: false,
+          senderIsStaff: false,
+          content: "posted before the ban",
+          sentAt: new Date(),
+          isDeleted: false,
+          deletedBy: null,
+          deletedAt: null,
+        });
+      });
+      await assertFails(
+        updateDoc(doc(banned.firestore(), `${GLOBAL}/g-by-banned`), {
+          isDeleted: true,
+          deletedBy: "banned-uid",
+          deletedAt: serverTimestamp(),
+          content: "",
+        }),
+      );
+    },
+  );
+
+  await check("SECURITY BAN: a banned account cannot file a report", async () => {
+    await assertFails(
+      fileReport(banned.firestore(), "banned-uid", {
+        targetType: "globalMessage",
+        targetId: "g-ok-1",
+        reportedUserId: "host-uid",
+      }),
+    );
+  });
+
+  await check(
+    "SECURITY BAN: the banned flag is NOT self-writable — a user cannot " +
+      "clear their own restriction, or set someone else's",
+    async () => {
+      await assertFails(
+        updateDoc(doc(banned.firestore(), "users/banned-uid"), {
+          banned: false,
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(attacker.firestore(), "users/attacker-uid"), {
+          banned: true,
+        }),
+      );
+      // Legitimate profile edits still work — the allowlist is intact.
+      await assertSucceeds(
+        updateDoc(doc(attacker.firestore(), "users/attacker-uid"), {
+          bio: "still editable",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "an ACTIVE account with no `banned` field at all is unaffected",
+    async () => {
+      await assertSucceeds(
+        getDocs(
+          query(
+            collection(invitee.firestore(), GLOBAL),
+            orderBy("sentAt", "desc"),
+            limit(5),
+          ),
+        ),
+      );
+    },
+  );
+
+  // ==================================================================
+  // CHANNEL BOOTSTRAP — the parent document is not a prerequisite.
+  // ==================================================================
+
+  await check(
+    "GLOBAL: the channel needs NO globalChat/main parent document — " +
+      "messages read and write with the parent absent",
+    async () => {
+      let parentExists = true;
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const snapshot = await getDoc(
+          doc(context.firestore(), "globalChat/main"),
+        );
+        parentExists = snapshot.exists();
+      });
+      if (parentExists) {
+        throw new Error(
+          "the suite never created globalChat/main, yet it exists",
+        );
+      }
+      // Everything above this point already read and wrote the channel.
+      await assertSucceeds(
+        getDocs(
+          query(
+            collection(invitee.firestore(), GLOBAL),
+            orderBy("sentAt", "desc"),
+            limit(5),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY GLOBAL: the client cannot create the channel document",
+    async () => {
+      await assertFails(
+        setDoc(doc(host.firestore(), "globalChat/main"), { name: "Global" }),
+      );
+    },
+  );
+
+  // ==================================================================
+  // SUSTAINED SEND LIMIT — the 3s floor alone still allows 1,200/hour.
+  // ==================================================================
+
+  await check(
+    "SECURITY RATE: the fixed-window cap rejects the 201st message",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), SENDER_STATE("invitee-uid")), {
+          lastMessageAt: new Date(Date.now() - 60 * 1000),
+          lastMessageId: "earlier",
+          windowStartAt: new Date(Date.now() - 30 * 60 * 1000),
+          windowCount: 200,
+        });
+      });
+      const db = invitee.firestore();
+      const batch = writeBatch(db);
+      batch.set(doc(db, `${GLOBAL}/g-over-cap`), {
+        senderId: "invitee-uid",
+        senderName: "Invitee",
+        senderPhotoUrl: null,
+        senderIsCreator: false,
+        senderIsStaff: false,
+        content: "one too many",
+        sentAt: serverTimestamp(),
+        isDeleted: false,
+        deletedBy: null,
+        deletedAt: null,
+      });
+      batch.set(doc(db, SENDER_STATE("invitee-uid")), {
+        lastMessageAt: serverTimestamp(),
+        lastMessageId: "g-over-cap",
+        windowStartAt: new Date(Date.now() - 30 * 60 * 1000),
+        windowCount: 201,
+      });
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
+    "RATE: the 200th message inside the window is still allowed (boundary)",
+    async () => {
+      const windowStart = new Date(Date.now() - 30 * 60 * 1000);
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), SENDER_STATE("invitee-uid")), {
+          lastMessageAt: new Date(Date.now() - 60 * 1000),
+          lastMessageId: "earlier",
+          windowStartAt: windowStart,
+          windowCount: 199,
+        });
+      });
+      const db = invitee.firestore();
+      const batch = writeBatch(db);
+      batch.set(doc(db, `${GLOBAL}/g-at-cap`), {
+        senderId: "invitee-uid",
+        senderName: "Invitee",
+        senderPhotoUrl: null,
+        senderIsCreator: false,
+        senderIsStaff: false,
+        content: "the two hundredth",
+        sentAt: serverTimestamp(),
+        isDeleted: false,
+        deletedBy: null,
+        deletedAt: null,
+      });
+      batch.set(doc(db, SENDER_STATE("invitee-uid")), {
+        lastMessageAt: serverTimestamp(),
+        lastMessageId: "g-at-cap",
+        windowStartAt: windowStart,
+        windowCount: 200,
+      });
+      await assertSucceeds(batch.commit());
+    },
+  );
+
+  await check(
+    "SECURITY RATE: a client cannot silently RESET the window to dodge " +
+      "the cap",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), SENDER_STATE("invitee-uid")), {
+          lastMessageAt: new Date(Date.now() - 60 * 1000),
+          lastMessageId: "earlier",
+          // A window that is still very much running.
+          windowStartAt: new Date(Date.now() - 60 * 1000),
+          windowCount: 200,
+        });
+      });
+      const db = invitee.firestore();
+      const batch = writeBatch(db);
+      batch.set(doc(db, `${GLOBAL}/g-reset`), {
+        senderId: "invitee-uid",
+        senderName: "Invitee",
+        senderPhotoUrl: null,
+        senderIsCreator: false,
+        senderIsStaff: false,
+        content: "fresh window please",
+        sentAt: serverTimestamp(),
+        isDeleted: false,
+        deletedBy: null,
+        deletedAt: null,
+      });
+      batch.set(doc(db, SENDER_STATE("invitee-uid")), {
+        lastMessageAt: serverTimestamp(),
+        lastMessageId: "g-reset",
+        // Pretending the window just started.
+        windowStartAt: serverTimestamp(),
+        windowCount: 1,
+      });
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
+    "RATE: once the fixed hour has fully elapsed a NEW window opens " +
+      "and sending resumes",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), SENDER_STATE("invitee-uid")), {
+          lastMessageAt: new Date(Date.now() - 60 * 1000),
+          lastMessageId: "earlier",
+          windowStartAt: new Date(Date.now() - 61 * 60 * 1000),
+          windowCount: 200,
+        });
+      });
+      const db = invitee.firestore();
+      const batch = writeBatch(db);
+      batch.set(doc(db, `${GLOBAL}/g-rolled`), {
+        senderId: "invitee-uid",
+        senderName: "Invitee",
+        senderPhotoUrl: null,
+        senderIsCreator: false,
+        senderIsStaff: false,
+        content: "new hour",
+        sentAt: serverTimestamp(),
+        isDeleted: false,
+        deletedBy: null,
+        deletedAt: null,
+      });
+      batch.set(doc(db, SENDER_STATE("invitee-uid")), {
+        lastMessageAt: serverTimestamp(),
+        lastMessageId: "g-rolled",
+        windowStartAt: serverTimestamp(),
+        windowCount: 1,
+      });
+      await assertSucceeds(batch.commit());
+    },
+  );
+
+
+  // ==================================================================
+  // EMAIL VERIFICATION — the project's existing publishing policy,
+  // applied to the most outbound surface it has.
+  // ==================================================================
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), "users/unverified-uid"), {
+      uid: "unverified-uid",
+      displayName: "Unverified",
+      accountType: "personal",
+    });
+  });
+
+  await check(
+    "VERIFY: an ACTIVE but UNVERIFIED account can READ Global Chat — a " +
+      "new account should see the room it is joining",
+    async () => {
+      await assertSucceeds(
+        getDocs(
+          query(
+            collection(unverified.firestore(), GLOBAL),
+            orderBy("sentAt", "desc"),
+            limit(25),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY VERIFY: an unverified account CANNOT send to Global Chat",
+    async () => {
+      await assertFails(
+        sendGlobal(
+          unverified.firestore(),
+          "unverified-uid",
+          "Unverified",
+          "g-unverified",
+        ),
+      );
+    },
+  );
+
+  await check(
+    "VERIFY: a VERIFIED active account CAN send",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), "users/verified-uid"), {
+          uid: "verified-uid",
+          displayName: "Verified",
+          accountType: "personal",
+        });
+      });
+      const verified = testEnv.authenticatedContext("verified-uid", {
+        email_verified: true,
+      });
+      await assertSucceeds(
+        sendGlobal(
+          verified.firestore(),
+          "verified-uid",
+          "Verified",
+          "g-verified",
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY VERIFY: a VERIFIED but BANNED account still cannot read or " +
+      "send — the two checks are independent",
+    async () => {
+      // `banned` context already carries email_verified: true.
+      await assertFails(
+        getDocs(
+          query(
+            collection(banned.firestore(), GLOBAL),
+            orderBy("sentAt", "desc"),
+            limit(5),
+          ),
+        ),
+      );
+      await assertFails(
+        sendGlobal(
+          banned.firestore(),
+          "banned-uid",
+          "Banned",
+          "g-verified-banned",
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY VERIFY: verification cannot be spoofed through the profile " +
+      "document — it is a token claim, and the field is not writable",
+    async () => {
+      // Writing an emailVerified-looking field changes nothing, and the
+      // allowlist rejects it outright.
+      await assertFails(
+        updateDoc(doc(unverified.firestore(), "users/unverified-uid"), {
+          emailVerified: true,
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(unverified.firestore(), "users/unverified-uid"), {
+          email_verified: true,
+        }),
+      );
+      // And sending still fails afterwards.
+      await assertFails(
+        sendGlobal(
+          unverified.firestore(),
+          "unverified-uid",
+          "Unverified",
+          "g-still-denied",
+        ),
+      );
+    },
+  );
+
+  await check(
+    "VERIFY: an unverified account CAN still file a report — reporting is " +
+      "a safety action and follows the blocking precedent, not publishing",
+    async () => {
+      await assertSucceeds(
+        fileReport(unverified.firestore(), "unverified-uid", {
+          targetId: "g-ok-1",
+          reportedUserId: "host-uid",
+        }),
       );
     },
   );

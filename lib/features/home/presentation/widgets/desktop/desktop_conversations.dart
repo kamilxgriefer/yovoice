@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
@@ -9,16 +10,26 @@ import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/global_chat_panel.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
+import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
+import 'package:yovoice/features/moderation/data/services/report_service.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
-/// Which slice of the user's existing conversations the hub is showing.
+/// Which conversation the hub is showing.
 ///
-/// These are FILTERS over conversations that already exist, not four new
-/// inboxes — switching one is local state, so the desktop shell, the rail
-/// and the profile card never rebuild.
-enum ConversationFilter { all, clubs, friends, private }
+/// [global] is a DIFFERENT KIND of thing from the other three and is
+/// first on purpose: it is one shared public channel, while Friends,
+/// Clubs and Private are filters over this account's own existing
+/// conversations. There is deliberately no "All" tab — merging a public
+/// community channel into a list of someone's private chats would present
+/// public and private messages as the same kind of thing, which is
+/// exactly the confusion the separation exists to prevent.
+///
+/// Switching tabs is local state, so the desktop shell, the rail and the
+/// profile card never rebuild.
+enum ConversationFilter { global, friends, clubs, private }
 
 /// "Conversations" — the desktop Home hub under For you.
 ///
@@ -29,14 +40,23 @@ enum ConversationFilter { all, clubs, friends, private }
 ///    [ClubChatService.watchLatestMessage] per club's default chat channel
 ///  - friend edges    → [FriendService.watchFriends]
 ///
-/// SCHEMA LIMIT, stated rather than papered over: the data model has two
-/// conversation types — club channels and 1:1 direct conversations. There
-/// is no third "private" record. So `Private` is every direct
-/// conversation (the model's own direct/private type) and `Friends` is
-/// the subset of those whose counterpart is a confirmed friend; Friends
-/// is therefore a subset of Private, not a disjoint bucket. Club chat
-/// also has no per-member unread counter, so club rows carry no unread
-/// badge — none is invented. See docs/Decisions.md ADR-036.
+///  - Global Chat     → [GlobalChatService], the canonical
+///    `globalChat/main/messages` channel shared by the whole community
+///
+/// SCHEMA LIMIT, stated rather than papered over: for the three personal
+/// tabs the data model has two conversation types — club channels and 1:1
+/// direct conversations. There is no third "private" record. So `Private`
+/// is every direct conversation (the model's own direct/private type) and
+/// `Friends` is the subset of those whose counterpart is a confirmed
+/// friend; Friends is therefore a subset of Private, not a disjoint
+/// bucket. Club chat also has no per-member unread counter, so club rows
+/// carry no unread badge — none is invented.
+///
+/// Global has no unread badge either: nothing in the schema records a
+/// per-user last-seen marker for it, and inventing one would be a number
+/// with nothing behind it. Global messages live in their own collection
+/// and are never merged into the direct-message unread count the rail
+/// badge shows. See docs/Decisions.md ADR-036 and ADR-037.
 class DesktopConversations extends StatefulWidget {
   const DesktopConversations({
     required this.currentUserId,
@@ -49,6 +69,9 @@ class DesktopConversations extends StatefulWidget {
     this.clubService,
     this.clubChatService,
     this.friendService,
+    this.globalChatService,
+    this.reportService,
+    this.firebaseAuth,
     super.key,
   });
 
@@ -74,6 +97,9 @@ class DesktopConversations extends StatefulWidget {
   final ClubService? clubService;
   final ClubChatService? clubChatService;
   final FriendService? friendService;
+  final GlobalChatService? globalChatService;
+  final ReportService? reportService;
+  final FirebaseAuth? firebaseAuth;
 
   /// Dense but scannable: five rows is the most the column fits without
   /// pushing the page into a second screen of scrolling.
@@ -84,7 +110,13 @@ class DesktopConversations extends StatefulWidget {
 }
 
 class _DesktopConversationsState extends State<DesktopConversations> {
-  ConversationFilter _filter = ConversationFilter.all;
+  /// Global is this module's default view.
+  ConversationFilter _filter = ConversationFilter.global;
+
+  /// Resolved once from the ID token's `role` claim. Only decides which
+  /// menu items are OFFERED on a message; firestore.rules is what
+  /// authorizes a moderator deletion.
+  bool _isStaff = false;
 
   Stream<List<Conversation>>? _conversations;
   Stream<List<FriendUser>>? _friends;
@@ -119,6 +151,23 @@ class _DesktopConversationsState extends State<DesktopConversations> {
     } catch (_) {
       _clubs = null;
       _clubChat = null;
+    }
+    unawaited(_resolveStaffClaim());
+  }
+
+  Future<void> _resolveStaffClaim() async {
+    try {
+      final user = (widget.firebaseAuth ?? FirebaseAuth.instance).currentUser;
+      if (user == null) return;
+      final token = await user.getIdTokenResult();
+      final role = token.claims?['role'];
+      final staff =
+          role is String &&
+          const ['moderator', 'admin', 'superAdmin'].contains(role);
+      if (mounted && staff) setState(() => _isStaff = true);
+    } catch (_) {
+      // No claim, no token, or a harness without auth: no staff actions
+      // are offered, which is the safe default.
     }
   }
 
@@ -211,7 +260,8 @@ class _DesktopConversationsState extends State<DesktopConversations> {
     ];
 
     final rows = switch (filter) {
-      ConversationFilter.all => [...clubRows(), ...directRows(direct)],
+      // Global is not a row list at all — it renders the live channel.
+      ConversationFilter.global => <_ConversationRow>[],
       ConversationFilter.clubs => clubRows(),
       ConversationFilter.friends => directRows(
         direct.where(
@@ -232,11 +282,8 @@ class _DesktopConversationsState extends State<DesktopConversations> {
 
   (String, String, VoidCallback) _emptyFor(ConversationFilter filter) {
     return switch (filter) {
-      ConversationFilter.all => (
-        'No conversations yet — start one with a friend.',
-        'Find friends',
-        widget.onFindFriends,
-      ),
+      // Unused: the Global tab renders its own states inside the panel.
+      ConversationFilter.global => ('', '', widget.onFindFriends),
       ConversationFilter.clubs => (
         'You have not joined a club yet.',
         'Browse Clubs',
@@ -278,6 +325,7 @@ class _DesktopConversationsState extends State<DesktopConversations> {
                   if (mounted) _syncClubPreviews(clubs);
                 });
 
+                final isGlobal = _filter == ConversationFilter.global;
                 final rows = _rowsFor(_filter, direct, friendIds, clubs);
                 final (emptyText, emptyAction, onEmptyAction) = _emptyFor(
                   _filter,
@@ -295,17 +343,25 @@ class _DesktopConversationsState extends State<DesktopConversations> {
                     children: [
                       Row(
                         children: [
-                          const Expanded(
-                            child: Text(
-                              'Conversations',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16.5,
-                                fontWeight: FontWeight.w800,
-                              ),
+                          const Text(
+                            'Conversations',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16.5,
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
-                          _SeeAllChats(onTap: widget.onSeeAllChats),
+                          // Says whose conversation this is, so a public
+                          // channel is never mistaken for a private one.
+                          if (isGlobal) ...[
+                            const SizedBox(width: 9),
+                            const _CommunityIndicator(),
+                          ],
+                          const Spacer(),
+                          // "See all chats" goes to the direct-message
+                          // inbox, which is not where Global lives.
+                          if (!isGlobal)
+                            _SeeAllChats(onTap: widget.onSeeAllChats),
                         ],
                       ),
                       const SizedBox(height: 12),
@@ -314,7 +370,14 @@ class _DesktopConversationsState extends State<DesktopConversations> {
                         onChanged: (filter) => setState(() => _filter = filter),
                       ),
                       const SizedBox(height: 6),
-                      if (rows.isEmpty)
+                      if (isGlobal)
+                        GlobalChatPanel(
+                          currentUserId: widget.currentUserId,
+                          chatService: widget.globalChatService,
+                          reportService: widget.reportService,
+                          isStaff: _isStaff,
+                        )
+                      else if (rows.isEmpty)
                         _FilterEmptyState(
                           text: emptyText,
                           actionLabel: emptyAction,
@@ -332,6 +395,38 @@ class _DesktopConversationsState extends State<DesktopConversations> {
           },
         );
       },
+    );
+  }
+}
+
+/// Names the audience of the Global tab in one glance.
+class _CommunityIndicator extends StatelessWidget {
+  const _CommunityIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(999),
+        color: AppColors.primary.withValues(alpha: .14),
+        border: Border.all(color: AppColors.primary.withValues(alpha: .38)),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.public_rounded, size: 12, color: Color(0xFFD3A5FF)),
+          SizedBox(width: 5),
+          Text(
+            'YO Voice community',
+            style: TextStyle(
+              color: Color(0xFFD3A5FF),
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -376,9 +471,9 @@ class _FilterBar extends StatelessWidget {
   final ValueChanged<ConversationFilter> onChanged;
 
   static const _labels = <ConversationFilter, String>{
-    ConversationFilter.all: 'All',
-    ConversationFilter.clubs: 'Clubs',
+    ConversationFilter.global: 'Global',
     ConversationFilter.friends: 'Friends',
+    ConversationFilter.clubs: 'Clubs',
     ConversationFilter.private: 'Private',
   };
 

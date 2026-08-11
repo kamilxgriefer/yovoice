@@ -49,6 +49,43 @@ permission flags).
   until production room documents are confirmed migrated to `broadcast`.
   See [ADR-001](Decisions.md#adr-001-legacy-podcast-room-experience-stays-supported).
 
+## Moderation & safety
+
+- **Global Chat has no report-triage UI.** Reports land in `reports`
+  and are readable only by accounts holding a `moderator`/`admin`/
+  `superAdmin` role claim — through the Firestore Console, because no
+  Admin Center screen lists them yet. Filing one records it; nothing is
+  automated, and the reporter gets no follow-up. Tracked as the first
+  gap to close if Global Chat sees real use
+  ([ADR-037](Decisions.md#adr-037-global-chat-is-one-canonical-public-channel-written-directly-under-security-rules-with-a-rules-enforced-rate-limit)).
+- **Blocking on Global Chat is a UI filter, not a read boundary.**
+  Firestore delivers every channel message to every active account,
+  including ones from senders the reader blocked; the panel drops them
+  from the rendered list (and waits for the block list before its first
+  paint, so nothing flashes). Anyone reading the collection through the
+  SDK sees everything. It is also one-directional: an account that
+  blocked *you* still sees your public messages. Symmetry, or a real
+  per-recipient boundary, would need a mirrored `blockedBy` edge or
+  per-user fan-out — deliberately not built here.
+- **A ban reaches Firebase Auth slightly after it reaches Firestore.**
+  `setUserBan` disables the account, revokes refresh tokens, and writes
+  `users/{uid}.banned`. Firestore rules read that field, so database
+  access stops on the **next request**. The ID token itself stays
+  cryptographically valid until it expires — at most one hour — so any
+  surface that trusts the token alone (currently none in this app, but
+  worth knowing before adding one) has that window.
+- **Global Chat rate limiting is a floor, not a shield.** Rules cap a
+  sender at one message every 3 seconds AND 200 per FIXED one-hour
+  window, and a reporter at one report every 30 seconds AND 20 per fixed
+  24-hour window. The windows tumble rather than slide, so an account can
+  send up to 400 messages across two adjacent hours by straddling a
+  boundary — still a 3x reduction on the floor's 1,200/h. That
+  stops flooding from one account; it does not stop a distributed
+  abuser, and there is no content filtering of any kind. Combined with
+  [ADR-004](Decisions.md#adr-004-firebase-app-check-integrated-client-side-enforcement-deliberately-off)'s
+  open App Check gap, a script holding a valid ID token can post at that
+  rate.
+
 ## UI
 
 - **Fixed (2026-08-10): the web app's browser tab showed the YO Voice

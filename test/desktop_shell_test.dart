@@ -49,6 +49,7 @@ void main() {
             unreadNotificationCount: 0,
             onSelect: (_) {},
             onCreateRoom: () {},
+            onCreateMoment: () {},
             onOpenProfile: () {},
             onOpenProfileSettings: () {},
           ),
@@ -74,9 +75,78 @@ void main() {
           reason: '$absent must not be a rail item',
         );
       }
-      // Create Room is the ONLY creation action in the rail.
+      // The rail's two creation actions, in order.
       expect(find.text('Create Room'), findsOneWidget);
-      expect(find.text('Create your Moment'), findsNothing);
+      expect(find.text('Create Voice Moment'), findsOneWidget);
+
+      // Create Voice Moment sits UNDER Create Room, and both stay above
+      // the pinned profile card.
+      final createRoom = tester.getCenter(find.text('Create Room'));
+      final createMoment = tester.getCenter(find.text('Create Voice Moment'));
+      final profileCard = tester.getCenter(find.byTooltip('Profile settings'));
+      expect(createMoment.dy, greaterThan(createRoom.dy));
+      expect(profileCard.dy, greaterThan(createMoment.dy));
+    });
+
+    testWidgets('Create Voice Moment reports its own callback — the rail '
+        'never owns a second recorder', (tester) async {
+      var rooms = 0;
+      var moments = 0;
+      useDesktopWindow(tester);
+      await tester.pumpWidget(
+        host(
+          DesktopSidebar(
+            active: DesktopNavItem.home,
+            unreadConversationCount: 0,
+            unreadNotificationCount: 0,
+            onSelect: (_) {},
+            onCreateRoom: () => rooms++,
+            onCreateMoment: () => moments++,
+            onOpenProfile: () {},
+            onOpenProfileSettings: () {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('Create Voice Moment'));
+      await tester.pump();
+      expect(moments, 1);
+      expect(rooms, 0, reason: 'the two actions are not the same button');
+
+      await tester.tap(find.text('Create Room'));
+      await tester.pump();
+      expect(rooms, 1);
+      expect(moments, 1);
+    });
+
+    testWidgets('both creation actions survive a SHORT desktop window '
+        '(1440x620) and stay reachable', (tester) async {
+      useDesktopWindow(tester, size: const Size(1440, 620));
+      await tester.pumpWidget(
+        host(
+          DesktopSidebar(
+            active: DesktopNavItem.home,
+            unreadConversationCount: 0,
+            unreadNotificationCount: 0,
+            onSelect: (_) {},
+            onCreateRoom: () {},
+            onCreateMoment: () {},
+            onOpenProfile: () {},
+            onOpenProfileSettings: () {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      await tester.scrollUntilVisible(
+        find.text('Create Voice Moment'),
+        80,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('Create Voice Moment'), findsOneWidget);
+      expect(find.byTooltip('Profile settings'), findsOneWidget);
     });
 
     testWidgets('the gear opens profile settings; the card body opens the '
@@ -92,6 +162,7 @@ void main() {
             unreadNotificationCount: 0,
             onSelect: (_) {},
             onCreateRoom: () {},
+            onCreateMoment: () {},
             onOpenProfile: () => profile++,
             onOpenProfileSettings: () => settings++,
           ),
@@ -118,6 +189,7 @@ void main() {
             unreadNotificationCount: 0,
             onSelect: tapped.add,
             onCreateRoom: () {},
+            onCreateMoment: () {},
             onOpenProfile: () {},
             onOpenProfileSettings: () {},
           ),
@@ -156,6 +228,7 @@ void main() {
             unreadNotificationCount: 0,
             onSelect: (_) {},
             onCreateRoom: () {},
+            onCreateMoment: () {},
             onOpenProfile: () {},
             onOpenProfileSettings: () {},
           ),
@@ -178,6 +251,7 @@ void main() {
             unreadNotificationCount: 6,
             onSelect: (_) {},
             onCreateRoom: () {},
+            onCreateMoment: () {},
             onOpenProfile: () {},
             onOpenProfileSettings: () {},
           ),
@@ -365,6 +439,7 @@ void main() {
             onMorePressed: () {},
             onDesktopNavSelected: (_) {},
             onCreateRoom: () {},
+            onCreateMoment: () {},
             onOpenProfile: () {},
             onOpenProfileSettings: () {},
           ),
@@ -705,6 +780,7 @@ class _FakeDesktopShellState extends State<_FakeDesktopShell> {
             unreadNotificationCount: 0,
             onSelect: _select,
             onCreateRoom: () {},
+            onCreateMoment: () {},
             onOpenProfile: () {},
             onOpenProfileSettings: () {},
           ),
