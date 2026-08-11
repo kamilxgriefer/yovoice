@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
@@ -287,8 +288,15 @@ class MessageService {
             type: type,
             targetId: conversationId,
           );
-        } catch (_) {
-          // Best-effort — the message itself already sent above.
+        } catch (error) {
+          // Best-effort — the message itself already sent above — but a
+          // recipient silently losing both the bell row AND its push is
+          // exactly the class of failure that hid the friend-request
+          // outage, so it is named here.
+          debugPrint(
+            'MessageService: no notification could be written for this '
+            'message (${error.runtimeType}). The message itself sent.',
+          );
         }
       }
       // Best-effort — the message itself already sent above.

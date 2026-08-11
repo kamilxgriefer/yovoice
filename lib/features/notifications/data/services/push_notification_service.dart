@@ -25,6 +25,27 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {}
 /// than crashing app startup — see main.dart's App Check guard for the same
 /// pattern applied here.
 class PushNotificationService {
+  /// Web push needs a VAPID public key, and there is no safe default for
+  /// it: without one `getToken()` on web either throws or yields a token
+  /// the browser will never deliver to. It is supplied at build time and
+  /// is deliberately absent from the repository.
+  ///
+  ///   flutter build web --release \
+  ///     --dart-define=YOVOICE_WEB_PUSH_VAPID_KEY=`<public key>`
+  ///
+  /// The key is the "Web Push certificates" key pair's PUBLIC key, from
+  /// Firebase Console → Project settings → Cloud Messaging. It is a
+  /// public value (it ships in the client either way), but it is a
+  /// per-project configuration value, so it lives in the build command
+  /// and not in source. Nothing else about web push is gated on it.
+  static const String webVapidKey = String.fromEnvironment(
+    'YOVOICE_WEB_PUSH_VAPID_KEY',
+  );
+
+  /// True when this build can actually register for web push. On every
+  /// other platform token registration has no such prerequisite.
+  static bool get webPushConfigured => !kIsWeb || webVapidKey.isNotEmpty;
+
   PushNotificationService._({
     NotificationService? notificationService,
     FirebaseAuth? auth,
@@ -43,6 +64,7 @@ class PushNotificationService {
   StreamSubscription<RemoteMessage>? _openedAppSubscription;
   String? _registeredToken;
   bool _initialized = false;
+  bool _warnedAboutVapid = false;
 
   /// Set by the widget layer once a navigator is available. Called with the
   /// notification's type, targetId, and actorId whenever a push is tapped,
@@ -58,6 +80,18 @@ class PushNotificationService {
   Future<void> initialize() async {
     if (_initialized) return;
     _initialized = true;
+
+    // An unconfigured web build cannot register a token, so asking the
+    // browser for notification permission would spend the user's single
+    // prompt on a capability that cannot work — and browsers do not give
+    // it back. Nothing else in the notification system depends on this.
+    if (kIsWeb && webVapidKey.isEmpty) {
+      debugPrint(
+        'PushNotificationService: skipping web push setup — no VAPID key '
+        'in this build. In-app notifications are unaffected.',
+      );
+      return;
+    }
 
     try {
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
@@ -104,8 +138,7 @@ class PushNotificationService {
   /// account's push subscription active.
   Future<void> unregisterCurrentDevice() async {
     try {
-      final token =
-          _registeredToken ?? await FirebaseMessaging.instance.getToken();
+      final token = _registeredToken ?? await _currentToken();
       if (token != null && _auth.currentUser != null) {
         await _notificationService.unregisterFcmToken(token);
       }
@@ -124,7 +157,7 @@ class PushNotificationService {
   }
 
   Future<void> _registerCurrentToken() async {
-    final token = await FirebaseMessaging.instance.getToken();
+    final token = await _currentToken();
     if (token == null || _auth.currentUser == null) return;
     _registeredToken = token;
     try {
@@ -132,7 +165,50 @@ class PushNotificationService {
         token,
         platform: _platformName,
       );
-    } catch (_) {}
+    } catch (error) {
+      // A token that fails to persist means this device silently gets no
+      // push. That is worth saying out loud — the in-app activity feed
+      // is unaffected either way, so this is never fatal.
+      debugPrint(
+        'PushNotificationService: could not store the FCM token for this '
+        'device (${error.runtimeType}). Push will not reach it; in-app '
+        'notifications are unaffected.',
+      );
+    }
+  }
+
+  /// The device token, or null when this platform cannot produce one.
+  ///
+  /// On web `getToken()` REQUIRES the VAPID key. Calling it without one
+  /// is not a degraded path, it is a broken one: it throws, or hands
+  /// back something undeliverable. So an unconfigured web build does not
+  /// call it at all, says why once, and leaves the rest of the
+  /// notification system alone.
+  Future<String?> _currentToken() async {
+    if (kIsWeb && webVapidKey.isEmpty) {
+      if (!_warnedAboutVapid) {
+        _warnedAboutVapid = true;
+        debugPrint(
+          'PushNotificationService: web push is not configured — build '
+          'with --dart-define=YOVOICE_WEB_PUSH_VAPID_KEY=<public key> to '
+          'enable it. No token will be registered; the in-app activity '
+          'feed and badge are unaffected.',
+        );
+      }
+      return null;
+    }
+    try {
+      return kIsWeb
+          ? await FirebaseMessaging.instance.getToken(vapidKey: webVapidKey)
+          : await FirebaseMessaging.instance.getToken();
+    } catch (error) {
+      debugPrint(
+        'PushNotificationService: getToken failed (${error.runtimeType}). '
+        'This device will not receive push; in-app notifications are '
+        'unaffected.',
+      );
+      return null;
+    }
   }
 
   Future<void> _handleTokenRefresh(String token) async {
@@ -143,7 +219,13 @@ class PushNotificationService {
         token,
         platform: _platformName,
       );
-    } catch (_) {}
+    } catch (error) {
+      debugPrint(
+        'PushNotificationService: refreshed FCM token could not be stored '
+        '(${error.runtimeType}). This device may stop receiving push until '
+        'the next refresh; in-app notifications are unaffected.',
+      );
+    }
   }
 
   String get _platformName {
@@ -204,7 +286,14 @@ class PushNotificationService {
             '${message.data['type'] ?? ''}|${message.data['targetId'] ?? ''}'
             '|${message.data['actorId'] ?? ''}',
       );
-    } catch (_) {}
+    } catch (error) {
+      // Only the foreground re-display failed. The message itself was
+      // received and the activity document behind it is already stored.
+      debugPrint(
+        'PushNotificationService: could not present a foreground '
+        'notification (${error.runtimeType}).',
+      );
+    }
   }
 
   void _routeFromMessage(RemoteMessage message) {

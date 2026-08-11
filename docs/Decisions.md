@@ -2405,3 +2405,164 @@ where "I saw no reports of that kind" has to be true.
   cannot be what removes it.
 - Still no mobile moderation surface, and still no staff view of the
   broad audit log — deliberately.
+
+## ADR-041: Friend-request, acceptance and follow notifications are derived from their source documents by Firestore triggers, not written by the acting client
+
+**Status**: Accepted
+**Date**: 2026-08-12
+
+### Context
+
+A regression report said notifications were "completely non-functional".
+The investigation disproved the two obvious explanations before finding
+the real shape of the problem.
+
+*Not* stale rules: the deployed ruleset was read from the Firebase
+Console and its notification block is current — the create allowlist
+contains `bellSuppressed`, the friends-existence check is present, and
+the owner-update rule permits the legacy backfill. *Not* broken client
+logic either: running the real `FriendService`, `FollowService` and
+`NotificationService` against a fake backend produced exactly one
+correct document per event, and replaying the same payload against the
+rules emulator was accepted, readable by the recipient through both feed
+queries, and correctly deduped on retry.
+
+What the end-to-end reproduction did show is that all three
+notifications existed **only** as a second client write issued after the
+authoritative write, from inside `try { ... } catch (_) {}`. Three
+consequences follow from that shape, independent of any single bug:
+
+- the notification is not a consequence of the event, it is a
+  best-effort follow-up. Anything that stops the client between the two
+  writes — a denied rule, a dropped connection, a closed tab, a
+  navigation — loses it permanently, with no retry;
+- every failure is silent. No log, no counter, nothing to inspect. An
+  outage of this class can only be discovered by a human noticing that
+  something never arrived;
+- recipient, actor, type, timestamp and routing were all chosen by the
+  sender's client, so the rules had to carry real complexity trying to
+  make them unforgeable — and still could not verify the thing that
+  actually matters, such as whether a friendship exists at all.
+
+### Decision
+
+Derive all three from the documents that already are the authoritative
+record of the event:
+
+- `onFriendRequestCreated` — `users/{userId}/friendRequests/{senderId}`
+  created. The path carries both identities, so the recipient is the
+  path owner and the actor is the document id. Neither is supplied by a
+  caller.
+- `onFriendRequestResolved` — the same document **deleted**. The request
+  is removed on accept, decline and cancel alike; what separates them is
+  whether the friendship now exists, which the acceptance transaction
+  commits in the same batch. If it does, the original requester
+  (`senderId`) is told that the path owner accepted. If it does not, the
+  request was declined or cancelled and nothing is written. This also
+  covers the mutual-accept path in `sendFriendRequest` without a special
+  case.
+- `onFollowerCreated` — `users/{userId}/followers/{followerId}` created.
+
+All three write through the Admin SDK with server timestamps,
+`bellSuppressed: false`, a deterministic id (`friendRequest_{actor}`,
+`friendAccepted_{actor}`, `follow_{actor}`), and only public actor
+fields. `friendRequest`, `friendAccepted` and `follow` were removed from
+the client-creatable type list in `firestore.rules`.
+
+### Reasoning
+
+The trigger fires from the committed write and Cloud Functions retries
+it, so the notification survives everything that used to lose it. The
+deterministic id makes at-least-once delivery safe: a redelivery
+overwrites its own record instead of appending a second one, and a
+replayed source event is absorbed the same way.
+
+Deleting the request document is a better acceptance signal than a
+client-written marker: it needs no schema change, no client cooperation,
+and it cannot be produced by a decline, because a decline leaves no
+friendship behind. A client marker would have been one more field a
+client could get wrong or lie about.
+
+Removing the three types from the client allowlist is what closes the
+forgery hole. Rules cannot check whether a friendship exists before
+allowing "X accepted your friend request" — a trigger can, because it
+reads the friendship itself.
+
+### Consequences
+
+- **Deploy order is load-bearing**: the Functions must ship BEFORE the
+  rules change. Rules first would leave a window where the client is
+  denied and no trigger exists yet. This is written into DEPLOYMENT.md.
+- `FollowService` no longer takes a `NotificationService`; the two test
+  call sites that injected one were updated.
+- Client tests for these flows now assert the source documents and the
+  absence of a client-written notification; the notification itself is
+  proven against the real triggers in
+  `firestore-tests/notifications.smoke.js`.
+- Notification types still written by clients — club/room invites,
+  `directMessage`, `mention`, `reply` — keep the existing path and the
+  existing silent-catch weakness. Moving them is the obvious follow-up
+  and is not done here.
+- Push delivery is unaffected by this change and remains broken on web
+  for a separate reason: there is no `web/firebase-messaging-sw.js` and
+  `getToken()` is called without a `vapidKey`, so no web client ever
+  registers a token for `onNotificationCreated` to send to. Fixing that
+  needs a VAPID key, which is out of scope here.
+
+## ADR-042: The activity feed renders on its own terms, and web push fails closed without its key
+
+**Status**: Accepted
+**Date**: 2026-08-12
+
+### Context
+
+Two smaller findings from the same investigation as
+[ADR-041](#adr-041-friend-request-acceptance-and-follow-notifications-are-derived-from-their-source-documents-by-firestore-triggers-not-written-by-the-acting-client),
+both capable of making a working notification system look dead.
+
+The Notifications screen composes three streams — friend requests,
+conversations, and the activity feed. It treated them as equals: one
+`isLoading` covering all three, and one `hasError` across all three
+replacing the entire screen with "Could not load notifications". So a
+Chats-side permission error blanked the bell inbox, and one auxiliary
+stream stuck in `waiting` held the screen on a spinner indefinitely.
+
+Separately, web push could not work at all: no service worker existed,
+and `getToken()` was called with no `vapidKey`. It failed obscurely
+rather than saying so.
+
+### Decision
+
+- The **activity feed is canonical**; friend requests and unread
+  conversations are auxiliary. Only the feed decides the loading state,
+  and only a feed error that left nothing to render is fatal to the
+  screen. An auxiliary failure contributes an empty section plus a small
+  notice above the feed, which keeps rendering.
+- The feed's own error state is **retryable** and distinguishes a
+  permission denial from a connection failure.
+- Web push is **configuration-gated**: the VAPID public key comes from
+  `--dart-define=YOVOICE_WEB_PUSH_VAPID_KEY` and is absent from source.
+  With no key the app skips web push setup entirely rather than
+  half-attempting it.
+
+### Reasoning
+
+"Some of this screen is missing" is a true statement the user can act
+on. "Could not load notifications" when the notifications loaded fine is
+not, and it is worse than showing partial data.
+
+Skipping the permission request when the key is absent matters more than
+it looks: a browser grants that prompt once. Spending it on a capability
+that cannot work costs the user the chance to enable push later.
+
+### Consequences
+
+- `NotificationsScreen` gained optional service and `currentUserId`
+  parameters, used only by tests — the auxiliary streams have to be made
+  to fail on demand for either regression to be testable at all.
+- Production web builds ship with web push disabled until the define is
+  added to the Hosting workflow; DEPLOYMENT.md records where the key
+  comes from and where it goes.
+- Notification-path `catch (_) {}` blocks now log a bounded diagnostic
+  with no tokens, emails or message content. Behaviour is unchanged;
+  only the silence is gone.

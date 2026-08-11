@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 
@@ -143,8 +144,15 @@ class NotificationService {
     try {
       final unread = await own.where('isRead', isEqualTo: false).get();
       await _normalizeLegacyDocs(unread.docs);
-    } catch (_) {
-      // Best-effort — the merged feed still serves in-window legacy docs.
+    } on FirebaseException catch (error) {
+      // Best-effort — the merged feed still serves in-window legacy docs,
+      // so this degrades rather than failing. Still worth naming: a
+      // permanent denial here means legacy documents never gain the
+      // routing field and stay dependent on the base query's window.
+      debugPrint(
+        'NotificationService: legacy routing backfill skipped '
+        '(${error.code}).',
+      );
     }
   }
 
@@ -161,9 +169,13 @@ class NotificationService {
         batch.update(doc.reference, {'bellSuppressed': false});
       }
       await batch.commit();
-    } catch (_) {
+    } on FirebaseException catch (error) {
       // Best-effort — rules may lag a deploy; the base window still
       // renders these docs meanwhile.
+      debugPrint(
+        'NotificationService: could not stamp bellSuppressed onto '
+        '${missing.length} legacy document(s) (${error.code}).',
+      );
     }
   }
 

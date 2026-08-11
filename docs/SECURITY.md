@@ -240,6 +240,28 @@ callable. Full reasoning:
   field is read. The reporter's identity is not shown to the reported
   account or any ordinary client — reports are unreadable outside staff.
 
+## Social notification integrity
+
+`friendRequest`, `friendAccepted` and `follow` are no longer in the
+client-creatable notification type list. They are written by
+`onFriendRequestCreated`, `onFriendRequestResolved` and
+`onFollowerCreated` through the Admin SDK, from the authoritative source
+documents (ADR-041).
+
+What that closes: a client used to be able to write "X accepted your
+friend request" into someone's inbox with no friendship existing
+anywhere. Rules cannot check that — the relationship is a different
+document, and a create rule that reads it still cannot know which side
+accepted. The trigger reads the friendship directly, so the claim is
+verified rather than asserted.
+
+Recipient, actor, type and timestamp now all come from the document path
+and the server clock; none is caller-supplied. Only public profile
+fields (display name, photo) enter the payload — a Functions test
+asserts the exact key set and that no email, phone, role or preference
+data appears. Recipients may still only change `isRead`/`readAt`, and
+`fcmTokens` remain owner-scoped.
+
 ## Current status
 
 **No known critical open vulnerabilities.** A full audit found 13 issues

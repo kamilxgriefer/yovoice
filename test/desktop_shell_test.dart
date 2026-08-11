@@ -11,7 +11,6 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sideb
 import 'package:yovoice/features/home/presentation/widgets/desktop/followed_creators_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
-import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -681,14 +680,7 @@ void main() {
             onOpenCreator: onOpenCreator ?? (_) {},
             onViewAll: onViewAll ?? () {},
             onDiscover: onDiscover ?? () {},
-            followService: FollowService(
-              firestore: db,
-              auth: auth,
-              notificationService: NotificationService(
-                firestore: db,
-                auth: auth,
-              ),
-            ),
+            followService: FollowService(firestore: db, auth: auth),
             feedService: HomeFeedService(firestore: db, auth: auth),
             roomService: RoomService(firestore: db, auth: auth),
           ),

@@ -405,8 +405,20 @@ service cloud.firestore {
         allow create: if isSignedIn() &&
             request.auth.uid == request.resource.data.actorId &&
             request.resource.data.actorId != userId &&
+            // friendRequest / friendAccepted / follow are NOT here any
+            // more. They are derived from their authoritative source
+            // documents by onFriendRequestCreated,
+            // onFriendRequestResolved and onFollowerCreated, which write
+            // through the Admin SDK and bypass these rules (ADR-041).
+            // Leaving them client-creatable would mean a client could
+            // still forge "X accepted your friend request" without any
+            // friendship existing — the rules cannot check that, but the
+            // trigger can, because it reads the friendship itself.
+            //
+            // DEPLOY ORDER MATTERS: ship the Functions before these
+            // rules. Rules first would leave a window where the client
+            // is denied and no trigger exists yet.
             request.resource.data.type in [
-              'friendRequest', 'friendAccepted', 'follow',
               'clubInvite', 'clubInviteAccepted',
               'roomInvite', 'broadcastInvite',
               'directMessage', 'mention', 'reply',

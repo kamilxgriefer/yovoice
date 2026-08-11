@@ -8,12 +8,19 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 
-/// Regression suite for the P0 friend-request notification lifecycle:
-/// request created → notification to recipient; request ACCEPTED →
-/// notification to the ORIGINAL SENDER (this was the broken direction);
-/// no redundant "you accepted" notification for the acceptor; retries
-/// cannot duplicate the acceptance notification; the resolved request
-/// notification is retired instead of lingering as actionable.
+/// The friend-request notification lifecycle, CLIENT side.
+///
+/// Since ADR-041 the client does not write these notifications at all:
+/// onFriendRequestCreated and onFriendRequestResolved derive them from
+/// the documents these methods commit. So what belongs here is the
+/// client's half of the contract — that it writes the authoritative
+/// source documents the triggers key on, in the right places, and that
+/// it does NOT write a notification of its own (which rules now refuse
+/// anyway, and which used to fail silently).
+///
+/// The notification itself is proven end-to-end against the real
+/// triggers in functions/test/social_notifications.smoke.js, and the
+/// trigger logic in functions/test/social_notifications.test.js.
 void main() {
   const senderUid = 'alice-uid';
   const acceptorUid = 'bob-uid';
@@ -57,7 +64,8 @@ void main() {
     await seedUsers();
   });
 
-  test('sending a request notifies the recipient, not the sender', () async {
+  test('sending a request commits the source document the trigger keys '
+      'on, under the RECIPIENT, and writes no notification itself', () async {
     final alice = serviceFor(senderUid, 'alice@yovoice.app', 'Alice');
     await alice.sendFriendRequest(
       const FriendUser(
@@ -70,16 +78,35 @@ void main() {
       ),
     );
 
-    final bobFeed = await notificationsOf(acceptorUid);
-    expect(bobFeed, hasLength(1));
-    expect(bobFeed.single['type'], NotificationType.friendRequest.name);
-    expect(bobFeed.single['actorId'], senderUid);
+    // onFriendRequestCreated fires on users/{recipient}/friendRequests/
+    // {sender}: the path itself carries both identities, which is why
+    // neither can be spoofed by the caller.
+    final request = await db
+        .collection('users')
+        .doc(acceptorUid)
+        .collection('friendRequests')
+        .doc(senderUid)
+        .get();
+    expect(request.exists, isTrue);
+    expect(request.data()!['senderId'], senderUid);
+
+    // And the mirror the sender uses to see their own outgoing request.
+    final sent = await db
+        .collection('users')
+        .doc(senderUid)
+        .collection('sentFriendRequests')
+        .doc(acceptorUid)
+        .get();
+    expect(sent.exists, isTrue);
+
+    // No client-written notification on either side.
+    expect(await notificationsOf(acceptorUid), isEmpty);
     expect(await notificationsOf(senderUid), isEmpty);
   });
 
   test(
-    'accepting notifies the ORIGINAL SENDER with the acceptor as actor, '
-    'and the acceptor gets no redundant self-notification',
+    'accepting commits the friendship AND removes the request, which is '
+    'exactly what tells onFriendRequestResolved it was an acceptance',
     () async {
       final alice = serviceFor(senderUid, 'alice@yovoice.app', 'Alice');
       await alice.sendFriendRequest(
@@ -104,33 +131,34 @@ void main() {
         ),
       );
 
-      // The original sender's feed now holds the acceptance, attributed
-      // to the acceptor — with real display data so the UI can show
-      // "[Name] accepted your friend request."
-      final aliceFeed = await notificationsOf(senderUid);
-      final accepted = aliceFeed
-          .where((n) => n['type'] == NotificationType.friendAccepted.name)
-          .toList();
-      expect(accepted, hasLength(1), reason: 'sender must be notified once');
-      expect(accepted.single['actorId'], acceptorUid);
-      expect(accepted.single['actorName'], 'Bob');
+      // Both halves of the friendship exist...
+      for (final pair in [
+        [senderUid, acceptorUid],
+        [acceptorUid, senderUid],
+      ]) {
+        final friend = await db
+            .collection('users')
+            .doc(pair[0])
+            .collection('friends')
+            .doc(pair[1])
+            .get();
+        expect(friend.exists, isTrue, reason: '${pair[0]} -> ${pair[1]}');
+      }
 
-      // The acceptor's own feed must NOT contain an acceptance echo.
-      final bobFeed = await notificationsOf(acceptorUid);
-      expect(
-        bobFeed.where(
-          (n) => n['type'] == NotificationType.friendAccepted.name,
-        ),
-        isEmpty,
-        reason: 'no redundant "you accepted" notification',
-      );
+      // ...and the request document is gone. The trigger distinguishes
+      // accept from decline precisely by whether the friendship exists
+      // once this document disappears.
+      final request = await db
+          .collection('users')
+          .doc(acceptorUid)
+          .collection('friendRequests')
+          .doc(senderUid)
+          .get();
+      expect(request.exists, isFalse);
 
-      // The now-resolved friendRequest notification is retired (read),
-      // so it no longer lingers as an actionable item.
-      final request = bobFeed.singleWhere(
-        (n) => n['type'] == NotificationType.friendRequest.name,
-      );
-      expect(request['isRead'], isTrue);
+      // Still nothing client-written in either feed.
+      expect(await notificationsOf(senderUid), isEmpty);
+      expect(await notificationsOf(acceptorUid), isEmpty);
     },
   );
 
@@ -150,7 +178,9 @@ void main() {
         ),
       );
 
-      // Same dedupeKey the production acceptFriendRequest passes.
+      // The deterministic id onFriendRequestResolved writes under. The
+      // mechanism is unchanged by ADR-041 — only the writer moved — so
+      // this still pins "a replay lands on the same document".
       const dedupeKey = 'friendAccepted_$acceptorUid';
       await bobNotifications.notify(
         recipientId: senderUid,

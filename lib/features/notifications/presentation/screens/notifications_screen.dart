@@ -13,12 +13,31 @@ import 'package:yovoice/features/notifications/data/services/notification_servic
 import 'package:yovoice/features/notifications/presentation/notification_router.dart';
 
 class NotificationsScreen extends StatefulWidget {
-  const NotificationsScreen({this.isRootTab = false, super.key});
+  const NotificationsScreen({
+    this.isRootTab = false,
+    this.friendService,
+    this.messageService,
+    this.notificationService,
+    this.currentUserId,
+    super.key,
+  });
 
   /// True when this screen IS the shell's current content (the desktop
   /// rail's Notifications slot) rather than a pushed route — same flag
   /// FriendsScreen uses, so a root tab shows no dead back button.
   final bool isRootTab;
+
+  /// Injectable for tests only — production passes nothing and each
+  /// service resolves its own Firebase instances, exactly as before.
+  /// The activity feed's independence from the two auxiliary streams is
+  /// only testable if those streams can be made to fail on demand.
+  final FriendService? friendService;
+  final MessageService? messageService;
+  final NotificationService? notificationService;
+
+  /// Test-only, for the same reason as the services above: reading it
+  /// from FirebaseAuth needs an initialised Firebase app.
+  final String? currentUserId;
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -31,9 +50,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   static const Color _secondaryText = Color(0xFF9D95AD);
   static const Color _primary = Color(0xFFB348FF);
 
-  final FriendService _friendService = FriendService();
-  final MessageService _messageService = MessageService();
-  final NotificationService _notificationService = NotificationService();
+  late final FriendService _friendService =
+      widget.friendService ?? FriendService();
+  late final MessageService _messageService =
+      widget.messageService ?? MessageService();
+  late final NotificationService _notificationService =
+      widget.notificationService ?? NotificationService();
 
   late final Stream<List<FriendRequest>> _friendRequestsStream;
   late final Stream<List<Conversation>> _conversationsStream;
@@ -41,7 +63,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   final Set<String> _processingRequestIds = <String>{};
   int _notificationsLimit = 50;
 
-  String get _currentUserId => FirebaseAuth.instance.currentUser?.uid ?? '';
+  String get _currentUserId =>
+      widget.currentUserId ?? FirebaseAuth.instance.currentUser?.uid ?? '';
 
   @override
   void initState() {
@@ -259,18 +282,23 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 limit: _notificationsLimit,
               ),
               builder: (context, notificationSnapshot) {
-                final isLoading =
-                    (friendSnapshot.connectionState ==
-                            ConnectionState.waiting &&
-                        !friendSnapshot.hasData) ||
-                    (conversationSnapshot.connectionState ==
-                            ConnectionState.waiting &&
-                        !conversationSnapshot.hasData) ||
-                    (notificationSnapshot.connectionState ==
-                            ConnectionState.waiting &&
-                        !notificationSnapshot.hasData);
+                // The ACTIVITY FEED is the canonical content of this
+                // screen. Friend requests and unread conversations are
+                // auxiliary sections rendered alongside it, and neither
+                // may decide whether the feed appears.
+                //
+                // Both used to. `isLoading` waited on all three streams,
+                // so one auxiliary stream stuck in `waiting` held the
+                // whole screen on a spinner; and a single `hasError`
+                // across all three replaced everything — including
+                // already-loaded activity — with one error state. A
+                // Chats-side permission error blanked the bell inbox.
+                final feedLoading =
+                    notificationSnapshot.connectionState ==
+                        ConnectionState.waiting &&
+                    !notificationSnapshot.hasData;
 
-                if (isLoading) {
+                if (feedLoading) {
                   return const Center(
                     child: CircularProgressIndicator(
                       strokeWidth: 2.5,
@@ -279,20 +307,38 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   );
                 }
 
-                if (friendSnapshot.hasError ||
-                    conversationSnapshot.hasError ||
-                    notificationSnapshot.hasError) {
-                  return const _EmptyState(
-                    icon: Icons.error_outline_rounded,
-                    title: 'Could not load notifications',
-                    subtitle:
-                        'Check your connection and Firestore permissions.',
+                // Only a failure of the feed itself is fatal to the
+                // screen, and only when it left nothing to show.
+                if (notificationSnapshot.hasError &&
+                    !notificationSnapshot.hasData) {
+                  final denied = notificationSnapshot.error
+                      .toString()
+                      .toLowerCase()
+                      .contains('permission');
+                  return _EmptyState(
+                    icon: denied
+                        ? Icons.lock_outline_rounded
+                        : Icons.error_outline_rounded,
+                    title: 'Could not load your activity',
+                    subtitle: denied
+                        ? 'This account is not allowed to read its activity '
+                              'feed. Sign out and back in to refresh it.'
+                        : 'Check your connection and try again.',
+                    onRetry: () => setState(() {}),
                   );
                 }
 
-                final requests = friendSnapshot.data ?? const <FriendRequest>[];
-                final conversations =
-                    conversationSnapshot.data ?? const <Conversation>[];
+                // An auxiliary stream that failed contributes nothing and
+                // says so in its own section, rather than taking the
+                // screen down with it.
+                final requests = friendSnapshot.hasError
+                    ? const <FriendRequest>[]
+                    : friendSnapshot.data ?? const <FriendRequest>[];
+                final conversations = conversationSnapshot.hasError
+                    ? const <Conversation>[]
+                    : conversationSnapshot.data ?? const <Conversation>[];
+                final auxiliaryFailed =
+                    friendSnapshot.hasError || conversationSnapshot.hasError;
                 final notifications =
                     notificationSnapshot.data ?? const <AppNotification>[];
                 final unreadConversations = conversations
@@ -308,7 +354,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
                 if (requests.isEmpty &&
                     unreadConversations.isEmpty &&
-                    notifications.isEmpty) {
+                    notifications.isEmpty &&
+                    !auxiliaryFailed) {
                   return const _EmptyState(
                     icon: Icons.notifications_none_rounded,
                     title: 'You are all caught up',
@@ -321,6 +368,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 return ListView(
                   padding: const EdgeInsets.fromLTRB(18, 10, 18, 32),
                   children: [
+                    if (auxiliaryFailed) ...[
+                      const _DegradedNotice(),
+                      const SizedBox(height: 12),
+                    ],
                     if (requests.isNotEmpty) ...[
                       _SectionHeader(
                         title: 'Friend requests',
@@ -884,16 +935,57 @@ class _AvatarInitial extends StatelessWidget {
   }
 }
 
+/// Shown when an AUXILIARY section could not load. The activity feed
+/// itself is fine and stays on screen — this says which part is missing
+/// rather than pretending the page is complete.
+class _DegradedNotice extends StatelessWidget {
+  const _DegradedNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: const Color(0xFF12101D),
+        border: Border.all(color: const Color(0xFF2C253B)),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.cloud_off_rounded, size: 16, color: Color(0xFF9D95AD)),
+          SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              'Friend requests and unread messages could not be loaded. '
+              'Your activity below is up to date.',
+              style: TextStyle(
+                color: Color(0xFF9D95AD),
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _EmptyState extends StatelessWidget {
   const _EmptyState({
     required this.icon,
     required this.title,
     required this.subtitle,
+    this.onRetry,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
+
+  /// Present only on the feed's own error state, so a failure the user
+  /// can do something about is retryable instead of terminal.
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -938,6 +1030,20 @@ class _EmptyState extends StatelessWidget {
                 height: 1.45,
               ),
             ),
+            if (onRetry != null) ...[
+              const SizedBox(height: 14),
+              TextButton(
+                onPressed: onRetry,
+                child: const Text(
+                  'Try again',
+                  style: TextStyle(
+                    color: _NotificationsScreenState._primary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),

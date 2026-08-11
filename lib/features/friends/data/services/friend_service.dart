@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show debugPrint;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -278,7 +277,7 @@ class FriendService {
         .collection('friendRequests')
         .doc(receiver.id);
 
-    final mutualAccept = await _firestore.runTransaction<bool>((tx) async {
+    await _firestore.runTransaction<bool>((tx) async {
       final snapshots = await Future.wait([
         tx.get(myFriend),
         tx.get(outgoing),
@@ -331,18 +330,12 @@ class FriendService {
       return false;
     });
 
-    try {
-      await _notifications.notify(
-        recipientId: receiver.id,
-        type: mutualAccept
-            ? NotificationType.friendAccepted
-            : NotificationType.friendRequest,
-        dedupeKey: mutualAccept ? null : 'friendRequest:${sender.uid}',
-      );
-    } catch (_) {
-      // Best-effort: the friend request/friendship itself already
-      // succeeded above, a notification failure shouldn't undo that.
-    }
+    // No notification is written here on purpose. It is derived from the
+    // documents this transaction just committed, by
+    // onFriendRequestCreated (a new request) or onFriendRequestResolved
+    // (the mutual-accept path, where the incoming request was deleted
+    // and a friendship now exists) — see ADR-041. A second client write
+    // could be lost between the two, and used to be, silently.
   }
 
   Future<void> cancelFriendRequest(String receiverId) async {
@@ -386,20 +379,10 @@ class FriendService {
       tx.delete(senderDoc.collection('sentFriendRequests').doc(me.uid));
     });
 
-    // Notify the ORIGINAL SENDER their request was accepted. Deterministic
-    // dedupe id: re-accepting (double-tap, retry) can't duplicate it.
-    // Failures no longer vanish into a silent catch — the acceptance
-    // itself must still succeed, but the miss is logged for diagnosis.
-    try {
-      await _notifications.notify(
-        recipientId: request.senderId,
-        type: NotificationType.friendAccepted,
-        dedupeKey: 'friendAccepted_${me.uid}',
-      );
-    } catch (error) {
-      debugPrint('[NOTIFY] friendAccepted to ${request.senderId} failed: '
-          '${error.runtimeType}');
-    }
+    // The original sender is told by onFriendRequestResolved, which fires
+    // on the request document this transaction deleted and confirms the
+    // friendship exists before writing anything — so a decline can never
+    // masquerade as an acceptance (ADR-041).
 
     // The acceptor's own "sent you a friend request" notification is now
     // resolved — retire it so it doesn't linger as an actionable item.

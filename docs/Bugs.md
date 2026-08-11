@@ -49,6 +49,39 @@ permission flags).
   until production room documents are confirmed migrated to `broadcast`.
   See [ADR-001](Decisions.md#adr-001-legacy-podcast-room-experience-stays-supported).
 
+## Notifications
+
+- **FIXED — friend requests, acceptances and follows could silently
+  produce no notification.** All three were a second client write issued
+  after the authoritative write, inside `try { ... } catch (_) {}`. Any
+  interruption between the two writes lost the notification permanently
+  and reported nothing. They are now derived from their source documents
+  by `onFriendRequestCreated`, `onFriendRequestResolved` and
+  `onFollowerCreated` (ADR-041), which Cloud Functions retries.
+  **Needs the Functions deploy to take effect in production.**
+- **FIXED — clients could forge these three notification types.** A
+  client could write "X accepted your friend request" with no friendship
+  existing; rules cannot check that. The three types were removed from
+  the client-creatable list, and the trigger reads the friendship itself.
+- **PARTLY FIXED — web push.** The service worker
+  (`web/firebase-messaging-sw.js`) now exists and ships in the build, and
+  `getToken()` passes a `vapidKey` from
+  `--dart-define=YOVOICE_WEB_PUSH_VAPID_KEY`. **Still blocked on the key
+  itself**, which is a per-project configuration value and deliberately
+  not in the repository. Without it the app now skips web push setup
+  entirely — no permission prompt spent, no `getToken()` call, no empty
+  token written, one clear log line — instead of failing obscurely.
+  Unverified until someone supplies the key and tests in a real browser.
+- **FIXED — the Notifications screen collapsed on an unrelated failure.**
+  It returned one "Could not load notifications" state if ANY of three
+  streams errored, including the unrelated conversations stream, and
+  spun while any one was still loading. Loading and fatal errors now
+  depend on the activity feed alone; an auxiliary failure degrades to a
+  small notice above the feed, which keeps rendering.
+- **OPEN — remaining client-written notification types still fail
+  silently.** Club/room invites, `directMessage`, `mention` and `reply`
+  keep the old best-effort path.
+
 ## Moderation & safety
 
 - **Production is running a client that is ahead of its backend.**

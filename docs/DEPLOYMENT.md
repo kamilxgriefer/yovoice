@@ -186,7 +186,7 @@ firebase hosting:channel:list --project yovoice-ec54a
 | `listReportAuditTrail` | **Not deployed** | new in this commit |
 | `setUserBan` | Deployed, but **source changed** (token revocation on ban) | in `functions:list`; source diff in `24353d4` |
 | `reports` + `adminAuditLogs` indexes | **None deployed** | `firestore.indexes` returns only `notifications` and `rooms` |
-| `firestore.rules` | **Unverified from the CLI** | there is no read-only rules-fetch command; check Console → Firestore → Rules before deploying |
+| `firestore.rules` | **`24353d4`-era IS deployed; `1e76d36`+ is NOT** | read from Console → Firestore → Rules on 2026-08-12: `globalChat` and `reportLimits` present, `isActiveStaff` absent. There is still no read-only CLI command — the Console is the only way to check. |
 
 Two consequences worth stating plainly, because they are live now:
 
@@ -212,6 +212,9 @@ undeployed milestones are covered:
 | `listReportAuditTrail` | new export, never deployed | `functions/moderation/report_audit.js` (this commit) |
 | `onGlobalMessageModerated` | deployed, but its module changed | `functions/moderation/global_chat.js` (`24353d4`) |
 | `setUserBan` | deployed, but now revokes refresh tokens on ban | `functions/admin/users.js` (`24353d4`) |
+| `onFriendRequestCreated` | new export — friend-request notifications do not exist without it | `functions/notifications/social.js` (ADR-041) |
+| `onFriendRequestResolved` | new export — acceptance notifications do not exist without it | `functions/notifications/social.js` (ADR-041) |
+| `onFollowerCreated` | new export — follow notifications do not exist without it | `functions/notifications/social.js` (ADR-041) |
 
 `functions/utils/audit.js` also changed — `writeAuditLog` gained an
 optional `entryId` for deterministic, replay-safe audit ids. Its other
@@ -225,8 +228,21 @@ Deploy them by name. A blanket `--only functions` would also redeploy 29
 functions that did not change:
 
 ```bash
-firebase deploy --only functions:onGlobalMessageModerated,functions:setUserBan,functions:moderateReport,functions:listReportAuditTrail --project yovoice-ec54a
+firebase deploy --only functions:onGlobalMessageModerated,functions:setUserBan,functions:moderateReport,functions:listReportAuditTrail,functions:onFriendRequestCreated,functions:onFriendRequestResolved,functions:onFollowerCreated --project yovoice-ec54a
 ```
+
+All three notification triggers are v2 Firestore document triggers,
+`europe-west1`, nodejs22, matching every other function in the project.
+They are additive: deploying them before the client is safe, because the
+client no longer writes these notifications and the triggers do not
+depend on any client change.
+
+**The one ordering constraint that can cause an outage**: the rules
+change in this milestone REMOVES `friendRequest`, `friendAccepted` and
+`follow` from the client-creatable notification types. Deploying rules
+before the Functions would leave a window in which the client is denied
+and no trigger exists yet — no social notifications at all. Functions
+first, always.
 
 ### Firestore indexes
 
@@ -258,8 +274,11 @@ where nothing records them.
 #    Indexes and wait for Enabled before step 4.
 firebase deploy --only firestore:indexes --project yovoice-ec54a
 
-# 2. The audit trigger, so a removal can never be unlogged.
-firebase deploy --only functions:onGlobalMessageModerated --project yovoice-ec54a
+# 2. The audit trigger, so a removal can never be unlogged, plus the
+#    three social notification triggers. These MUST precede the rules
+#    deploy in step 3, which withdraws the client's ability to write
+#    those notification types.
+firebase deploy --only functions:onGlobalMessageModerated,functions:onFriendRequestCreated,functions:onFriendRequestResolved,functions:onFollowerCreated --project yovoice-ec54a
 
 # 3. Rules: staff read access to `reports`, the create-only report path,
 #    and `adminAuditLogs` denied to every client.
@@ -310,6 +329,36 @@ Reversible by redeploying the previous revision from git history:
 
 Removing an index is safe but not instant to rebuild; removing a
 Function only makes its clients fail, it destroys nothing.
+
+## Web push configuration (required before web push works)
+
+`web/firebase-messaging-sw.js` is in the repository and is copied into
+`build/web` by `flutter build web`. The remaining prerequisite is the
+**VAPID public key**, which is not in the repository on purpose:
+
+- **Where to get it**: Firebase Console → Project settings → Cloud
+  Messaging → Web configuration → *Web Push certificates*. Use the
+  **public** key of the key pair.
+- **Where to supply it**: as a build-time define, so it never lands in
+  source:
+
+```bash
+flutter build web --release --dart-define=YOVOICE_WEB_PUSH_VAPID_KEY=THE_PUBLIC_KEY
+```
+
+  The Hosting CI workflow builds without it today, so **production web
+  builds currently ship with web push disabled**. Adding it means adding
+  the define to `.github/workflows/firebase-hosting-merge.yml`, with the
+  value stored as a repository secret.
+- **Behaviour without it**: the app skips web push setup entirely — it
+  does not request notification permission (a browser only grants that
+  prompt once), does not call `getToken()`, and writes no token. It logs
+  one line saying why. The in-app activity feed, badge, iOS and Android
+  push are all unaffected.
+
+Android and iOS need nothing new: the default notification channel is
+declared in `AndroidManifest.xml`, and `remote-notification` is already
+in the iOS `UIBackgroundModes`.
 
 ## App Check rollout (not enabled — staged plan)
 

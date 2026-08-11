@@ -493,7 +493,6 @@ class _PreviewApp extends StatelessWidget {
                     followService: FollowService(
                       firestore: db,
                       auth: auth,
-                      notificationService: notifications,
                     ),
                     feedService: HomeFeedService(firestore: db, auth: auth),
                     roomService: rooms,

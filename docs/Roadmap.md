@@ -16,6 +16,20 @@ someone decide what to pick up next.
 
 ## Done
 
+- Server-derived social notifications (2026-08-12): friend requests,
+  acceptances and follows are no longer a best-effort second client
+  write. Three Firestore triggers derive them from the authoritative
+  documents, with deterministic ids so an at-least-once redelivery
+  cannot duplicate a row, and the three types were removed from the
+  client-creatable set so they can no longer be forged. Proven
+  end-to-end through the real triggers in the emulator: 13 pipeline
+  stages, from the source write to the recipient's bell feed and unread
+  badge. 224 Flutter tests, 173 rules tests, 65 Functions tests.
+  **Needs a Functions deploy, then the rules deploy, in that order**
+  ([ADR-041](Decisions.md#adr-041-friend-request-acceptance-and-follow-notifications-are-derived-from-their-source-documents-by-firestore-triggers-not-written-by-the-acting-client)).
+  Web push remains broken for a separate, documented reason, and
+  `@mentions` are not started.
+
 - Moderation Center completion pass (2026-08-11): each report now shows
   its own moderation history, served by a new scoped
   `listReportAuditTrail` callable rather than the broad

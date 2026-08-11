@@ -799,13 +799,16 @@ async function main() {
   // --- Notifications (users/{userId}/notifications/{notificationId}) ---
 
   await check(
-    "regression: an actor can write a notification into someone else's inbox",
+    "regression: an actor can write a still-client-creatable notification " +
+      "into someone else's inbox",
     async () => {
       const db = host.firestore();
       const ref = doc(db, "users/invitee-uid/notifications/notif-1");
       await assertSucceeds(
         setDoc(ref, {
-          type: "friendRequest",
+          // friendRequest/friendAccepted/follow are server-derived now
+          // (ADR-041); clubInvite is still a legitimate client write.
+          type: "clubInvite",
           actorId: "host-uid",
           actorName: "Host",
           actorPhotoUrl: null,
@@ -1512,28 +1515,72 @@ async function main() {
     },
   );
 
-  await check(
-    "friendAccepted notification: acceptor can write it into the " +
-      "sender's feed with the exact payload notify() sends",
-    async () => {
-      await assertSucceeds(
-        setDoc(
-          doc(
-            host.firestore(),
-            "users/invitee-uid/notifications/friendAccepted_host-uid",
+  // The three social notification types moved to server triggers
+  // (ADR-041). A client writing one is now, by definition, a forgery:
+  // rules cannot verify that a friendship or a follow edge exists, but
+  // the trigger reads the authoritative document and can.
+  for (const forged of ["friendRequest", "friendAccepted", "follow"]) {
+    await check(
+      `SECURITY: a client cannot write a '${forged}' notification — it is ` +
+        "server-derived",
+      async () => {
+        await assertFails(
+          setDoc(
+            doc(
+              host.firestore(),
+              `users/invitee-uid/notifications/${forged}_host-uid`,
+            ),
+            {
+              type: forged,
+              actorId: "host-uid",
+              actorName: "Host",
+              actorPhotoUrl: null,
+              targetId: null,
+              targetLabel: null,
+              isRead: false,
+              createdAt: new Date(),
+              dedupeKey: null,
+              bellSuppressed: false,
+            },
           ),
-          {
-            type: "friendAccepted",
-            actorId: "host-uid",
-            actorName: "Host",
-            actorPhotoUrl: null,
-            targetId: null,
-            targetLabel: null,
-            isRead: false,
-            createdAt: new Date(),
-            dedupeKey: null,
-          },
-        ),
+        );
+      },
+    );
+  }
+
+  await check(
+    "a recipient can still acknowledge a server-written social " +
+      "notification, and only through the safe fields",
+    async () => {
+      const path = "users/invitee-uid/notifications/follow_host-uid";
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), path), {
+          type: "follow",
+          actorId: "host-uid",
+          actorName: "Host",
+          actorPhotoUrl: null,
+          targetId: null,
+          targetLabel: null,
+          isRead: false,
+          createdAt: new Date(),
+          dedupeKey: "follow_host-uid",
+          bellSuppressed: false,
+        });
+      });
+      // The owner may mark it read...
+      await assertSucceeds(
+        updateDoc(doc(invitee.firestore(), path), {
+          isRead: true,
+          readAt: new Date(),
+        }),
+      );
+      // ...but may not rewrite who it came from.
+      await assertFails(
+        updateDoc(doc(invitee.firestore(), path), { actorId: "someone-else" }),
+      );
+      // ...and a third party cannot touch it at all.
+      await assertFails(
+        updateDoc(doc(attacker.firestore(), path), { isRead: true }),
       );
     },
   );
