@@ -53,6 +53,32 @@ class ClubChatService {
         );
   }
 
+  /// The single newest message in a channel, or null when the channel has
+  /// never been used.
+  ///
+  /// Club chat has no denormalised "last message" on the club document —
+  /// previews have to come from the messages themselves. [watchMessages]
+  /// would pull 250 documents per club to render one preview line, so
+  /// conversation-list surfaces (the desktop Conversations hub) use this
+  /// instead: the same collection and the same ordering, limited to one.
+  Stream<ClubMessage?> watchLatestMessage({
+    required String clubId,
+    required String channelId,
+  }) {
+    return _messages(clubId: clubId, channelId: channelId)
+        .orderBy('sentAt', descending: true)
+        .limit(1)
+        .snapshots()
+        .map((snapshot) {
+          if (snapshot.docs.isEmpty) return null;
+          return ClubMessage.fromFirestore(
+            clubId: clubId,
+            channelId: channelId,
+            document: snapshot.docs.first,
+          );
+        });
+  }
+
   Future<void> sendTextMessage({
     required String clubId,
     required String channelId,

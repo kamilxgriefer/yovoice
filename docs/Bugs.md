@@ -51,6 +51,25 @@ permission flags).
 
 ## UI
 
+- **Fixed (2026-08-10): the web app's browser tab showed the YO Voice
+  mark inside a solid black square** while the landing page's tab showed
+  the clean transparent one. Not a CSS or padding problem — the icon
+  files themselves were RealFaviconGenerator output built from a version
+  of the artwork with the square baked in, 100% opaque at every size
+  (`web/favicon.ico`, `favicon-96x96.png`, `apple-touch-icon.png`,
+  `web-app-manifest-*.png`). All of them are now straight downscales of
+  the marketing site's canonical transparent icon
+  (`yovoice-website/src/app/icon.png`), so both tabs render the same
+  mark at the same scale and padding. `favicon.svg` (a 1.6 MB traced
+  raster), `favicon.zip`, `favicon.png` and the unreferenced
+  `flutter create` `manifest.json` + `icons/Icon-*.png` were deleted with
+  them. `test/web_favicon_test.dart` decodes each PNG's corner pixel and
+  fails if an opaque one ever comes back; `web/README.md` documents how
+  to regenerate. **Needs a Flutter web deploy to reach production** —
+  the `?v=2` links and the Hosting `no-cache` header on the icon
+  filenames are what stop the cached black-square version from surviving
+  it.
+
 - **Fixed (P1, 2026-08-09): room rosters, members and chat messages
   wrote STALE identity (FirebaseAuth displayName/photoURL) instead of
   the canonical profile.** FirebaseAuth's cached identity is not updated

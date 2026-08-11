@@ -7,6 +7,12 @@ import 'package:yovoice/core/helpers/error_messages.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
+import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/followed_creators_card.dart';
+import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
+import 'package:yovoice/features/profile/data/models/follow_user.dart';
+import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
@@ -162,12 +168,63 @@ class _MainShellState extends State<MainShell>
     ),
   );
 
+  /// Desktop Home. Every tab-level destination below goes through
+  /// [_onDestinationSelected] — the same content-slot swap the rail
+  /// uses, so the sidebar and profile card never rebuild. The three that
+  /// push (a room, a chat, a club) are the flows that already own a
+  /// full-screen route everywhere else in the app.
   Widget get _desktopHome => DesktopHome(
+    currentUserId: _currentUserId,
     onOpenRoom: (room) => unawaited(_openRoom(room)),
     onSeeAllRooms: () => _onDestinationSelected(_discoverSlot),
     onViewAllFriends: () => _onDestinationSelected(2),
     onStartRoom: () => unawaited(_openCreateRoom()),
+    onOpenMoment: (moment) => unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => MomentCommentsScreen(moment: moment),
+        ),
+      ),
+    ),
+    onCreateMoment: () => unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => const RecordVoiceMomentScreen(),
+        ),
+      ),
+    ),
+    onSeeAllMoments: () =>
+        unawaited(_openMoreDestination(MoreDestination.moments)),
+    onOpenConversation: (conversation) =>
+        unawaited(_openConversation(conversation)),
+    onOpenClub: (club) => unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ClubOverviewScreen(clubId: club.id),
+        ),
+      ),
+    ),
+    onSeeAllChats: () => _onDestinationSelected(1),
+    onOpenClubs: () => unawaited(_openMoreDestination(MoreDestination.clubs)),
   );
+
+  /// Opens an existing conversation in the existing ChatScreen — the same
+  /// arguments the Chats screen passes, so read receipts, presence and
+  /// permissions behave identically wherever a chat is opened from.
+  Future<void> _openConversation(Conversation conversation) async {
+    final otherUserId = conversation.otherUserId(_currentUserId);
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ChatScreen(
+          conversationId: conversation.id,
+          otherUserId: otherUserId,
+          otherDisplayName: conversation.displayNameFor(otherUserId),
+          otherEmail: conversation.emailFor(otherUserId),
+          otherPhotoUrl: conversation.photoUrlFor(otherUserId),
+        ),
+      ),
+    );
+  }
 
   /// Entering a room is the existing full-screen room flow (identical to
   /// every other entry point); Home's own navigation never pushes.
@@ -651,6 +708,7 @@ class _MainShellState extends State<MainShell>
                   // desktop reference.
                   if (_selectedIndex == 0)
                     _DesktopRightColumn(
+                      currentUserId: _currentUserId,
                       onOpenRoom: (room) => unawaited(
                         Navigator.of(context).push<void>(
                           MaterialPageRoute<void>(
@@ -665,6 +723,24 @@ class _MainShellState extends State<MainShell>
                         Navigator.of(context).push<void>(
                           MaterialPageRoute<void>(
                             builder: (_) => const PremiumScreen(),
+                          ),
+                        ),
+                      ),
+                      onOpenCreator: (creator) => unawaited(
+                        showProfilePreview(
+                          context,
+                          userId: creator.uid,
+                          displayName: creator.displayName,
+                          photoUrl: creator.photoUrl,
+                        ),
+                      ),
+                      onViewAllCreators: () => unawaited(
+                        Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(
+                            builder: (_) => FollowListScreen(
+                              userId: _currentUserId,
+                              type: FollowListType.following,
+                            ),
                           ),
                         ),
                       ),
@@ -706,19 +782,29 @@ class _MainShellState extends State<MainShell>
   }
 }
 
-/// Home's desktop right column: Voice Trending over the top, the Premium
-/// card beneath — both scroll together so a short window never clips the
-/// CTA.
+/// Home's desktop right column: Voice Trending, the Premium card, then
+/// the creators this account already follows — all scrolling together so
+/// a short window never clips the bottom of the rail.
+///
+/// The order is deliberate: what is loud right now (Trending), the offer
+/// (Premium, unchanged), then who this person specifically follows. The
+/// last two are different questions and are kept as separate modules.
 class _DesktopRightColumn extends StatelessWidget {
   const _DesktopRightColumn({
+    required this.currentUserId,
     required this.onOpenRoom,
     required this.onSeeAll,
     required this.onCheckPlans,
+    required this.onOpenCreator,
+    required this.onViewAllCreators,
   });
 
+  final String currentUserId;
   final ValueChanged<VoiceRoom> onOpenRoom;
   final VoidCallback onSeeAll;
   final VoidCallback onCheckPlans;
+  final ValueChanged<FollowUser> onOpenCreator;
+  final VoidCallback onViewAllCreators;
 
   @override
   Widget build(BuildContext context) {
@@ -730,6 +816,13 @@ class _DesktopRightColumn extends StatelessWidget {
           VoiceTrendingCard(onOpenRoom: onOpenRoom, onSeeAll: onSeeAll),
           const SizedBox(height: 16),
           PremiumDesktopCard(onCheckPlans: onCheckPlans),
+          const SizedBox(height: 16),
+          FollowedCreatorsCard(
+            currentUserId: currentUserId,
+            onOpenCreator: onOpenCreator,
+            onViewAll: onViewAllCreators,
+            onDiscover: onSeeAll,
+          ),
         ],
       ),
     );

@@ -4,11 +4,16 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/followed_creators_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
+import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+import 'package:yovoice/features/profile/data/models/follow_user.dart';
+import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 
@@ -494,6 +499,150 @@ void main() {
       await tester.tap(find.text('Check plans'));
       await tester.pump();
       expect(taps, 1);
+    });
+  });
+
+  group('FollowedCreatorsCard', () {
+    const uid = 'me';
+
+    MockFirebaseAuth authFor(FakeFirebaseFirestore db) => MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: uid, email: 'me@yovoice.app'),
+    );
+
+    Future<void> follow(
+      FakeFirebaseFirestore db,
+      String creatorId,
+      String name,
+    ) async {
+      await db
+          .collection('users')
+          .doc(uid)
+          .collection('following')
+          .doc(creatorId)
+          .set({
+            'uid': creatorId,
+            'displayName': name,
+            'username': name.toLowerCase(),
+            'followedAt': Timestamp.now(),
+          });
+    }
+
+    Widget card(
+      FakeFirebaseFirestore db, {
+      void Function(FollowUser)? onOpenCreator,
+      VoidCallback? onViewAll,
+      VoidCallback? onDiscover,
+    }) {
+      final auth = authFor(db);
+      return host(
+        SizedBox(
+          width: 344,
+          child: FollowedCreatorsCard(
+            currentUserId: uid,
+            onOpenCreator: onOpenCreator ?? (_) {},
+            onViewAll: onViewAll ?? () {},
+            onDiscover: onDiscover ?? () {},
+            followService: FollowService(
+              firestore: db,
+              auth: auth,
+              notificationService: NotificationService(
+                firestore: db,
+                auth: auth,
+              ),
+            ),
+            feedService: HomeFeedService(firestore: db, auth: auth),
+            roomService: RoomService(firestore: db, auth: auth),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('lists only creators this account really follows, and marks '
+        'the one who is hosting a live room right now', (tester) async {
+      useDesktopWindow(tester);
+      final db = FakeFirebaseFirestore();
+      await follow(db, 'creator-live', 'Marta');
+      await follow(db, 'creator-quiet', 'Bartek');
+
+      await db.collection('rooms').doc('r1').set({
+        'hostId': 'creator-live',
+        'hostName': 'Marta',
+        'name': 'Design critique',
+        'description': 'Bring your work',
+        'category': 'talk',
+        'visibility': 'public',
+        'language': 'English',
+        'participantCount': 9,
+        'memberCount': 0,
+        'isLive': true,
+        'roomType': 'community',
+        'status': 'active',
+        'experience': 'community',
+        'createdAt': Timestamp.now(),
+      });
+
+      await tester.pumpWidget(card(db));
+      await tester.pump(const Duration(milliseconds: 120));
+
+      expect(find.text('Top creators you follow'), findsOneWidget);
+      expect(find.text('Marta'), findsOneWidget);
+      expect(find.text('Bartek'), findsOneWidget);
+      // The live signal is the real hosted room; the other creator falls
+      // back to their handle, with no invented activity.
+      expect(find.text('Live · Design critique'), findsOneWidget);
+      expect(find.text('@bartek'), findsOneWidget);
+      // Never a follower count or any other fabricated number.
+      expect(find.textContaining('followers'), findsNothing);
+    });
+
+    testWidgets('following nobody: a premium empty state with one Discover '
+        'action — never substituted with suggested people', (tester) async {
+      useDesktopWindow(tester);
+      final db = FakeFirebaseFirestore();
+      var discover = 0;
+
+      await tester.pumpWidget(card(db, onDiscover: () => discover++));
+      await tester.pump(const Duration(milliseconds: 120));
+
+      expect(find.text('Top creators you follow'), findsOneWidget);
+      expect(
+        find.textContaining('creators you follow will appear here'),
+        findsOneWidget,
+      );
+      // No list, and no "View all" pointing at an empty list.
+      expect(find.text('View all'), findsNothing);
+
+      await tester.tap(find.text('Discover creators'));
+      await tester.pump();
+      expect(discover, 1);
+    });
+
+    testWidgets('a row opens that creator and View all opens the following '
+        'list', (tester) async {
+      useDesktopWindow(tester);
+      final db = FakeFirebaseFirestore();
+      await follow(db, 'creator-1', 'Marta');
+
+      FollowUser? opened;
+      var viewAll = 0;
+
+      await tester.pumpWidget(
+        card(
+          db,
+          onOpenCreator: (creator) => opened = creator,
+          onViewAll: () => viewAll++,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 120));
+
+      await tester.tap(find.text('Marta'));
+      await tester.pump();
+      expect(opened?.uid, 'creator-1');
+
+      await tester.tap(find.text('View all'));
+      await tester.pump();
+      expect(viewAll, 1);
     });
   });
 }

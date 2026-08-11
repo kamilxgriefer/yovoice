@@ -3,8 +3,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/features/clubs/data/models/club.dart';
+import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
+import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_conversations.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_moments_strip.dart';
+import 'package:yovoice/features/messages/data/models/conversation.dart';
+import 'package:yovoice/features/messages/data/services/message_service.dart';
+import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
@@ -15,11 +24,14 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 /// "Pulse Home" — the DESKTOP Home surface.
 ///
 /// Every module reads existing production data; nothing here invents a
-/// user, a room or an activity number:
-///  - live rooms          → [RoomService.watchLivePublicRooms]
-///  - rosters / avatars    → [RoomService.watchParticipants] per shown room
-///  - friends & presence   → [FriendService.watchFriends]
-///  - greeting identity    → [ProfileService.watchCurrentProfile]
+/// user, a room, a message or an activity number:
+///  - live rooms           → [RoomService.watchLivePublicRooms]
+///  - rosters / avatars     → [RoomService.watchParticipants] per shown room
+///  - friends & presence    → [FriendService.watchFriends]
+///  - greeting identity     → [ProfileService.watchCurrentProfile]
+///  - Moments from the circle → [HomeFeedService.watchSocialMoments]
+///  - Conversations         → [MessageService.watchConversations] +
+///    [ClubService.watchMyClubs] (see [DesktopConversations])
 ///
 /// Presence in Firestore carries no room context, so "In a room · X" is
 /// derived by matching a friend's uid against the rosters this screen
@@ -27,27 +39,61 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 ///
 /// Navigation is delegated: the callbacks below are wired by MainShell
 /// to the SAME fixed-shell content-slot mechanism the rail uses, so
-/// nothing here pushes a route except entering a room.
+/// nothing here pushes a route except entering a room, opening a chat or
+/// a club — the flows that already own their full-screen route
+/// everywhere else in the app.
 class DesktopHome extends StatefulWidget {
   const DesktopHome({
+    required this.currentUserId,
     required this.onOpenRoom,
     required this.onSeeAllRooms,
     required this.onViewAllFriends,
     required this.onStartRoom,
+    required this.onOpenMoment,
+    required this.onCreateMoment,
+    required this.onSeeAllMoments,
+    required this.onOpenConversation,
+    required this.onOpenClub,
+    required this.onSeeAllChats,
+    required this.onOpenClubs,
     this.roomService,
     this.friendService,
     this.profileService,
+    this.feedService,
+    this.messageService,
+    this.clubService,
+    this.clubChatService,
     super.key,
   });
 
+  final String currentUserId;
+
   final ValueChanged<VoiceRoom> onOpenRoom;
+
+  /// Discover — also the destination behind every "go find something"
+  /// action in the empty states.
   final VoidCallback onSeeAllRooms;
   final VoidCallback onViewAllFriends;
   final VoidCallback onStartRoom;
 
+  /// The existing Moment viewer, creation flow and Moments destination.
+  final ValueChanged<VoiceMoment> onOpenMoment;
+  final VoidCallback onCreateMoment;
+  final VoidCallback onSeeAllMoments;
+
+  /// The existing chat screen, club surface, Chats and Clubs destinations.
+  final ValueChanged<Conversation> onOpenConversation;
+  final ValueChanged<Club> onOpenClub;
+  final VoidCallback onSeeAllChats;
+  final VoidCallback onOpenClubs;
+
   final RoomService? roomService;
   final FriendService? friendService;
   final ProfileService? profileService;
+  final HomeFeedService? feedService;
+  final MessageService? messageService;
+  final ClubService? clubService;
+  final ClubChatService? clubChatService;
 
   @override
   State<DesktopHome> createState() => _DesktopHomeState();
@@ -147,14 +193,28 @@ class _DesktopHomeState extends State<DesktopHome> {
               friends: _friends,
               roomNames: _friendRoomNames,
               onViewAll: widget.onViewAllFriends,
-              onStartRoom: widget.onStartRoom,
+              onFindFriends: widget.onSeeAllRooms,
             );
+
+            // One spacing scale for the whole surface, so the section
+            // boundaries line up with the right column instead of each
+            // module inventing its own rhythm.
+            const gap = SizedBox(height: 22);
 
             return ListView(
               padding: const EdgeInsets.fromLTRB(24, 18, 20, 28),
               children: [
                 _GreetingHeader(profile: _profile),
-                const SizedBox(height: 22),
+                const SizedBox(height: 20),
+                DesktopMomentsStrip(
+                  profile: _profile,
+                  feedService: widget.feedService,
+                  onOpenMoment: widget.onOpenMoment,
+                  onCreateMoment: widget.onCreateMoment,
+                  onSeeAll: widget.onSeeAllMoments,
+                  onDiscover: widget.onSeeAllRooms,
+                ),
+                gap,
                 _LiveAroundYou(
                   rooms: preview,
                   roomService: _rooms,
@@ -191,12 +251,29 @@ class _DesktopHomeState extends State<DesktopHome> {
                   const SizedBox(height: 16),
                   circle,
                 ],
-                const SizedBox(height: 24),
-                _ForYou(
-                  rooms: forYou,
-                  roomService: _rooms,
-                  onOpen: widget.onOpenRoom,
-                  onSeeAll: widget.onSeeAllRooms,
+                // "For you" hides entirely when there is nothing to
+                // recommend, and takes its gap with it.
+                if (forYou.isNotEmpty) ...[
+                  gap,
+                  _ForYou(
+                    rooms: forYou,
+                    roomService: _rooms,
+                    onOpen: widget.onOpenRoom,
+                    onSeeAll: widget.onSeeAllRooms,
+                  ),
+                ],
+                gap,
+                DesktopConversations(
+                  currentUserId: widget.currentUserId,
+                  messageService: widget.messageService,
+                  clubService: widget.clubService,
+                  clubChatService: widget.clubChatService,
+                  friendService: widget.friendService,
+                  onOpenConversation: widget.onOpenConversation,
+                  onOpenClub: widget.onOpenClub,
+                  onSeeAllChats: widget.onSeeAllChats,
+                  onFindFriends: widget.onViewAllFriends,
+                  onOpenClubs: widget.onOpenClubs,
                 ),
               ],
             );
@@ -594,24 +671,56 @@ class _LiveAroundYou extends StatelessWidget {
         if (rooms.isEmpty)
           const _QuietState(text: 'No public rooms are live right now.')
         else
-          Row(
-            children: [
-              for (var i = 0; i < rooms.length; i++) ...[
-                if (i > 0) const SizedBox(width: 12),
-                Expanded(
-                  child: _LivePreviewCard(
-                    room: rooms[i],
-                    roomService: roomService,
-                    onTap: () => onOpen(rooms[i]),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              const gap = 12.0;
+              // Three across the centre column is the intended shape, but
+              // near the 1100px shell breakpoint three equal cards would
+              // be ~140px each — every room name reduced to an ellipsis.
+              // Below that floor the row scrolls at a readable card width
+              // instead, so no room is dropped and none is unreadable.
+              final perCard = (constraints.maxWidth - gap * 2) / 3;
+              if (perCard >= _LivePreviewCard.minWidth) {
+                return Row(
+                  children: [
+                    for (var i = 0; i < rooms.length; i++) ...[
+                      if (i > 0) const SizedBox(width: gap),
+                      Expanded(
+                        child: _LivePreviewCard(
+                          room: rooms[i],
+                          roomService: roomService,
+                          onTap: () => onOpen(rooms[i]),
+                        ),
+                      ),
+                    ],
+                    // Keeps the row's rhythm when fewer than three are
+                    // live.
+                    for (var i = rooms.length; i < 3; i++) ...[
+                      const SizedBox(width: gap),
+                      const Expanded(child: SizedBox()),
+                    ],
+                  ],
+                );
+              }
+
+              return SizedBox(
+                height: _LivePreviewCard.height,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: EdgeInsets.zero,
+                  itemCount: rooms.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: gap),
+                  itemBuilder: (context, index) => SizedBox(
+                    width: _LivePreviewCard.minWidth,
+                    child: _LivePreviewCard(
+                      room: rooms[index],
+                      roomService: roomService,
+                      onTap: () => onOpen(rooms[index]),
+                    ),
                   ),
                 ),
-              ],
-              // Keeps the row's rhythm when fewer than three are live.
-              for (var i = rooms.length; i < 3; i++) ...[
-                const SizedBox(width: 12),
-                const Expanded(child: SizedBox()),
-              ],
-            ],
+              );
+            },
           ),
       ],
     );
@@ -628,6 +737,13 @@ class _LivePreviewCard extends StatefulWidget {
   final VoiceRoom room;
   final RoomService? roomService;
   final VoidCallback onTap;
+
+  /// Below this a room name is nothing but an ellipsis, so the row
+  /// scrolls at this width rather than shrinking past it.
+  static const double minWidth = 194;
+
+  /// Only used by the scrolling variant, which needs a bounded height.
+  static const double height = 98;
 
   @override
   State<_LivePreviewCard> createState() => _LivePreviewCardState();
@@ -671,23 +787,32 @@ class _LivePreviewCardState extends State<_LivePreviewCard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            room.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w800,
+                    LayoutBuilder(
+                      // Near the 1100px shell breakpoint these three
+                      // cards get narrow enough that the pill would eat
+                      // the whole title. The section heading already says
+                      // "Live around you" and carries the live dot, so
+                      // the name wins the space.
+                      builder: (context, constraints) => Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              room.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        const _LivePill(compact: true),
-                      ],
+                          if (constraints.maxWidth >= 118) ...[
+                            const SizedBox(width: 6),
+                            const _LivePill(compact: true),
+                          ],
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 3),
                     Text(
@@ -703,16 +828,23 @@ class _LivePreviewCardState extends State<_LivePreviewCard> {
                     _Roster(
                       roomId: room.id,
                       roomService: widget.roomService,
-                      builder: (context, participants) => Row(
-                        children: [
-                          _AvatarStack(
-                            participants: participants,
-                            total: room.participantCount,
-                            radius: 11,
-                          ),
-                          const Spacer(),
-                          _ListenerCount(count: room.participantCount),
-                        ],
+                      builder: (context, participants) => LayoutBuilder(
+                        // Three equal cards get narrow near the 1100px
+                        // desktop breakpoint. The count is the fact worth
+                        // keeping; the avatar stack steps aside for it
+                        // instead of overflowing the card.
+                        builder: (context, constraints) => Row(
+                          children: [
+                            if (constraints.maxWidth >= 108)
+                              _AvatarStack(
+                                participants: participants,
+                                total: room.participantCount,
+                                radius: 11,
+                              ),
+                            const Spacer(),
+                            _ListenerCount(count: room.participantCount),
+                          ],
+                        ),
                       ),
                     ),
                   ],
@@ -1202,13 +1334,15 @@ class _YourCircle extends StatelessWidget {
     required this.friends,
     required this.roomNames,
     required this.onViewAll,
-    required this.onStartRoom,
+    required this.onFindFriends,
   });
 
   final Stream<List<FriendUser>>? friends;
   final Map<String, String> roomNames;
   final VoidCallback onViewAll;
-  final VoidCallback onStartRoom;
+
+  /// The empty state's single action — Discover, inside the shell.
+  final VoidCallback onFindFriends;
 
   @override
   Widget build(BuildContext context) {
@@ -1223,34 +1357,51 @@ class _YourCircle extends StatelessWidget {
         stream: friends,
         builder: (context, snapshot) {
           final people = snapshot.data ?? const <FriendUser>[];
+          final online = people.where((person) => person.isOnline).length;
+
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
+              // The header used to share this row with a "Start a room"
+              // button that duplicated the rail's Create Room. The
+              // recovered width goes to the list instead: a real count of
+              // who is actually online, then more of the people
+              // themselves.
               Row(
                 children: [
-                  const Expanded(
-                    child: Text(
-                      'Your circle',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w800,
-                      ),
+                  const Text(
+                    'Your circle',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15.5,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
-                  _StartRoomButton(onTap: onStartRoom),
+                  const SizedBox(width: 9),
+                  if (people.isNotEmpty)
+                    Flexible(
+                      child: Text(
+                        online > 0 ? '$online online' : '${people.length}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: online > 0
+                              ? const Color(0xFF35D07F)
+                              : const Color(0xFF7E7895),
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
                 ],
               ),
               const SizedBox(height: 12),
               if (people.isEmpty)
-                const _QuietState(
-                  text:
-                      'No friends yet — add people and their live '
-                      'activity shows up here.',
-                )
+                _NoFriendsState(onFindFriends: onFindFriends)
               else
-                for (final person in people.take(5))
+                // One more face than before now that the button is gone.
+                for (final person in people.take(6))
                   _CirclePerson(person: person, roomName: roomNames[person.id]),
               const SizedBox(height: 4),
               Align(
@@ -1294,30 +1445,58 @@ class _YourCircle extends StatelessWidget {
   }
 }
 
-class _StartRoomButton extends StatelessWidget {
-  const _StartRoomButton({required this.onTap});
+/// Nobody in the circle yet. The card says what will land here and
+/// offers one existing way to fill it — room creation lives in the rail's
+/// Create Room button, not in a second button here.
+class _NoFriendsState extends StatelessWidget {
+  const _NoFriendsState({required this.onFindFriends});
 
-  final VoidCallback onTap;
+  final VoidCallback onFindFriends;
 
   @override
   Widget build(BuildContext context) {
-    return OutlinedButton.icon(
-      onPressed: onTap,
-      style: OutlinedButton.styleFrom(
-        side: BorderSide(color: AppColors.primary.withValues(alpha: .45)),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        minimumSize: Size.zero,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        color: Colors.white.withValues(alpha: .02),
+        border: Border.all(color: const Color(0xFF241A33)),
       ),
-      icon: const Icon(Icons.add_rounded, size: 15, color: Color(0xFFD3A5FF)),
-      label: const Text(
-        'Start a room',
-        style: TextStyle(
-          color: Color(0xFFD3A5FF),
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'No friends yet — once you add people, you will see who is '
+            'online and which room they are in.',
+            style: TextStyle(
+              color: Color(0xFF9A90AC),
+              fontSize: 12.5,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton(
+            onPressed: onFindFriends,
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: AppColors.primary.withValues(alpha: .45)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text(
+              'Find people',
+              style: TextStyle(
+                color: Color(0xFFD3A5FF),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1453,42 +1632,80 @@ class _ForYou extends StatelessWidget {
           trailingIcon: Icons.auto_awesome_rounded,
           onSeeAll: onSeeAll,
         ),
-        IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (var i = 0; i < rooms.length; i++) ...[
-                if (i > 0) const SizedBox(width: 14),
-                Expanded(
-                  child: _ForYouCard(
-                    room: rooms[i],
-                    roomService: roomService,
-                    onTap: () => onOpen(rooms[i]),
-                  ),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            // Two columns only while each card stays wide enough for a
+            // cover plus a readable text block; below that they stack
+            // rather than shrink into unreadable slivers.
+            final twoUp = constraints.maxWidth >= 620;
+            final cards = [
+              for (final room in rooms)
+                _ForYouCard(
+                  key: ValueKey(room.id),
+                  room: room,
+                  roomService: roomService,
+                  onTap: () => onOpen(room),
                 ),
+            ];
+
+            if (!twoUp) {
+              return Column(
+                children: [
+                  for (var i = 0; i < cards.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 12),
+                    cards[i],
+                  ],
+                ],
+              );
+            }
+
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var i = 0; i < cards.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 14),
+                  Expanded(child: cards[i]),
+                ],
+                // A single recommendation keeps its column width rather
+                // than stretching across the row.
+                if (cards.length == 1) ...[
+                  const SizedBox(width: 14),
+                  const Expanded(child: SizedBox()),
+                ],
               ],
-              if (rooms.length == 1) ...[
-                const SizedBox(width: 14),
-                const Expanded(child: SizedBox()),
-              ],
-            ],
-          ),
+            );
+          },
         ),
       ],
     );
   }
 }
 
+/// A recommendation, as an editorial card rather than a poster.
+///
+/// The old version was a 148px slab filled edge-to-edge with the room's
+/// fallback gradient, a giant translucent circle and two lines of text —
+/// bright, low-information and indistinguishable from the next one. This
+/// one is dark glass like the rest of Home, spends its violet on the
+/// cover, the LIVE state, the border and the CTA, and carries what
+/// actually decides whether you join: who hosts it, what it is about, its
+/// category and language, who is already inside and how many are
+/// listening. Every one of those is a real field — anything the room
+/// does not have is simply not drawn.
 class _ForYouCard extends StatefulWidget {
   const _ForYouCard({
     required this.room,
     required this.roomService,
     required this.onTap,
+    super.key,
   });
 
   final VoiceRoom room;
   final RoomService? roomService;
   final VoidCallback onTap;
+
+  static const double height = 158;
+  static const double coverSize = 130;
 
   @override
   State<_ForYouCard> createState() => _ForYouCardState();
@@ -1500,7 +1717,12 @@ class _ForYouCardState extends State<_ForYouCard> {
   @override
   Widget build(BuildContext context) {
     final room = widget.room;
-    final gradient = _RoomVisual(room: room)._fallback;
+    final topic = room.description.trim();
+    final chips = <String>[
+      if (room.category.trim().isNotEmpty) room.category.trim(),
+      if (room.language.trim().isNotEmpty) room.language.trim(),
+    ];
+    final host = room.hostName.trim();
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
@@ -1509,92 +1731,229 @@ class _ForYouCardState extends State<_ForYouCard> {
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
-          height: 148,
+          height: _ForYouCard.height,
+          padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                gradient.first.withValues(alpha: _hover ? .85 : .70),
-                gradient.last.withValues(alpha: _hover ? .55 : .38),
-              ],
-            ),
+            color: _hover
+                ? const Color(0xFF171024).withValues(alpha: .95)
+                : const Color(0xFF120C1D).withValues(alpha: .78),
             border: Border.all(
               color: _hover
-                  ? AppColors.primary.withValues(alpha: .55)
-                  : const Color(0xFF3A2A52),
+                  ? AppColors.primary.withValues(alpha: .50)
+                  : const Color(0xFF241A33),
             ),
+            boxShadow: _hover
+                ? [
+                    BoxShadow(
+                      color: AppColors.primary.withValues(alpha: .14),
+                      blurRadius: 26,
+                      offset: const Offset(0, 6),
+                    ),
+                  ]
+                : const [],
           ),
-          child: Stack(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // A soft light source instead of stock artwork.
-              Positioned(
-                right: -30,
-                bottom: -40,
-                child: Container(
-                  width: 170,
-                  height: 170,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white.withValues(alpha: .07),
+              Stack(
+                children: [
+                  _RoomVisual(
+                    room: room,
+                    size: _ForYouCard.coverSize,
+                    radius: 14,
                   ),
-                ),
+                  if (room.isLive)
+                    const Positioned(
+                      top: 8,
+                      left: 8,
+                      child: _LivePill(compact: true),
+                    ),
+                ],
               ),
-              if (room.isLive)
-                const Positioned(top: 12, right: 12, child: _LivePill()),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+              const SizedBox(width: 12),
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Spacer(),
                     Text(
                       room.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 19,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -.3,
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -.2,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      room.description.trim().isNotEmpty
-                          ? room.description.trim()
-                          : room.category,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: .72),
-                        fontSize: 12.5,
+                    if (host.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.mic_rounded,
+                            size: 12,
+                            color: Color(0xFFB07BFF),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              host,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFFB3A8C4),
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 12),
+                    ],
+                    if (topic.isNotEmpty) ...[
+                      const SizedBox(height: 5),
+                      Text(
+                        topic,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF9A90AC),
+                          fontSize: 12,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                    if (chips.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      _ChipRow(chips: chips),
+                    ],
+                    const Spacer(),
                     _Roster(
                       roomId: room.id,
                       roomService: widget.roomService,
-                      builder: (context, participants) => Row(
-                        children: [
-                          _AvatarStack(
-                            participants: participants,
-                            total: room.participantCount,
-                            radius: 11,
-                          ),
-                          const Spacer(),
-                          _ListenerCount(
-                            count: room.participantCount,
-                            label: true,
-                          ),
-                        ],
+                      builder: (context, participants) => LayoutBuilder(
+                        builder: (context, constraints) => Row(
+                          children: [
+                            if (constraints.maxWidth >= 190)
+                              _AvatarStack(
+                                participants: participants,
+                                total: room.participantCount,
+                                radius: 10,
+                              ),
+                            const Spacer(),
+                            _ListenerCount(count: room.participantCount),
+                            const SizedBox(width: 10),
+                            _JoinChip(hovered: _hover, onTap: widget.onTap),
+                          ],
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Category/language chips on one line — anything that does not fit is
+/// dropped rather than wrapped into a second row the card has no height
+/// for.
+class _ChipRow extends StatelessWidget {
+  const _ChipRow({required this.chips});
+
+  final List<String> chips;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 22,
+      child: ClipRect(
+        child: OverflowBox(
+          alignment: Alignment.centerLeft,
+          maxWidth: double.infinity,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < chips.length; i++) ...[
+                if (i > 0) const SizedBox(width: 6),
+                _MiniChip(chips[i]),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MiniChip extends StatelessWidget {
+  const _MiniChip(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(999),
+        color: Colors.white.withValues(alpha: .04),
+        border: Border.all(color: const Color(0xFF3A2A52)),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        style: const TextStyle(
+          color: Color(0xFFCFC6DC),
+          fontSize: 10.5,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+class _JoinChip extends StatelessWidget {
+  const _JoinChip({required this.hovered, required this.onTap});
+
+  final bool hovered;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            gradient: hovered
+                ? const LinearGradient(
+                    colors: [AppColors.primary, AppColors.secondary],
+                  )
+                : null,
+            color: hovered ? null : AppColors.primary.withValues(alpha: .16),
+            border: Border.all(
+              color: AppColors.primary.withValues(alpha: hovered ? .0 : .45),
+            ),
+          ),
+          child: Text(
+            'Join',
+            style: TextStyle(
+              color: hovered ? Colors.white : const Color(0xFFD3A5FF),
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ),
       ),

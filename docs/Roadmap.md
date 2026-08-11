@@ -16,6 +16,32 @@ someone decide what to pick up next.
 
 ## Done
 
+- Desktop Home modules + app favicon (2026-08-10): the three empty
+  regions of the desktop Home are now real modules — "Moments from your
+  circle" between the greeting and Live around you
+  (`HomeFeedService.watchSocialMoments`, one tile per person, ring/"New"
+  = posted in the last 24h because `voiceMoments` has no seen flag),
+  a "Conversations" hub under For you with All/Clubs/Friends/Private
+  filters over the existing `MessageService` + `ClubService` +
+  `FriendService` data (filters are local state; the shell never
+  rebuilds), and "Top creators you follow" under the Premium card
+  (`FollowService.watchFollowing`, live signal from `rooms.hostId`,
+  never fabricated follower counts, never silently swapped for suggested
+  people). The two "For you" gradient slabs became compact dark-glass
+  editorial cards (cover, LIVE, title, host, topic, real chips, avatar
+  stack, count, Join); `Your circle` lost its duplicate "Start a room"
+  button and gained a real online count. Live around you scrolls at a
+  readable card width near the 1100px breakpoint instead of ellipsising
+  every room name. The browser tab now uses the same clean transparent
+  YO Voice symbol as the landing page — the old RealFaviconGenerator set
+  had a solid black square baked into every size; regenerated from
+  `yovoice-website/src/app/icon.png`, with `favicon.svg`/`favicon.zip`/
+  `favicon.png` and the `flutter create` `manifest.json` + `icons/`
+  leftovers deleted, `?v=` cache-busting and a Hosting `no-cache` header
+  for the icon files. Mobile Home, the rail, More, Notifications and
+  every backend surface untouched
+  ([ADR-036](Decisions.md#adr-036-desktop-home-is-composed-of-real-source-modules-each-one-states-the-state-it-cannot-prove)).
+
 - Post-landing entry transition (2026-08-09, `yovoice-website` `7c623f1`;
   the `web/index.html` half landed here in `8115f56`): the jump from
   `yovoice.app` into the Flutter web app is now a ~2.8s animated launch

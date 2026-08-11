@@ -1869,3 +1869,105 @@ pages filled the same moment with a bare `<p>Loading…</p>`.
 - Reduced motion renders the final composition statically (mark,
   wordmark, "Create your space") with a plain segmented fill — no phrase
   rotation, no blur, no expanding glow.
+
+---
+
+## ADR-036: Desktop Home is composed of real-source modules; each one states the state it cannot prove
+
+**Status**: Accepted
+**Date**: 2026-08-10
+
+### Context
+
+The desktop Home from ADR-034 ("Pulse Home") left three large empty
+regions — under the greeting, under the recommendation cards, and under
+the Premium card — and carried two actions that duplicated the rail:
+a second Moment-creation button (already removed in `5f02271`) and a
+"Start a room" button inside the Your circle card. The annotated
+reference (`assets/images/Zrzut ekranu 2026-08-10 o 22.11.05.png`) asks
+for those regions to be filled with a Moments strip, a Conversations hub
+and a followed-creators list, and for the two duplicate actions to go.
+
+Each new module wants a state the schema does not actually record:
+"unviewed" Moments, per-club unread counts, a separate "private"
+conversation type, and creator activity in rooms they do not host.
+
+### Decision
+
+- Three new desktop-only widgets, each reading an EXISTING service, each
+  injectable for tests:
+  `DesktopMomentsStrip` (`HomeFeedService.watchSocialMoments` — self +
+  friends + following), `DesktopConversations`
+  (`MessageService.watchConversations` + `ClubService.watchMyClubs` +
+  `FriendService.watchFriends`), `FollowedCreatorsCard`
+  (`FollowService.watchFollowing` + `watchLivePublicRooms` +
+  `watchSocialMoments`).
+- Where a requested state is not in the schema, the module shows the
+  closest state the data proves and says so in its doc comment:
+  - Moments have **no per-viewer seen flag** and are recorded audio, so
+    the ring and the "New" label both mean "posted in the last 24 hours";
+    older Moments show their real `durationSeconds` instead. No "Live"
+    state on a Moment, ever.
+  - Club chat has **no per-member unread counter** (`clubs/{id}/channels/
+    {id}/messages` has no read receipts), so club rows carry no unread
+    badge. Direct conversations do — from `unreadCounts`.
+  - The model has exactly **two** conversation types, club channels and
+    1:1 direct conversations. `Private` is therefore every direct
+    conversation (the model's own direct/private type) and `Friends` is
+    the subset whose counterpart is in `users/{uid}/friends` — a subset,
+    not a disjoint bucket.
+  - A creator's live signal comes from `rooms.hostId` only. Surfacing
+    "speaking in someone else's room" would mean a participant listener
+    per live room in the right column; hosting is the case that matters
+    and it costs nothing extra.
+- `ClubChatService.watchLatestMessage(clubId, channelId)` is added
+  because a conversation list needs one message per club and
+  `watchMessages` pulls 250. Same collection, same ordering, `limit(1)`.
+- `ClubService`'s `FirebaseFunctions` moves from constructor-eager to
+  lazy. Only `transferClubOwnershipSelf` uses it, `FirebaseFunctions
+  .instance` throws with no Firebase app, and there is no fake for
+  cloud_functions — eager resolution made the whole service
+  unconstructible in a widget test that only reads clubs.
+- The "For you" cards are rebuilt as dark-glass editorial cards
+  (cover + LIVE + title + host + topic + real chips + avatar stack +
+  count + Join) instead of gradient-filled slabs, and `Your circle`
+  trades its "Start a room" button for a real online count and one more
+  face.
+- Navigation is unchanged in kind: tab-level destinations still go
+  through `MainShell._onDestinationSelected` (content slots). Only the
+  flows that already own a full-screen route everywhere else — a room,
+  a chat, a club, the Following list, the profile preview sheet — push.
+
+### Reasoning
+
+- The alternative for every "missing state" above was to fabricate it
+  (a decayed unread guess, a "Live" badge on recorded audio, a third
+  conversation bucket). The project's hard rule is that a feature with
+  no backing shows as absent, not as invented data — and a state that
+  is subtly wrong is worse on a social product than a state that is
+  simply not shown.
+- Widening the strip to one tile per PERSON (newest Moment) rather than
+  one per Moment stops a single prolific poster from filling it.
+- Filters are local `setState`, deliberately: the requirement is that
+  changing them never rebuilds the desktop shell.
+- Near the 1100px breakpoint the centre column is ~490px. Three equal
+  live cards there are ~140px each — every room name an ellipsis. The
+  row now scrolls at a 194px floor instead of shrinking past readable,
+  so nothing is dropped and nothing is illegible.
+
+### Consequences
+
+- Home now opens 3–4 more Firestore listeners on desktop (social
+  moments, conversations, my clubs + one per club, following). All are
+  per-widget and disposed with it; the club previews are added and
+  dropped as the club list changes.
+- `DesktopHome` gained a `currentUserId` and eight callbacks. It is a
+  wider constructor, but every one of them is wired by `MainShell` to a
+  mechanism that already existed.
+- A populated desktop Home could never be looked at before shipping —
+  every module is data-driven and there is no signed-in session outside
+  a real device. `test/desktop_home_preview.dart` fixes that: the
+  production widgets against `fake_cloud_firestore`, run with
+  `flutter run -d web-server -t test/desktop_home_preview.dart`
+  (`?empty=1` for the new-account view). It lives under `test/` because
+  the fakes are dev_dependencies and must not be importable from `lib/`.

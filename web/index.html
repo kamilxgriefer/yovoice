@@ -76,12 +76,26 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="YoVoice">
 
-  <!-- RealFaviconGenerator -->
-  <link rel="icon" type="image/png" sizes="96x96" href="favicon-96x96.png">
-  <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="shortcut icon" href="favicon.ico">
-  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
-  <link rel="manifest" href="site.webmanifest">
+  <!--
+    Favicon — one source of truth with the marketing site. Every file
+    below is a straight downscale of yovoice-website's src/app/icon.png
+    (the canonical symbol, public/logos/yo-voice-symbol.png, centred on a
+    512x512 transparent canvas), so this tab and the landing-page tab
+    show the same mark at the same scale and padding.
+
+    The previous set came from RealFaviconGenerator and had a solid black
+    square baked into every size — visible as a dark tile around the mark
+    in the tab strip. See web/README.md before regenerating.
+
+    ?v=2 busts the browser/CDN copy of that black-square version; bump it
+    whenever the artwork changes.
+  -->
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png?v=2">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png?v=2">
+  <link rel="icon" type="image/png" sizes="96x96" href="favicon-96x96.png?v=2">
+  <link rel="shortcut icon" href="favicon.ico?v=2">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=2">
+  <link rel="manifest" href="site.webmanifest?v=2">
 
 </head>
 

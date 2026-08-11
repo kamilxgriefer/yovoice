@@ -21,14 +21,24 @@ class ClubService {
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _storage = storage ?? FirebaseStorage.instance,
-       _functions = functions ?? FirebaseFunctions.instance,
+       _functionsOverride = functions,
        _notifications = notificationService ?? NotificationService();
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final FirebaseStorage _storage;
-  final FirebaseFunctions _functions;
   final NotificationService _notifications;
+
+  /// Resolved on first use, not in the constructor. Exactly one method
+  /// here calls a Cloud Function (`transferClubOwnershipSelf`), but
+  /// `FirebaseFunctions.instance` throws whenever no Firebase app is
+  /// initialised — which made the whole service unconstructible in widget
+  /// tests that only ever read clubs (the desktop Conversations hub).
+  /// There is no fake for cloud_functions, and lazy resolution keeps
+  /// production behaviour byte-for-byte identical.
+  final FirebaseFunctions? _functionsOverride;
+  FirebaseFunctions get _functions =>
+      _functionsOverride ?? FirebaseFunctions.instance;
 
   CollectionReference<Map<String, dynamic>> get _clubs =>
       _firestore.collection('clubs');
