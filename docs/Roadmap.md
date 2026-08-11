@@ -16,6 +16,24 @@ someone decide what to pick up next.
 
 ## Done
 
+- Moderation Center completion pass (2026-08-11): each report now shows
+  its own moderation history, served by a new scoped
+  `listReportAuditTrail` callable rather than the broad
+  `listAdminAuditLogs` browser — the caller sends a report id and both
+  target ids are derived from the report server-side, so there is no
+  parameter that reaches another report or an unrelated admin action,
+  and `adminAuditLogs` stays denied to every client. Report-workflow and
+  content-removal events are shown as distinct kinds, never merged. The
+  queue's target and reason filters became real server-side clauses with
+  a composite index per combination, replacing the in-memory narrowing
+  that made a filtered page look like a filtered collection. 224 Flutter
+  tests, 170 rules tests, 54 Functions tests and two emulator smoke
+  tests pass; the populated detail and timeline were rendered and
+  inspected at 1440×820, 1440×620 and 1100×820. **Needs the ordered
+  deploy in
+  [DEPLOYMENT.md](DEPLOYMENT.md#undeployed-backend-as-of-2026-08-11--the-selective-manifest)**
+  ([ADR-040](Decisions.md#adr-040-a-reports-audit-trail-is-served-by-a-scoped-callable-not-by-the-admin-audit-browser-queue-filters-are-server-side-clauses)).
+
 - Staff Moderation Center (2026-08-11): desktop-only report triage,
   reached from the existing More popover — listed only for accounts that
   pass the staff check, opening in a fixed-shell content slot. The rail

@@ -51,13 +51,41 @@ permission flags).
 
 ## Moderation & safety
 
+- **Production is running a client that is ahead of its backend.**
+  Pushing to `main` auto-deploys Hosting, so the Global Chat and
+  Moderation Center *clients* went live with commits `24353d4` and
+  `1e76d36` (live release 2026-08-11 22:16:50) while their Functions,
+  indexes and rules did not. Verified against the live project:
+  `moderateReport` and `listReportAuditTrail` are absent from
+  `firebase functions:list`, and `firebase firestore:indexes` returns no
+  `reports` index. A staff account opening Moderation in production
+  today gets a queue query with no index and a callable that resolves to
+  nothing — the actions fail, nothing is corrupted. Fixed by running the
+  ordered sequence in
+  [DEPLOYMENT.md](DEPLOYMENT.md#undeployed-backend-as-of-2026-08-11--the-selective-manifest).
+- **FIXED — the audit timeline's status arrow rendered as a tofu box.**
+  `'open → resolved'` used U+2192, and Roboto — the font CanvasKit falls
+  back to on web — has no glyph for it. Caught by actually looking at a
+  rendered screenshot, not by any test. Now `'open › resolved'`
+  (U+203A, which Roboto has). A sweep of every UI string literal found
+  no other missing glyph; the remaining non-ASCII characters are emoji,
+  which resolve through CanvasKit's emoji fallback.
+- **FIXED — a failed audit page took the loaded history with it.** A
+  pagination failure in the timeline replaced the whole list with an
+  error box, so a moderator lost the history they already had. The error
+  is now inline beneath the events, and Retry resumes from the same
+  cursor.
+
 - **Moderation has no mobile surface.** The Moderation Center is
   desktop-only by design in this milestone; a moderator on a phone
   cannot triage. Deliberate, not an oversight.
-- **`adminAuditLogs` has no staff-facing view.** Entries are written
-  deterministically and are unreadable by every client, staff included —
-  reviewing them means the Firestore Console or the existing
-  `listAdminAuditLogs` callable.
+- **`adminAuditLogs` has no BROAD staff-facing view.** Entries are
+  written deterministically and stay unreadable by every client, staff
+  included. A moderator can now see one report's own history through the
+  scoped `listReportAuditTrail` callable (ADR-040), which is the only
+  client-reachable path into the collection and cannot be pointed
+  anywhere else. Reviewing the whole log still means the Firestore
+  Console or the admin-only `listAdminAuditLogs` callable.
 - **A newly promoted moderator must refresh their token.** Staff access
   requires the signed claim as well as the server record, so promotion
   takes effect when the ID token refreshes (up to an hour, or instantly

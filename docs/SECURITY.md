@@ -214,10 +214,27 @@ callable. Full reasoning:
 - **Banning is admin-only** and unchanged — `setUserBan` is gated to
   `requireUserManager` (admin/superAdmin). Moderators are shown an
   escalation note rather than an action that would be refused.
-- **Audit**: `adminAuditLogs` is `if false` for every client. Report
-  actions write `report_{reportId}_{requestId}`; message removals write
+- **Audit**: `adminAuditLogs` is `if false` for every client — that has
+  not changed and must not. Report actions write
+  `report_{reportId}_{requestId}`; message removals write
   `globalMessage_{eventId}` from the existing trigger. Both ids are
   deterministic, so retries overwrite rather than duplicate.
+- **Reading the audit trail** goes through `listReportAuditTrail`, and
+  only that. It re-checks the same three-part staff test as every other
+  moderation path (signed claim + server-written `users/{uid}.role`
+  mirror + not banned), then answers one question: what happened to this
+  report and to the message it is about. The client supplies a report
+  id; **both target ids are read from the report document server-side**,
+  so no argument exists that could point it at another report or at an
+  unrelated admin action. The response is a field allowlist — id, kind,
+  action, actorId, actorName (public display name only), actorRole,
+  previous/new status, resolution, note, contentRemoved, removedContent,
+  createdAt — with strings capped at 500 characters. No email, no
+  provider data, no raw document, no unrelated `details` keys.
+  `listAdminAuditLogs`, which lists the whole collection with free-text
+  search and returns `actor.email`, was deliberately **not** reused and
+  **not** widened; see
+  [ADR-040](Decisions.md#adr-040-a-reports-audit-trail-is-served-by-a-scoped-callable-not-by-the-admin-audit-browser-queue-filters-are-server-side-clauses).
 - **Privacy**: the panel shows only public profile fields
   (display name, avatar). No email, phone, provider data or internal
   field is read. The reporter's identity is not shown to the reported

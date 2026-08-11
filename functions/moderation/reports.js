@@ -293,6 +293,10 @@ const moderateReport = onCall(
           previousStatus: outcome.previous,
           newStatus: outcome.status,
           resolution: needsResolution ? resolution : null,
+          // The note as recorded at the time of the action. The report
+          // document holds only the latest one; a trail needs the value
+          // that went with this specific transition.
+          note: moderatorNote || null,
           contentRemoved: outcome.contentRemoved,
           requestId,
         },

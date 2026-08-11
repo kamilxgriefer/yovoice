@@ -6,6 +6,7 @@ import 'package:yovoice/features/moderation/data/models/moderation_report.dart';
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
 import 'package:yovoice/features/moderation/data/services/report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_message_sheet.dart';
+import 'package:yovoice/features/moderation/presentation/widgets/report_audit_timeline.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// The staff Moderation Center — the report queue and its detail panel,
@@ -115,8 +116,19 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
               _limit = ModerationService.pageSize;
               _selectedId = null;
             }),
-            onTargetFilter: (value) => setState(() => _targetFilter = value),
-            onReasonFilter: (value) => setState(() => _reasonFilter = value),
+            // Narrowing changes which documents the query returns, so
+            // the page window resets — keeping it would claim to have
+            // paged through a set that was never queried.
+            onTargetFilter: (value) => setState(() {
+              _targetFilter = value;
+              _limit = ModerationService.pageSize;
+              _selectedId = null;
+            }),
+            onReasonFilter: (value) => setState(() {
+              _reasonFilter = value;
+              _limit = ModerationService.pageSize;
+              _selectedId = null;
+            }),
             onSelect: (id) => setState(() => _selectedId = id),
             onLoadMore: () =>
                 setState(() => _limit += ModerationService.pageSize),
@@ -220,23 +232,25 @@ class _ModerationWorkspace extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<List<ModerationReport>>(
-      stream: service.watchQueue(status: status, limit: limit),
-      builder: (context, snapshot) {
-        final all = snapshot.data;
-        // Target and reason are narrowed in memory, on ONE page that is
-        // already bounded by the query's limit — adding two more equality
-        // filters would need a composite index per combination for no
-        // real benefit at this size.
-        final reports = (all ?? const <ModerationReport>[])
-            .where(
-              (report) =>
-                  (targetFilter == null ||
-                      report.targetType == targetFilter) &&
-                  (reasonFilter == null || report.reason == reasonFilter),
-            )
-            .toList(growable: false);
+    // Every filter is a server-side clause. The key ties this
+    // StreamBuilder to the EXACT active query, so when a filter changes
+    // Flutter tears down the old subscription and its state — a late
+    // snapshot from the previous query cannot repaint the new queue.
+    final queryKey = '${status.name}'
+        '|${targetFilter?.name ?? '*'}'
+        '|${reasonFilter?.name ?? '*'}'
+        '|$limit';
 
+    return StreamBuilder<List<ModerationReport>>(
+      key: ValueKey(queryKey),
+      stream: service.watchQueue(
+        status: status,
+        targetType: targetFilter,
+        reason: reasonFilter,
+        limit: limit,
+      ),
+      builder: (context, snapshot) {
+        final reports = snapshot.data ?? const <ModerationReport>[];
         final selected = reports.where((r) => r.id == selectedId).firstOrNull;
 
         return Padding(
@@ -261,7 +275,6 @@ class _ModerationWorkspace extends StatelessWidget {
                     final queue = _Queue(
                       snapshot: snapshot,
                       reports: reports,
-                      unfiltered: all?.length ?? 0,
                       limit: limit,
                       selectedId: selectedId,
                       onSelect: onSelect,
@@ -508,7 +521,6 @@ class _Queue extends StatelessWidget {
   const _Queue({
     required this.snapshot,
     required this.reports,
-    required this.unfiltered,
     required this.limit,
     required this.selectedId,
     required this.onSelect,
@@ -517,7 +529,6 @@ class _Queue extends StatelessWidget {
 
   final AsyncSnapshot<List<ModerationReport>> snapshot;
   final List<ModerationReport> reports;
-  final int unfiltered;
   final int limit;
   final String? selectedId;
   final ValueChanged<String> onSelect;
@@ -552,8 +563,11 @@ class _Queue extends StatelessWidget {
       );
     }
 
-    // A full page back means there is very likely more behind it.
-    final hasMore = unfiltered >= limit;
+    // A full page back means there is very likely more behind it. The
+    // page is the SERVER's filtered result, so this is a truthful
+    // statement about the whole matching set, not about one slice of a
+    // broader query.
+    final hasMore = reports.length >= limit;
 
     return Container(
       decoration: BoxDecoration(
@@ -852,6 +866,11 @@ class _DetailState extends State<_Detail> {
   ReportResolution _resolution = ReportResolution.noActionNeeded;
   final TextEditingController _note = TextEditingController();
 
+  /// Bumped only after the SERVER confirms an action, which makes the
+  /// timeline reload from the first page. Nothing is inserted
+  /// optimistically, so a confirmed event appears exactly once.
+  int _auditRefresh = 0;
+
   @override
   void dispose() {
     _note.dispose();
@@ -886,6 +905,7 @@ class _DetailState extends State<_Detail> {
       setState(() {
         // Cleared only on success, so the NEXT action gets a new key.
         _requestId = null;
+        _auditRefresh++;
         _success = result.replayed
             ? 'Already applied.'
             : switch (result.status) {
@@ -984,6 +1004,17 @@ class _DetailState extends State<_Detail> {
               _Field(label: 'Moderator note', value: report.resolutionNote!),
             ],
           ],
+          const SizedBox(height: 18),
+          ReportAuditTimeline(
+            // Keyed on the report so selecting another one rebuilds the
+            // widget outright rather than showing the previous report's
+            // history under a new header.
+            key: ValueKey('audit-${report.id}'),
+            reportId: report.id,
+            service: service,
+            refreshToken: _auditRefresh,
+            onAccessExpired: widget.onAccessExpired,
+          ),
           const SizedBox(height: 18),
           if (!report.isClosed) _actions(report),
           if (_error != null) ...[

@@ -33,6 +33,8 @@ const FUNCTIONS_HOST =
   process.env.FUNCTIONS_EMULATOR_HOST ?? "127.0.0.1:5001";
 const ENDPOINT =
   `http://${FUNCTIONS_HOST}/${PROJECT}/europe-west1/moderateReport`;
+const AUDIT_ENDPOINT =
+  `http://${FUNCTIONS_HOST}/${PROJECT}/europe-west1/listReportAuditTrail`;
 
 const MOD = "smoke-mod-uid";
 const AUTHOR = "smoke-author-uid";
@@ -64,8 +66,8 @@ function emulatorIdToken(uid, claims = {}) {
   return `${header}.${payload}.`;
 }
 
-async function callModerateReport(body, { uid, role }) {
-  const response = await fetch(ENDPOINT, {
+async function callEndpoint(url, body, { uid, role }) {
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -76,6 +78,11 @@ async function callModerateReport(body, { uid, role }) {
   const json = await response.json().catch(() => ({}));
   return { status: response.status, json };
 }
+
+const callModerateReport = (body, auth) =>
+  callEndpoint(ENDPOINT, body, auth);
+const callAuditTrail = (body, auth) =>
+  callEndpoint(AUDIT_ENDPOINT, body, auth);
 
 async function seed() {
   await Promise.all([
@@ -109,11 +116,26 @@ async function seed() {
       status: "open",
     }),
   ]);
-  const stale = await db
-    .collection("adminAuditLogs")
-    .where("targetId", "==", REPORT_ID)
-    .get();
-  await Promise.all(stale.docs.map((entry) => entry.ref.delete()));
+  for (const targetId of [REPORT_ID, MESSAGE_ID, "smoke-unrelated-user"]) {
+    const stale = await db
+      .collection("adminAuditLogs")
+      .where("targetId", "==", targetId)
+      .get();
+    await Promise.all(stale.docs.map((entry) => entry.ref.delete()));
+  }
+
+  // An unrelated admin action sitting in the same collection. The
+  // scoped reader must never hand this to a moderator.
+  await db.doc("adminAuditLogs/smoke-unrelated-ban").set({
+    actorId: "someone-else",
+    actorEmail: "admin@example.invalid",
+    actorRole: "admin",
+    action: "ban_user",
+    targetType: "user",
+    targetId: "smoke-unrelated-user",
+    details: { reason: "unrelated" },
+    createdAt: FieldValue.serverTimestamp(),
+  });
 }
 
 async function main() {
@@ -209,10 +231,72 @@ async function main() {
     "the removal audit is keyed on the CloudEvent id",
   );
 
+  // ---- the scoped audit reader, over the real HTTP endpoint --------
+
+  const auditDenied = await callAuditTrail(
+    { reportId: REPORT_ID },
+    { uid: "smoke-plain-uid", role: "user" },
+  );
+  assert.equal(
+    auditDenied.status,
+    403,
+    `an ordinary user must not read the audit trail, got ${auditDenied.status}`,
+  );
+
+  const trail = await callAuditTrail(
+    { reportId: REPORT_ID },
+    { uid: MOD, role: "moderator" },
+  );
+  assert.equal(trail.status, 200, `expected 200, got ${trail.status}`);
+
+  const events = trail.json.result?.events ?? [];
+  const workflow = events.filter((event) => event.kind === "reportWorkflow");
+  const content = events.filter((event) => event.kind === "contentModeration");
+
+  assert.equal(workflow.length, 1, "the resolve action should appear once");
+  assert.equal(workflow[0].newStatus, "resolved");
+  assert.equal(workflow[0].contentRemoved, true);
+  assert.equal(content.length, 1, "the message removal should appear once");
+  assert.equal(content[0].removedContent, "reported content");
+
+  // Nothing unrelated, and no private field, may come back.
+  assert.ok(
+    !events.some((event) => event.action === "ban_user"),
+    "an unrelated admin action leaked into the scoped trail",
+  );
+  assert.ok(
+    !JSON.stringify(events).includes("@example.invalid"),
+    "an email address leaked into the scoped trail",
+  );
+  // The entry ids derive from the report id the caller itself supplied
+  // (reports use a deterministic `{reporterId}_{targetType}_{targetId}`
+  // id to enforce one-report-per-user-per-target), so they are excluded
+  // here. What must not appear is the reporter turning up in a PAYLOAD
+  // field — as an actor, a note, or removed content.
+  const payloads = events.map(({ id, ...rest }) => rest);
+  assert.ok(
+    !JSON.stringify(payloads).includes(REPORTER),
+    "the reporter's identity leaked into an audit payload field",
+  );
+  assert.ok(
+    !events.some((event) => event.actorId === REPORTER),
+    "the reporter was attributed as a moderation actor",
+  );
+
+  // The replay earlier added no second workflow record, and the trail
+  // proves it from the reader's side too.
+  assert.equal(
+    events.filter((event) => event.kind === "reportWorkflow").length,
+    1,
+    "a replayed action must not appear twice in the trail",
+  );
+
   console.log(
     "OK  moderateReport is reachable, refuses non-staff, soft-deletes the "
       + "target, resolves the report, and writes one audit per action "
-      + `(${reportAudits.docs[0].id})`,
+      + `(${reportAudits.docs[0].id}); listReportAuditTrail returns exactly `
+      + "that event plus the message removal, refuses ordinary users, and "
+      + "leaks no unrelated audit, email or reporter identity",
   );
 }
 

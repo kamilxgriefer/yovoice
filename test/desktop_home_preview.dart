@@ -36,6 +36,7 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/premium_deskt
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
 import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
+import 'package:yovoice/features/moderation/data/models/moderation_audit_event.dart';
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
 import 'package:yovoice/features/moderation/presentation/screens/moderation_center_screen.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
@@ -424,7 +425,7 @@ class _PreviewApp extends StatelessWidget {
               child: moderationPreview
                   ? ModerationCenterScreen(
                       isRootTab: true,
-                      moderationService: ModerationService(
+                      moderationService: _PreviewModerationService(
                         firestore: db,
                         auth: auth,
                       ),
@@ -504,5 +505,110 @@ class _PreviewApp extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// The audit trail is the one part of the Moderation Center that cannot
+/// come from `fake_cloud_firestore`: it is served by the
+/// `listReportAuditTrail` callable, and there is no Functions emulator
+/// behind this harness. Without a stand-in the timeline can only ever be
+/// looked at in its error state, which is not the state that needs
+/// judging before shipping.
+///
+/// Preview-only, and obviously fictional, exactly like the seeded rooms
+/// and messages above. Production reads the real callable.
+class _PreviewModerationService extends ModerationService {
+  _PreviewModerationService({super.firestore, super.auth});
+
+  @override
+  Future<ModerationAuditPage> reportAuditTrail(
+    String reportId, {
+    int limit = ModerationService.auditPageSize,
+    String? cursor,
+  }) async {
+    // A deliberate mix: one report-workflow event and one
+    // content-moderation event, which is what a remove-and-resolve
+    // actually produces, plus a second page so the pagination control
+    // can be seen.
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+
+    Map<String, dynamic> event(
+      String id,
+      String kind,
+      String action,
+      String at, {
+      String? previousStatus,
+      String? newStatus,
+      String? resolution,
+      String? note,
+      bool contentRemoved = false,
+      String? removedContent,
+    }) => <String, dynamic>{
+      'id': id,
+      'kind': kind,
+      'action': action,
+      'actorId': _uid,
+      'actorName': 'CeoGriefer',
+      'actorRole': 'moderator',
+      'previousStatus': previousStatus,
+      'newStatus': newStatus,
+      'resolution': resolution,
+      'note': note,
+      'contentRemoved': contentRemoved,
+      'removedContent': removedContent,
+      'createdAt': at,
+    };
+
+    if (cursor == null) {
+      return ModerationAuditPage.fromResponse(<String, dynamic>{
+        'events': [
+          event(
+            'w2',
+            'reportWorkflow',
+            'report_removeAndResolve',
+            '2026-08-11T18:42:10.000Z',
+            previousStatus: 'inReview',
+            newStatus: 'resolved',
+            resolution: 'contentRemoved',
+            note: 'Third strike this week.',
+            contentRemoved: true,
+          ),
+          event(
+            'c1',
+            'contentModeration',
+            'globalMessage_moderated',
+            '2026-08-11T18:42:09.000Z',
+            contentRemoved: true,
+            removedContent: 'buy followers here, dm me',
+          ),
+          event(
+            'w1',
+            'reportWorkflow',
+            'report_claim',
+            '2026-08-11T18:39:02.000Z',
+            previousStatus: 'open',
+            newStatus: 'inReview',
+          ),
+        ],
+        'hasMore': true,
+        'nextCursor': '2026-08-11T18:39:02.000Z',
+      });
+    }
+
+    return ModerationAuditPage.fromResponse(<String, dynamic>{
+      'events': [
+        event(
+          'w0',
+          'reportWorkflow',
+          'report_release',
+          '2026-08-11T18:31:44.000Z',
+          previousStatus: 'inReview',
+          newStatus: 'open',
+          note: 'Passing to someone who speaks Polish.',
+        ),
+      ],
+      'hasMore': false,
+      'nextCursor': null,
+    });
   }
 }

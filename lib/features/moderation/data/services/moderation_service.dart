@@ -5,6 +5,8 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:yovoice/features/messages/data/models/global_message.dart';
+import 'package:yovoice/features/moderation/data/models/moderation_audit_event.dart';
+import 'package:yovoice/features/moderation/data/services/report_service.dart';
 import 'package:yovoice/features/moderation/data/models/moderation_report.dart';
 
 /// Why a privileged moderation call failed, so the panel can say
@@ -95,6 +97,10 @@ class ModerationService {
   /// Mirrors MAX_MODERATOR_NOTE in functions/moderation/reports.js.
   static const int maxModeratorNoteLength = 500;
 
+  /// Mirrors DEFAULT_LIMIT in functions/moderation/report_audit.js. The
+  /// callable caps it at MAX_LIMIT regardless of what is asked for.
+  static const int auditPageSize = 10;
+
   CollectionReference<Map<String, dynamic>> get _reports =>
       _firestore.collection('reports');
 
@@ -139,18 +145,35 @@ class ModerationService {
 
   /// The queue, newest first.
   ///
-  /// `status` is an equality filter and `createdAt` the sort, which
-  /// Firestore serves from the composite index declared in
-  /// firestore.indexes.json. Ordering is deterministic because Firestore
-  /// appends `__name__` in the same direction as the final orderBy, so
-  /// two reports filed in the same millisecond keep one stable order and
-  /// a growing window cannot reorder or duplicate them.
+  /// EVERY filter is a server-side equality clause — status, target type
+  /// and reason alike. Narrowing a page in Dart would be a lie: one page
+  /// of the broad query, filtered locally, looks like "all open spam
+  /// reports" while actually being "the spam reports that happened to
+  /// fall in the newest 20 open ones". The composite indexes for each
+  /// combination the UI can produce are declared in
+  /// firestore.indexes.json.
+  ///
+  /// Ordering is deterministic: Firestore appends `__name__` in the same
+  /// direction as the final orderBy, so two reports filed in the same
+  /// millisecond keep one stable order, and a growing window cannot
+  /// reorder or duplicate them.
   Stream<List<ModerationReport>> watchQueue({
     required ReportStatus status,
+    ReportTargetType? targetType,
+    ReportReason? reason,
     int limit = pageSize,
   }) {
-    return _reports
-        .where('status', isEqualTo: status.name)
+    Query<Map<String, dynamic>> query = _reports.where(
+      'status',
+      isEqualTo: status.name,
+    );
+    if (targetType != null) {
+      query = query.where('targetType', isEqualTo: targetType.name);
+    }
+    if (reason != null) {
+      query = query.where('reason', isEqualTo: reason.name);
+    }
+    return query
         .orderBy('createdAt', descending: true)
         .limit(limit)
         .snapshots()
@@ -196,6 +219,37 @@ class ModerationService {
         .get();
     if (!snapshot.exists) return null;
     return GlobalMessage.fromFirestore(snapshot);
+  }
+
+  /// The selected report's moderation history.
+  ///
+  /// Goes through `listReportAuditTrail`, NOT the broad
+  /// `listAdminAuditLogs` browser: `adminAuditLogs` is unreadable by
+  /// every client (rules deny it outright), and the scoped callable
+  /// derives the target ids from the report document, so there is no
+  /// parameter a caller could point at another report or an unrelated
+  /// admin action.
+  Future<ModerationAuditPage> reportAuditTrail(
+    String reportId, {
+    int limit = auditPageSize,
+    String? cursor,
+  }) async {
+    try {
+      final callable = _functions.httpsCallable('listReportAuditTrail');
+      final response = await callable.call<Map<String, dynamic>>({
+        'reportId': reportId,
+        'limit': limit,
+        'cursor': ?cursor,
+      });
+      return ModerationAuditPage.fromResponse(response.data);
+    } on FirebaseFunctionsException catch (error) {
+      throw ModerationException(_failureFor(error), _messageFor(error));
+    } catch (_) {
+      throw const ModerationException(
+        ModerationFailure.unknown,
+        'The activity history could not be loaded.',
+      );
+    }
   }
 
   /// A fresh idempotency key. Held by the UI for the lifetime of one

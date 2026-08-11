@@ -165,6 +165,152 @@ the Moderation entry once their ID token refreshes (sign out and in
 forces it), while a REVOKED moderator loses access on their next
 request, because the server record is checked too.
 
+## Undeployed backend as of 2026-08-11 — the selective manifest
+
+Everything below was **read from the live project**, not inferred from
+filenames or from what the repo happens to contain:
+
+```bash
+firebase functions:list --project yovoice-ec54a
+firebase firestore:indexes --project yovoice-ec54a
+firebase hosting:channel:list --project yovoice-ec54a
+```
+
+### What production actually has right now
+
+| Target | State | Evidence |
+|---|---|---|
+| Hosting (Flutter web) | **Already carries Global Chat AND the Moderation Center** | `live` released 2026-08-11 22:16:50; the served `main.dart.js` contains `Claim and review`, `Reports appear as the community files them`, `moderateReport`, `globalChat` |
+| `onGlobalMessageModerated` | **Deployed** | in `functions:list`, v2, europe-west1, nodejs22 |
+| `moderateReport` | **Not deployed** | absent from `functions:list` |
+| `listReportAuditTrail` | **Not deployed** | new in this commit |
+| `setUserBan` | Deployed, but **source changed** (token revocation on ban) | in `functions:list`; source diff in `24353d4` |
+| `reports` + `adminAuditLogs` indexes | **None deployed** | `firestore.indexes` returns only `notifications` and `rooms` |
+| `firestore.rules` | **Unverified from the CLI** | there is no read-only rules-fetch command; check Console → Firestore → Rules before deploying |
+
+Two consequences worth stating plainly, because they are live now:
+
+1. **Hosting is ahead of the backend.** Pushing to `main` auto-deploys
+   the web app (see the CI section above), so both milestones' *client*
+   code shipped the moment they were pushed, while their Functions,
+   indexes and rules did not. A staff account opening Moderation in
+   production today gets a queue query with no composite index and a
+   `moderateReport` call that resolves to nothing. Nothing is corrupted
+   — the actions simply fail — but the feature is not usable until the
+   deploys below run.
+2. **The next push does the same thing again.** Treat "push to `main`"
+   as a Hosting deploy, and sequence the backend first.
+
+### Cloud Functions — the complete selective list
+
+Derived from `functions/index.js` exports, not from file names. Both
+undeployed milestones are covered:
+
+| Function | Why | Source |
+|---|---|---|
+| `moderateReport` | new export, never deployed | `functions/moderation/reports.js` (`1e76d36`) |
+| `listReportAuditTrail` | new export, never deployed | `functions/moderation/report_audit.js` (this commit) |
+| `onGlobalMessageModerated` | deployed, but its module changed | `functions/moderation/global_chat.js` (`24353d4`) |
+| `setUserBan` | deployed, but now revokes refresh tokens on ban | `functions/admin/users.js` (`24353d4`) |
+
+`functions/utils/audit.js` also changed — `writeAuditLog` gained an
+optional `entryId` for deterministic, replay-safe audit ids. Its other
+callers (`admin/clubs.js`, `admin/rooms.js`, `clubs/ownership.js`) pass
+no `entryId` and keep the previous `.add()` behaviour exactly, so the
+functions exported from those modules do **not** need redeploying. They
+will pick the new util up whenever they are next deployed for their own
+reasons.
+
+Deploy them by name. A blanket `--only functions` would also redeploy 29
+functions that did not change:
+
+```bash
+firebase deploy --only functions:onGlobalMessageModerated,functions:setUserBan,functions:moderateReport,functions:listReportAuditTrail --project yovoice-ec54a
+```
+
+### Firestore indexes
+
+Five new composite indexes, each tied to a query that exists:
+
+| Index | Query that needs it |
+|---|---|
+| `reports (status, createdAt DESC)` | the unfiltered queue |
+| `reports (status, targetType, createdAt DESC)` | queue + target filter |
+| `reports (status, reason, createdAt DESC)` | queue + reason filter |
+| `reports (status, targetType, reason, createdAt DESC)` | queue + both filters |
+| `adminAuditLogs (targetType, targetId, createdAt DESC)` | both scoped queries inside `listReportAuditTrail` |
+
+`firestore.indexes.json` also regained `rooms (isLive, visibility,
+createdAt DESC)`, which exists in production but had drifted out of the
+file. It backs `RoomService.watchLivePublicRooms()` — the Home live-rooms
+list. Keeping the file a superset of production means an index deploy can
+never be the thing that removes it.
+
+### Recommended order
+
+Backend first, client last, and the audit trigger before anything that
+lets a moderator remove content — otherwise removals happen in a window
+where nothing records them.
+
+```bash
+# 1. Indexes first: they build asynchronously and the queue's first
+#    query fails until they are READY. Watch Console → Firestore →
+#    Indexes and wait for Enabled before step 4.
+firebase deploy --only firestore:indexes --project yovoice-ec54a
+
+# 2. The audit trigger, so a removal can never be unlogged.
+firebase deploy --only functions:onGlobalMessageModerated --project yovoice-ec54a
+
+# 3. Rules: staff read access to `reports`, the create-only report path,
+#    and `adminAuditLogs` denied to every client.
+#    Run the emulator suite against a FRESH emulator first.
+cd firestore-tests && npm test && cd ..
+firebase deploy --only firestore:rules --project yovoice-ec54a
+
+# 4. The privileged callables.
+firebase deploy --only functions:moderateReport,functions:listReportAuditTrail --project yovoice-ec54a
+
+# 5. Immediate ban revocation.
+firebase deploy --only functions:setUserBan --project yovoice-ec54a
+
+# 6. The client. Already live via CI in this case — redeploy only if a
+#    newer build needs to ship:
+flutter build web --release && firebase deploy --only hosting --project yovoice-ec54a
+```
+
+Then verify with a real staff account: the queue loads, each filter
+combination returns without a `FAILED_PRECONDITION`, one claim/release
+round trip succeeds, and the audit timeline shows that action. Watch
+Console → Functions → Logs for permission denials and errors on the four
+functions, and Firestore usage for index-missing errors.
+
+### Rollback, and what must never be deleted
+
+Reversible by redeploying the previous revision from git history:
+
+- **Functions** — `git checkout <previous-commit> -- functions/` then
+  redeploy the same named list. Cloud Run keeps previous revisions, so a
+  bad deploy can also be rolled back per function in the Console.
+- **Rules** — `git checkout <previous-commit> -- firestore.rules` and
+  redeploy. Rulesets are versioned in Console → Firestore → Rules with a
+  history view.
+- **Hosting** — previous releases are promotable from the Console.
+
+**Not reversible, and not to be "cleaned up" during a rollback:**
+
+- `adminAuditLogs` entries. They are the record of who did what, they
+  are append-only by design, and deleting them to tidy a failed deploy
+  destroys the only evidence a moderation decision ever happened.
+- `reports` documents. Reporter evidence is immutable by rule; a
+  rollback must not delete or rewrite it. Workflow fields (`status`,
+  `assignedTo`, `resolution`) may legitimately move forward again after
+  a redeploy.
+- Soft-deleted Global Chat messages (`isDeleted: true` with the original
+  text retained). The retained text IS the audit evidence.
+
+Removing an index is safe but not instant to rebuild; removing a
+Function only makes its clients fail, it destroys nothing.
+
 ## App Check rollout (not enabled — staged plan)
 
 App Check enforcement is **off** on every Cloud Function

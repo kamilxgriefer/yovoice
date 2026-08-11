@@ -2311,3 +2311,97 @@ have never had the authority to ban.
 - Report triage still has no mobile surface, and there is no
   staff-facing view of `adminAuditLogs` — both deliberate for this
   milestone.
+
+## ADR-040: A report's audit trail is served by a scoped callable, not by the admin audit browser; queue filters are server-side clauses
+
+**Status**: Accepted
+**Date**: 2026-08-11
+
+### Context
+
+[ADR-039](#adr-039-the-moderation-center-is-a-staff-gated-more-destination-triage-is-a-callable-and-staff-authority-is-claim--server-record)
+shipped the Moderation Center with two loose ends it named honestly:
+there was no staff-facing view of `adminAuditLogs`, and the target and
+reason filters narrowed **one bounded page in memory** rather than
+querying.
+
+Both needed closing, and the obvious move for the first one was wrong.
+`functions/admin/audit.js` already exposes `listAdminAuditLogs`, and it
+is gated on `requireAdminCenterAccess` — which already includes
+moderators. But it is a whole-collection browser: unfiltered by default,
+free-text search across every field, and it returns `actor.email` and
+`target.email`. Pointing the Moderation Center at it would let a
+moderator reviewing one spam report page through every ban, role change
+and club deletion in the product, with email addresses attached. That is
+not a change to the Moderation Center; it is a silent expansion of what
+a moderator can see.
+
+The filters were a subtler problem. Narrowing a page in Dart *looks*
+right — the wrong rows disappear — while telling the reviewer something
+false: "all open spam reports" is really "the spam reports that happened
+to fall inside the newest 20 open ones". A report older than the page
+window is invisible with no indication that it exists.
+
+### Decision
+
+- **Add `listReportAuditTrail`**, a callable that answers exactly one
+  question: what has happened to THIS report, and to the message it is
+  about. The caller sends a report id and nothing else that selects
+  data; both target ids are read from the report document server-side,
+  so no parameter can be pointed at another report or an unrelated
+  admin action. `listAdminAuditLogs` is left exactly as it is.
+- **Same staff test as everywhere else** — `requireActiveStaff`: signed
+  `role` claim, plus the server-written `users/{uid}.role` mirror, plus
+  not banned. `adminAuditLogs` stays denied to every client in rules;
+  the Admin SDK remains the only reader.
+- **Response is an allowlist**, not a document: id, kind, action,
+  actorId, actorName (public display name only), actorRole, previous and
+  new status, resolution, note, contentRemoved, removedContent,
+  createdAt. Strings are capped at 500 characters so a long removed
+  message cannot turn the trail into a bulk content export.
+- **Two event kinds, never merged.** `reportWorkflow` (how the report
+  moved) and `contentModeration` (what happened to the message, and what
+  it said) are different facts written by different writers. A
+  remove-and-resolve legitimately produces one of each; collapsing them
+  would imply every resolution removed content.
+- **Every queue filter becomes a server-side equality clause**, with a
+  composite index per combination the UI can produce. This supersedes
+  ADR-039's in-memory narrowing.
+
+### Reasoning
+
+Least privilege is the whole point of the first decision: the capability
+granted is "read this report's history", not "read the audit log". The
+scoped callable cannot be talked into more, because there is no argument
+that widens it — a bug would have to be introduced, not merely exploited.
+
+Pagination uses `createdAt` as a strict upper bound rather than a
+Firestore cursor because the trail is a merge of two independent
+queries; a strict `<` advances both together and cannot repeat or skip
+across the boundary. Ties break on document id so equal timestamps keep
+one stable order across pages.
+
+The index-per-combination cost is four small indexes. The alternative —
+a filter that quietly lies about a queue of reports — is not a
+performance tradeoff, it is a correctness one, and this is the surface
+where "I saw no reports of that kind" has to be true.
+
+### Consequences
+
+- Four `reports` composite indexes and one on
+  `adminAuditLogs (targetType, targetId, createdAt DESC)`. All five must
+  be deployed and READY before the queue is opened, or its first query
+  fails with `FAILED_PRECONDITION`.
+- `writeAuditLog` accepts an optional `entryId`; `moderateReport` now
+  records the moderator note that went with each transition, so the
+  trail shows the note for that action rather than only the report's
+  latest one.
+- The timeline never inserts an event optimistically. After a confirmed
+  action it reloads from the first page, which is what keeps a new event
+  from appearing twice.
+- `firestore.indexes.json` regained `rooms (isLive, visibility,
+  createdAt DESC)`, which existed in production but had drifted out of
+  the file. The file is now a superset of production, so an index deploy
+  cannot be what removes it.
+- Still no mobile moderation surface, and still no staff view of the
+  broad audit log — deliberately.
