@@ -259,10 +259,16 @@ class MessageService {
           .doc(recipientId)
           .get();
       suppressBell = friendDoc.exists;
-    } catch (_) {
-      // Fail open: if friendship can't be read, keep the bell entry — a
+    } catch (error) {
+      // Fail OPEN: if friendship can't be read, keep the bell entry — a
       // redundant bell row for a friend beats silently hiding a
-      // stranger's message request.
+      // stranger's message request. Swallowing is intentional and cannot
+      // hide a lost notification, because the fallback is the MORE
+      // visible routing, not the less.
+      debugPrint(
+        'MessageService: friendship lookup failed (${error.runtimeType}); '
+        'routing this message notification to the bell to be safe.',
+      );
     }
 
     final type = isReplyToRecipient
@@ -275,7 +281,11 @@ class MessageService {
         targetId: conversationId,
         suppressBell: suppressBell,
       );
-    } catch (_) {
+    } catch (error) {
+      debugPrint(
+        'MessageService: suppressed notification rejected '
+        '(${error.runtimeType}); retrying as a visible record.',
+      );
       // The rules only accept a SUPPRESSED record when the recipient's
       // own friends list contains the sender. If our sender-side read
       // said "friend" but the write was rejected (asymmetric state, e.g.

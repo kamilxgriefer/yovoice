@@ -2490,6 +2490,21 @@ reads the friendship itself.
 
 ### Consequences
 
+- **Acceptance needs positive evidence, not just an existing
+  friendship.** A stale request document sitting beside an
+  already-established friendship would otherwise turn any later deletion
+  of it — cleanup, an account teardown, a migration — into "X accepted
+  your friend request" long after the fact. `onFriendRequestResolved`
+  therefore also requires the friendship's `createdAt` to be within
+  60 seconds of `event.time`, which a genuine acceptance always is
+  because both are committed in the same transaction. Comparing against
+  `event.time` rather than `now` keeps the answer identical on every
+  retry of the same event. A friendship with no `createdAt` fails closed.
+  `blockUser` is already safe without this — it deletes the friendship
+  and both request documents in one transaction, so no friendship
+  survives for the trigger to find — and all four cases (decline, block,
+  stale cleanup, genuine acceptance) are exercised through the real
+  exported trigger in `firestore-tests/notifications.smoke.js`.
 - **Deploy order is load-bearing**: the Functions must ship BEFORE the
   rules change. Rules first would leave a window where the client is
   denied and no trigger exists yet. This is written into DEPLOYMENT.md.

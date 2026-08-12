@@ -2,6 +2,7 @@ import 'dart:async';
 
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
@@ -391,8 +392,17 @@ class FriendService {
         type: NotificationType.friendRequest,
         actorId: request.senderId,
       );
-    } catch (_) {
-      // Cosmetic cleanup; never fail the acceptance over it.
+    } catch (error) {
+      // Cosmetic cleanup; never fail the acceptance over it. It cannot
+      // hide the loss of an authoritative action: the friendship is
+      // already committed and the requester's notification is written by
+      // onFriendRequestResolved, not here. The only consequence is a
+      // stale unread row for the acceptor.
+      debugPrint(
+        'FriendService: could not retire the resolved friend-request '
+        'notification (${error.runtimeType}). The acceptance itself '
+        'succeeded.',
+      );
     }
   }
 

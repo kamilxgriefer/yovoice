@@ -142,9 +142,16 @@ class PushNotificationService {
       if (token != null && _auth.currentUser != null) {
         await _notificationService.unregisterFcmToken(token);
       }
-    } catch (_) {
-      // Best-effort: a stale token left behind just means one fewer device
-      // gets push for the old account, never a crash on sign-out.
+    } catch (error) {
+      // Best-effort by design: sign-out must never fail because a token
+      // could not be removed. But a token left behind means the PREVIOUS
+      // account keeps receiving push on this device, which is a privacy
+      // consequence and not merely a lost convenience — so it is named.
+      debugPrint(
+        'PushNotificationService: could not unregister this device on sign '
+        'out (${error.runtimeType}). The previous account may keep '
+        'receiving push here until the token is refreshed or invalidated.',
+      );
     }
     _registeredToken = null;
   }

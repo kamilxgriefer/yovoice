@@ -59,8 +59,15 @@ class NotificationRouter {
           // center itself (where the tap originated) is enough for these.
           break;
       }
-    } catch (_) {
-      // Deleted/inaccessible target: fail closed, never crash on tap.
+    } on Exception catch (error) {
+      // Fail closed: a deleted or now-inaccessible target must never
+      // crash the tap, and must never fall through to showing content
+      // the user has lost access to. Naming it distinguishes "this
+      // conversation is gone" from "deep links are broken".
+      debugPrint(
+        'NotificationRouter: could not open the target of a '
+        '${type.name} notification (${error.runtimeType}). Staying put.',
+      );
     }
   }
 

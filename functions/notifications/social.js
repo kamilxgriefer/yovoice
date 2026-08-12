@@ -35,6 +35,12 @@ const REGION = "europe-west1";
 
 const MAX_NAME = 80;
 
+/// How close a friendship's creation must be to the request deletion for
+/// the deletion to count as an acceptance. Acceptance commits both in one
+/// transaction, so the real gap is milliseconds; this is slack for clock
+/// skew, not a guess.
+const ACCEPTANCE_WINDOW_MS = 60 * 1000;
+
 /// Public display fields only. Email, phone, provider data, roles,
 /// moderation state and preferences never enter a notification.
 async function publicActor(uid) {
@@ -152,12 +158,57 @@ const onFriendRequestResolved = onDocumentDeleted(
 
     const friendship = await db.doc(`users/${userId}/friends/${senderId}`).get();
     if (!friendship.exists) {
-      // Declined or cancelled. Nothing happened that the other side
-      // should be told about, and inventing a notification here would be
-      // exactly the "invented notification" case.
+      // Declined, cancelled, or removed by blockUser — which deletes the
+      // friendship and both request documents in ONE transaction, so by
+      // the time this runs there is no friendship to find. Nothing
+      // happened that the other side should be told about, and inventing
+      // a notification here would be exactly the "invented notification"
+      // case.
       logger.info("friendRequest resolved without acceptance", {
         userId,
         senderId,
+        reason: "no friendship",
+      });
+      return;
+    }
+
+    // Existence alone is not proof of acceptance. A STALE request
+    // document sitting alongside an already-established friendship would
+    // otherwise turn any later deletion of it — administrative cleanup,
+    // an account teardown, a migration — into "X accepted your friend
+    // request", years after the fact.
+    //
+    // Acceptance writes the friendship in the SAME transaction that
+    // deletes the request, so a genuine acceptance has a friendship
+    // created at the moment of this event. The comparison is against
+    // `event.time` (the commit time of the deletion), not `now`, so it
+    // gives the same answer on every retry of the same event.
+    const createdAt = friendship.data()?.createdAt;
+    const createdMs =
+      createdAt && typeof createdAt.toMillis === "function"
+        ? createdAt.toMillis()
+        : null;
+    const eventMs = Date.parse(event.time);
+
+    if (createdMs === null) {
+      // A legacy friendship with no timestamp cannot be dated, so it
+      // cannot be shown to be new. Failing closed here loses at most one
+      // notification for a pre-existing friendship; failing open invents
+      // an acceptance that never happened.
+      logger.info("friendRequest resolved without acceptance", {
+        userId,
+        senderId,
+        reason: "friendship has no createdAt",
+      });
+      return;
+    }
+
+    if (Math.abs(eventMs - createdMs) > ACCEPTANCE_WINDOW_MS) {
+      logger.info("friendRequest resolved without acceptance", {
+        userId,
+        senderId,
+        reason: "friendship predates this deletion",
+        ageMs: eventMs - createdMs,
       });
       return;
     }

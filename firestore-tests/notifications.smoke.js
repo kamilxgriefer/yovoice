@@ -26,6 +26,7 @@ const {
   orderBy,
   limit,
   serverTimestamp,
+  writeBatch,
 } = require("firebase/firestore");
 
 // Must match the project the Functions emulator loaded, or no trigger runs.
@@ -331,6 +332,151 @@ async function waitFor(read, predicate, budgetMs = 25000) {
   } catch (e) {
     stage("13. stranger CANNOT hide itself from the bell", e.code === "permission-denied", e.code);
   }
+
+  // ---- 14-17. the acceptance signal cannot be faked ----------------
+  //
+  // The request document is deleted on accept, decline, cancel AND
+  // block. Each of these drives the REAL onFriendRequestResolved trigger
+  // and asserts what it must not produce.
+
+  async function clearInbox(uid) {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      const snap = await getDocs(collection(db, `users/${uid}/notifications`));
+      await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+    });
+  }
+
+  async function resetRelationship() {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      for (const path of [
+        `users/${A}/friends/${B}`,
+        `users/${B}/friends/${A}`,
+        `users/${A}/friendRequests/${B}`,
+        `users/${B}/friendRequests/${A}`,
+      ]) {
+        await deleteDoc(doc(db, path)).catch(() => {});
+      }
+    });
+  }
+
+  // DECLINE: request deleted, no friendship ever created.
+  await clearInbox(A);
+  await resetRelationship();
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, `users/${B}/friendRequests/${A}`), {
+      senderId: A,
+      createdAt: serverTimestamp(),
+    });
+  });
+  await sleep(3000);
+  await clearInbox(A);
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await deleteDoc(doc(ctx.firestore(), `users/${B}/friendRequests/${A}`));
+  });
+  await sleep(4000);
+  stage(
+    "14. DECLINE emits no acceptance",
+    (await inbox(ctxA, A)).filter((n) => n.type === "friendAccepted").length === 0,
+  );
+
+  // BLOCK: friendship AND both requests removed in one transaction, the
+  // way blockUser does it. The friendship is gone by trigger time.
+  await clearInbox(A);
+  await resetRelationship();
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, `users/${B}/friends/${A}`), {
+      userId: A,
+      createdAt: serverTimestamp(),
+    });
+    await setDoc(doc(db, `users/${B}/friendRequests/${A}`), {
+      senderId: A,
+      createdAt: serverTimestamp(),
+    });
+  });
+  await sleep(2500);
+  await clearInbox(A);
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    const batch = writeBatch(db);
+    batch.delete(doc(db, `users/${B}/friends/${A}`));
+    batch.delete(doc(db, `users/${B}/friendRequests/${A}`));
+    await batch.commit();
+  });
+  await sleep(4000);
+  stage(
+    "15. BLOCK (friendship + request removed together) emits no acceptance",
+    (await inbox(ctxA, A)).filter((n) => n.type === "friendAccepted").length === 0,
+  );
+
+  // STALE REQUEST beside an OLD friendship: cleanup deletes only the
+  // request. Existence of a friendship alone must not read as acceptance.
+  await clearInbox(A);
+  await resetRelationship();
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, `users/${B}/friends/${A}`), {
+      userId: A,
+      // Long-established friendship, not one created by this deletion.
+      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30),
+    });
+    await setDoc(doc(db, `users/${B}/friendRequests/${A}`), {
+      senderId: A,
+      createdAt: serverTimestamp(),
+    });
+  });
+  await sleep(2500);
+  await clearInbox(A);
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await deleteDoc(doc(ctx.firestore(), `users/${B}/friendRequests/${A}`));
+  });
+  await sleep(4000);
+  stage(
+    "16. cleanup of a STALE request beside an old friendship emits no " +
+      "acceptance",
+    (await inbox(ctxA, A)).filter((n) => n.type === "friendAccepted").length === 0,
+  );
+
+  // And the genuine case still works after all of that.
+  await clearInbox(A);
+  await resetRelationship();
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, `users/${B}/friendRequests/${A}`), {
+      senderId: A,
+      createdAt: serverTimestamp(),
+    });
+  });
+  await sleep(3000);
+  await clearInbox(A);
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    const batch = writeBatch(db);
+    batch.set(doc(db, `users/${B}/friends/${A}`), {
+      userId: A,
+      createdAt: serverTimestamp(),
+    });
+    batch.set(doc(db, `users/${A}/friends/${B}`), {
+      userId: B,
+      createdAt: serverTimestamp(),
+    });
+    batch.delete(doc(db, `users/${B}/friendRequests/${A}`));
+    await batch.commit();
+  });
+  const accepted = await waitFor(
+    () => inbox(ctxA, A),
+    (v) => v.some((n) => n.type === "friendAccepted"),
+  );
+  const acceptedRows = accepted.filter((n) => n.type === "friendAccepted");
+  stage(
+    "17. a GENUINE acceptance still notifies the requester exactly once, " +
+      "with the accepter as actor",
+    acceptedRows.length === 1 && acceptedRows[0].actorId === B,
+    acceptedRows.length ? `actor=${acceptedRows[0].actorId}` : "none",
+  );
 
   // Push tokens are deliberately NOT asserted here. No client runs in
   // this harness, so there is no token to find, and a green check here
