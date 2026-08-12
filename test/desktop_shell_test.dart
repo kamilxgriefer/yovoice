@@ -488,7 +488,7 @@ void main() {
 
   group('VoiceTrendingCard', () {
     testWidgets('Trending Moments renders REAL live rooms with a Live pill; '
-        'People to Follow stays hidden when there are no suggestions', (
+        'People to Follow keeps its heading and says it is empty', (
       tester,
     ) async {
       final db = FakeFirebaseFirestore();
@@ -542,14 +542,97 @@ void main() {
       expect(find.text('Late Night Confessions'), findsOneWidget);
       expect(find.text('Real stories, live now'), findsOneWidget);
       expect(find.text('Live'), findsNWidgets(2));
-      // No suggestions available in this environment → section hidden,
-      // never filled with placeholder people.
-      expect(find.text('People to Follow'), findsNothing);
+      // No suggestions available in this environment. The section keeps
+      // its heading and says so — it is never filled with placeholder
+      // people, and it no longer vanishes, which read as breakage.
+      expect(find.text('People to Follow'), findsOneWidget);
+      expect(find.text('No suggestions right now.'), findsOneWidget);
       expect(find.text('See all'), findsOneWidget);
 
       await tester.tap(find.text('Late Night Confessions'));
       await tester.pump();
       expect(opened?.name, 'Late Night Confessions');
+    });
+  });
+
+  group('Voice Trending states', () {
+    testWidgets('with nothing live and nobody to suggest, BOTH sections '
+        'keep their headings and say so — the card never collapses to a '
+        'bare title', (tester) async {
+      tester.view.physicalSize = const Size(1440, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final db = FakeFirebaseFirestore();
+      await db.collection('users').doc('me').set({
+        'uid': 'me',
+        'displayName': 'Me',
+      });
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: 'me', displayName: 'Me'),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 320,
+              child: VoiceTrendingCard(
+                onOpenRoom: (_) {},
+                onSeeAll: () {},
+                roomService: RoomService(firestore: db, auth: auth),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 80));
+
+      expect(find.text('Voice Trending'), findsOneWidget);
+      expect(find.text('Trending Moments'), findsOneWidget);
+      expect(find.text('No one is live right now.'), findsOneWidget);
+      expect(find.text('People to Follow'), findsOneWidget);
+      expect(find.text('No suggestions right now.'), findsOneWidget);
+      expect(find.text('See all'), findsOneWidget);
+      // And nothing invented to fill the space: no row was rendered at
+      // all, so no name, avatar or description could be a placeholder.
+      expect(find.textContaining('@'), findsNothing);
+    });
+
+    testWidgets('a See all tap reaches the existing discovery callback', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1440, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final db = FakeFirebaseFirestore();
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: 'me', displayName: 'Me'),
+      );
+      var seeAll = 0;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 320,
+              child: VoiceTrendingCard(
+                onOpenRoom: (_) {},
+                onSeeAll: () => seeAll++,
+                roomService: RoomService(firestore: db, auth: auth),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 80));
+
+      await tester.tap(find.text('See all'));
+      await tester.pump();
+      expect(seeAll, 1);
     });
   });
 
@@ -581,7 +664,10 @@ void main() {
   });
 
   group('desktop More popover — Moderation gating', () {
-    Future<void> openPopover(WidgetTester tester, {required bool isStaff}) async {
+    Future<void> openPopover(
+      WidgetTester tester, {
+      required bool isStaff,
+    }) async {
       useDesktopWindow(tester);
       await tester.pumpWidget(
         host(

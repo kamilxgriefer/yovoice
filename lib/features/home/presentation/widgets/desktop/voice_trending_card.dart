@@ -106,17 +106,30 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
               final live = (snapshot.data ?? const <VoiceRoom>[])
                   .take(2)
                   .toList(growable: false);
-              if (live.isEmpty) return const SizedBox.shrink();
+              // The section keeps its heading in every state. Vanishing
+              // was the old behaviour and it reads as breakage: the card
+              // shrinks to a title and a "See all" with no explanation,
+              // and a slow stream is indistinguishable from an empty one.
+              final waiting =
+                  snapshot.connectionState == ConnectionState.waiting &&
+                  !snapshot.hasData;
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const _SectionLabel('Trending Moments'),
                   const SizedBox(height: 8),
-                  for (final room in live)
-                    _MomentRow(
-                      room: room,
-                      onTap: () => widget.onOpenRoom(room),
-                    ),
+                  if (waiting)
+                    const _RowPlaceholder(count: 2)
+                  else if (snapshot.hasError)
+                    const _SectionNote('Live moments are unavailable.')
+                  else if (live.isEmpty)
+                    const _SectionNote('No one is live right now.')
+                  else
+                    for (final room in live)
+                      _MomentRow(
+                        room: room,
+                        onTap: () => widget.onOpenRoom(room),
+                      ),
                   const SizedBox(height: 14),
                 ],
               );
@@ -128,7 +141,27 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
               final people = (snapshot.data ?? const <SuggestedFriend>[])
                   .take(2)
                   .toList(growable: false);
-              if (people.isEmpty) return const SizedBox.shrink();
+              final waiting =
+                  snapshot.connectionState == ConnectionState.waiting &&
+                  !snapshot.hasData;
+              if (waiting || snapshot.hasError || people.isEmpty) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _SectionLabel('People to Follow'),
+                    const SizedBox(height: 8),
+                    if (waiting)
+                      const _RowPlaceholder(count: 2)
+                    else if (snapshot.hasError)
+                      const _SectionNote('Suggestions are unavailable.')
+                    else
+                      // Deliberately restrained: an empty suggestion list
+                      // is a real answer. Filling it with invented people
+                      // would be worse than saying nothing.
+                      const _SectionNote('No suggestions right now.'),
+                  ],
+                );
+              }
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -252,6 +285,55 @@ class _MomentRow extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// One muted line standing in for a section that has nothing to show.
+class _SectionNote extends StatelessWidget {
+  const _SectionNote(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Color(0xFF7E7895),
+          fontSize: 11.5,
+          height: 1.35,
+        ),
+      ),
+    );
+  }
+}
+
+/// Inert bars matching a real row's height, so the card does not jump
+/// when the data lands. No animation: this is a supporting card, and a
+/// spinner here would pull attention from the content it supports.
+class _RowPlaceholder extends StatelessWidget {
+  const _RowPlaceholder({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        for (var i = 0; i < count; i++)
+          Container(
+            height: 44,
+            margin: const EdgeInsets.only(bottom: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: Colors.white.withValues(alpha: .03),
+              border: Border.all(color: const Color(0xFF241A33)),
+            ),
+          ),
+      ],
     );
   }
 }
