@@ -1,7 +1,14 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/features/profile/data/models/follow_user.dart';
+import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
+import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home_sections.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/sponsored_card.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -43,6 +50,8 @@ class MobileHome extends StatefulWidget {
     this.friendService,
     this.profileService,
     this.feedService,
+    this.followService,
+    this.currentUserId,
     super.key,
   });
 
@@ -59,6 +68,13 @@ class MobileHome extends StatefulWidget {
   final ProfileService? profileService;
   final HomeFeedService? feedService;
 
+  /// Injected in tests for the same reason the others are: production
+  /// passes nothing and resolves its own, which needs a Firebase app.
+  final FollowService? followService;
+
+  /// The signed-in uid. Optional so tests need no Firebase app.
+  final String? currentUserId;
+
   @override
   State<MobileHome> createState() => _MobileHomeState();
 }
@@ -69,6 +85,7 @@ class _MobileHomeState extends State<MobileHome> {
   Stream<List<FriendUser>>? _friends;
   Stream<UserProfile>? _profile;
   Stream<List<VoiceMoment>>? _feed;
+  Stream<List<FollowUser>>? _following;
 
   /// uids seen in the rosters of the rooms currently on screen — the only
   /// truthful source for "in conversation", since presence documents
@@ -104,6 +121,14 @@ class _MobileHomeState extends State<MobileHome> {
     } catch (_) {
       _feed = null;
     }
+    try {
+      final uid = _resolvedUserId;
+      _following = uid.isEmpty
+          ? null
+          : (widget.followService ?? FollowService()).watchFollowing(uid);
+    } catch (_) {
+      _following = null;
+    }
   }
 
   @override
@@ -130,6 +155,31 @@ class _MobileHomeState extends State<MobileHome> {
         });
       }, onError: (_) {});
     }
+  }
+
+  String get _resolvedUserId {
+    final injected = widget.currentUserId;
+    if (injected != null) return injected;
+    try {
+      return FirebaseAuth.instance.currentUser?.uid ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  void _openPremium() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const PremiumScreen()),
+    );
+  }
+
+  void _openCreator(FollowUser creator) {
+    showProfilePreview(
+      context,
+      userId: creator.uid,
+      displayName: creator.displayName,
+      photoUrl: creator.photoUrl,
+    );
   }
 
   @override
@@ -177,6 +227,25 @@ class _MobileHomeState extends State<MobileHome> {
                   rooms: featured,
                   roomService: _rooms,
                 ),
+                // Mobile Home mirrors desktop Home's composition in one
+                // vertical feed, in mobile-native shapes over the same
+                // services.
+                StreamBuilder<List<VoiceMoment>>(
+                  stream: _feed,
+                  builder: (context, momentSnapshot) => MobileMomentsStrip(
+                    moments: momentSnapshot.data ?? const <VoiceMoment>[],
+                    profile: null,
+                    currentUserId: _resolvedUserId,
+                    onOpenMoment: widget.onOpenComments,
+                    onCreateMoment: widget.onCreateMoment,
+                    onDiscover: widget.onOpenDiscover,
+                  ),
+                ),
+                MobileLiveRail(
+                  rooms: live,
+                  onOpenRoom: widget.onOpenRoom,
+                  onSeeAll: widget.onOpenDiscover,
+                ),
                 const SizedBox(height: 14),
                 _FeaturedCarousel(
                   rooms: featured,
@@ -201,6 +270,37 @@ class _MobileHomeState extends State<MobileHome> {
                   onOpen: widget.onOpenRoom,
                   onSeeAll: widget.onOpenDiscover,
                 ),
+                const SizedBox(height: 20),
+                StreamBuilder<List<FollowUser>>(
+                  stream: _following,
+                  builder: (context, followSnapshot) {
+                    final creators =
+                        followSnapshot.data ?? const <FollowUser>[];
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        MobileVoiceTrending(
+                          rooms: live,
+                          creators: creators,
+                          onOpenRoom: widget.onOpenRoom,
+                          onOpenCreator: _openCreator,
+                          onSeeAll: widget.onOpenDiscover,
+                        ),
+                        const SizedBox(height: 14),
+                        MobilePremiumCard(onCheckPlans: _openPremium),
+                        const SizedBox(height: 14),
+                        MobileTopCreators(
+                          creators: creators,
+                          onOpenCreator: _openCreator,
+                          onViewAll: widget.onOpenFriends,
+                          onDiscover: widget.onOpenDiscover,
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 14),
+                const SponsoredCard(),
                 const SizedBox(height: 20),
                 _FeedSection(
                   feed: _feed,

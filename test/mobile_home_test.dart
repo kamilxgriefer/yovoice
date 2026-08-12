@@ -4,6 +4,8 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
@@ -90,6 +92,9 @@ void main() {
       roomService: RoomService(firestore: db, auth: firebaseAuth),
       friendService: FriendService(firestore: db, auth: firebaseAuth),
       profileService: ProfileService(firestore: db, auth: firebaseAuth),
+      feedService: HomeFeedService(firestore: db, auth: firebaseAuth),
+      followService: FollowService(firestore: db, auth: firebaseAuth),
+      currentUserId: uid,
     );
   }
 
@@ -101,7 +106,10 @@ void main() {
 
   testWidgets('renders the briefing modules from real data and drops the '
       'retired hero composition', (tester) async {
-    usePhone(tester, const Size(390, 844));
+    // Tall viewport: mobile Home is a long feed now, and a lazy ListView
+    // only builds what fits. Phone-width layout is asserted by the
+    // dedicated size tests below.
+    usePhone(tester, const Size(390, 2600));
     await seedRoom(
       id: 'r1',
       name: 'Evening Talks',
@@ -130,7 +138,7 @@ void main() {
   });
 
   testWidgets('actions reuse the existing flows', (tester) async {
-    usePhone(tester, const Size(390, 844));
+    usePhone(tester, const Size(390, 2600));
     await seedRoom(id: 'r1', name: 'Evening Talks', description: 'Real talk');
 
     VoiceRoom? opened;
@@ -154,11 +162,20 @@ void main() {
     await tester.pump();
     expect(opened?.name, 'Evening Talks');
 
-    await tester.tap(find.text('See all').last);
+    // The feed now has several "See all" actions, so each tap is scoped
+    // to its own section header rather than to tree order.
+    Finder seeAllNextTo(String heading) => find.descendant(
+      of: find
+          .ancestor(of: find.text(heading), matching: find.byType(Row))
+          .first,
+      matching: find.text('See all'),
+    );
+
+    await tester.tap(seeAllNextTo('Live around you'));
     await tester.pump();
     expect(discover, 1);
 
-    await tester.tap(find.text('See all').first);
+    await tester.tap(seeAllNextTo('Your circle'));
     await tester.pump();
     expect(friends, 1);
 

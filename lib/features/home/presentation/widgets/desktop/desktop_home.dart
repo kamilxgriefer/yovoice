@@ -457,8 +457,13 @@ class _SeeAllButton extends StatelessWidget {
 /// A room's identity tile: its cover when it has one, otherwise a stable
 /// gradient derived from the room id — a design-system fallback, never a
 /// stock photo.
-class _RoomVisual extends StatelessWidget {
-  const _RoomVisual({required this.room, this.size = 56, this.radius = 14});
+class RoomVisual extends StatelessWidget {
+  const RoomVisual({
+    required this.room,
+    this.size = 56,
+    this.radius = 14,
+    super.key,
+  });
 
   final VoiceRoom room;
   final double size;
@@ -815,7 +820,7 @@ class _LivePreviewCardState extends State<_LivePreviewCard> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _RoomVisual(room: room, size: 52, radius: 13),
+              RoomVisual(room: room, size: 52, radius: 13),
               const SizedBox(width: 11),
               Expanded(
                 child: Column(
@@ -2021,7 +2026,7 @@ class _ForYouCardState extends State<_ForYouCard> {
             children: [
               Stack(
                 children: [
-                  _RoomVisual(
+                  RoomVisual(
                     room: room,
                     size: _ForYouCard.coverSize,
                     radius: 14,
