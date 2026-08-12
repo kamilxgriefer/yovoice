@@ -19,6 +19,7 @@ import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.da
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/sponsored_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
@@ -847,6 +848,8 @@ class _DesktopRightColumn extends StatelessWidget {
           const SizedBox(height: 16),
           PremiumDesktopCard(onCheckPlans: onCheckPlans),
           const SizedBox(height: 16),
+          const SponsoredCard(),
+          const SizedBox(height: 14),
           FollowedCreatorsCard(
             currentUserId: currentUserId,
             onOpenCreator: onOpenCreator,

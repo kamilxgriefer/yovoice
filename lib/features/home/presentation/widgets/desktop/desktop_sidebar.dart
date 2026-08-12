@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/sidebar_clock.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -127,7 +128,12 @@ class DesktopSidebar extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          // The clock uses the space the rail already leaves above the
+          // profile card. It sits OUTSIDE the scrolling nav column, so it
+          // cannot push navigation off-screen at short heights, and the
+          // profile card stays anchored to the bottom.
+          const SidebarClock(),
+          const SizedBox(height: 4),
           _ProfileCard(
             profileService: profileService,
             onTap: onOpenProfile,
