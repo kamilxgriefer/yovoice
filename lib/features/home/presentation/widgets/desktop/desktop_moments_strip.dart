@@ -295,8 +295,7 @@ class _MomentTile extends StatelessWidget {
   bool get _isNew {
     final createdAt = moment.createdAt;
     if (createdAt == null) return false;
-    return DateTime.now().difference(createdAt) <
-        DesktopMomentsStrip.newWindow;
+    return DateTime.now().difference(createdAt) < DesktopMomentsStrip.newWindow;
   }
 
   @override
@@ -339,7 +338,9 @@ class _MomentTile extends StatelessWidget {
               fresh ? 'New' : moment.durationLabel,
               maxLines: 1,
               style: TextStyle(
-                color: fresh ? const Color(0xFFE879F9) : const Color(0xFF9A90AC),
+                color: fresh
+                    ? const Color(0xFFE879F9)
+                    : const Color(0xFF9A90AC),
                 fontSize: 10.5,
                 fontWeight: fresh ? FontWeight.w800 : FontWeight.w600,
               ),
@@ -499,8 +500,11 @@ class _CircleQuietState extends StatelessWidget {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(999),
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-              minimumSize: Size.zero,
+              // Wider than the label strictly needs: at 14pt the text sat
+              // hard against the pill's radius. Still a secondary action —
+              // outlined, not filled, and nowhere near full width.
+              padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 10),
+              minimumSize: const Size(150, 40),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
             child: const Text(

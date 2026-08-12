@@ -22,6 +22,7 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// "Pulse Home" — the DESKTOP Home surface.
@@ -493,6 +494,29 @@ class _RoomVisual extends StatelessWidget {
             : Image.network(
                 cover,
                 fit: BoxFit.cover,
+                // The gradient sits UNDER the decode, so a cover that is
+                // still arriving shows the room's own colours rather than
+                // a blank hole, and fades into the photo when it lands.
+                frameBuilder: (_, child, frame, wasSynchronouslyLoaded) {
+                  if (wasSynchronouslyLoaded) return child;
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(colors: _fallback),
+                        ),
+                      ),
+                      AnimatedOpacity(
+                        opacity: frame == null ? 0 : 1,
+                        duration: const Duration(milliseconds: 180),
+                        child: child,
+                      ),
+                    ],
+                  );
+                },
+                // Never a broken-image glyph: a revoked or 404 cover
+                // degrades to the same branded gradient as no cover.
                 errorBuilder: (_, __, ___) => DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(colors: _fallback),
@@ -1014,10 +1038,8 @@ class _FeaturedContent extends StatelessWidget {
             _Roster(
               roomId: room.id,
               roomService: roomService,
-              builder: (context, participants) => _SpeakerCluster(
-                participants: participants,
-                hostId: room.hostId,
-              ),
+              builder: (context, participants) =>
+                  _HostAvatarButton(participants: participants, room: room),
             ),
           ],
         ),
@@ -1052,108 +1074,280 @@ class _TopicChip extends StatelessWidget {
   }
 }
 
-/// Up to four real participants in a loose cluster. Exactly one carries
-/// the violet ring: the host if they are unmuted, else the first
-/// unmuted speaker — the closest truthful signal available for a room
-/// this user has not joined (live audio levels only exist once inside).
-class _SpeakerCluster extends StatelessWidget {
-  const _SpeakerCluster({required this.participants, required this.hostId});
+/// The Featured card's single avatar: the room's HOST, and a way in.
+///
+/// This replaced a four-avatar cluster. The cluster was real data, but
+/// three of the four faces were doing decorative work — they said
+/// "people are here" without letting you find out who. One avatar plus a
+/// count says the same thing honestly, and a click opens the roster the
+/// cluster was standing in for.
+class _HostAvatarButton extends StatefulWidget {
+  const _HostAvatarButton({required this.participants, required this.room});
 
   final List<RoomParticipant> participants;
-  final String hostId;
+  final VoiceRoom room;
+
+  @override
+  State<_HostAvatarButton> createState() => _HostAvatarButtonState();
+}
+
+class _HostAvatarButtonState extends State<_HostAvatarButton> {
+  final MenuController _menu = MenuController();
+
+  RoomParticipant? get _host {
+    for (final participant in widget.participants) {
+      if (participant.isHost || participant.userId == widget.room.hostId) {
+        return participant;
+      }
+    }
+    return null;
+  }
+
+  /// Host, then moderators, then speakers, then listeners — the ordering
+  /// the room stage itself uses.
+  List<RoomParticipant> get _ordered {
+    final ordered = [...widget.participants]
+      ..sort((a, b) {
+        int rank(RoomParticipant p) {
+          if (p.isHost || p.userId == widget.room.hostId) return 0;
+          if (p.role == 'moderator') return 1;
+          if (p.isSpeaker) return 2;
+          return 3;
+        }
+
+        final byRole = rank(a).compareTo(rank(b));
+        return byRole != 0
+            ? byRole
+            : a.displayName.toLowerCase().compareTo(
+                b.displayName.toLowerCase(),
+              );
+      });
+    return ordered;
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (participants.isEmpty) return const SizedBox(width: 176);
-
-    final ordered = [...participants]
-      ..sort((a, b) {
-        int rank(RoomParticipant p) => p.isHost ? 0 : (p.isSpeaker ? 1 : 2);
-        return rank(a).compareTo(rank(b));
-      });
-    final shown = ordered.take(4).toList(growable: false);
-
-    final speaking = shown.firstWhere(
-      (p) => p.isHost && !p.isMuted,
-      orElse: () => shown.firstWhere(
-        (p) => p.isSpeaker && !p.isMuted,
-        orElse: () => shown.first,
-      ),
-    );
-
-    // Hand-placed offsets: a group of people, not points on a circle.
-    const spots = <Offset>[
-      Offset(0, 6),
-      Offset(96, 0),
-      Offset(12, 84),
-      Offset(104, 92),
-    ];
+    final host = _host;
+    final count = widget.participants.length;
 
     return SizedBox(
       width: 176,
       height: 156,
-      child: Stack(
-        children: [
-          for (var i = 0; i < shown.length; i++)
-            Positioned(
-              left: spots[i].dx,
-              top: spots[i].dy,
-              child: _ClusterAvatar(
-                participant: shown[i],
-                speaking: identical(shown[i], speaking),
+      child: Center(
+        child: MenuAnchor(
+          controller: _menu,
+          alignmentOffset: const Offset(-150, 8),
+          style: MenuStyle(
+            backgroundColor: const WidgetStatePropertyAll(Color(0xFF120C1D)),
+            shape: WidgetStatePropertyAll(
+              RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: Color(0xFF2E2140)),
               ),
             ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: _Waveform(active: !speaking.isMuted),
+            padding: const WidgetStatePropertyAll(EdgeInsets.all(10)),
           ),
-        ],
+          menuChildren: [
+            SizedBox(
+              width: 250,
+              child: _RosterList(
+                participants: _ordered,
+                hostId: widget.room.hostId,
+                onDismiss: () => _menu.close(),
+              ),
+            ),
+          ],
+          builder: (context, controller, _) {
+            return Semantics(
+              button: true,
+              label: count == 0
+                  ? 'Host of ${widget.room.name}'
+                  : 'Host of ${widget.room.name}. $count in the room. '
+                        'Open the participant list',
+              child: Tooltip(
+                message: count == 0
+                    ? 'Nobody in the room yet'
+                    : 'See who is in the room',
+                child: InkWell(
+                  onTap: () => controller.isOpen
+                      ? controller.close()
+                      : controller.open(),
+                  customBorder: const CircleBorder(),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: const LinearGradient(
+                            colors: [AppColors.primary, AppColors.secondary],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.primary.withValues(alpha: .35),
+                              blurRadius: 22,
+                            ),
+                          ],
+                        ),
+                        child: UserAvatar(
+                          radius: 38,
+                          photoUrl: host?.photoUrl,
+                          displayName:
+                              host?.displayName ?? widget.room.hostName,
+                          fallbackIcon: Icons.person_rounded,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      // Kept from the cluster this replaced — the card's
+                      // "there is audio happening" signal.
+                      const SizedBox(
+                        width: 132,
+                        child: _Waveform(active: true),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        count == 0 ? 'Host' : '$count in the room',
+                        style: const TextStyle(
+                          color: Color(0xFF9A90AC),
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
       ),
     );
   }
 }
 
-class _ClusterAvatar extends StatelessWidget {
-  const _ClusterAvatar({required this.participant, required this.speaking});
+/// The roster itself. Every row is a real participant document from the
+/// room's own stream — the same source the stage reads — so there is
+/// nothing here that was invented to fill the list.
+class _RosterList extends StatelessWidget {
+  const _RosterList({
+    required this.participants,
+    required this.hostId,
+    required this.onDismiss,
+  });
 
-  final RoomParticipant participant;
-  final bool speaking;
+  final List<RoomParticipant> participants;
+  final String hostId;
+  final VoidCallback onDismiss;
+
+  String _role(RoomParticipant participant) {
+    if (participant.isHost || participant.userId == hostId) return 'Host';
+    if (participant.role == 'moderator') return 'Moderator';
+    if (participant.isSpeaker) return 'Speaker';
+    return 'Listening';
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(2.5),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: speaking
-              ? AppColors.primary
-              : Colors.white.withValues(alpha: .10),
-          width: speaking ? 2.2 : 1.4,
+    if (participants.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+        child: Text(
+          'Nobody is in this room yet.',
+          style: TextStyle(color: Color(0xFF9A90AC), fontSize: 12),
         ),
-        boxShadow: speaking
-            ? [
-                BoxShadow(
-                  color: AppColors.primary.withValues(alpha: .45),
-                  blurRadius: 18,
-                ),
-              ]
-            : const [],
-      ),
-      child: UserAvatar(
-        radius: 25,
-        photoUrl: participant.photoUrl,
-        displayName: participant.displayName,
-      ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(6, 2, 6, 8),
+          child: Text(
+            '${participants.length} in the room',
+            style: const TextStyle(
+              color: Color(0xFF9A90AC),
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 260),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final participant in participants)
+                  InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () {
+                      onDismiss();
+                      showProfilePreview(
+                        context,
+                        userId: participant.userId,
+                        displayName: participant.displayName,
+                        photoUrl: participant.photoUrl,
+                      );
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 7,
+                      ),
+                      child: Row(
+                        children: [
+                          UserAvatar(
+                            radius: 15,
+                            photoUrl: participant.photoUrl,
+                            displayName: participant.displayName,
+                          ),
+                          const SizedBox(width: 9),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  participant.displayName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                Text(
+                                  _role(participant),
+                                  style: const TextStyle(
+                                    color: Color(0xFF7E7895),
+                                    fontSize: 10.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (participant.isMuted)
+                            const Icon(
+                              Icons.mic_off_rounded,
+                              size: 14,
+                              color: Color(0xFF7E7895),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
 
-/// A compact audio-activity mark. Deliberately a fixed silhouette: real
-/// per-room amplitude is only available once you are inside the room,
-/// and animating an invented one would be fiction.
 class _Waveform extends StatelessWidget {
   const _Waveform({this.active = true});
 
