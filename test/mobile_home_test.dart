@@ -4,6 +4,8 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
+import 'package:yovoice/features/messages/presentation/screens/global_chat_screen.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -94,6 +96,7 @@ void main() {
       profileService: ProfileService(firestore: db, auth: firebaseAuth),
       feedService: HomeFeedService(firestore: db, auth: firebaseAuth),
       followService: FollowService(firestore: db, auth: firebaseAuth),
+      globalChatService: GlobalChatService(firestore: db, auth: firebaseAuth),
       currentUserId: uid,
     );
   }
@@ -215,4 +218,132 @@ void main() {
       },
     );
   }
+  group('Global conversations', () {
+    Future<void> seedGlobal({
+      required String id,
+      required String sender,
+      required String content,
+      bool isDeleted = false,
+      Duration age = const Duration(minutes: 1),
+    }) async {
+      await db
+          .collection('globalChat')
+          .doc('main')
+          .collection('messages')
+          .doc(id)
+          .set(<String, dynamic>{
+            'senderId': sender,
+            'senderName': sender,
+            'senderPhotoUrl': null,
+            'senderIsCreator': false,
+            'senderIsStaff': false,
+            'content': isDeleted ? '' : content,
+            'sentAt': Timestamp.fromDate(DateTime.now().subtract(age)),
+            'isDeleted': isDeleted,
+            'deletedBy': isDeleted ? 'mod' : null,
+            'deletedAt': null,
+          });
+    }
+
+    testWidgets('renders real messages and opens the existing Global Chat '
+        'screen', (tester) async {
+      usePhone(tester, const Size(390, 2600));
+      await seedGlobal(id: 'm1', sender: 'Ola', content: 'hello world');
+      await seedGlobal(
+        id: 'm2',
+        sender: 'Jonas',
+        content: 'anyone up for a room',
+        age: const Duration(minutes: 2),
+      );
+
+      await tester.pumpWidget(host(buildHome()));
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('Global conversations'), findsOneWidget);
+      expect(find.text('hello world'), findsOneWidget);
+      expect(find.text('anyone up for a room'), findsOneWidget);
+
+      await tester.tap(find.text('Open Global Chat'));
+      await tester.pumpAndSettle();
+
+      // The real screen, hosting the canonical panel.
+      expect(find.byType(GlobalChatScreen), findsOneWidget);
+    });
+
+    testWidgets('a moderated message never appears in the preview', (
+      tester,
+    ) async {
+      usePhone(tester, const Size(390, 2600));
+      await seedGlobal(id: 'm1', sender: 'Ola', content: 'still here');
+      await seedGlobal(
+        id: 'm2',
+        sender: 'Spammer',
+        content: 'buy followers',
+        isDeleted: true,
+        age: const Duration(seconds: 30),
+      );
+
+      await tester.pumpWidget(host(buildHome()));
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('still here'), findsOneWidget);
+      expect(find.text('buy followers'), findsNothing);
+      expect(find.text('Spammer'), findsNothing);
+    });
+
+    testWidgets('an empty channel says so rather than showing nothing', (
+      tester,
+    ) async {
+      usePhone(tester, const Size(390, 2600));
+      await tester.pumpWidget(host(buildHome()));
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('Global conversations'), findsOneWidget);
+      expect(
+        find.text('No messages yet — say the first thing.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the section fits a 320pt phone without overflow', (
+      tester,
+    ) async {
+      usePhone(tester, const Size(320, 640));
+      await seedGlobal(
+        id: 'm1',
+        sender: 'SomebodyWithAVeryLongDisplayName',
+        content:
+            'a long message that would happily run past the edge of a '
+            'narrow phone if nothing constrained it',
+      );
+
+      await tester.pumpWidget(host(buildHome()));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the preview subscription is dropped with the widget', (
+      tester,
+    ) async {
+      usePhone(tester, const Size(390, 2600));
+      await seedGlobal(id: 'm1', sender: 'Ola', content: 'hello world');
+
+      await tester.pumpWidget(host(buildHome()));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text('hello world'), findsOneWidget);
+
+      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // A write after teardown must not reach a live listener.
+      await seedGlobal(
+        id: 'm2',
+        sender: 'Late',
+        content: 'after disposal',
+        age: Duration.zero,
+      );
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(tester.takeException(), isNull);
+    });
+  });
 }

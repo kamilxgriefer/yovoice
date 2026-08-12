@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/messages/presentation/screens/global_chat_screen.dart';
+import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
@@ -51,6 +53,7 @@ class MobileHome extends StatefulWidget {
     this.profileService,
     this.feedService,
     this.followService,
+    this.globalChatService,
     this.currentUserId,
     super.key,
   });
@@ -72,6 +75,10 @@ class MobileHome extends StatefulWidget {
   /// passes nothing and resolves its own, which needs a Firebase app.
   final FollowService? followService;
 
+  /// The canonical Global Chat service. Injected in tests; production
+  /// resolves its own, exactly as the others do.
+  final GlobalChatService? globalChatService;
+
   /// The signed-in uid. Optional so tests need no Firebase app.
   final String? currentUserId;
 
@@ -86,6 +93,12 @@ class _MobileHomeState extends State<MobileHome> {
   Stream<UserProfile>? _profile;
   Stream<List<VoiceMoment>>? _feed;
   Stream<List<FollowUser>>? _following;
+
+  /// ONE subscription to the community channel, owned here and handed to
+  /// the preview. The full screen opens its own when pushed; Home never
+  /// keeps a second live listener on the same collection.
+  GlobalChatService? _globalChat;
+  Stream<GlobalChatFeed>? _globalFeed;
 
   /// uids seen in the rosters of the rooms currently on screen — the only
   /// truthful source for "in conversation", since presence documents
@@ -120,6 +133,14 @@ class _MobileHomeState extends State<MobileHome> {
       _feed = (widget.feedService ?? HomeFeedService()).watchSocialMoments();
     } catch (_) {
       _feed = null;
+    }
+    try {
+      _globalChat = widget.globalChatService ?? GlobalChatService();
+      // A short window: this is a three-message preview, not a feed.
+      _globalFeed = _globalChat!.watchMessages(limit: 8);
+    } catch (_) {
+      _globalChat = null;
+      _globalFeed = null;
     }
     try {
       final uid = _resolvedUserId;
@@ -165,6 +186,19 @@ class _MobileHomeState extends State<MobileHome> {
     } catch (_) {
       return '';
     }
+  }
+
+  void _openGlobalChat() {
+    // Single seam: the future Global Hub onboarding redirects from here
+    // rather than from inside the card. See MobileGlobalConversations.
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => GlobalChatScreen(
+          currentUserId: _resolvedUserId,
+          chatService: widget.globalChatService,
+        ),
+      ),
+    );
   }
 
   void _openPremium() {
@@ -298,6 +332,15 @@ class _MobileHomeState extends State<MobileHome> {
                       ],
                     );
                   },
+                ),
+                const SizedBox(height: 14),
+                StreamBuilder<GlobalChatFeed>(
+                  stream: _globalFeed,
+                  builder: (context, globalSnapshot) =>
+                      MobileGlobalConversations(
+                        feed: globalSnapshot,
+                        onOpenGlobalChat: _openGlobalChat,
+                      ),
                 ),
                 const SizedBox(height: 14),
                 const SponsoredCard(),
