@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 
@@ -1094,6 +1095,16 @@ class _HostAvatarButton extends StatefulWidget {
 class _HostAvatarButtonState extends State<_HostAvatarButton> {
   final MenuController _menu = MenuController();
 
+  /// Focus returns here when the roster closes, so keyboard users are not
+  /// dropped at the top of the page.
+  final FocusNode _triggerFocus = FocusNode(debugLabel: 'roster trigger');
+
+  @override
+  void dispose() {
+    _triggerFocus.dispose();
+    super.dispose();
+  }
+
   RoomParticipant? get _host {
     for (final participant in widget.participants) {
       if (participant.isHost || participant.userId == widget.room.hostId) {
@@ -1148,12 +1159,38 @@ class _HostAvatarButtonState extends State<_HostAvatarButton> {
             padding: const WidgetStatePropertyAll(EdgeInsets.all(10)),
           ),
           menuChildren: [
-            SizedBox(
-              width: 250,
-              child: _RosterList(
-                participants: _ordered,
-                hostId: widget.room.hostId,
-                onDismiss: () => _menu.close(),
+            // Escape has to LAND somewhere. Without focus inside the
+            // overlay the key event never reached the menu and the
+            // roster stayed open; autofocus plus an explicit DismissIntent
+            // binding closes it and hands focus back to the trigger.
+            Shortcuts(
+              shortcuts: const <ShortcutActivator, Intent>{
+                SingleActivator(LogicalKeyboardKey.escape): DismissIntent(),
+              },
+              child: Actions(
+                actions: <Type, Action<Intent>>{
+                  DismissIntent: CallbackAction<DismissIntent>(
+                    onInvoke: (_) {
+                      _menu.close();
+                      _triggerFocus.requestFocus();
+                      return null;
+                    },
+                  ),
+                },
+                child: Focus(
+                  autofocus: true,
+                  child: SizedBox(
+                    width: 250,
+                    child: _RosterList(
+                      participants: _ordered,
+                      hostId: widget.room.hostId,
+                      onDismiss: () {
+                        _menu.close();
+                        _triggerFocus.requestFocus();
+                      },
+                    ),
+                  ),
+                ),
               ),
             ),
           ],
@@ -1229,7 +1266,7 @@ class _HostAvatarButtonState extends State<_HostAvatarButton> {
 /// The roster itself. Every row is a real participant document from the
 /// room's own stream — the same source the stage reads — so there is
 /// nothing here that was invented to fill the list.
-class _RosterList extends StatelessWidget {
+class _RosterList extends StatefulWidget {
   const _RosterList({
     required this.participants,
     required this.hostId,
@@ -1239,6 +1276,27 @@ class _RosterList extends StatelessWidget {
   final List<RoomParticipant> participants;
   final String hostId;
   final VoidCallback onDismiss;
+
+  @override
+  State<_RosterList> createState() => _RosterListState();
+}
+
+class _RosterListState extends State<_RosterList> {
+  /// Its OWN controller. Falling back to the PrimaryScrollController put
+  /// a second ScrollPosition on the same controller as the page beneath,
+  /// which Scrollbar asserts against — the roster is an overlay, not part
+  /// of the page's scroll.
+  final ScrollController _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  List<RoomParticipant> get participants => widget.participants;
+  String get hostId => widget.hostId;
+  VoidCallback get onDismiss => widget.onDismiss;
 
   String _role(RoomParticipant participant) {
     if (participant.isHost || participant.userId == hostId) return 'Host';
@@ -1275,8 +1333,10 @@ class _RosterList extends StatelessWidget {
           ),
         ),
         ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 260),
+          constraints: const BoxConstraints(maxHeight: 264),
           child: SingleChildScrollView(
+            controller: _scroll,
+            primary: false,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [

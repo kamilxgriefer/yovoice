@@ -23,6 +23,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
@@ -65,11 +66,10 @@ Future<FakeFirebaseFirestore> _seed({required bool live}) async {
   });
   if (!live) return db;
 
-  for (final entry
-      in [
-        ('Late Night Confessions', 'Real stories, live now'),
-        ('Friday Freestyle', 'The room is warming up'),
-      ].indexed) {
+  for (final entry in [
+    ('Late Night Confessions', 'Real stories, live now'),
+    ('Friday Freestyle', 'The room is warming up'),
+  ].indexed) {
     await db.collection('rooms').doc('room-${entry.$1}').set(<String, dynamic>{
       'hostId': 'host',
       'hostName': 'Host',
@@ -112,6 +112,114 @@ Future<void> _shoot(String name) async {
 
 void main() {
   setUpAll(_loadRealFonts);
+
+  // Roster-open captures. The -150 MenuAnchor offset has never been seen
+  // rendered; these exist to look at it at each supported width.
+  for (final size in const [
+    Size(1920, 1080),
+    Size(1440, 900),
+    Size(1366, 768),
+    Size(1100, 800),
+  ]) {
+    testWidgets('roster-${size.width.toInt()}x${size.height.toInt()}', (
+      tester,
+    ) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final db = FakeFirebaseFirestore();
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: 'me', displayName: 'Me'),
+      );
+      await db.collection('users').doc('me').set(<String, dynamic>{
+        'uid': 'me',
+        'displayName': 'Me',
+      });
+      await db.collection('rooms').doc('r1').set(<String, dynamic>{
+        'hostId': 'host',
+        'hostName': 'Hosty',
+        'name': 'what is going on',
+        'description': 'haha yes',
+        'category': 'talk',
+        'visibility': 'public',
+        'language': 'English',
+        'participantCount': 7,
+        'memberCount': 0,
+        'isLive': true,
+        'roomType': 'community',
+        'status': 'active',
+        'experience': 'community',
+        'createdAt': Timestamp.fromDate(
+          DateTime.now().subtract(const Duration(minutes: 4)),
+        ),
+      });
+      final people = db
+          .collection('rooms')
+          .doc('r1')
+          .collection('participants');
+      await people.doc('host').set(<String, dynamic>{
+        'userId': 'host',
+        'displayName': 'Hosty McLongnameThatKeepsGoing',
+        'role': 'host',
+        'isMuted': false,
+        'isSpeaker': true,
+      });
+      await people.doc('mod').set(<String, dynamic>{
+        'userId': 'mod',
+        'displayName': 'Moddy',
+        'role': 'moderator',
+        'isMuted': false,
+        'isSpeaker': true,
+      });
+      for (var i = 0; i < 5; i++) {
+        await people.doc('l$i').set(<String, dynamic>{
+          'userId': 'l$i',
+          'displayName': 'Listener number $i with a long name',
+          'role': 'listener',
+          'isMuted': true,
+          'isSpeaker': false,
+        });
+      }
+
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: _capture,
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              brightness: Brightness.dark,
+              useMaterial3: true,
+              fontFamily: 'Roboto',
+            ),
+            home: Scaffold(
+              backgroundColor: const Color(0xFF080711),
+              body: DesktopHome(
+                currentUserId: 'me',
+                onOpenRoom: (_) {},
+                onSeeAllRooms: () {},
+                onViewAllFriends: () {},
+                onStartRoom: () {},
+                onOpenMoment: (_) {},
+                onCreateMoment: () {},
+                onSeeAllMoments: () {},
+                onOpenConversation: (_) {},
+                onOpenClub: (_) {},
+                onSeeAllChats: () {},
+                onOpenClubs: () {},
+                roomService: RoomService(firestore: db, auth: auth),
+              ),
+            ),
+          ),
+        ),
+      );
+      await _settle(tester);
+      await tester.tap(find.text('7 in the room'));
+      await _settle(tester);
+      await _shoot('roster-${size.width.toInt()}x${size.height.toInt()}');
+    });
+  }
 
   // The rail plus the full right column, at each width that matters:
   // a normal laptop, a wide desktop, and the narrowest width still
@@ -172,10 +280,7 @@ void main() {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           VoiceTrendingCard(
-                            roomService: RoomService(
-                              firestore: db,
-                              auth: auth,
-                            ),
+                            roomService: RoomService(firestore: db, auth: auth),
                             onOpenRoom: (_) {},
                             onSeeAll: () {},
                           ),
