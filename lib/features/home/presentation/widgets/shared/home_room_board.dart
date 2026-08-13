@@ -62,6 +62,18 @@ List<VoiceRoom> rankRoomsForHome({
   return [for (final tier in tiers) ...tier].take(limit).toList(growable: false);
 }
 
+/// 2400 → "2.4K". Every listener count on Home goes through this, so a
+/// banner and the owned-room card under it can never disagree about how
+/// big the same room is.
+String compactCount(int count) {
+  if (count < 1000) return '$count';
+  final thousands = count / 1000;
+  final text = thousands >= 10
+      ? thousands.round().toString()
+      : thousands.toStringAsFixed(1);
+  return '${text.endsWith('.0') ? text.substring(0, text.length - 2) : text}K';
+}
+
 /// A wide room banner: the room's own cover IS the card, and one primary
 /// action sits on it.
 ///
@@ -306,17 +318,6 @@ class _CountChip extends StatelessWidget {
 
   final int count;
 
-  /// 2400 → "2.4K". The banner's count sits next to a LIVE badge in a
-  /// tight row, and five-digit rooms would push the badge off the card.
-  static String format(int count) {
-    if (count < 1000) return '$count';
-    final thousands = count / 1000;
-    final text = thousands >= 10
-        ? thousands.round().toString()
-        : thousands.toStringAsFixed(1);
-    return '${text.endsWith('.0') ? text.substring(0, text.length - 2) : text}K';
-  }
-
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -329,7 +330,7 @@ class _CountChip extends StatelessWidget {
         ),
         const SizedBox(width: 5),
         Text(
-          format(count),
+          compactCount(count),
           style: const TextStyle(
             color: Color(0xFFE6E0EE),
             fontSize: 12,
@@ -671,7 +672,9 @@ class _OwnedRoomCard extends StatelessWidget {
             ),
           ),
           Text(
-            room.isLive ? 'Live · ${room.participantCount} here' : 'Not live',
+            room.isLive
+                ? 'Live · ${compactCount(room.participantCount)} here'
+                : 'Not live',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: Color(0xFF9D95AD), fontSize: 11.5),

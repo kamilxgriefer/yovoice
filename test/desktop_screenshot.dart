@@ -86,8 +86,8 @@ Future<FakeFirebaseFirestore> _seed({required bool live}) async {
     ),
   ].indexed) {
     await db.collection('rooms').doc('room-${entry.$1}').set(<String, dynamic>{
-      'hostId': 'host',
-      'hostName': 'Host',
+      'hostId': entry.$1 == 0 ? _me : 'host',
+      'hostName': entry.$1 == 0 ? 'CeoGriefer' : 'Host',
       'name': entry.$2.$1,
       'description': entry.$2.$2,
       'category': ['Talk', 'Gaming', 'Talk'][entry.$1],
@@ -365,7 +365,11 @@ void main() {
   // The Home surface itself — the room board, the People & Moments rail,
   // Your active rooms and the Global Chat preview — at the desktop widths
   // that matter and at phone size.
-  for (final size in const [Size(1440, 900), Size(1100, 900)]) {
+  for (final size in const [
+    Size(1440, 900),
+    Size(1100, 900),
+    Size(1440, 1800),
+  ]) {
     final label = 'home-${size.width.toInt()}x${size.height.toInt()}';
     testWidgets(label, (tester) async {
       tester.view.physicalSize = size;

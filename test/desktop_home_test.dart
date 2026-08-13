@@ -436,6 +436,53 @@ void main() {
     expect(find.text('Enter'), findsOneWidget);
   });
 
+  test('one listener-count format, so a banner and the owned card under '
+      'it can never disagree about the same room', () {
+    expect(compactCount(0), '0');
+    expect(compactCount(782), '782');
+    expect(compactCount(999), '999');
+    expect(compactCount(1000), '1K');
+    expect(compactCount(1800), '1.8K');
+    expect(compactCount(2400), '2.4K');
+    // Below 10K keeps one decimal; at and above it drops to whole
+    // thousands, so the chip never grows past four characters.
+    expect(compactCount(9950), '9.9K');
+    expect(compactCount(12400), '12K');
+    expect(compactCount(999999), '1000K');
+  });
+
+  testWidgets('Your active rooms ends in a Create room tile that starts the '
+      'existing room flow', (tester) async {
+    useDesktop(tester, const Size(1440, 2600));
+    await seedRoom(
+      id: 'mine',
+      name: 'My Room',
+      description: 'I host this',
+      hostId: uid,
+    );
+
+    var started = 0;
+    await tester.pumpWidget(
+      host(buildHome(onStartRoom: () => started++)),
+    );
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+
+    // The tile sits AFTER the room this account owns. The owner-only
+    // settings button is the unambiguous marker for that card — the
+    // room's name also appears on its banner in the board above.
+    expect(find.text('Create room'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('Create room')).dx,
+      greaterThan(tester.getTopLeft(find.byTooltip('Room settings')).dx),
+    );
+
+    await tester.tap(find.text('Create room'));
+    await tester.pump();
+    expect(started, 1);
+  });
+
   testWidgets('an account hosting nothing gets one compact empty state with '
       'the existing Create Room action', (tester) async {
     useDesktop(tester, const Size(1440, 2600));

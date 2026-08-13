@@ -7,6 +7,8 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart'
     show RoomVisual;
+import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart'
+    show compactCount;
 
 /// The desktop right column's top card: "Voice Trending" — two curated
 /// sections over REAL data.
@@ -159,16 +161,6 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
-/// 2100 → "2.1K", so a busy room cannot push the row's own title out.
-String _compact(int count) {
-  if (count < 1000) return '$count';
-  final thousands = count / 1000;
-  final text = thousands >= 10
-      ? thousands.round().toString()
-      : thousands.toStringAsFixed(1);
-  return '${text.endsWith('.0') ? text.substring(0, text.length - 2) : text}K';
-}
-
 class _MomentRow extends StatelessWidget {
   const _MomentRow({required this.room, required this.onTap});
 
@@ -233,7 +225,7 @@ class _MomentRow extends StatelessWidget {
                 ),
                 const SizedBox(width: 3),
                 Text(
-                  _compact(room.participantCount),
+                  compactCount(room.participantCount),
                   style: const TextStyle(
                     color: Color(0xFFCFC6DC),
                     fontSize: 11,
