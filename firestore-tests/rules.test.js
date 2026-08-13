@@ -3363,6 +3363,166 @@ async function main() {
     },
   );
 
+  // --- room metadata (three-step creation wizard) -----------------------
+
+  function roomDoc(overrides = {}) {
+    return {
+      hostId: "host-uid",
+      hostName: "Host",
+      name: "Metadata room",
+      description: "",
+      category: "talk",
+      visibility: "public",
+      language: "English",
+      maxParticipants: 25,
+      participantCount: 1,
+      memberCount: 0,
+      isLive: true,
+      roomType: "temporary",
+      status: "active",
+      experience: "community",
+      ...overrides,
+    };
+  }
+
+  await check("ROOM META: a community room persists its own metadata", () =>
+    assertSucceeds(
+      setDoc(
+        doc(host.firestore(), "rooms/meta-community"),
+        roomDoc({
+          targetAudience: "newcomers",
+          topicTags: ["flutter", "dart"],
+          roomGuidelines: "Be kind.",
+          conversationStyle: "supportive",
+          newcomerFriendly: true,
+        }),
+      ),
+    ),
+  );
+
+  await check("ROOM META: a podcast room persists its own metadata", () =>
+    assertSucceeds(
+      setDoc(
+        doc(host.firestore(), "rooms/meta-podcast"),
+        roomDoc({
+          experience: "broadcast",
+          targetAudience: "professionals",
+          topicTags: ["interview"],
+          showFormat: "panel",
+        }),
+      ),
+    ),
+  );
+
+  await check(
+    "ROOM META regression: a legacy room with NO metadata still writes",
+    () =>
+      assertSucceeds(
+        setDoc(doc(host.firestore(), "rooms/meta-legacy"), roomDoc()),
+      ),
+  );
+
+  await check(
+    "ROOM META SECURITY: a community room cannot forge podcast-only fields",
+    async () => {
+      await assertFails(
+        setDoc(
+          doc(host.firestore(), "rooms/forge-1"),
+          roomDoc({ showFormat: "panel" }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "ROOM META SECURITY: a podcast room cannot forge community-only fields",
+    async () => {
+      await assertFails(
+        setDoc(
+          doc(host.firestore(), "rooms/forge-2"),
+          roomDoc({ experience: "broadcast", conversationStyle: "casual" }),
+        ),
+      );
+      await assertFails(
+        setDoc(
+          doc(host.firestore(), "rooms/forge-3"),
+          roomDoc({ experience: "broadcast", newcomerFriendly: true }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "ROOM META SECURITY: invented enum values are refused for every field",
+    async () => {
+      await assertFails(
+        setDoc(
+          doc(host.firestore(), "rooms/bad-1"),
+          roomDoc({ targetAudience: "vip" }),
+        ),
+      );
+      await assertFails(
+        setDoc(
+          doc(host.firestore(), "rooms/bad-2"),
+          roomDoc({ conversationStyle: "chaotic" }),
+        ),
+      );
+      await assertFails(
+        setDoc(
+          doc(host.firestore(), "rooms/bad-3"),
+          roomDoc({ experience: "broadcast", showFormat: "livestream" }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "ROOM META SECURITY: more than three tags, or oversized guidelines, "
+      + "are refused",
+    async () => {
+      await assertFails(
+        setDoc(
+          doc(host.firestore(), "rooms/bad-4"),
+          roomDoc({ topicTags: ["a", "b", "c", "d"] }),
+        ),
+      );
+      await assertFails(
+        setDoc(
+          doc(host.firestore(), "rooms/bad-5"),
+          roomDoc({ roomGuidelines: "x".repeat(281) }),
+        ),
+      );
+      await assertFails(
+        setDoc(
+          doc(host.firestore(), "rooms/bad-6"),
+          roomDoc({ topicTags: "not-a-list" }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "ROOM META SECURITY: a host cannot smuggle a bad value in via update",
+    async () => {
+      await assertFails(
+        updateDoc(doc(host.firestore(), "rooms/meta-community"), {
+          targetAudience: "vip",
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(host.firestore(), "rooms/meta-community"), {
+          showFormat: "panel",
+        }),
+      );
+      // A legitimate edit still works.
+      await assertSucceeds(
+        updateDoc(doc(host.firestore(), "rooms/meta-community"), {
+          targetAudience: "enthusiasts",
+        }),
+      );
+    },
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();
   process.exit(failed > 0 ? 1 : 0);

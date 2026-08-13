@@ -1089,11 +1089,57 @@ service cloud.firestore {
       }
     }
 
+    // Descriptive room metadata, added with the three-step creation
+    // wizard. NONE of it is authorization: targetAudience does not decide
+    // who may join, and nothing below is consulted when granting access.
+    // It is validated here so a client cannot invent a capability by
+    // writing a value the app has never heard of.
+    //
+    // Every field is OPTIONAL. Rooms written before these existed carry
+    // none of them and must keep loading, so each check is guarded by
+    // presence rather than required outright.
+    function roomMetadataValid(data) {
+      return (
+        !('targetAudience' in data) ||
+        data.targetAudience in
+            ['everyone', 'newcomers', 'enthusiasts', 'professionals']
+      ) && (
+        !('topicTags' in data) ||
+        (data.topicTags is list && data.topicTags.size() <= 3)
+      ) && (
+        !('roomGuidelines' in data) ||
+        (data.roomGuidelines is string && data.roomGuidelines.size() <= 280)
+      ) && (
+        !('conversationStyle' in data) ||
+        data.conversationStyle in
+            ['casual', 'focused', 'networking', 'supportive']
+      ) && (
+        !('newcomerFriendly' in data) || data.newcomerFriendly is bool
+      ) && (
+        !('showFormat' in data) ||
+        data.showFormat in
+            ['solo', 'interview', 'panel', 'qAndA', 'openDiscussion']
+      );
+    }
+
+    // A room may not wear the other type's clothes. A community room
+    // carrying showFormat would present itself as a podcast wherever that
+    // field is read; a broadcast room carrying conversationStyle does the
+    // reverse. The experience field decides, and it is the same one the
+    // stage screens branch on.
+    function roomTypeFieldsScoped(data) {
+      return data.get('experience', 'community') == 'broadcast'
+          ? (!('conversationStyle' in data) && !('newcomerFriendly' in data))
+          : !('showFormat' in data);
+    }
+
     match /rooms/{roomId} {
       allow read: if isSignedIn();
 
       allow create: if isVerified() &&
-          request.resource.data.hostId == request.auth.uid;
+          request.resource.data.hostId == request.auth.uid &&
+          roomMetadataValid(request.resource.data) &&
+          roomTypeFieldsScoped(request.resource.data);
 
       // Non-host writers (joining/leaving) are only ever trusted with this
       // narrow set of lifecycle/counter fields — never name, description,
@@ -1105,6 +1151,8 @@ service cloud.firestore {
       // value validation for these counters belongs in a Cloud Function
       // trigger, not here.
       allow update: if isSignedIn() &&
+          roomMetadataValid(request.resource.data) &&
+          roomTypeFieldsScoped(request.resource.data) &&
           (
             resource.data.hostId == request.auth.uid
               ? request.resource.data.hostId == resource.data.hostId

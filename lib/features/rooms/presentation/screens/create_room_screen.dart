@@ -157,7 +157,16 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
 
   // ------------------------------------------------------- step control
 
+  /// The Identity form only exists while its step is on screen, so
+  /// `_identityKey.currentState` is null from step two onward. Validating
+  /// through it there silently returned false and Create did nothing.
+  /// The step gate validates the live form; everything after checks the
+  /// values themselves.
   bool get _identityValid => _identityKey.currentState?.validate() ?? false;
+
+  bool get _identityComplete =>
+      _name.text.trim().length >= 3 &&
+      (!_isBroadcast || _topic.text.trim().length >= 3);
 
   void _next() {
     if (_step == _Step.identity && !_identityValid) return;
@@ -183,7 +192,10 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   // ------------------------------------------------------------ create
 
   Future<void> _create() async {
-    if (_busy || !_identityValid) return;
+    if (_busy || !_identityComplete) {
+      if (!_identityComplete) setState(() => _step = _Step.identity);
+      return;
+    }
     setState(() {
       _busy = true;
       _coverError = null;
