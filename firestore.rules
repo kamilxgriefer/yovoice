@@ -240,16 +240,6 @@ service cloud.firestore {
           clubRole(clubId) in ['owner', 'coOwner', 'admin'];
     }
 
-    // A Family Room is a Club with type == 'family': same members, roles,
-    // invites, channels and lounge, but a private data boundary. Written
-    // once at creation and immutable thereafter, so a club can never be
-    // converted into a family space or back.
-    function isFamilySpace(clubId) {
-      return get(
-        /databases/$(database)/documents/clubs/$(clubId)
-      ).data.get('type', 'community') == 'family';
-    }
-
     function clubRolePower(role) {
       return role == 'owner' ? 60 :
           role == 'coOwner' ? 50 :
