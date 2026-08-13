@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+
+import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -31,11 +33,19 @@ class CreateClubScreen extends StatefulWidget {
 }
 
 class _CreateClubScreenState extends State<CreateClubScreen> {
+  /// Every colour on this screen comes from here. The Family flow used to
+  /// inherit Club violet wholesale, which is exactly the failure a single
+  /// identity source exists to prevent.
+  SpaceIdentity get _identity =>
+      widget.isFamily ? SpaceIdentity.family : SpaceIdentity.club;
+
+  /// Focus rings, selected chips, benefit ticks and the CTA all read this.
+  Color get _primary => _identity.primary;
+
   static const _background = Color(0xFF080711);
   static const _surface = Color(0xFF171121);
   static const _surfaceStrong = Color(0xFF21162D);
   static const _border = Color(0xFF3A2C49);
-  static const _primary = Color(0xFFA226FF);
   static const _muted = Color(0xFFA69CAF);
 
   static const _languages = <String>[
@@ -197,7 +207,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(18, 10, 18, 130),
           children: [
-            const _HeroCard(),
+            _HeroCard(identity: _identity, isFamily: widget.isFamily),
             const SizedBox(height: 24),
             _SectionTitle(
               title: widget.isFamily ? 'Family identity' : 'Club identity',
@@ -211,7 +221,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                 Expanded(
                   child: _MediaPickerCard(
                     icon: Icons.groups_2_rounded,
-                    label: 'Club avatar',
+                    label: widget.isFamily ? 'Family avatar' : 'Club avatar',
                     helper: _avatarBytes == null
                         ? 'Choose image'
                         : 'Tap to replace',
@@ -230,7 +240,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                 Expanded(
                   child: _MediaPickerCard(
                     icon: Icons.image_rounded,
-                    label: 'Club banner',
+                    label: widget.isFamily ? 'Family banner' : 'Club banner',
                     helper: _bannerBytes == null
                         ? 'Choose image'
                         : 'Tap to replace',
@@ -249,7 +259,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
             const SizedBox(height: 16),
             _Field(
               controller: _nameController,
-              label: 'Club name',
+              label: widget.isFamily ? 'Family name' : 'Club name',
               hint: 'e.g. YO Voice Founders',
               maxLength: 40,
               validator: (value) {
@@ -304,9 +314,13 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
               ),
             ],
             const SizedBox(height: 26),
-            const _SectionTitle(
-              title: 'Default language',
-              subtitle: 'Members can still use any language in the club.',
+            _SectionTitle(
+              title: widget.isFamily
+                  ? 'Primary family language'
+                  : 'Default language',
+              subtitle: widget.isFamily
+                  ? 'Everyone can still speak any language here.'
+                  : 'Members can still use any language in the club.',
             ),
             const SizedBox(height: 14),
             DropdownButtonFormField<String>(
@@ -320,7 +334,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
               decoration: InputDecoration(
                 filled: true,
                 fillColor: _surface,
-                prefixIcon: const Icon(Icons.language_rounded, color: _primary),
+                prefixIcon: Icon(Icons.language_rounded, color: _primary),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(18),
                   borderSide: const BorderSide(color: _border),
@@ -343,7 +357,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
               },
             ),
             const SizedBox(height: 24),
-            const _WhatGetsCreatedCard(),
+            _WhatGetsCreatedCard(isFamily: widget.isFamily),
           ],
         ),
       ),
@@ -377,7 +391,13 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                     )
                   : const Icon(Icons.add_business_rounded),
               label: Text(
-                _busy ? 'Creating club...' : 'Create Club',
+                _busy
+                    ? (widget.isFamily
+                          ? 'Creating Family Room...'
+                          : 'Creating club...')
+                    : (widget.isFamily
+                          ? 'Create Family Room'
+                          : 'Create Club'),
                 style: const TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w900,
@@ -392,7 +412,10 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
 }
 
 class _HeroCard extends StatelessWidget {
-  const _HeroCard();
+  const _HeroCard({required this.identity, required this.isFamily});
+
+  final SpaceIdentity identity;
+  final bool isFamily;
 
   @override
   Widget build(BuildContext context) {
@@ -405,11 +428,11 @@ class _HeroCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(26),
         border: Border.all(color: const Color(0xFF7130A5)),
       ),
-      child: const Row(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _ClubMark(),
-          SizedBox(width: 16),
+          _ClubMark(identity: identity),
+          const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -424,8 +447,15 @@ class _HeroCard extends StatelessWidget {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  'A Club is permanent: members, roles, a main chat, announcements and a private voice lounge.',
-                  style: TextStyle(color: Color(0xFFD1C4DA), height: 1.42),
+                  isFamily
+                      ? 'A private, invite-only space for the people '
+                            'closest to you.'
+                      : 'A Club is permanent: members, roles, a main chat, '
+                            'announcements and a private voice lounge.',
+                  style: TextStyle(
+                    color: Color(0xFFD1C4DA),
+                    height: 1.42,
+                  ),
                 ),
               ],
             ),
@@ -437,17 +467,20 @@ class _HeroCard extends StatelessWidget {
 }
 
 class _ClubMark extends StatelessWidget {
-  const _ClubMark();
+  const _ClubMark({required this.identity});
+
+  final SpaceIdentity identity;
+
   @override
   Widget build(BuildContext context) => Container(
     width: 62,
     height: 62,
     decoration: BoxDecoration(
-      color: const Color(0xFFA226FF).withValues(alpha: .18),
+      color: identity.wash,
       borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: const Color(0xFFA226FF)),
+      border: Border.all(color: identity.primary),
     ),
-    child: const Icon(Icons.shield_rounded, color: Color(0xFFBE63FF), size: 34),
+    child: Icon(identity.icon, color: identity.accent, size: 34),
   );
 }
 
@@ -714,7 +747,9 @@ class _PrivacyChoice extends StatelessWidget {
 }
 
 class _WhatGetsCreatedCard extends StatelessWidget {
-  const _WhatGetsCreatedCard();
+  const _WhatGetsCreatedCard({required this.isFamily});
+
+  final bool isFamily;
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(17),
@@ -723,26 +758,36 @@ class _WhatGetsCreatedCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(20),
       border: Border.all(color: const Color(0xFF33283E)),
     ),
-    child: const Column(
+    child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
+        const Text(
           'Created automatically',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
         ),
-        SizedBox(height: 12),
-        _CreatedItem(icon: Icons.tag_rounded, text: 'General chat'),
+        const SizedBox(height: 12),
+        _CreatedItem(
+          icon: Icons.tag_rounded,
+          text: isFamily ? 'Family chat' : 'General chat',
+        ),
         _CreatedItem(
           icon: Icons.campaign_rounded,
-          text: 'Announcements channel',
+          text: isFamily ? 'Announcements' : 'Announcements channel',
         ),
         _CreatedItem(
           icon: Icons.graphic_eq_rounded,
-          text: 'Private Club Lounge',
+          text: isFamily ? 'Family Lounge' : 'Private Club Lounge',
         ),
+        if (isFamily)
+          _CreatedItem(
+            icon: Icons.waving_hand_rounded,
+            text: 'Quick check-ins',
+          ),
         _CreatedItem(
           icon: Icons.admin_panel_settings_rounded,
-          text: 'Owner role and membership',
+          text: isFamily
+              ? 'Organizer role and membership'
+              : 'Owner role and membership',
         ),
       ],
     ),

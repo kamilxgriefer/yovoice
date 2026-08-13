@@ -10,6 +10,7 @@ import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/widgets/family_check_in_panel.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 
+import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/presentation/screens/create_club_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_screen.dart';
@@ -98,9 +99,9 @@ void main() {
       await tester.pumpWidget(host(const RoomTypeSelectorScreen()));
       await tester.pump();
 
-      // The eyebrow and title colours are the card's accent.
+      // The eyebrow carries the identity's lighter accent.
       final eyebrow = tester.widget<Text>(find.text('PRIVATE FAMILY SPACE'));
-      expect(eyebrow.style?.color, RoomTypeSelectorScreen.familyAccent);
+      expect(eyebrow.style?.color, SpaceIdentity.family.accent);
 
       // Its surface is the dark emerald tint, not the shared violet one.
       final card = find.ancestor(
@@ -119,10 +120,8 @@ void main() {
 
       // The violet cards must not have picked up the emerald.
       final clubEyebrow = tester.widget<Text>(find.text('PERMANENT COMMUNITY'));
-      expect(
-        clubEyebrow.style?.color,
-        isNot(RoomTypeSelectorScreen.familyAccent),
-      );
+      expect(clubEyebrow.style?.color, SpaceIdentity.club.accent);
+      expect(clubEyebrow.style?.color, isNot(SpaceIdentity.family.accent));
     });
 
     testWidgets('every card keeps the same width and padding, so the new '
@@ -179,6 +178,94 @@ void main() {
         expect(find.text('Family Room'), findsOneWidget);
       });
     }
+  });
+
+  group('Family creation copy', () {
+    testWidgets('the Family flow contains NO Club copy anywhere', (
+      tester,
+    ) async {
+      usePhone(tester, const Size(390, 3000));
+      await tester.pumpWidget(
+        host(
+          CreateClubScreen(
+            type: ClubType.family,
+            clubService: ClubService(
+              firestore: db,
+              auth: auth(),
+              storage: MockFirebaseStorage(),
+              notificationService: NotificationService(
+                firestore: db,
+                auth: auth(),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      for (final clubCopy in const [
+        'Club avatar',
+        'Club banner',
+        'Club name',
+        'Private Club Lounge',
+        'Create Club',
+        'Club identity',
+        'Default language',
+        'General chat',
+        'Owner role and membership',
+      ]) {
+        expect(find.text(clubCopy), findsNothing, reason: clubCopy);
+      }
+
+      for (final familyCopy in const [
+        'Create Family Room',
+        'A private, invite-only space for the people closest to you.',
+        'Family avatar',
+        'Family banner',
+        'Family name',
+        'Primary family language',
+        'Family chat',
+        'Announcements',
+        'Family Lounge',
+        'Quick check-ins',
+        'Organizer role and membership',
+      ]) {
+        expect(find.text(familyCopy), findsWidgets, reason: familyCopy);
+      }
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the Club flow keeps its own copy, unchanged', (tester) async {
+      usePhone(tester, const Size(390, 3000));
+      await tester.pumpWidget(
+        host(
+          CreateClubScreen(
+            clubService: ClubService(
+              firestore: db,
+              auth: auth(),
+              storage: MockFirebaseStorage(),
+              notificationService: NotificationService(
+                firestore: db,
+                auth: auth(),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      for (final clubCopy in const [
+        'Create Club',
+        'Club identity',
+        'Club avatar',
+        'Club name',
+        'Private Club Lounge',
+      ]) {
+        expect(find.text(clubCopy), findsWidgets, reason: clubCopy);
+      }
+      expect(find.text('Family avatar'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
   });
 
   group('Quick check-ins', () {
@@ -355,6 +442,52 @@ void main() {
           .collection('checkIns')
           .get();
       expect(rows.docs, isEmpty);
+    });
+  });
+
+  group('Space identity system', () {
+    test('every space type has its own distinct identity', () {
+      expect(SpaceIdentity.community.primary, const Color(0xFF8A2BE2));
+      expect(SpaceIdentity.community.accent, const Color(0xFFC026FF));
+      expect(SpaceIdentity.podcast.primary, const Color(0xFFFF3D68));
+      expect(SpaceIdentity.podcast.accent, const Color(0xFFFF6B81));
+      expect(SpaceIdentity.club.primary, const Color(0xFFD9A441));
+      expect(SpaceIdentity.club.accent, const Color(0xFFFFD166));
+      expect(SpaceIdentity.family.primary, const Color(0xFF28D17C));
+      expect(SpaceIdentity.family.accent, const Color(0xFF35E58D));
+      expect(SpaceIdentity.family.surface, const Color(0xFF12231D));
+      expect(SpaceIdentity.family.border, const Color(0xFF286447));
+
+      // No two types may share a primary — the colour IS the identity.
+      final primaries = SpaceIdentity.all.map((i) => i.primary).toSet();
+      expect(primaries, hasLength(4));
+      final surfaces = SpaceIdentity.all.map((i) => i.surface).toSet();
+      expect(surfaces, hasLength(4));
+    });
+
+    test('of() resolves every kind, so no surface can miss one', () {
+      for (final kind in SpaceKind.values) {
+        expect(SpaceIdentity.of(kind).kind, kind);
+      }
+    });
+
+    testWidgets('each Create card wears its own identity', (tester) async {
+      usePhone(tester, const Size(390, 2400));
+      await tester.pumpWidget(host(const RoomTypeSelectorScreen()));
+      await tester.pump();
+
+      for (final (eyebrow, identity) in <(String, SpaceIdentity)>[
+        ('OPEN CONVERSATION', SpaceIdentity.community),
+        ('HOST + AUDIENCE', SpaceIdentity.podcast),
+        ('PERMANENT COMMUNITY', SpaceIdentity.club),
+        ('PRIVATE FAMILY SPACE', SpaceIdentity.family),
+      ]) {
+        expect(
+          tester.widget<Text>(find.text(eyebrow)).style?.color,
+          identity.accent,
+          reason: eyebrow,
+        );
+      }
     });
   });
 

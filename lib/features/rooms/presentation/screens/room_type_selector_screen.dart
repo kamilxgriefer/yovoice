@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/space_identity.dart';
+
 import 'package:yovoice/features/clubs/data/models/club.dart' show ClubType;
 import 'package:yovoice/features/clubs/presentation/screens/create_club_screen.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
@@ -9,19 +11,14 @@ class RoomTypeSelectorScreen extends StatelessWidget {
   const RoomTypeSelectorScreen({super.key});
 
   static const _background = Color(0xFF080711);
-  static const _primary = Color(0xFFA226FF);
   static const _muted = Color(0xFFA69CAF);
 
-  /// Family Room's restrained emerald identity. The only card on this
-  /// screen that steps outside the violet/magenta family, because it is
-  /// the only one that is private by definition — the colour is the
-  /// signal, and it stays inside the design system's card shape,
-  /// spacing, typography and hover behaviour.
-  static const familyAccent = Color(0xFF28D17C);
-  static const familyGlow = Color(0xFF35E58D);
-  static const familySurface = Color(0xFF12231D);
-  static const familyBorder = Color(0xFF286447);
-  static const _familyAccent = familyAccent;
+  /// Kept as the names the existing tests use; the values now come from
+  /// the one identity system rather than being restated here.
+  static final familyAccent = SpaceIdentity.family.primary;
+  static final familyGlow = SpaceIdentity.family.accent;
+  static final familySurface = SpaceIdentity.family.surface;
+  static final familyBorder = SpaceIdentity.family.border;
 
   void _openRoom(BuildContext context, RoomExperience experience) {
     Navigator.of(context).pushReplacement(
@@ -83,8 +80,7 @@ class RoomTypeSelectorScreen extends StatelessWidget {
             title: 'Community Room',
             eyebrow: 'OPEN CONVERSATION',
             subtitle: 'A relaxed live room where everyone can speak.',
-            icon: Icons.groups_rounded,
-            accent: _primary,
+            identity: SpaceIdentity.community,
             features: const [
               'Free-flowing voice conversation',
               'Live chat and reactions',
@@ -97,8 +93,7 @@ class RoomTypeSelectorScreen extends StatelessWidget {
             title: 'Podcast Room',
             eyebrow: 'HOST + AUDIENCE',
             subtitle: 'A hosted show with a stage, audience and requests.',
-            icon: Icons.podcasts_rounded,
-            accent: const Color(0xFFFF426E),
+            identity: SpaceIdentity.podcast,
             features: const [
               'Host and speaker stage',
               'Audience raise-hand queue',
@@ -111,8 +106,7 @@ class RoomTypeSelectorScreen extends StatelessWidget {
             title: 'Club',
             eyebrow: 'PERMANENT COMMUNITY',
             subtitle: 'Members, roles, chat, announcements and a Club Lounge.',
-            icon: Icons.shield_rounded,
-            accent: const Color(0xFFB94DFF),
+            identity: SpaceIdentity.club,
             highlighted: true,
             features: const [
               'Invite friends and manage members',
@@ -127,18 +121,12 @@ class RoomTypeSelectorScreen extends StatelessWidget {
             eyebrow: 'PRIVATE FAMILY SPACE',
             subtitle:
                 'A permanent, invite-only space for the people closest to you.',
-            // A home holding a heart — the closest thing in the icon set
-            // to "family", without importing a raster mark.
-            icon: Icons.family_restroom_rounded,
-            accent: _familyAccent,
+            identity: SpaceIdentity.family,
             features: const [
               'Always-open family voice lounge',
               'Private chat, announcements and quick check-ins',
               'Organizer and Member roles',
             ],
-            surface: familySurface,
-            border: familyBorder,
-            glow: familyGlow,
             onTap: () => _openFamilyRoom(context),
           ),
         ],
@@ -152,36 +140,28 @@ class _RoomChoice extends StatelessWidget {
     required this.title,
     required this.eyebrow,
     required this.subtitle,
-    required this.icon,
-    required this.accent,
+    required this.identity,
     required this.features,
     required this.onTap,
     this.highlighted = false,
-    this.surface,
-    this.border,
-    this.glow,
   });
 
   final String title;
   final String eyebrow;
   final String subtitle;
-  final IconData icon;
-  final Color accent;
+  /// Where every colour on this card comes from. Shape, padding, radius,
+  /// icon box, type scale and hover stay shared across all four — only
+  /// the identity differs.
+  final SpaceIdentity identity;
+
   final List<String> features;
   final VoidCallback onTap;
   final bool highlighted;
 
-  /// Optional identity overrides. Every other dimension — padding, radius,
-  /// icon box, type scale, feature rows, hover — stays shared, so a card
-  /// with its own colours is still the same card.
-  final Color? surface;
-  final Color? border;
-  final Color? glow;
-
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: surface ?? const Color(0xFF171121),
+      color: identity.surface,
       borderRadius: BorderRadius.circular(26),
       child: InkWell(
         onTap: onTap,
@@ -189,31 +169,18 @@ class _RoomChoice extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            gradient: highlighted
-                ? const LinearGradient(
-                    colors: [Color(0xFF281238), Color(0xFF171121)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  )
-                : null,
             borderRadius: BorderRadius.circular(26),
             border: Border.all(
-              color:
-                  border ??
-                  (highlighted
-                      ? const Color(0xFF7E35AD)
-                      : const Color(0xFF3A2C49)),
+              color: identity.outline,
               width: highlighted ? 1.5 : 1,
             ),
-            boxShadow: (highlighted || glow != null)
-                ? [
-                    BoxShadow(
-                      color: (glow ?? accent).withValues(alpha: .12),
-                      blurRadius: 24,
-                      spreadRadius: 1,
-                    ),
-                  ]
-                : null,
+            boxShadow: [
+              BoxShadow(
+                color: identity.glow,
+                blurRadius: 24,
+                spreadRadius: 1,
+              ),
+            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -225,10 +192,10 @@ class _RoomChoice extends StatelessWidget {
                     width: 58,
                     height: 58,
                     decoration: BoxDecoration(
-                      color: accent.withValues(alpha: .17),
+                      color: identity.wash,
                       borderRadius: BorderRadius.circular(18),
                     ),
-                    child: Icon(icon, color: accent, size: 30),
+                    child: Icon(identity.icon, color: identity.primary, size: 30),
                   ),
                   const Spacer(),
                   if (highlighted)
@@ -238,16 +205,16 @@ class _RoomChoice extends StatelessWidget {
                         vertical: 6,
                       ),
                       decoration: BoxDecoration(
-                        color: accent.withValues(alpha: .15),
+                        color: identity.wash,
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
-                          color: accent.withValues(alpha: .55),
+                          color: identity.primary.withValues(alpha: .55),
                         ),
                       ),
                       child: Text(
                         'NEW',
                         style: TextStyle(
-                          color: accent,
+                          color: identity.onSurfaceAccent,
                           fontSize: 11,
                           fontWeight: FontWeight.w900,
                           letterSpacing: 1.2,
@@ -260,7 +227,7 @@ class _RoomChoice extends StatelessWidget {
               Text(
                 eyebrow,
                 style: TextStyle(
-                  color: accent,
+                  color: identity.onSurfaceAccent,
                   fontSize: 11,
                   fontWeight: FontWeight.w900,
                   letterSpacing: 1.25,
@@ -279,7 +246,7 @@ class _RoomChoice extends StatelessWidget {
                       ),
                     ),
                   ),
-                  Icon(Icons.arrow_forward_rounded, color: accent),
+                  Icon(Icons.arrow_forward_rounded, color: identity.primary),
                 ],
               ),
               const SizedBox(height: 6),
@@ -293,7 +260,11 @@ class _RoomChoice extends StatelessWidget {
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Row(
                     children: [
-                      Icon(Icons.check_circle_rounded, color: accent, size: 17),
+                      Icon(
+                        Icons.check_circle_rounded,
+                        color: identity.primary,
+                        size: 17,
+                      ),
                       const SizedBox(width: 9),
                       Expanded(
                         child: Text(
