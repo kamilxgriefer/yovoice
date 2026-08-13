@@ -9,7 +9,12 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_moments_strip.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 
-/// The regression tests commit fb7874a shipped without.
+/// The regression tests commit fb7874a shipped without, carried onto the
+/// surfaces that replaced its cards.
+///
+/// The Featured Live card is gone; the room banner's face pile is the
+/// affordance that now opens a room's roster, so the roster coverage
+/// points there rather than at the deleted host-avatar button.
 ///
 /// Everything here is driven by fake_cloud_firestore and mock auth: no
 /// network, no LiveKit, no image decoding, and therefore nothing that can
@@ -85,12 +90,15 @@ void main() {
     }, timeout: const Timeout(Duration(seconds: 60)));
   });
 
-  group('Featured Live roster', () {
+
+  group('Room banner participant preview', () {
     late FakeFirebaseFirestore db;
     late MockFirebaseAuth auth;
 
     /// One live room plus a deliberately SHUFFLED participant set, so an
     /// ordering assertion cannot pass by accident of insertion order.
+    /// `participantCount` matches the number of participant documents,
+    /// the way the room writes keep it in production.
     Future<void> seedRoom({int listeners = 2}) async {
       await db.collection('rooms').doc('room-1').set(<String, dynamic>{
         'hostId': host,
@@ -100,7 +108,7 @@ void main() {
         'category': 'talk',
         'visibility': 'public',
         'language': 'English',
-        'participantCount': 2 + listeners,
+        'participantCount': 3 + listeners,
         'memberCount': 0,
         'isLive': true,
         'roomType': 'community',
@@ -193,24 +201,23 @@ void main() {
       });
     });
 
-    testWidgets('the card exposes ONE avatar trigger, and it reports a '
-        'truthful count from the participant stream', (tester) async {
+    testWidgets('the banner exposes ONE face pile, and the count beside the '
+        'LIVE badge is the room\'s own', (tester) async {
       await seedRoom();
       await pumpHome(tester);
 
       // 5 participants: host, moderator, speaker, 2 listeners.
-      expect(find.text('5 in the room'), findsOneWidget);
-      // The cluster of four decorative avatars is gone.
-      expect(find.textContaining('in the room'), findsOneWidget);
+      expect(find.text('5'), findsOneWidget);
+      expect(find.byTooltip('See who is in the room'), findsOneWidget);
     }, timeout: const Timeout(Duration(seconds: 90)));
 
-    testWidgets('activating the avatar opens a roster ordered host → '
+    testWidgets('activating the face pile opens a roster ordered host → '
         'moderator → speaker → listener, with real mute state', (tester) async {
       await seedRoom();
       await pumpHome(tester);
 
-      await tester.tap(find.text('5 in the room'));
-      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byTooltip('See who is in the room'));
+      await tester.pumpAndSettle();
 
       // Every row came from the seeded stream.
       for (final name in ['Hosty', 'Moddy', 'Speaky', 'Listener 0']) {
@@ -237,16 +244,16 @@ void main() {
       await seedRoom(listeners: 1);
       await pumpHome(tester);
 
-      await tester.tap(find.text('4 in the room'));
-      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byTooltip('See who is in the room'));
+      await tester.pumpAndSettle();
       expect(find.text('Moddy'), findsOneWidget);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpAndSettle();
       expect(find.text('Moddy'), findsNothing);
 
-      await tester.tap(find.text('4 in the room'));
-      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byTooltip('See who is in the room'));
+      await tester.pumpAndSettle();
       expect(
         find.text('Moddy'),
         findsOneWidget,
@@ -255,7 +262,7 @@ void main() {
     }, timeout: const Timeout(Duration(seconds: 90)));
 
     testWidgets(
-      'an empty room says so instead of showing an empty list',
+      'a room nobody is in shows no face pile rather than placeholder faces',
       (tester) async {
         await db.collection('rooms').doc('room-1').set(<String, dynamic>{
           'hostId': host,
@@ -275,12 +282,36 @@ void main() {
         });
         await pumpHome(tester);
 
-        expect(find.text('Host'), findsOneWidget);
-        await tester.tap(find.text('Host'));
-        await tester.pump(const Duration(milliseconds: 300));
-        expect(find.text('Nobody is in this room yet.'), findsOneWidget);
+        // The banner is there and honest about being empty...
+        expect(find.text('quiet room'), findsOneWidget);
+        expect(find.text('0'), findsOneWidget);
+        // ...and offers no way into a roster that would be empty.
+        expect(find.byTooltip('See who is in the room'), findsNothing);
       },
       timeout: const Timeout(Duration(seconds: 90)),
+    );
+
+    testWidgets(
+      'the roster itself says so when the room empties out under it',
+      (tester) async {
+        // The list widget keeps its own empty state, for the case where
+        // the last participant leaves while the roster is open.
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: RoomRosterList(
+                participants: const [],
+                hostId: host,
+                onDismiss: () {},
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(find.text('Nobody is in this room yet.'), findsOneWidget);
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
     );
 
     testWidgets(
@@ -288,7 +319,7 @@ void main() {
       (tester) async {
         await seedRoom();
         await pumpHome(tester);
-        expect(find.text('5 in the room'), findsOneWidget);
+        expect(find.byTooltip('See who is in the room'), findsOneWidget);
 
         await tester.pumpWidget(const MaterialApp(home: SizedBox()));
         await tester.pump(const Duration(milliseconds: 200));

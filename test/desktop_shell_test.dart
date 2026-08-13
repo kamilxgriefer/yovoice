@@ -488,7 +488,7 @@ void main() {
 
   group('VoiceTrendingCard', () {
     testWidgets('Trending Moments renders REAL live rooms with a Live pill; '
-        'People to Follow keeps its heading and says it is empty', (
+        'and no longer carries a second people-discovery list', (
       tester,
     ) async {
       final db = FakeFirebaseFirestore();
@@ -542,12 +542,11 @@ void main() {
       expect(find.text('Late Night Confessions'), findsOneWidget);
       expect(find.text('Real stories, live now'), findsOneWidget);
       expect(find.text('Live'), findsNWidgets(2));
-      // No suggestions available in this environment. The section keeps
-      // its heading and says so — it is never filled with placeholder
-      // people, and it no longer vanishes, which read as breakage.
-      expect(find.text('People to Follow'), findsOneWidget);
-      expect(find.text('No suggestions right now.'), findsOneWidget);
-      expect(find.text('See all'), findsOneWidget);
+      // People discovery lives in the top people rail and in Top
+      // creators now; a third copy inside Voice Trending was the
+      // duplication this redesign removed.
+      expect(find.text('People to Follow'), findsNothing);
+      expect(find.text('View all'), findsOneWidget);
 
       await tester.tap(find.text('Late Night Confessions'));
       await tester.pump();
@@ -556,9 +555,9 @@ void main() {
   });
 
   group('Voice Trending states', () {
-    testWidgets('with nothing live and nobody to suggest, BOTH sections '
-        'keep their headings and say so — the card never collapses to a '
-        'bare title', (tester) async {
+    testWidgets('with nothing live it says so, and shows no people list', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(1440, 1000);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
@@ -592,9 +591,8 @@ void main() {
       expect(find.text('Voice Trending'), findsOneWidget);
       expect(find.text('Trending Moments'), findsOneWidget);
       expect(find.text('No one is live right now.'), findsOneWidget);
-      expect(find.text('People to Follow'), findsOneWidget);
-      expect(find.text('No suggestions right now.'), findsOneWidget);
-      expect(find.text('See all'), findsOneWidget);
+      expect(find.text('People to Follow'), findsNothing);
+      expect(find.text('View all'), findsOneWidget);
       // And nothing invented to fill the space: no row was rendered at
       // all, so no name, avatar or description could be a placeholder.
       expect(find.textContaining('@'), findsNothing);
@@ -630,7 +628,7 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 80));
 
-      await tester.tap(find.text('See all'));
+      await tester.tap(find.text('View all'));
       await tester.pump();
       expect(seeAll, 1);
     });

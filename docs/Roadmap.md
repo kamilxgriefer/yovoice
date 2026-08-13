@@ -244,6 +244,18 @@ someone decide what to pick up next.
   password/verify-email), account section, SEO/metadata foundation,
   full design-system rebuild (pill buttons, glass panels, reusable
   `src/components/ui/` library), 15 new marketing pages.
+- Home rebuilt as one room board, both surfaces (2026-08-13): the three
+  overlapping room sections collapsed into a single ranked, deduplicated
+  column of full-bleed cover banners shared by desktop and mobile, a
+  combined `People & Moments` rail (presence dots, VIP from
+  `premiumIdentity`, Follow through the existing `FollowService`),
+  `View all` on both room sections, a dashed `Create room` tile, and
+  cover thumbnails plus listener counts in Voice Trending. Two write-only
+  per-room roster subscriptions removed. See
+  [ADR-043](Decisions.md#adr-043-home-is-one-room-board-of-full-bleed-banners-presence-vip-and-follow-on-the-rail-come-from-existing-server-written-sources).
+  NOT built, and why: the mockups' `SCHEDULED` banner with a date (rooms
+  carry no start time in Firestore) and the mobile rail's people segment
+  (`MobileMomentsStrip` still shows Moments only).
 - Full documentation system — Vision/Architecture/Features/Roadmap/
   Firebase/Backend/Flutter/UI/Decisions/Bugs plus this evolution pass
   (`02275bd`, `26d11a2`, and this session's commit).

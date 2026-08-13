@@ -10,13 +10,14 @@ import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
-import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_conversations.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -157,47 +158,6 @@ void main() {
     });
   }
 
-  Future<void> seedClub({
-    required String id,
-    required String name,
-    String? lastMessage,
-  }) async {
-    await db.collection('clubs').doc(id).set({
-      'name': name,
-      'description': 'A club',
-      'ownerId': 'owner-$id',
-      'ownerName': 'Owner',
-      'privacy': 'public',
-      'defaultLanguage': 'English',
-      'memberCount': 3,
-      'onlineCount': 0,
-      'defaultChatChannelId': 'general',
-      'defaultVoiceChannelId': 'lounge',
-      'announcementChannelId': 'announcements',
-      'createdAt': Timestamp.now(),
-    });
-    await db.collection('users').doc(uid).collection('clubs').doc(id).set({
-      'clubId': id,
-      'joinedAt': Timestamp.now(),
-    });
-    if (lastMessage != null) {
-      await db
-          .collection('clubs')
-          .doc(id)
-          .collection('channels')
-          .doc('general')
-          .collection('messages')
-          .doc('m1')
-          .set({
-            'senderId': 'someone',
-            'senderName': 'Ola',
-            'content': lastMessage,
-            'sentAt': Timestamp.now(),
-            'isDeleted': false,
-          });
-    }
-  }
-
   /// Writes straight into the canonical channel the app reads, so these
   /// tests exercise the same path production uses.
   Future<void> seedGlobalMessage({
@@ -272,6 +232,7 @@ void main() {
       onOpenClubs: onOpenClubs ?? () {},
       roomService: RoomService(firestore: db, auth: firebaseAuth),
       friendService: FriendService(firestore: db, auth: firebaseAuth),
+      followService: FollowService(firestore: db, auth: firebaseAuth),
       profileService: ProfileService(firestore: db, auth: firebaseAuth),
       feedService: HomeFeedService(firestore: db, auth: firebaseAuth),
       messageService: MessageService(
@@ -303,106 +264,228 @@ void main() {
   setUp(ProfileService.resetCurrentProfileCache);
   tearDown(ProfileService.resetCurrentProfileCache);
 
-  testWidgets('renders the Pulse Home modules from real live-room data', (
+  testWidgets('answers its four questions in order, once each', (
     tester,
   ) async {
-    useDesktop(tester, const Size(1440, 820));
+    useDesktop(tester, const Size(1440, 2600));
+    await seedRoom(id: 'r1', name: 'Evening Talks', description: 'Real talk');
+    await tester.pumpWidget(host(buildHome()));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+
+    for (final heading in [
+      'Rooms for you',
+      'Your active rooms',
+      'Global Chat',
+    ]) {
+      expect(find.text(heading), findsOneWidget, reason: heading);
+    }
+
+    double y(String label) => tester.getTopLeft(find.text(label)).dy;
+    expect(y('Rooms for you'), lessThan(y('Your active rooms')));
+    expect(y('Your active rooms'), lessThan(y('Global Chat')));
+
+    // The removed compositions must not come back.
+    for (final gone in [
+      'Live around you',
+      'Your circle',
+      'For you',
+      'Recommended now',
+    ]) {
+      expect(find.text(gone), findsNothing, reason: '\$gone returned');
+    }
+  });
+
+  testWidgets('the room board is ONE deduplicated column — a room the '
+      'sources both return appears exactly once', (tester) async {
+    useDesktop(tester, const Size(1440, 2600));
     await seedRoom(
       id: 'r1',
-      name: 'Late night conversations',
-      description: 'Real people. Honest talks.',
-      participants: 186,
+      name: 'Evening Talks',
+      description: 'Real talk',
+      age: const Duration(minutes: 1),
     );
     await seedRoom(
       id: 'r2',
-      name: 'Night owls',
-      description: 'Late talks for open minds.',
-      age: const Duration(minutes: 5),
+      name: 'Night Shift',
+      description: 'Late voices',
+      age: const Duration(minutes: 9),
     );
 
     await tester.pumpWidget(host(buildHome()));
-    await tester.pump(const Duration(milliseconds: 120));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
 
-    // Compact greeting — no emoji, no giant heading.
-    expect(find.textContaining('Kamil'), findsWidgets);
-    // Every section of the redesigned surface, in order.
-    expect(find.text('Moments from your circle'), findsOneWidget);
-    expect(find.text('Live around you'), findsOneWidget);
-    expect(find.text('FEATURED LIVE'), findsOneWidget);
-    expect(find.text('Late night conversations'), findsWidgets);
-    expect(find.text('Real people. Honest talks.'), findsWidgets);
-    expect(find.text('Your circle'), findsOneWidget);
-    expect(find.text('Join room'), findsOneWidget);
-    expect(find.text('186 listening'), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    expect(find.byType(HomeRoomBanner), findsNWidgets(2));
+    expect(find.text('Evening Talks'), findsOneWidget);
+    expect(find.text('Night Shift'), findsOneWidget);
+
+    // Vertically stacked, not a grid: each banner starts below the last.
+    final first = tester.getTopLeft(find.text('Evening Talks'));
+    final second = tester.getTopLeft(find.text('Night Shift'));
+    expect(second.dy, greaterThan(first.dy));
+    expect(second.dx, closeTo(first.dx, 1));
+
+    // One primary action per room.
+    expect(find.text('Join room'), findsNWidgets(2));
   });
 
-  testWidgets('the two obsolete actions are gone: no "Start a room" in Your '
-      'circle, and Home never renders a sidebar Moment action', (tester) async {
-    useDesktop(tester, const Size(1440, 820));
-    await seedRoom(id: 'r1', name: 'Room one', description: 'One');
-
-    await tester.pumpWidget(host(buildHome()));
-    await tester.pump(const Duration(milliseconds: 120));
-
-    expect(find.text('Start a room'), findsNothing);
-    expect(find.text('Create your Moment'), findsNothing);
-    // Room creation is still reachable from Home's own empty state only
-    // when nothing is live; the rail owns it the rest of the time.
-    expect(find.text('Your circle'), findsOneWidget);
-  });
-
-  testWidgets('section actions delegate to the shell — Join opens the real '
-      'room, See all and View all friends fire their callbacks', (
+  testWidgets('Join room opens the real room through the shell callback', (
     tester,
   ) async {
-    useDesktop(tester, const Size(1440, 820));
+    useDesktop(tester, const Size(1440, 2600));
+    await seedRoom(id: 'r1', name: 'Evening Talks', description: 'Real talk');
+    VoiceRoom? opened;
+    await tester.pumpWidget(host(buildHome(onOpenRoom: (r) => opened = r)));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+
+    await tester.tap(find.text('Join room').first);
+    await tester.pump();
+    expect(opened?.name, 'Evening Talks');
+  });
+
+  testWidgets('a banner shows the real listener count, and its face pile '
+      'opens the real roster on demand', (tester) async {
+    useDesktop(tester, const Size(1440, 2600));
     await seedRoom(
       id: 'r1',
-      name: 'Late night conversations',
-      description: 'Real people.',
+      name: 'Evening Talks',
+      description: 'Real talk',
+      participants: 7,
+      hostName: 'Hosty',
     );
+    await tester.pumpWidget(host(buildHome()));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
 
-    VoiceRoom? opened;
-    var seeAll = 0;
-    var friends = 0;
+    // The count on the banner is the room's own participantCount.
+    expect(find.text('7'), findsOneWidget);
 
-    await tester.pumpWidget(
-      host(
-        buildHome(
-          onOpenRoom: (room) => opened = room,
-          onSeeAll: () => seeAll++,
-          onFriends: () => friends++,
-        ),
-      ),
-    );
-    await tester.pump(const Duration(milliseconds: 120));
+    final facePile = find.byTooltip('See who is in the room');
+    expect(facePile, findsOneWidget);
 
-    await tester.tap(find.text('Join room'));
-    await tester.pump();
-    expect(opened?.name, 'Late night conversations');
-
-    await tester.tap(find.text('See all').first);
-    await tester.pump();
-    expect(seeAll, 1);
-
-    await tester.tap(find.text('View all friends'));
-    await tester.pump();
-    expect(friends, 1);
+    await tester.tap(facePile);
+    // The dialog route has to finish its transition AND the roster
+    // stream has to deliver its first snapshot.
+    await tester.pumpAndSettle();
+    // The roster came from the room's own participant documents.
+    expect(find.text('Speaker r1'), findsOneWidget);
   });
 
-  testWidgets('no live rooms: honest empty states, never invented rooms', (
+  testWidgets('the banner counts big rooms in K, and a room nobody is in '
+      'shows no face pile rather than placeholder faces', (tester) async {
+    useDesktop(tester, const Size(1440, 2600));
+    await seedRoom(
+      id: 'busy',
+      name: 'Late Night Creators',
+      description: 'Deep conversations',
+      participants: 2400,
+    );
+    await tester.pumpWidget(host(buildHome()));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+
+    expect(find.text('2.4K'), findsOneWidget);
+    // seedRoom writes one participant document, so the pile is present.
+    expect(find.byTooltip('See who is in the room'), findsOneWidget);
+  });
+
+  testWidgets('no live rooms: an honest note, never invented rooms', (
     tester,
   ) async {
-    useDesktop(tester, const Size(1440, 820));
+    useDesktop(tester, const Size(1440, 2600));
     await tester.pumpWidget(host(buildHome()));
-    await tester.pump(const Duration(milliseconds: 120));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
 
-    expect(find.text('No public rooms are live right now.'), findsOneWidget);
-    expect(find.text('Nothing is live yet'), findsOneWidget);
-    // The "For you" rail hides entirely rather than showing filler.
-    expect(find.text('For you'), findsNothing);
-    expect(tester.takeException(), isNull);
+    expect(find.textContaining('No rooms to show yet'), findsOneWidget);
+    expect(find.text('Join room'), findsNothing);
+  });
+
+  testWidgets('Your active rooms lists only rooms this account hosts, and '
+      'only the owner sees the settings affordance', (tester) async {
+    useDesktop(tester, const Size(1440, 2600));
+    await seedRoom(
+      id: 'mine',
+      name: 'My Room',
+      description: 'I host this',
+      hostId: uid,
+    );
+    await seedRoom(
+      id: 'theirs',
+      name: 'Someone Elses',
+      description: 'Not mine',
+      hostId: 'other-uid',
+    );
+
+    await tester.pumpWidget(host(buildHome()));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+
+    // Owned rooms carry the owner-only settings button; the board's
+    // banners never do.
+    expect(find.byTooltip('Room settings'), findsOneWidget);
+    expect(find.text('Enter'), findsOneWidget);
+  });
+
+  testWidgets('an account hosting nothing gets one compact empty state with '
+      'the existing Create Room action', (tester) async {
+    useDesktop(tester, const Size(1440, 2600));
+    await seedRoom(id: 'r1', name: 'Evening Talks', description: 'Real talk');
+    await tester.pumpWidget(host(buildHome()));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+
+    expect(find.text('You have no rooms yet.'), findsOneWidget);
+    expect(find.text('Create Room'), findsOneWidget);
+    expect(find.byTooltip('Room settings'), findsNothing);
+  });
+
+  testWidgets('Global Chat previews real messages and hides moderated ones', (
+    tester,
+  ) async {
+    useDesktop(tester, const Size(1440, 2600));
+    await seedGlobalMessage(
+      id: 'g1',
+      senderId: 'luna',
+      senderName: 'LunaVibes',
+      content: 'That voice moment was incredible!',
+    );
+    await seedGlobalMessage(
+      id: 'g2',
+      senderId: 'echo',
+      senderName: 'EchoWave',
+      content: 'Anyone up for a late night talk?',
+      age: const Duration(minutes: 8),
+    );
+    // Moderated away: it must never reach the preview.
+    await seedGlobalMessage(
+      id: 'g3',
+      senderId: 'spammer',
+      senderName: 'Spammer',
+      content: 'Removed by a moderator',
+      age: const Duration(minutes: 12),
+      isDeleted: true,
+      deletedBy: 'mod-uid',
+    );
+
+    await tester.pumpWidget(host(buildHome()));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+
+    expect(find.text('That voice moment was incredible!'), findsOneWidget);
+    expect(find.text('Anyone up for a late night talk?'), findsOneWidget);
+    expect(find.text('Removed by a moderator'), findsNothing);
   });
 
   group('Moments from your circle', () {
@@ -434,7 +517,9 @@ void main() {
       );
 
       await tester.pumpWidget(host(buildHome()));
-      await tester.pump(const Duration(milliseconds: 150));
+      for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
 
       expect(find.text('Your Moment'), findsOneWidget);
       expect(find.text('Ola'), findsWidgets);
@@ -471,7 +556,9 @@ void main() {
           ),
         ),
       );
-      await tester.pump(const Duration(milliseconds: 150));
+      for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
 
       await tester.tap(find.text('Ola').first);
       await tester.pump();
@@ -486,15 +573,75 @@ void main() {
       expect(seeAllMoments, 1);
     });
 
+    testWidgets('the rail marks online friends, and offers Follow only for '
+        'people this account has not followed yet', (tester) async {
+      useDesktop(tester, const Size(1440, 900));
+      // Ola is a friend and online; Marek is already followed.
+      await seedFriend('friend-1', 'Ola');
+      await seedFollowing('creator-1', 'Marek');
+      // A friend who is also already followed must NOT be offered again.
+      await seedFriend('friend-2', 'Zosia');
+      await seedFollowing('friend-2', 'Zosia');
+
+      await tester.pumpWidget(host(buildHome()));
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+
+      // Ola is followable; Zosia and Marek are not.
+      expect(find.text('Follow'), findsOneWidget);
+      expect(
+        find.ancestor(
+          of: find.text('Ola'),
+          matching: find.byType(Column),
+        ),
+        findsWidgets,
+      );
+      expect(find.text('Zosia'), findsNothing);
+    });
+
+    testWidgets('following someone from the rail goes through the real '
+        'FollowService and writes both sides of the edge', (tester) async {
+      useDesktop(tester, const Size(1440, 900));
+      await seedFriend('friend-1', 'Ola');
+
+      await tester.pumpWidget(host(buildHome()));
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+
+      await tester.tap(find.text('Follow'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      // The same two documents the profile screens write.
+      final following = await db
+          .collection('users')
+          .doc(uid)
+          .collection('following')
+          .doc('friend-1')
+          .get();
+      final follower = await db
+          .collection('users')
+          .doc('friend-1')
+          .collection('followers')
+          .doc(uid)
+          .get();
+      expect(following.exists, isTrue, reason: 'following edge missing');
+      expect(follower.exists, isTrue, reason: 'follower mirror missing');
+    });
+
     testWidgets('empty circle: a compact state with one Discover action, '
         'never a blank band', (tester) async {
       useDesktop(tester, const Size(1440, 820));
       var discover = 0;
 
       await tester.pumpWidget(host(buildHome(onSeeAll: () => discover++)));
-      await tester.pump(const Duration(milliseconds: 150));
+      for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
 
-      expect(find.text('Moments from your circle'), findsOneWidget);
+      expect(find.text('People & Moments'), findsOneWidget);
       // Creation stays reachable even with nothing to show.
       expect(find.text('Your Moment'), findsOneWidget);
       expect(find.text('Find creators'), findsOneWidget);
@@ -505,327 +652,12 @@ void main() {
     });
   });
 
-  group('For you', () {
-    // Tall enough that the section is genuinely on screen: with the
-    // Moments strip above it, "For you" sits below the fold on a 820px
-    // laptop and the page scrolls to it, which is the intended behaviour.
-    testWidgets('compact editorial cards carry host, topic, chips and a Join '
-        'affordance — all from real room fields', (tester) async {
-      useDesktop(tester, const Size(1440, 1400));
-      await seedRoom(id: 'r1', name: 'Featured one', description: 'First');
-      await seedRoom(
-        id: 'r2',
-        name: 'Design critique',
-        description: 'Bring your work',
-        hostName: 'Marta',
-        participants: 24,
-        age: const Duration(minutes: 5),
-      );
-
-      await tester.pumpWidget(host(buildHome()));
-      await tester.pump(const Duration(milliseconds: 150));
-
-      expect(find.text('For you'), findsOneWidget);
-      expect(find.text('Design critique'), findsWidgets);
-      expect(find.text('Bring your work'), findsWidgets);
-      // Host identity and the real chips, not decoration.
-      expect(find.text('Marta'), findsOneWidget);
-      expect(find.text('talk'), findsWidgets);
-      expect(find.text('English'), findsWidgets);
-      expect(find.text('Join'), findsWidgets);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('a card opens the real room through the shell callback', (
-      tester,
-    ) async {
-      useDesktop(tester, const Size(1440, 1400));
-      await seedRoom(id: 'r1', name: 'Featured one', description: 'First');
-      await seedRoom(
-        id: 'r2',
-        name: 'Design critique',
-        description: 'Bring',
-        age: const Duration(minutes: 5),
-      );
-
-      VoiceRoom? opened;
-      await tester.pumpWidget(
-        host(buildHome(onOpenRoom: (room) => opened = room)),
-      );
-      await tester.pump(const Duration(milliseconds: 150));
-
-      await tester.tap(find.text('Join').first);
-      await tester.pump();
-      expect(opened?.name, 'Design critique');
-    });
-  });
-
-  group('Conversations', () {
-    testWidgets('Global is the FIRST tab and the default view — the module '
-        'opens on the community channel, and there is no "All" tab merging '
-        'public messages into private ones', (tester) async {
-      useDesktop(tester, const Size(1440, 1700));
-      await seedConversation(
-        id: 'c1',
-        otherId: 'friend-1',
-        otherName: 'Ola',
-        lastMessage: 'See you tonight',
-      );
-      await seedGlobalMessage(
-        id: 'g1',
-        senderId: 'stranger-1',
-        senderName: 'Marek',
-        content: 'Anyone up for a room tonight?',
-      );
-
-      await tester.pumpWidget(host(buildHome()));
-      await tester.pump(const Duration(milliseconds: 200));
-      await tester.pump(const Duration(milliseconds: 200));
-
-      expect(find.text('Conversations'), findsOneWidget);
-      expect(find.text('Global'), findsOneWidget);
-      expect(find.text('All'), findsNothing);
-      // The community indicator, and the shared channel's real content.
-      expect(find.text('YO Voice community'), findsOneWidget);
-      expect(find.text('Anyone up for a room tonight?'), findsOneWidget);
-      expect(find.text('Marek'), findsOneWidget);
-      // A composer, not a list of conversation previews.
-      expect(find.text('Message the YO Voice community'), findsOneWidget);
-      // The user's private conversation is NOT on this tab.
-      expect(find.text('Ola'), findsNothing);
-    });
-
-    testWidgets('Global renders the same canonical channel for a DIFFERENT '
-        'signed-in account — it is one shared conversation, not a per-user '
-        'feed', (tester) async {
-      useDesktop(tester, const Size(1440, 1700));
-      await seedGlobalMessage(
-        id: 'g1',
-        senderId: uid,
-        senderName: 'Kamil',
-        content: 'First message in the community',
-      );
-
-      // A second, unrelated account reading the same collection.
-      const otherUid = 'other-uid';
-      await db.collection('users').doc(otherUid).set({
-        'uid': otherUid,
-        'displayName': 'Ola',
-        'email': 'ola@yovoice.app',
-      });
-      final otherAuth = MockFirebaseAuth(
-        signedIn: true,
-        mockUser: MockUser(uid: otherUid, email: 'ola@yovoice.app'),
-      );
-
-      await tester.pumpWidget(
-        host(
-          SizedBox(
-            width: 900,
-            child: DesktopConversations(
-              currentUserId: otherUid,
-              onOpenConversation: (_) {},
-              onOpenClub: (_) {},
-              onSeeAllChats: () {},
-              onFindFriends: () {},
-              onOpenClubs: () {},
-              messageService: MessageService(
-                firestore: db,
-                auth: otherAuth,
-                notificationService: NotificationService(
-                  firestore: db,
-                  auth: otherAuth,
-                ),
-              ),
-              friendService: FriendService(firestore: db, auth: otherAuth),
-              globalChatService: GlobalChatService(
-                firestore: db,
-                auth: otherAuth,
-              ),
-              firebaseAuth: otherAuth,
-            ),
-          ),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 200));
-
-      expect(find.text('First message in the community'), findsOneWidget);
-      expect(find.text('Kamil'), findsOneWidget);
-    });
-
-    testWidgets('Global messages never leak into the direct-message unread '
-        'count', (tester) async {
-      useDesktop(tester, const Size(1440, 1700));
-      await seedConversation(
-        id: 'c1',
-        otherId: 'friend-1',
-        otherName: 'Ola',
-        lastMessage: 'See you tonight',
-        unread: 2,
-      );
-      for (var i = 0; i < 5; i++) {
-        await seedGlobalMessage(
-          id: 'g$i',
-          senderId: 'stranger-$i',
-          senderName: 'Stranger $i',
-          content: 'Global message $i',
-        );
-      }
-
-      var unread = 0;
-      MessageService(
-        firestore: db,
-        auth: auth(),
-        notificationService: NotificationService(firestore: db, auth: auth()),
-      ).watchConversations().listen((conversations) {
-        unread = conversations
-            .where((conversation) => conversation.unreadCountFor(uid) > 0)
-            .length;
-      });
-      await tester.pumpWidget(host(buildHome()));
-      await tester.pump(const Duration(milliseconds: 300));
-
-      // One unread DM, five global messages, and the count still says one:
-      // the two live in different collections and are never summed.
-      expect(unread, 1);
-    });
-
-    testWidgets('the three personal tabs still show only their own real '
-        'conversation types', (tester) async {
-      useDesktop(tester, const Size(1440, 1700));
-      await seedFriend('friend-1', 'Ola');
-      await seedConversation(
-        id: 'c1',
-        otherId: 'friend-1',
-        otherName: 'Ola',
-        lastMessage: 'See you tonight',
-        unread: 3,
-      );
-      await seedConversation(
-        id: 'c2',
-        otherId: 'stranger-1',
-        otherName: 'Piotr',
-        lastMessage: 'Hello there',
-      );
-      await seedClub(id: 'club-1', name: 'Night Owls', lastMessage: 'Welcome');
-      await seedGlobalMessage(
-        id: 'g1',
-        senderId: 'stranger-9',
-        senderName: 'Marek',
-        content: 'Public message',
-      );
-
-      await tester.pumpWidget(host(buildHome()));
-      await tester.pump(const Duration(milliseconds: 200));
-      await tester.pump(const Duration(milliseconds: 200));
-
-      // Clubs: only the club conversation.
-      await tester.tap(find.text('Clubs'));
-      await tester.pump();
-      expect(find.text('Night Owls'), findsOneWidget);
-      expect(find.text('Piotr'), findsNothing);
-
-      // Friends: only the conversation whose counterpart is a friend.
-      await tester.tap(find.text('Friends'));
-      await tester.pump();
-      expect(find.text('Ola'), findsWidgets);
-      expect(find.text('Piotr'), findsNothing);
-      expect(find.text('Night Owls'), findsNothing);
-
-      // Private: the data model's direct conversations, in full.
-      await tester.tap(find.text('Private'));
-      await tester.pump();
-      expect(find.text('Ola'), findsWidgets);
-      expect(find.text('Piotr'), findsWidgets);
-      expect(find.text('Night Owls'), findsNothing);
-
-      // And no personal tab ever shows a public message.
-      expect(find.text('Public message'), findsNothing);
-      expect(find.text('Marek'), findsNothing);
-    });
-
-    testWidgets('a row opens the existing chat / club surface and See all '
-        'chats delegates to the shell', (tester) async {
-      useDesktop(tester, const Size(1440, 1700));
-      await seedConversation(
-        id: 'c1',
-        otherId: 'friend-1',
-        otherName: 'Ola',
-        lastMessage: 'See you tonight',
-      );
-      await seedClub(id: 'club-1', name: 'Night Owls', lastMessage: 'Welcome');
-
-      Conversation? openedConversation;
-      Club? openedClub;
-      var seeAllChats = 0;
-
-      await tester.pumpWidget(
-        host(
-          buildHome(
-            onOpenConversation: (conversation) =>
-                openedConversation = conversation,
-            onOpenClub: (club) => openedClub = club,
-            onSeeAllChats: () => seeAllChats++,
-          ),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 200));
-      await tester.pump(const Duration(milliseconds: 200));
-
-      // Rows live on the personal tabs; Global is a live channel.
-      await tester.tap(find.text('Private'));
-      await tester.pump();
-      await tester.tap(find.text('Ola'));
-      await tester.pump();
-      expect(openedConversation?.id, 'c1');
-
-      await tester.tap(find.text('Clubs'));
-      await tester.pump();
-
-      await tester.tap(find.text('Night Owls'));
-      await tester.pump();
-      expect(openedClub?.id, 'club-1');
-
-      await tester.tap(find.text('See all chats'));
-      await tester.pump();
-      expect(seeAllChats, 1);
-    });
-
-    testWidgets('each empty filter gets its own contextual state and an '
-        'existing action', (tester) async {
-      useDesktop(tester, const Size(1440, 1700));
-      await tester.pumpWidget(host(buildHome()));
-      await tester.pump(const Duration(milliseconds: 200));
-
-      // Global: an empty community channel invites the first message
-      // rather than showing a conversation-list empty state.
-      expect(
-        find.text('No one has said anything yet. Start the conversation.'),
-        findsOneWidget,
-      );
-
-      await tester.tap(find.text('Friends'));
-      await tester.pump();
-      expect(find.text('No chats with your friends yet.'), findsOneWidget);
-
-      await tester.tap(find.text('Clubs'));
-      await tester.pump();
-      expect(find.text('You have not joined a club yet.'), findsOneWidget);
-      expect(find.text('Browse Clubs'), findsOneWidget);
-
-      await tester.tap(find.text('Private'));
-      await tester.pump();
-      expect(find.text('No direct messages yet.'), findsOneWidget);
-    });
-  });
-
-  for (final size in [
-    const Size(1440, 820),
-    const Size(1440, 620),
-    // The narrowest supported desktop: at the 1100px shell breakpoint the
-    // centre column is only ~490px wide with the right column beside it.
-    const Size(1100 - 264 - 344, 900),
-    const Size(1920, 1080),
+  // Every supported desktop size, plus the narrow end of the range.
+  for (final size in const [
+    Size(1920, 1080),
+    Size(1440, 900),
+    Size(1366, 768),
+    Size(1100, 800),
   ]) {
     testWidgets('lays out without overflow at ${size.width.toInt()}x'
         '${size.height.toInt()}', (tester) async {
@@ -855,15 +687,4 @@ void main() {
     });
   }
 
-  testWidgets('narrow desktop centre stacks Featured and Your circle '
-      'instead of squeezing them', (tester) async {
-    useDesktop(tester, const Size(700, 820));
-    await seedRoom(id: 'r1', name: 'Room one', description: 'One');
-
-    await tester.pumpWidget(host(buildHome()));
-    await tester.pump(const Duration(milliseconds: 120));
-
-    expect(find.text('Your circle'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
 }

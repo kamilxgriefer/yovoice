@@ -74,9 +74,19 @@ class MobileSectionHeader extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 foregroundColor: const Color(0xFFD3A5FF),
               ),
-              child: const Text(
-                'See all',
-                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'View all',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  SizedBox(width: 2),
+                  Icon(Icons.chevron_right_rounded, size: 18),
+                ],
               ),
             ),
           ],

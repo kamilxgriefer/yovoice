@@ -8,6 +8,7 @@ class FriendUser {
     required this.photoUrl,
     required this.isOnline,
     required this.lastSeen,
+    this.premiumIdentity = false,
   });
 
   final String id;
@@ -16,6 +17,11 @@ class FriendUser {
   final String? photoUrl;
   final bool isOnline;
   final DateTime? lastSeen;
+
+  /// The server-written public mirror of the premium entitlement, read
+  /// straight off the user document. Never a locally computed flag —
+  /// only Cloud Functions write it.
+  final bool premiumIdentity;
 
   String get initial {
     final normalizedName = displayName.trim();
@@ -59,6 +65,7 @@ class FriendUser {
       photoUrl: _normalizeNullableString(data['photoUrl']),
       isOnline: data['isOnline'] as bool? ?? false,
       lastSeen: _readDateTime(data['lastSeen']),
+      premiumIdentity: data['premiumIdentity'] as bool? ?? false,
     );
   }
 
@@ -73,6 +80,7 @@ class FriendUser {
       photoUrl: _normalizeNullableString(data['photoUrl']),
       isOnline: data['isOnline'] as bool? ?? false,
       lastSeen: _readDateTime(data['lastSeen']),
+      premiumIdentity: data['premiumIdentity'] as bool? ?? false,
     );
   }
 

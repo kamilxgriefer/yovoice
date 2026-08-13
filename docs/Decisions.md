@@ -2581,3 +2581,65 @@ that cannot work costs the user the chance to enable push later.
 - Notification-path `catch (_) {}` blocks now log a bounded diagnostic
   with no tokens, emails or message content. Behaviour is unchanged;
   only the silence is gone.
+
+
+## ADR-043: Home is one room board of full-bleed banners; presence, VIP and Follow on the rail come from existing server-written sources
+
+### Context
+
+Home carried three overlapping presentations of the same room stream
+(`Live around you`, `Featured Live`, `For you`), so one room could appear
+three times on one screen, and the desktop and mobile surfaces had drifted
+into different compositions. The redesign mockups asked for a single
+vertical board of cover-art banners plus a combined `People & Moments`
+rail, on both surfaces.
+
+### Decision
+
+One `HomeRoomBanner`, shared by `DesktopHome` and `MobileHome` via
+`lib/features/home/presentation/widgets/shared/home_room_board.dart`,
+differing only by a `compact` density flag. The room's cover is the card
+background; legibility comes from a two-pass gradient scrim, NOT a
+`BackdropFilter`. The banner's face pile reads the room's own
+`watchParticipants` stream and opens the existing `RoomRosterList`.
+
+The rail packs one horizontal row: `Your Moment`, then people whose
+Moments the circle can hear, then a divider, then friends this account
+has not followed yet. Online dots read the friend document's own
+`isOnline`; the VIP frame reads `premiumIdentity` — the server-written
+public mirror, now also carried on `FriendUser`; `Follow` calls the
+existing `FollowService.follow`.
+
+### Reasoning
+
+A `BackdropFilter` per banner is a saved layer per banner. With up to
+twelve banners that is a real cost on CanvasKit — measured here as the
+screenshot rasteriser going from seconds to minutes per capture, which is
+the same work a browser would do. Two gradient passes buy nearly all of
+the legibility for none of it.
+
+The rail's follow segment is deliberately drawn from friends-not-yet-
+followed rather than a recommendation feed: there is no suggestion
+backend, and inventing one would be fabricated activity. A real edge the
+user already has is the honest version of "people you could follow".
+
+`premiumIdentity` had to reach `FriendUser`, which is an additive read of
+a field Cloud Functions already write — no schema change, and the client
+still cannot grant itself the badge.
+
+### Consequences
+
+- `rankRoomsForHome` is the single ordering function for both surfaces;
+  its top tier is now actually fed, by `FollowService.watchFollowing`.
+- Two write-only roster subscription maps (`_friendRoomNames` on desktop,
+  `_peopleInRooms` on mobile) were removed — they opened one Firestore
+  listener per visible room to fill a map nothing read.
+- The three retired card compositions and their private helpers are
+  deleted; `RoomRosterList` survives as the shared roster.
+- **A room has no start time in Firestore.** The mockups' `SCHEDULED`
+  banner with a date is therefore NOT built: it needs a `scheduledFor`
+  field, and adding one is a schema change. A non-live room shows
+  `NOT LIVE` and no invented date.
+- Likewise there is no sponsor backend, so `SponsoredCard` keeps its
+  honest `Sponsored example` placeholder rather than the mockups'
+  fictional brand.

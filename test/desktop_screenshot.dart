@@ -24,7 +24,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
+import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
+import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
+import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
@@ -67,18 +72,28 @@ Future<FakeFirebaseFirestore> _seed({required bool live}) async {
   if (!live) return db;
 
   for (final entry in [
-    ('Late Night Confessions', 'Real stories, live now'),
-    ('Friday Freestyle', 'The room is warming up'),
+    (
+      'Late Night Creators',
+      'Deep conversations and creative energy. Connect, share and inspire.',
+    ),
+    (
+      'Gaming After Hours',
+      'Chill gaming sessions, strategy talks and good vibes.',
+    ),
+    (
+      'Polish Coffee Talk',
+      'Friendly talks in Polish over coffee. Share stories and meet people.',
+    ),
   ].indexed) {
     await db.collection('rooms').doc('room-${entry.$1}').set(<String, dynamic>{
       'hostId': 'host',
       'hostName': 'Host',
       'name': entry.$2.$1,
       'description': entry.$2.$2,
-      'category': 'talk',
+      'category': ['Talk', 'Gaming', 'Talk'][entry.$1],
       'visibility': 'public',
-      'language': 'English',
-      'participantCount': 4 + entry.$1,
+      'language': entry.$1 == 2 ? 'Polish' : 'English',
+      'participantCount': [2400, 1800, 782][entry.$1],
       'memberCount': 0,
       'isLive': true,
       'roomType': 'community',
@@ -88,8 +103,55 @@ Future<FakeFirebaseFirestore> _seed({required bool live}) async {
         DateTime.now().subtract(Duration(minutes: 3 + entry.$1 * 9)),
       ),
     });
+    final people = db
+        .collection('rooms')
+        .doc('room-${entry.$1}')
+        .collection('participants');
+    for (final (index, name) in ['Ola', 'Marek', 'Zosia', 'Piotr'].indexed) {
+      await people.doc('p$index').set(<String, dynamic>{
+        'userId': 'p$index',
+        'displayName': name,
+        'role': index == 0 ? 'host' : 'listener',
+        'isMuted': index != 0,
+        'isSpeaker': index == 0,
+      });
+    }
   }
   return db;
+}
+
+/// Two friends and a Moment — enough for the rail to show a ringed tile,
+/// an online dot, the divider and a Follow action.
+Future<void> _seedCircle(FakeFirebaseFirestore db) async {
+  for (final (index, name) in ['Sieeema', 'testGriefer'].indexed) {
+    final id = 'friend-$index';
+    await db.collection('users').doc(id).set(<String, dynamic>{
+      'uid': id,
+      'displayName': name,
+      'username': name.toLowerCase(),
+      'isOnline': true,
+      'premiumIdentity': index == 1,
+    });
+    await db
+        .collection('users')
+        .doc(_me)
+        .collection('friends')
+        .doc(id)
+        .set(<String, dynamic>{'friendId': id, 'createdAt': Timestamp.now()});
+  }
+  await db.collection('voiceMoments').doc('m1').set(<String, dynamic>{
+    'authorId': 'friend-0',
+    'authorName': 'Sieeema',
+    'caption': 'Morning thoughts',
+    'audioUrl': 'https://example.invalid/m1.m4a',
+    'durationSeconds': 42,
+    'likeCount': 0,
+    'commentCount': 0,
+    'isPublished': true,
+    'createdAt': Timestamp.fromDate(
+      DateTime.now().subtract(const Duration(minutes: 30)),
+    ),
+  });
 }
 
 Future<void> _settle(WidgetTester tester) async {
@@ -215,7 +277,7 @@ void main() {
         ),
       );
       await _settle(tester);
-      await tester.tap(find.text('7 in the room'));
+      await tester.tap(find.byTooltip('See who is in the room'));
       await _settle(tester);
       await _shoot('roster-${size.width.toInt()}x${size.height.toInt()}');
     });
@@ -300,4 +362,112 @@ void main() {
       await _shoot(label);
     });
   }
+  // The Home surface itself — the room board, the People & Moments rail,
+  // Your active rooms and the Global Chat preview — at the desktop widths
+  // that matter and at phone size.
+  for (final size in const [Size(1440, 900), Size(1100, 900)]) {
+    final label = 'home-${size.width.toInt()}x${size.height.toInt()}';
+    testWidgets(label, (tester) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final db = await _seed(live: true);
+      await _seedCircle(db);
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: _me, displayName: 'CeoGriefer'),
+      );
+
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: _capture,
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              brightness: Brightness.dark,
+              useMaterial3: true,
+              fontFamily: 'Roboto',
+            ),
+            home: Scaffold(
+              backgroundColor: const Color(0xFF080711),
+              body: DesktopHome(
+                currentUserId: _me,
+                onOpenRoom: (_) {},
+                onSeeAllRooms: () {},
+                onViewAllFriends: () {},
+                onStartRoom: () {},
+                onOpenMoment: (_) {},
+                onCreateMoment: () {},
+                onSeeAllMoments: () {},
+                onOpenConversation: (_) {},
+                onOpenClub: (_) {},
+                onSeeAllChats: () {},
+                onOpenClubs: () {},
+                roomService: RoomService(firestore: db, auth: auth),
+                friendService: FriendService(firestore: db, auth: auth),
+                followService: FollowService(firestore: db, auth: auth),
+                profileService: ProfileService(firestore: db, auth: auth),
+                feedService: HomeFeedService(firestore: db, auth: auth),
+                globalChatService: GlobalChatService(
+                  firestore: db,
+                  auth: auth,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await _settle(tester);
+      await _shoot(label);
+    });
+  }
+
+  testWidgets('home-mobile-390x844', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final db = await _seed(live: true);
+    await _seedCircle(db);
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: _me, displayName: 'CeoGriefer'),
+    );
+
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: _capture,
+        child: MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(
+            brightness: Brightness.dark,
+            useMaterial3: true,
+            fontFamily: 'Roboto',
+          ),
+          home: Scaffold(
+            backgroundColor: const Color(0xFF080711),
+            body: MobileHome(
+              currentUserId: _me,
+              onOpenRoom: (_) {},
+              onOpenDiscover: () {},
+              onOpenFriends: () {},
+              onOpenNotifications: () {},
+              onOpenProfile: () {},
+              onCreateMoment: () {},
+              onCreateRoom: () {},
+              onOpenComments: (_) {},
+              roomService: RoomService(firestore: db, auth: auth),
+              friendService: FriendService(firestore: db, auth: auth),
+              profileService: ProfileService(firestore: db, auth: auth),
+              feedService: HomeFeedService(firestore: db, auth: auth),
+              globalChatService: GlobalChatService(firestore: db, auth: auth),
+            ),
+          ),
+        ),
+      ),
+    );
+    await _settle(tester);
+    await _shoot('home-mobile-390x844');
+  });
 }

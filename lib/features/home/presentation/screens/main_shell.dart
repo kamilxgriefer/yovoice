@@ -156,6 +156,7 @@ class _MainShellState extends State<MainShell>
     ),
     onOpenProfile: () => unawaited(_openProfile()),
     onCreateMoment: _openCreateMoment,
+    onCreateRoom: () => unawaited(_openCreateRoom()),
     onOpenComments: (moment) => unawaited(
       Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
@@ -844,18 +845,20 @@ class _DesktopRightColumn extends StatelessWidget {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(6, 20, 20, 20),
         children: [
-          VoiceTrendingCard(onOpenRoom: onOpenRoom, onSeeAll: onSeeAll),
-          const SizedBox(height: 16),
-          PremiumDesktopCard(onCheckPlans: onCheckPlans),
-          const SizedBox(height: 16),
-          const SponsoredCard(),
-          const SizedBox(height: 14),
+          // People first, Premium last: the right column supports the
+          // centre rather than selling over it.
           FollowedCreatorsCard(
             currentUserId: currentUserId,
             onOpenCreator: onOpenCreator,
             onViewAll: onViewAllCreators,
             onDiscover: onSeeAll,
           ),
+          const SizedBox(height: 16),
+          VoiceTrendingCard(onOpenRoom: onOpenRoom, onSeeAll: onSeeAll),
+          const SizedBox(height: 16),
+          const SponsoredCard(),
+          const SizedBox(height: 16),
+          PremiumDesktopCard(onCheckPlans: onCheckPlans),
         ],
       ),
     );

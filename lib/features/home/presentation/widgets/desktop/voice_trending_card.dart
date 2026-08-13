@@ -2,12 +2,11 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
-import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
-import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
-import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart'
+    show RoomVisual;
 
 /// The desktop right column's top card: "Voice Trending" — two curated
 /// sections over REAL data.
@@ -41,11 +40,6 @@ class VoiceTrendingCard extends StatefulWidget {
 
 class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
   RoomService? _rooms;
-  ProfileService? _profiles;
-
-  Future<List<SuggestedFriend>> _suggestions = Future.value(
-    const <SuggestedFriend>[],
-  );
 
   @override
   void initState() {
@@ -57,19 +51,6 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
       _rooms = widget.roomService ?? RoomService();
     } catch (_) {
       _rooms = null;
-    }
-    try {
-      _profiles = widget.profileService ?? ProfileService();
-    } catch (_) {
-      _profiles = null;
-    }
-    try {
-      final social = widget.socialGraphService ?? SocialGraphService();
-      _suggestions = social
-          .getFriendSuggestions(limit: 2)
-          .catchError((_) => const <SuggestedFriend>[]);
-    } catch (_) {
-      _suggestions = Future.value(const <SuggestedFriend>[]);
     }
   }
 
@@ -135,54 +116,6 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
               );
             },
           ),
-          FutureBuilder<List<SuggestedFriend>>(
-            future: _suggestions,
-            builder: (context, snapshot) {
-              final people = (snapshot.data ?? const <SuggestedFriend>[])
-                  .take(2)
-                  .toList(growable: false);
-              final waiting =
-                  snapshot.connectionState == ConnectionState.waiting &&
-                  !snapshot.hasData;
-              if (waiting || snapshot.hasError || people.isEmpty) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const _SectionLabel('People to Follow'),
-                    const SizedBox(height: 8),
-                    if (waiting)
-                      const _RowPlaceholder(count: 2)
-                    else if (snapshot.hasError)
-                      const _SectionNote('Suggestions are unavailable.')
-                    else
-                      // Deliberately restrained: an empty suggestion list
-                      // is a real answer. Filling it with invented people
-                      // would be worse than saying nothing.
-                      const _SectionNote('No suggestions right now.'),
-                  ],
-                );
-              }
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const _SectionLabel('People to Follow'),
-                  const SizedBox(height: 8),
-                  for (final person in people)
-                    _PersonRow(
-                      person: person,
-                      profileService: _profiles,
-                      key: ValueKey(person.uid),
-                      onTap: () => showProfilePreview(
-                        context,
-                        userId: person.uid,
-                        displayName: person.displayName,
-                        photoUrl: person.photoUrl,
-                      ),
-                    ),
-                ],
-              );
-            },
-          ),
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton(
@@ -193,7 +126,7 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
               child: const Text(
-                'See all',
+                'View all',
                 style: TextStyle(
                   color: Color(0xFFD3A5FF),
                   fontSize: 12.5,
@@ -226,6 +159,16 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
+/// 2100 → "2.1K", so a busy room cannot push the row's own title out.
+String _compact(int count) {
+  if (count < 1000) return '$count';
+  final thousands = count / 1000;
+  final text = thousands >= 10
+      ? thousands.round().toString()
+      : thousands.toStringAsFixed(1);
+  return '${text.endsWith('.0') ? text.substring(0, text.length - 2) : text}K';
+}
+
 class _MomentRow extends StatelessWidget {
   const _MomentRow({required this.room, required this.onTap});
 
@@ -245,13 +188,10 @@ class _MomentRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 7),
         child: Row(
           children: [
-            UserAvatar(
-              radius: 19,
-              photoUrl: room.imageUrl ?? room.hostPhotoUrl,
-              displayName: room.name,
-              backgroundColor: const Color(0xFF3B1D5C),
-              fallbackIcon: Icons.graphic_eq_rounded,
-            ),
+            // The room's own cover, square like the board's tiles —
+            // RoomVisual owns the branded fallback and the broken-image
+            // case, so a revoked cover never shows a broken glyph.
+            RoomVisual(room: room, size: 40, radius: 11),
             const SizedBox(width: 11),
             Expanded(
               child: Column(
@@ -282,6 +222,26 @@ class _MomentRow extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             const _LivePill(),
+            const SizedBox(width: 7),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.people_alt_rounded,
+                  size: 12,
+                  color: Color(0xFF9A90AC),
+                ),
+                const SizedBox(width: 3),
+                Text(
+                  _compact(room.participantCount),
+                  style: const TextStyle(
+                    color: Color(0xFFCFC6DC),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -369,78 +329,3 @@ class _LivePill extends StatelessWidget {
   }
 }
 
-class _PersonRow extends StatelessWidget {
-  const _PersonRow({
-    required this.person,
-    required this.profileService,
-    required this.onTap,
-    super.key,
-  });
-
-  final SuggestedFriend person;
-  final ProfileService? profileService;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 7),
-        child: Row(
-          children: [
-            UserAvatar(
-              radius: 19,
-              photoUrl: person.photoUrl,
-              displayName: person.displayName,
-            ),
-            const SizedBox(width: 11),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    person.displayName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  // Their own words first (the profile bio/vibe), with the
-                  // real mutual-friend count as the fallback — never an
-                  // invented "content" blurb.
-                  StreamBuilder<UserProfile>(
-                    stream: profileService?.watchProfile(person.uid),
-                    builder: (context, snapshot) {
-                      final bio = snapshot.data?.bio.trim() ?? '';
-                      final text = bio.isNotEmpty
-                          ? bio
-                          : person.mutualCount > 0
-                          ? '${person.mutualCount} mutual '
-                                '${person.mutualCount == 1 ? 'friend' : 'friends'}'
-                          : 'Suggested for you';
-                      return Text(
-                        text,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF9A90AC),
-                          fontSize: 11.5,
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}

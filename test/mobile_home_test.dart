@@ -6,7 +6,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/global_chat_screen.dart';
-import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
@@ -81,6 +80,7 @@ void main() {
     VoidCallback? onDiscover,
     VoidCallback? onFriends,
     VoidCallback? onCreateMoment,
+    VoidCallback? onCreateRoom,
   }) {
     final firebaseAuth = auth();
     return MobileHome(
@@ -90,12 +90,12 @@ void main() {
       onOpenNotifications: () {},
       onOpenProfile: () {},
       onCreateMoment: onCreateMoment ?? () {},
+      onCreateRoom: onCreateRoom ?? () {},
       onOpenComments: (_) {},
       roomService: RoomService(firestore: db, auth: firebaseAuth),
       friendService: FriendService(firestore: db, auth: firebaseAuth),
       profileService: ProfileService(firestore: db, auth: firebaseAuth),
       feedService: HomeFeedService(firestore: db, auth: firebaseAuth),
-      followService: FollowService(firestore: db, auth: firebaseAuth),
       globalChatService: GlobalChatService(firestore: db, auth: firebaseAuth),
       currentUserId: uid,
     );
@@ -126,17 +126,36 @@ void main() {
     // Compact header: greeting + real name, and no emoji.
     expect(find.text('Kamil'), findsOneWidget);
     expect(find.textContaining('👋'), findsNothing);
-    // Briefing strip counts come from the live-room stream.
-    expect(find.textContaining('room live'), findsOneWidget);
-    // Featured room, from the same real data.
-    expect(find.text('FEATURED'), findsOneWidget);
-    expect(find.text('Evening Talks'), findsWidgets);
-    expect(find.text('8 listening'), findsOneWidget);
-    // The retired "LIVE NOW" hero heading is gone from mobile Home.
-    expect(find.text('LIVE NOW'), findsNothing);
-    expect(find.text('Your circle'), findsOneWidget);
-    expect(find.text('Your Moment'), findsOneWidget);
-    expect(find.text('Recommended now'), findsOneWidget);
+    // The four questions Home answers, in order, and nothing else.
+    expect(find.text('Moments from your circle'), findsOneWidget);
+    expect(find.text('Rooms for you'), findsOneWidget);
+    expect(find.text('Your active rooms'), findsOneWidget);
+    expect(find.text('Global Chat'), findsOneWidget);
+
+    double y(String label) => tester.getTopLeft(find.text(label)).dy;
+    expect(y('Moments from your circle'), lessThan(y('Rooms for you')));
+    expect(y('Rooms for you'), lessThan(y('Your active rooms')));
+    expect(y('Your active rooms'), lessThan(y('Global Chat')));
+
+    // The room appears ONCE, on one board — not in three sections.
+    expect(find.text('Evening Talks'), findsOneWidget);
+    // The banner's count chip: the room's own participantCount.
+    expect(find.text('8'), findsOneWidget);
+
+    // Retired compositions are gone.
+    for (final removed in [
+      'LIVE NOW',
+      'FEATURED',
+      'Your circle',
+      'Recommended now',
+      'Live around you',
+    ]) {
+      expect(find.text(removed), findsNothing, reason: '\$removed returned');
+    }
+
+    // Mobile carries no Premium or sponsored content.
+    expect(find.textContaining('Check plans'), findsNothing);
+    expect(find.text('SPONSORED EXAMPLE'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -161,30 +180,24 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 150));
 
+    // One primary action per room, on one board. The phone banner
+    // shortens the label to fit beside the chips and the face pile.
     await tester.tap(find.text('Join').first);
     await tester.pump();
     expect(opened?.name, 'Evening Talks');
 
-    // The feed now has several "See all" actions, so each tap is scoped
-    // to its own section header rather than to tree order.
-    Finder seeAllNextTo(String heading) => find.descendant(
-      of: find
-          .ancestor(of: find.text(heading), matching: find.byType(Row))
-          .first,
-      matching: find.text('See all'),
-    );
-
-    await tester.tap(seeAllNextTo('Live around you'));
+    // Discover is reached from the Moments empty state's Find creators —
+    // the rail is where people discovery lives now.
+    await tester.tap(find.text('Find creators'));
     await tester.pump();
     expect(discover, 1);
 
-    await tester.tap(seeAllNextTo('Your circle'));
-    await tester.pump();
-    expect(friends, 1);
-
-    await tester.tap(find.text('Your Moment'));
+    await tester.tap(find.text('Record a Moment'));
     await tester.pump();
     expect(moment, 1);
+
+    // Friends is a bottom-navigation destination now, not a Home card.
+    expect(friends, 0);
   });
 
   testWidgets('no live rooms: compact honest empty states', (tester) async {
@@ -192,7 +205,10 @@ void main() {
     await tester.pumpWidget(host(buildHome()));
     await tester.pump(const Duration(milliseconds: 150));
 
-    expect(find.text('Nothing is live right now'), findsOneWidget);
+    expect(
+      find.textContaining('No rooms to show yet'),
+      findsOneWidget,
+    );
     // The recommended list hides rather than showing filler rows.
     expect(find.text('Recommended now'), findsNothing);
     expect(tester.takeException(), isNull);

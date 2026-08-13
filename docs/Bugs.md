@@ -678,3 +678,16 @@ permission flags).
   delete is failing silently, most likely refFromURL vs the
   `.firebasestorage.app` bucket URL format. Cosmetic storage cost only;
   needs a debugPrint in the catch and a look at refFromURL handling.
+- **Fixed: mobile Home's "Create Room" empty state opened the Moment
+  recorder.** `MobileHome` had no `onCreateRoom` callback, so
+  `HomeActiveRooms`'s empty-state button was wired to `onCreateMoment`.
+  Starting a room and recording a Moment are different flows; the shell
+  now passes `_openCreateRoom`.
+- **Not a bug: the "DesktopHome renders one banner of two" report.** The
+  stream and `rankRoomsForHome` were always correct — instrumentation
+  showed `board=[r1, r2]` and two `HomeRoomBanner` widgets in the tree.
+  The failing test simply never set a viewport, so the 800x600 default
+  clipped the second banner out of the lazily-built `ListView` and the
+  finder saw one. Every other test in that file called `useDesktop`;
+  that one did not. Fixed by giving it a viewport, not by changing
+  production code.
