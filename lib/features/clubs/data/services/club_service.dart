@@ -62,6 +62,36 @@ class ClubService {
     return user;
   }
 
+  /// Creates the caller's Family Room: the same club document, members,
+  /// roles, invites, channels and lounge, with `type: family` — which is
+  /// what `firestore.rules` keys the private read boundary off.
+  ///
+  /// The id is deterministic (`family_{uid}`) and that is deliberate: it
+  /// is the one-per-account limit, enforced server-side. Creating a
+  /// second one has nowhere to go, so this surfaces the existing room
+  /// instead of failing with a permission error.
+  Future<Club> createFamilyRoom({
+    required String name,
+    required String description,
+    String defaultLanguage = 'English',
+    XFile? avatarFile,
+  }) async {
+    final existing = await _clubs.doc(Club.familyRoomIdFor(_user.uid)).get();
+    if (existing.exists) return Club.fromFirestore(existing);
+
+    return createClub(
+      name: name,
+      description: description,
+      // Invite-only is the only privacy a family space may have; there
+      // is no public variant of it to choose.
+      privacy: ClubPrivacy.inviteOnly,
+      defaultLanguage: defaultLanguage,
+      avatarFile: avatarFile,
+      type: ClubType.family,
+      documentId: Club.familyRoomIdFor(_user.uid),
+    );
+  }
+
   Future<Club> createClub({
     required String name,
     required String description,
@@ -69,6 +99,8 @@ class ClubService {
     required String defaultLanguage,
     XFile? avatarFile,
     XFile? bannerFile,
+    ClubType type = ClubType.community,
+    String? documentId,
   }) async {
     final user = _user;
     final normalizedName = name.trim();
@@ -87,7 +119,9 @@ class ClubService {
       throw ArgumentError('Club description cannot exceed 220 characters.');
     }
 
-    final clubRef = _clubs.doc();
+    final clubRef = documentId == null
+        ? _clubs.doc()
+        : _clubs.doc(documentId);
     String? avatarUrl;
     String? bannerUrl;
     final uploadedReferences = <Reference>[];
@@ -136,6 +170,7 @@ class ClubService {
         'avatarUrl': avatarUrl,
         'bannerUrl': bannerUrl,
         'privacy': privacy.name,
+        'type': type.name,
         'defaultLanguage': normalizedLanguage,
         'memberCount': 1,
         'onlineCount': 1,
@@ -179,7 +214,7 @@ class ClubService {
         'createdAt': FieldValue.serverTimestamp(),
       });
       batch.set(loungeRef, {
-        'name': 'Club Lounge',
+        'name': type == ClubType.family ? 'Family Lounge' : 'Club Lounge',
         'type': ClubChannelType.voice.name,
         'position': 2,
         'isPrivate': false,

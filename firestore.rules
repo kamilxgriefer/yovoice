@@ -240,6 +240,16 @@ service cloud.firestore {
           clubRole(clubId) in ['owner', 'coOwner', 'admin'];
     }
 
+    // A Family Room is a Club with type == 'family': same members, roles,
+    // invites, channels and lounge, but a private data boundary. Written
+    // once at creation and immutable thereafter, so a club can never be
+    // converted into a family space or back.
+    function isFamilySpace(clubId) {
+      return get(
+        /databases/$(database)/documents/clubs/$(clubId)
+      ).data.get('type', 'community') == 'family';
+    }
+
     function clubRolePower(role) {
       return role == 'owner' ? 60 :
           role == 'coOwner' ? 50 :
@@ -886,21 +896,56 @@ service cloud.firestore {
     }
 
     match /clubs/{clubId} {
-      allow read: if isSignedIn();
-      // Club creation is a Premium capability (docs/Decisions.md ADR-024).
-      // The per-user owned-club limit (entitlements.maxOwnedClubs) is
-      // enforced client-side — rules can't count documents — so the hard
-      // server gate here is the premium requirement itself.
+      // An ordinary club's metadata stays readable to any signed-in user
+      // — unchanged. A Family Room's does not: its name, description and
+      // member count are private to the people in it and to anyone
+      // holding a live invitation. The `!= 'family'` test short-circuits
+      // first, so ordinary club reads perform no extra document lookups.
+      allow read: if isSignedIn() && (
+            resource.data.get('type', 'community') != 'family' ||
+            isClubMember(clubId) ||
+            hasPendingClubInvite(clubId, request.auth.uid)
+          );
+
+      // Two creation paths, deliberately disjoint on `type`:
+      //
+      //  - community (the default, and every club that already exists):
+      //    a Premium capability, exactly as ADR-024 specifies. Untouched.
+      //  - family: free for any verified account, but pinned to the
+      //    deterministic id `family_{uid}`. That id IS the per-account
+      //    limit — rules cannot count documents, but they can refuse
+      //    every id except the one this account owns, so a second Family
+      //    Room has nowhere to be written. Being invited into someone
+      //    else's family space is unaffected: that writes a member
+      //    document, not a club.
       allow create: if isVerified() &&
           request.resource.data.ownerId == request.auth.uid &&
-          hasActivePremium();
-      allow update: if isClubOwner(clubId) ||
-          canManageClub(clubId) ||
           (
-            hasPendingClubInvite(clubId, request.auth.uid) &&
-            request.resource.data.memberCount == resource.data.memberCount + 1 &&
-            request.resource.data.ownerId == resource.data.ownerId
+            (
+              request.resource.data.get('type', 'community') == 'community' &&
+              hasActivePremium()
+            ) ||
+            (
+              request.resource.data.get('type', 'community') == 'family' &&
+              clubId == 'family_' + request.auth.uid
+            )
           );
+
+      // Ownership and type are immutable for every club. Without this a
+      // family space could be relabelled 'community' and lose its
+      // privacy boundary in one write.
+      allow update: if (
+            isClubOwner(clubId) ||
+            canManageClub(clubId) ||
+            (
+              hasPendingClubInvite(clubId, request.auth.uid) &&
+              request.resource.data.memberCount == resource.data.memberCount + 1 &&
+              request.resource.data.ownerId == resource.data.ownerId
+            )
+          ) &&
+          request.resource.data.ownerId == resource.data.ownerId &&
+          request.resource.data.get('type', 'community') ==
+              resource.data.get('type', 'community');
       allow delete: if isClubOwner(clubId);
 
       match /members/{memberId} {
@@ -986,6 +1031,54 @@ service cloud.firestore {
               request.resource.data.senderId == resource.data.senderId;
           allow delete: if false;
         }
+      }
+
+      // Family Moments. Deliberately NOT in the global `voiceMoments`
+      // collection: living under the club document means the private
+      // boundary is the club membership check itself, and there is no
+      // query anywhere that could sweep these into a public feed. Losing
+      // membership — leaving, removal, a block, account deletion —
+      // removes the member document and with it every read below.
+      match /moments/{momentId} {
+        allow read: if isClubMember(clubId);
+        allow create: if isVerified() &&
+            isClubMember(clubId) &&
+            request.resource.data.authorId == request.auth.uid &&
+            request.resource.data.clubId == clubId;
+        // Authors may edit their own caption; nobody may reassign one.
+        allow update: if isClubMember(clubId) &&
+            resource.data.authorId == request.auth.uid &&
+            request.resource.data.authorId == resource.data.authorId;
+        allow delete: if isClubMember(clubId) &&
+            (
+              resource.data.authorId == request.auth.uid ||
+              canManageClub(clubId)
+            );
+      }
+
+      // Quick check-ins: ordinary append-only status updates ("I'm home",
+      // "On my way", ...). No location of any kind is accepted or stored,
+      // and each row is scoped to the account that wrote it. Immutable
+      // once written, so a check-in cannot be edited to say something the
+      // person never said.
+      match /checkIns/{checkInId} {
+        allow read: if isClubMember(clubId);
+        allow create: if isVerified() &&
+            isClubMember(clubId) &&
+            request.resource.data.userId == request.auth.uid &&
+            request.resource.data.clubId == clubId &&
+            request.resource.data.status in [
+              'home', 'onMyWay', 'allGood', 'callMe'
+            ] &&
+            !('latitude' in request.resource.data) &&
+            !('longitude' in request.resource.data) &&
+            !('location' in request.resource.data);
+        allow update: if false;
+        allow delete: if isClubMember(clubId) &&
+            (
+              resource.data.userId == request.auth.uid ||
+              canManageClub(clubId)
+            );
       }
     }
 

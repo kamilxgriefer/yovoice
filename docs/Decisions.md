@@ -2643,3 +2643,68 @@ still cannot grant itself the badge.
 - Likewise there is no sponsor backend, so `SponsoredCard` keeps its
   honest `Sponsored example` placeholder rather than the mockups'
   fictional brand.
+
+
+## ADR-044: Family Room is a Club with `type: family`, pinned to a deterministic id, with a private read boundary
+
+### Context
+
+Family Room is a permanent, invite-only space for close family. It
+overlaps almost entirely with what Club already provides: membership,
+roles, invitations, persistent chat, announcements and a private voice
+lounge. The open questions were where its data lives, how "one per
+account" is enforced, and how its privacy differs from a private club.
+
+### Decision
+
+A Family Room IS a club document with `type: 'family'`. No parallel
+collection, membership system or message service. It reuses `clubs/{id}`,
+its `members`, `invites`, `channels` and the `club_lounge_{id}` private
+room wholesale; the lounge is named "Family Lounge".
+
+The id is deterministic: `family_{uid}`. `firestore.rules` refuses every
+other id for a family-type create, which is what makes one-per-account
+enforceable server-side.
+
+Family creation is exempt from ADR-024's Premium gate; ordinary Club
+creation is not, and its rule is unchanged. `ownerId` and `type` are
+immutable for every club.
+
+Family Moments live at `clubs/{id}/moments`, NOT in the global
+`voiceMoments` collection. Check-ins live at `clubs/{id}/checkIns`.
+
+### Reasoning
+
+Rules cannot count documents. A deterministic id turns "at most one" into
+"at most one id", which they can enforce exactly. Being invited into
+someone else's family space writes a member document, not a club, so the
+limit does not restrict membership.
+
+Family Moments are a subcollection rather than a scoped field on
+`voiceMoments` because the private boundary then IS the club membership
+check. There is no query anywhere — in this app, the website, or Cloud
+Functions — that could sweep a subcollection document into a public feed.
+A `spaceId` field on the global collection would have required every
+existing and future reader to remember to filter it out; forgetting once
+would leak a family's private audio into a public feed.
+
+Type immutability matters more than it looks: without it, one write
+relabelling `family` as `community` would strip the read boundary off an
+existing space and expose its metadata to every signed-in account.
+
+### Consequences
+
+- `/clubs/{clubId}` read is no longer unconditionally `isSignedIn()`. A
+  family space is readable only by members and holders of a live
+  invitation. Ordinary clubs are unaffected and pay no extra document
+  reads — the `!= 'family'` test short-circuits first.
+- Check-ins are append-only, restricted to four statuses, and rules
+  actively REJECT `latitude`/`longitude`/`location` keys. They are
+  ordinary status updates, not tracking.
+- Family Moment audio uses a room-scoped Storage path
+  `family_moments/{clubId}/{uid}/…` gated on the same membership document
+  via `firestore.exists()` from storage.rules.
+- **No end-to-end encryption is claimed or implemented.** Family content
+  is protected by Firestore rules and Storage rules, nothing stronger.
+- 16 new emulator cases in `firestore-tests/rules.test.js` cover the
+  boundary; the 173 pre-existing cases still pass unchanged.

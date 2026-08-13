@@ -256,6 +256,16 @@ someone decide what to pick up next.
   NOT built, and why: the mockups' `SCHEDULED` banner with a date (rooms
   carry no start time in Firestore) and the mobile rail's people segment
   (`MobileMomentsStrip` still shows Moments only).
+- Family Room, first slice (2026-08-13): a fourth creation choice on the
+  Create screen, implemented as a Club with `type: family` at the
+  deterministic id `family_{uid}` — reusing club membership, roles,
+  invites, chat, announcements and the private lounge rather than
+  building parallel systems. Free to create (ordinary Clubs stay
+  Premium-gated), invite-only, and invisible to non-members at the rules
+  level. See
+  [ADR-044](Decisions.md#adr-044-family-room-is-a-club-with-type-family-pinned-to-a-deterministic-id-with-a-private-read-boundary).
+  Still to build: the family Moments and check-in UI (their rules,
+  Storage path and data boundary are already in place and tested).
 - Full documentation system — Vision/Architecture/Features/Roadmap/
   Firebase/Backend/Flutter/UI/Decisions/Bugs plus this evolution pass
   (`02275bd`, `26d11a2`, and this session's commit).

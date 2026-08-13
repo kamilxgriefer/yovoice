@@ -3006,6 +3006,321 @@ async function main() {
     },
   );
 
+  // --- Family Room (clubs/{id} with type: 'family') ---------------------
+  //
+  // A Family Room is a Club with a private data boundary. These cases pin
+  // both halves: the boundary itself, and the fact that ordinary Club
+  // authorization is untouched by it.
+
+  const parent = testEnv.authenticatedContext("parent-uid", {
+    email_verified: true,
+  });
+  const sibling = testEnv.authenticatedContext("sibling-uid", {
+    email_verified: true,
+  });
+  const outsider = testEnv.authenticatedContext("outsider-uid", {
+    email_verified: true,
+  });
+  const FAMILY = "clubs/family_parent-uid";
+
+  function familyDoc(overrides = {}) {
+    return {
+      name: "The Family",
+      description: "Ours",
+      ownerId: "parent-uid",
+      ownerName: "Parent",
+      type: "family",
+      privacy: "inviteOnly",
+      defaultLanguage: "English",
+      memberCount: 1,
+      onlineCount: 1,
+      defaultChatChannelId: "general",
+      defaultVoiceChannelId: "lounge",
+      announcementChannelId: "announcements",
+      ...overrides,
+    };
+  }
+
+  await check(
+    "FAMILY: a verified user with NO premium can create their own family room",
+    async () => {
+      // Ordinary clubs need premium (ADR-024); a family space does not.
+      await assertSucceeds(
+        setDoc(doc(parent.firestore(), FAMILY), familyDoc()),
+      );
+    },
+  );
+
+  await check(
+    "FAMILY SECURITY: the deterministic id IS the one-per-account limit",
+    async () => {
+      // Any id other than family_{uid} is refused, so there is nowhere to
+      // write a second family room.
+      await assertFails(
+        setDoc(doc(parent.firestore(), "clubs/family_parent-uid-2"), familyDoc()),
+      );
+      await assertFails(
+        setDoc(doc(parent.firestore(), "clubs/some-random-id"), familyDoc()),
+      );
+    },
+  );
+
+  await check(
+    "FAMILY SECURITY: nobody can create a family room under someone else's id",
+    async () => {
+      await assertFails(
+        setDoc(
+          doc(attacker.firestore(), FAMILY),
+          familyDoc({ ownerId: "attacker-uid" }),
+        ),
+      );
+      await assertFails(
+        setDoc(
+          doc(attacker.firestore(), "clubs/family_attacker-uid"),
+          familyDoc({ ownerId: "parent-uid" }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "FAMILY SECURITY: an unverified account cannot create a family room",
+    async () => {
+      await assertFails(
+        setDoc(
+          doc(unverified.firestore(), "clubs/family_unverified-uid"),
+          familyDoc({ ownerId: "unverified-uid" }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "regression: creating an ORDINARY club still requires premium",
+    async () => {
+      // The family path must not have opened a free door for clubs.
+      await assertFails(
+        setDoc(doc(parent.firestore(), "clubs/free-club-attempt"), {
+          ownerId: "parent-uid",
+          name: "Free club",
+          type: "community",
+        }),
+      );
+      // ...and the same is true with no type field at all (every club
+      // that already exists in production).
+      await assertFails(
+        setDoc(doc(parent.firestore(), "clubs/free-club-attempt-2"), {
+          ownerId: "parent-uid",
+          name: "Free club",
+        }),
+      );
+    },
+  );
+
+  await check("FAMILY: the owner is a member and can read the space", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `${FAMILY}/members/parent-uid`), {
+        userId: "parent-uid",
+        displayName: "Parent",
+        role: "owner",
+        joinedAt: serverTimestamp(),
+      });
+    });
+    await assertSucceeds(getDoc(doc(parent.firestore(), FAMILY)));
+  });
+
+  await check(
+    "FAMILY SECURITY: a signed-in NON-member cannot read the family room at all",
+    async () => {
+      // An ordinary club's metadata is readable to any signed-in user;
+      // a family room's is not — not its name, not its member count.
+      await assertFails(getDoc(doc(outsider.firestore(), FAMILY)));
+    },
+  );
+
+  await check(
+    "FAMILY SECURITY: a non-member cannot read family chat, moments, "
+      + "check-ins or the roster",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), `${FAMILY}/channels/general/messages/m1`),
+          { senderId: "parent-uid", content: "dinner at 7", clubId: "family_parent-uid" },
+        );
+        await setDoc(doc(ctx.firestore(), `${FAMILY}/moments/mo1`), {
+          authorId: "parent-uid",
+          clubId: "family_parent-uid",
+          caption: "private",
+        });
+        await setDoc(doc(ctx.firestore(), `${FAMILY}/checkIns/c1`), {
+          userId: "parent-uid",
+          clubId: "family_parent-uid",
+          status: "home",
+        });
+      });
+      const db = outsider.firestore();
+      await assertFails(
+        getDoc(doc(db, `${FAMILY}/channels/general/messages/m1`)),
+      );
+      await assertFails(getDoc(doc(db, `${FAMILY}/moments/mo1`)));
+      await assertFails(getDoc(doc(db, `${FAMILY}/checkIns/c1`)));
+      await assertFails(getDocs(collection(db, `${FAMILY}/members`)));
+    },
+  );
+
+  await check(
+    "FAMILY: an invited-but-not-yet-joined user can read the room they "
+      + "were invited to, and nothing inside it",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), `${FAMILY}/invites/sibling-uid`), {
+          inviteeId: "sibling-uid",
+          inviterId: "parent-uid",
+          status: "pending",
+        });
+      });
+      const db = sibling.firestore();
+      await assertSucceeds(getDoc(doc(db, FAMILY)));
+      // The invitation is not membership: content stays closed.
+      await assertFails(getDoc(doc(db, `${FAMILY}/moments/mo1`)));
+      await assertFails(getDoc(doc(db, `${FAMILY}/checkIns/c1`)));
+    },
+  );
+
+  await check(
+    "FAMILY SECURITY: a revoked invitation cannot be reused to read the room",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await deleteDoc(doc(ctx.firestore(), `${FAMILY}/invites/sibling-uid`));
+      });
+      await assertFails(getDoc(doc(sibling.firestore(), FAMILY)));
+    },
+  );
+
+  await check("FAMILY: a member can read and post moments and check-ins", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `${FAMILY}/members/sibling-uid`), {
+        userId: "sibling-uid",
+        displayName: "Sibling",
+        role: "member",
+        joinedAt: serverTimestamp(),
+      });
+    });
+    const db = sibling.firestore();
+    await assertSucceeds(getDoc(doc(db, `${FAMILY}/moments/mo1`)));
+    await assertSucceeds(
+      setDoc(doc(db, `${FAMILY}/moments/mine`), {
+        authorId: "sibling-uid",
+        clubId: "family_parent-uid",
+        caption: "hello",
+      }),
+    );
+    await assertSucceeds(
+      setDoc(doc(db, `${FAMILY}/checkIns/mine`), {
+        userId: "sibling-uid",
+        clubId: "family_parent-uid",
+        status: "onMyWay",
+      }),
+    );
+  });
+
+  await check(
+    "FAMILY SECURITY: a check-in is scoped to the account writing it, "
+      + "immutable, and may carry no location",
+    async () => {
+      const db = sibling.firestore();
+      // Cannot check in AS someone else.
+      await assertFails(
+        setDoc(doc(db, `${FAMILY}/checkIns/spoofed`), {
+          userId: "parent-uid",
+          clubId: "family_parent-uid",
+          status: "home",
+        }),
+      );
+      // Only the four defined statuses.
+      await assertFails(
+        setDoc(doc(db, `${FAMILY}/checkIns/bogus`), {
+          userId: "sibling-uid",
+          clubId: "family_parent-uid",
+          status: "sos",
+        }),
+      );
+      // Precise location is refused outright, not merely ignored.
+      await assertFails(
+        setDoc(doc(db, `${FAMILY}/checkIns/located`), {
+          userId: "sibling-uid",
+          clubId: "family_parent-uid",
+          status: "home",
+          latitude: 52.23,
+          longitude: 21.01,
+        }),
+      );
+      // Append-only: a check-in cannot be rewritten after the fact.
+      await assertFails(
+        updateDoc(doc(db, `${FAMILY}/checkIns/mine`), { status: "callMe" }),
+      );
+    },
+  );
+
+  await check(
+    "FAMILY SECURITY: a member cannot post a moment as another member",
+    async () => {
+      await assertFails(
+        setDoc(doc(sibling.firestore(), `${FAMILY}/moments/spoofed`), {
+          authorId: "parent-uid",
+          clubId: "family_parent-uid",
+          caption: "not mine",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "FAMILY: only an organizer may invite, and a plain member may not",
+    async () => {
+      await assertFails(
+        setDoc(doc(sibling.firestore(), `${FAMILY}/invites/outsider-uid`), {
+          inviteeId: "outsider-uid",
+          inviterId: "sibling-uid",
+          status: "pending",
+        }),
+      );
+      await assertSucceeds(
+        setDoc(doc(parent.firestore(), `${FAMILY}/invites/outsider-uid`), {
+          inviteeId: "outsider-uid",
+          inviterId: "parent-uid",
+          status: "pending",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "FAMILY SECURITY: removal closes the door immediately",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await deleteDoc(doc(ctx.firestore(), `${FAMILY}/members/sibling-uid`));
+      });
+      const db = sibling.firestore();
+      await assertFails(getDoc(doc(db, FAMILY)));
+      await assertFails(getDoc(doc(db, `${FAMILY}/moments/mo1`)));
+      await assertFails(getDoc(doc(db, `${FAMILY}/checkIns/c1`)));
+    },
+  );
+
+  await check(
+    "FAMILY SECURITY: the type and owner of a space are immutable",
+    async () => {
+      const db = parent.firestore();
+      // Relabelling a family space as a community club would strip its
+      // read boundary in one write.
+      await assertFails(updateDoc(doc(db, FAMILY), { type: "community" }));
+      await assertFails(updateDoc(doc(db, FAMILY), { ownerId: "attacker-uid" }));
+      // An ordinary rename still works.
+      await assertSucceeds(updateDoc(doc(db, FAMILY), { name: "Our Family" }));
+    },
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();
   process.exit(failed > 0 ? 1 : 0);

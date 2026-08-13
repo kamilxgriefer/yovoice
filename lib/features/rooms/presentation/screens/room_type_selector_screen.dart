@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/clubs/data/models/club.dart' show ClubType;
 import 'package:yovoice/features/clubs/presentation/screens/create_club_screen.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
@@ -10,6 +11,17 @@ class RoomTypeSelectorScreen extends StatelessWidget {
   static const _background = Color(0xFF080711);
   static const _primary = Color(0xFFA226FF);
   static const _muted = Color(0xFFA69CAF);
+
+  /// Family Room's restrained emerald identity. The only card on this
+  /// screen that steps outside the violet/magenta family, because it is
+  /// the only one that is private by definition — the colour is the
+  /// signal, and it stays inside the design system's card shape,
+  /// spacing, typography and hover behaviour.
+  static const familyAccent = Color(0xFF28D17C);
+  static const familyGlow = Color(0xFF35E58D);
+  static const familySurface = Color(0xFF12231D);
+  static const familyBorder = Color(0xFF286447);
+  static const _familyAccent = familyAccent;
 
   void _openRoom(BuildContext context, RoomExperience experience) {
     Navigator.of(context).pushReplacement(
@@ -22,6 +34,17 @@ class RoomTypeSelectorScreen extends StatelessWidget {
   void _openClub(BuildContext context) {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute<void>(builder: (_) => const CreateClubScreen()),
+    );
+  }
+
+  void _openFamilyRoom(BuildContext context) {
+    // Same navigation pattern as the other three: pushReplacement onto
+    // the creation screen. A Family Room IS a club, so it reuses that
+    // screen's flow in its family template.
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => const CreateClubScreen(type: ClubType.family),
+      ),
     );
   }
 
@@ -98,6 +121,26 @@ class RoomTypeSelectorScreen extends StatelessWidget {
             ],
             onTap: () => _openClub(context),
           ),
+          const SizedBox(height: 16),
+          _RoomChoice(
+            title: 'Family Room',
+            eyebrow: 'PRIVATE FAMILY SPACE',
+            subtitle:
+                'A permanent, invite-only space for the people closest to you.',
+            // A home holding a heart — the closest thing in the icon set
+            // to "family", without importing a raster mark.
+            icon: Icons.family_restroom_rounded,
+            accent: _familyAccent,
+            features: const [
+              'Always-open family voice lounge',
+              'Private chat, Moments and announcements',
+              'Shared plans and quick check-ins',
+            ],
+            surface: familySurface,
+            border: familyBorder,
+            glow: familyGlow,
+            onTap: () => _openFamilyRoom(context),
+          ),
         ],
       ),
     );
@@ -114,6 +157,9 @@ class _RoomChoice extends StatelessWidget {
     required this.features,
     required this.onTap,
     this.highlighted = false,
+    this.surface,
+    this.border,
+    this.glow,
   });
 
   final String title;
@@ -125,10 +171,17 @@ class _RoomChoice extends StatelessWidget {
   final VoidCallback onTap;
   final bool highlighted;
 
+  /// Optional identity overrides. Every other dimension — padding, radius,
+  /// icon box, type scale, feature rows, hover — stays shared, so a card
+  /// with its own colours is still the same card.
+  final Color? surface;
+  final Color? border;
+  final Color? glow;
+
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFF171121),
+      color: surface ?? const Color(0xFF171121),
       borderRadius: BorderRadius.circular(26),
       child: InkWell(
         onTap: onTap,
@@ -145,15 +198,17 @@ class _RoomChoice extends StatelessWidget {
                 : null,
             borderRadius: BorderRadius.circular(26),
             border: Border.all(
-              color: highlighted
-                  ? const Color(0xFF7E35AD)
-                  : const Color(0xFF3A2C49),
+              color:
+                  border ??
+                  (highlighted
+                      ? const Color(0xFF7E35AD)
+                      : const Color(0xFF3A2C49)),
               width: highlighted ? 1.5 : 1,
             ),
-            boxShadow: highlighted
+            boxShadow: (highlighted || glow != null)
                 ? [
                     BoxShadow(
-                      color: accent.withValues(alpha: .12),
+                      color: (glow ?? accent).withValues(alpha: .12),
                       blurRadius: 24,
                       spreadRadius: 1,
                     ),

@@ -8,7 +8,23 @@ import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_created_screen.dart';
 
 class CreateClubScreen extends StatefulWidget {
-  const CreateClubScreen({super.key});
+  const CreateClubScreen({
+    this.type = ClubType.community,
+    this.clubService,
+    super.key,
+  });
+
+  /// Which space this screen is creating. A Family Room is the same club
+  /// document with a private boundary, so it reuses this whole flow —
+  /// only the wording, the accent and the privacy choice differ.
+  final ClubType type;
+
+  bool get isFamily => type == ClubType.family;
+
+  /// Injected in tests, exactly as the Home surfaces do it: production
+  /// passes nothing and the screen resolves its own, which needs a live
+  /// Firebase app.
+  final ClubService? clubService;
 
   @override
   State<CreateClubScreen> createState() => _CreateClubScreenState();
@@ -38,7 +54,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
-  final _clubService = ClubService();
+  late final ClubService _clubService = widget.clubService ?? ClubService();
   final _picker = ImagePicker();
 
   ClubPrivacy _privacy = ClubPrivacy.public;
@@ -99,14 +115,24 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
 
     setState(() => _busy = true);
     try {
-      final club = await _clubService.createClub(
-        name: _nameController.text,
-        description: _descriptionController.text,
-        privacy: _privacy,
-        defaultLanguage: _language,
-        avatarFile: _avatarFile,
-        bannerFile: _bannerFile,
-      );
+      final club = widget.isFamily
+          // Deterministic id, invite-only, no Premium requirement — the
+          // service owns those invariants so no caller can get them
+          // wrong.
+          ? await _clubService.createFamilyRoom(
+              name: _nameController.text,
+              description: _descriptionController.text,
+              defaultLanguage: _language,
+              avatarFile: _avatarFile,
+            )
+          : await _clubService.createClub(
+              name: _nameController.text,
+              description: _descriptionController.text,
+              privacy: _privacy,
+              defaultLanguage: _language,
+              avatarFile: _avatarFile,
+              bannerFile: _bannerFile,
+            );
 
       if (!mounted) return;
       await Navigator.of(context).pushReplacement<void, void>(
@@ -161,9 +187,9 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
         backgroundColor: _background,
         foregroundColor: Colors.white,
         centerTitle: true,
-        title: const Text(
-          'Create Club',
-          style: TextStyle(fontWeight: FontWeight.w900),
+        title: Text(
+          widget.isFamily ? 'Create Family Room' : 'Create Club',
+          style: const TextStyle(fontWeight: FontWeight.w900),
         ),
       ),
       body: Form(
@@ -173,9 +199,11 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
           children: [
             const _HeroCard(),
             const SizedBox(height: 24),
-            const _SectionTitle(
-              title: 'Club identity',
-              subtitle: 'Give your people a place they will recognize.',
+            _SectionTitle(
+              title: widget.isFamily ? 'Family identity' : 'Club identity',
+              subtitle: widget.isFamily
+                  ? 'Name the space your family will recognize.'
+                  : 'Give your people a place they will recognize.',
             ),
             const SizedBox(height: 14),
             Row(
@@ -239,37 +267,42 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
               maxLines: 4,
             ),
             const SizedBox(height: 26),
-            const _SectionTitle(
-              title: 'Privacy',
-              subtitle: 'Choose how new members can enter.',
-            ),
-            const SizedBox(height: 14),
-            _PrivacyChoice(
-              title: 'Public',
-              subtitle: 'Anyone can discover and join the club.',
-              icon: Icons.public_rounded,
-              value: ClubPrivacy.public,
-              selectedValue: _privacy,
-              onChanged: (value) => setState(() => _privacy = value),
-            ),
-            const SizedBox(height: 10),
-            _PrivacyChoice(
-              title: 'Private',
-              subtitle: 'The club is hidden and members join by invitation.',
-              icon: Icons.lock_rounded,
-              value: ClubPrivacy.private,
-              selectedValue: _privacy,
-              onChanged: (value) => setState(() => _privacy = value),
-            ),
-            const SizedBox(height: 10),
-            _PrivacyChoice(
-              title: 'Invite only',
-              subtitle: 'Visible club, but every member needs an invite.',
-              icon: Icons.mail_rounded,
-              value: ClubPrivacy.inviteOnly,
-              selectedValue: _privacy,
-              onChanged: (value) => setState(() => _privacy = value),
-            ),
+            // A Family Room has exactly one privacy model, so there is
+            // nothing to choose: offering "Public" on a space defined as
+            // private would be a lie the service would then ignore.
+            if (!widget.isFamily) ...[
+              const _SectionTitle(
+                title: 'Privacy',
+                subtitle: 'Choose how new members can enter.',
+              ),
+              const SizedBox(height: 14),
+              _PrivacyChoice(
+                title: 'Public',
+                subtitle: 'Anyone can discover and join the club.',
+                icon: Icons.public_rounded,
+                value: ClubPrivacy.public,
+                selectedValue: _privacy,
+                onChanged: (value) => setState(() => _privacy = value),
+              ),
+              const SizedBox(height: 10),
+              _PrivacyChoice(
+                title: 'Private',
+                subtitle: 'The club is hidden and members join by invitation.',
+                icon: Icons.lock_rounded,
+                value: ClubPrivacy.private,
+                selectedValue: _privacy,
+                onChanged: (value) => setState(() => _privacy = value),
+              ),
+              const SizedBox(height: 10),
+              _PrivacyChoice(
+                title: 'Invite only',
+                subtitle: 'Visible club, but every member needs an invite.',
+                icon: Icons.mail_rounded,
+                value: ClubPrivacy.inviteOnly,
+                selectedValue: _privacy,
+                onChanged: (value) => setState(() => _privacy = value),
+              ),
+            ],
             const SizedBox(height: 26),
             const _SectionTitle(
               title: 'Default language',
@@ -727,7 +760,11 @@ class _CreatedItem extends StatelessWidget {
       children: [
         Icon(icon, color: const Color(0xFFBE63FF), size: 19),
         const SizedBox(width: 10),
-        Text(text, style: const TextStyle(color: Color(0xFFD0C7D6))),
+        // Unconstrained, this Text overflowed the row on a 390pt phone —
+        // the longest of these lines does not fit beside the icon.
+        Expanded(
+          child: Text(text, style: const TextStyle(color: Color(0xFFD0C7D6))),
+        ),
       ],
     ),
   );

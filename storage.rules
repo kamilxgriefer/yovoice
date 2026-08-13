@@ -58,6 +58,28 @@ service firebase.storage {
           && request.resource.contentType.matches('image/.*');
     }
 
+    // Family Moment audio. Scoped to the family room, not just to the
+    // uploader, because unlike a public Moment this must not be readable
+    // by every signed-in account. Storage rules can query Firestore, so
+    // the gate is the SAME membership document firestore.rules checks —
+    // losing membership closes the audio at the same instant it closes
+    // the Moment row.
+    match /family_moments/{clubId}/{userId}/{fileName} {
+      function isFamilyMember() {
+        return isSignedIn() && firestore.exists(
+          /databases/(default)/documents/clubs/$(clubId)/members/$(request.auth.uid)
+        );
+      }
+
+      allow read: if isFamilyMember();
+      allow create, update: if isVerified()
+          && request.auth.uid == userId
+          && isFamilyMember()
+          && request.resource.size < 12 * 1024 * 1024
+          && request.resource.contentType.matches('audio/.*');
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
     match /voice_moments/{userId}/{fileName} {
       allow read: if isSignedIn();
       allow create, update: if isVerified()
