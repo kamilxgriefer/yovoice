@@ -133,8 +133,8 @@ class RoomTypeSelectorScreen extends StatelessWidget {
             accent: _familyAccent,
             features: const [
               'Always-open family voice lounge',
-              'Private chat, Moments and announcements',
-              'Shared plans and quick check-ins',
+              'Private chat, announcements and quick check-ins',
+              'Organizer and Member roles',
             ],
             surface: familySurface,
             border: familyBorder,

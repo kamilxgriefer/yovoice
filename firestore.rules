@@ -901,11 +901,28 @@ service cloud.firestore {
       // member count are private to the people in it and to anyone
       // holding a live invitation. The `!= 'family'` test short-circuits
       // first, so ordinary club reads perform no extra document lookups.
-      allow read: if isSignedIn() && (
+      allow get: if isSignedIn() && (
             resource.data.get('type', 'community') != 'family' ||
             isClubMember(clubId) ||
             hasPendingClubInvite(clubId, request.auth.uid)
           );
+
+      // LIST is separate from GET on purpose, and this is not a
+      // stylistic split. A per-document condition does not protect a
+      // collection listing: during list evaluation `resource.data` is not
+      // the document, so `resource.data.get('type', 'community')` fell
+      // back to its default and a signed-in outsider could enumerate
+      // `clubs` and read a family room's name straight out of it.
+      // Verified against the emulator, not assumed.
+      //
+      // Nothing may list this collection. The one query that used to —
+      // countOwnedClubs()'s owner-scoped count for the premium gate — now
+      // counts `users/{uid}/clubs` where role == 'owner' instead, a
+      // collection the caller already owns. With that gone there is no
+      // legitimate listing left, so the honest rule is `false`: a family
+      // room is undiscoverable because the query cannot run, not because
+      // no screen happens to call it today.
+      allow list: if false;
 
       // Two creation paths, deliberately disjoint on `type`:
       //

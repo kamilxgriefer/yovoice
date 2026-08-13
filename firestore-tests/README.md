@@ -43,6 +43,25 @@ npm test
 Exits non-zero if anything fails. Prints `OK`/`FAIL` per check plus a
 `<n> passed, <n> failed` summary.
 
+## Family Moment media (combined Firestore + Storage)
+
+`family-media.test.js` is the only suite that proves the cross-service
+gate: `family_moments/{clubId}/{uid}/…` in `storage.rules` is authorised by
+a `firestore.exists()` lookup against the family room's member document.
+
+Both emulators must run in the SAME hub, started with the SAME project id
+the harness uses, or the lookup silently resolves to nothing and EVERY
+case denies — which looks like a pass for every "must be denied" check and
+proves nothing. That is why this suite asserts the allowed uploads too;
+if those go red, the gate is not being consulted.
+
+```bash
+firebase emulators:start --only firestore,storage --project rules-test-yovoice
+npm --prefix firestore-tests run test:family-media
+```
+
+A green run here is the precondition for deploying `storage.rules`.
+
 ## Adding a case
 
 Each check is a `check("description", async () => { ... })` call — see

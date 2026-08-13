@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -5,6 +6,7 @@ import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/models/club_channel.dart';
 import 'package:yovoice/features/clubs/data/models/club_member.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
+import 'package:yovoice/features/clubs/presentation/widgets/family_check_in_panel.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_chat_screen.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_member_management_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
@@ -28,6 +30,9 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
   static const Color _purple = Color(0xFF9D20FF);
 
   final ClubService _clubService = ClubService();
+
+  /// The signed-in uid, for "is this my check-in" and role lookups.
+  String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
   final RoomService _roomService = RoomService();
   int _selectedTab = 0;
   bool _openingLounge = false;
@@ -216,6 +221,26 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
                           ),
                         ],
                       ),
+                      // A Family Room's quick check-ins sit right under
+                      // the header, above the lounge — they are the thing
+                      // most likely to be wanted on opening the space.
+                      if (club.isFamilyRoom) ...[
+                        const SizedBox(height: 18),
+                        StreamBuilder<List<ClubMember>>(
+                          stream: _members,
+                          builder: (context, memberSnapshot) {
+                            final me = memberSnapshot.data
+                                ?.where((member) => member.userId == _uid)
+                                .firstOrNull;
+                            return FamilyCheckInPanel(
+                              clubId: club.id,
+                              currentUserId: _uid,
+                              canManage: me?.role.canEditClub ?? false,
+                              clubService: _clubService,
+                            );
+                          },
+                        ),
+                      ],
                       const SizedBox(height: 18),
                       Row(
                         children: [

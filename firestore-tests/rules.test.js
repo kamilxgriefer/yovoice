@@ -3321,6 +3321,48 @@ async function main() {
     },
   );
 
+  await check(
+    "FAMILY SECURITY: Premium does NOT buy a second family room",
+    async () => {
+      // A premium account gets the community create path; it does not
+      // get a second family id, and a family-typed document cannot slip
+      // through the community branch either.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "entitlements/parent-uid"), {
+          status: "active",
+          currentPeriodEnd: new Date(Date.now() + 86400000),
+        });
+      });
+      await assertFails(
+        setDoc(doc(parent.firestore(), "clubs/family_parent-uid-second"),
+          familyDoc()),
+      );
+      await assertFails(
+        setDoc(doc(parent.firestore(), "clubs/another-family"), familyDoc()),
+      );
+    },
+  );
+
+  await check(
+    "FAMILY SECURITY: family rooms cannot be swept up by a listing query",
+    async () => {
+      // A per-document read condition does NOT protect a listing: during
+      // list evaluation resource.data is not the document, so the earlier
+      // `resource.data.get('type','community')` fell back to its default
+      // and an outsider could enumerate clubs and read a family room's
+      // name. Listing the collection is now refused outright.
+      await assertFails(getDocs(collection(outsider.firestore(), "clubs")));
+      await assertFails(
+        getDocs(
+          query(
+            collection(outsider.firestore(), "clubs"),
+            where("ownerId", "==", "parent-uid"),
+          ),
+        ),
+      );
+    },
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();
   process.exit(failed > 0 ? 1 : 0);

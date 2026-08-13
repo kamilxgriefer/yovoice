@@ -1,5 +1,14 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
+import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'package:yovoice/features/clubs/data/models/family_check_in.dart';
+import 'package:yovoice/features/clubs/data/services/club_service.dart';
+import 'package:yovoice/features/clubs/presentation/widgets/family_check_in_panel.dart';
+import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/presentation/screens/create_club_screen.dart';
@@ -14,6 +23,17 @@ import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_s
 /// The privacy boundary itself is server-side and is covered where it is
 /// actually enforced, in firestore-tests/rules.test.js.
 void main() {
+  late FakeFirebaseFirestore db;
+
+  MockFirebaseAuth auth() => MockFirebaseAuth(
+    signedIn: true,
+    mockUser: MockUser(uid: 'me', email: 'me@yovoice.app', displayName: 'Me'),
+  );
+
+  setUp(() {
+    db = FakeFirebaseFirestore();
+  });
+
   Widget host(Widget child) => MaterialApp(home: child);
 
   void usePhone(WidgetTester tester, Size size) {
@@ -39,8 +59,8 @@ void main() {
       );
       for (final benefit in const [
         'Always-open family voice lounge',
-        'Private chat, Moments and announcements',
-        'Shared plans and quick check-ins',
+        'Private chat, announcements and quick check-ins',
+        'Organizer and Member roles',
       ]) {
         expect(find.text(benefit), findsOneWidget, reason: benefit);
       }
@@ -159,6 +179,183 @@ void main() {
         expect(find.text('Family Room'), findsOneWidget);
       });
     }
+  });
+
+  group('Quick check-ins', () {
+    testWidgets('offers exactly the four agreed statuses, and says plainly '
+        'what they are not', (tester) async {
+      usePhone(tester, const Size(390, 1200));
+      await tester.pumpWidget(
+        host(
+          Scaffold(
+            body: FamilyCheckInPanel(
+              clubId: 'family_me',
+              currentUserId: 'me',
+              canManage: false,
+              clubService: ClubService(
+                firestore: db,
+                auth: auth(),
+                storage: MockFirebaseStorage(),
+                notificationService: NotificationService(
+                  firestore: db,
+                  auth: auth(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      for (final label in const [
+        "I'm home",
+        'On my way',
+        'All good',
+        'Call me',
+      ]) {
+        expect(find.text(label), findsOneWidget, reason: label);
+      }
+      // Nothing here may read as an emergency or location feature.
+      expect(
+        find.textContaining('Not an emergency feature'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('no location'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a check-in is stored with its author, the room and a '
+        'server timestamp, and carries no location', (tester) async {
+      usePhone(tester, const Size(390, 1200));
+      final service = ClubService(
+        firestore: db,
+        auth: auth(),
+        storage: MockFirebaseStorage(),
+        notificationService: NotificationService(firestore: db, auth: auth()),
+      );
+
+      await service.postCheckIn(
+        clubId: 'family_me',
+        status: FamilyCheckInStatus.onMyWay,
+      );
+
+      final rows = await db
+          .collection('clubs')
+          .doc('family_me')
+          .collection('checkIns')
+          .get();
+      expect(rows.docs, hasLength(1));
+      final data = rows.docs.single.data();
+      expect(data['userId'], 'me');
+      expect(data['clubId'], 'family_me');
+      expect(data['status'], 'onMyWay');
+      expect(data['createdAt'], isNotNull);
+      // Precise location is never collected, so it can never be stored.
+      expect(data.containsKey('latitude'), isFalse);
+      expect(data.containsKey('longitude'), isFalse);
+      expect(data.containsKey('location'), isFalse);
+    });
+
+    test('the four statuses are a closed set, and an unknown value is '
+        'never rendered as one of them', () {
+      expect(FamilyCheckInStatus.values, hasLength(4));
+      expect(FamilyCheckInStatus.fromValue('home'), FamilyCheckInStatus.home);
+      expect(FamilyCheckInStatus.fromValue('sos'), isNull);
+      expect(FamilyCheckInStatus.fromValue(null), isNull);
+      expect(FamilyCheckInStatus.fromValue(42), isNull);
+    });
+
+    testWidgets('the author can remove their own check-in; a plain member '
+        'gets no control over someone else\'s', (tester) async {
+      usePhone(tester, const Size(390, 1200));
+      final service = ClubService(
+        firestore: db,
+        auth: auth(),
+        storage: MockFirebaseStorage(),
+        notificationService: NotificationService(firestore: db, auth: auth()),
+      );
+      await db
+          .collection('clubs')
+          .doc('family_me')
+          .collection('checkIns')
+          .doc('theirs')
+          .set({
+            'userId': 'someone-else',
+            'clubId': 'family_me',
+            'displayName': 'Ola',
+            'status': 'home',
+            'createdAt': Timestamp.now(),
+          });
+
+      await tester.pumpWidget(
+        host(
+          Scaffold(
+            body: FamilyCheckInPanel(
+              clubId: 'family_me',
+              currentUserId: 'me',
+              canManage: false,
+              clubService: service,
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+
+      expect(find.textContaining('Ola'), findsOneWidget);
+      // Not mine, and I am not an organizer: no remove control.
+      expect(find.byTooltip('Remove check-in'), findsNothing);
+    });
+
+    testWidgets('an organizer can remove any check-in', (tester) async {
+      usePhone(tester, const Size(390, 1200));
+      final service = ClubService(
+        firestore: db,
+        auth: auth(),
+        storage: MockFirebaseStorage(),
+        notificationService: NotificationService(firestore: db, auth: auth()),
+      );
+      await db
+          .collection('clubs')
+          .doc('family_me')
+          .collection('checkIns')
+          .doc('theirs')
+          .set({
+            'userId': 'someone-else',
+            'clubId': 'family_me',
+            'displayName': 'Ola',
+            'status': 'home',
+            'createdAt': Timestamp.now(),
+          });
+
+      await tester.pumpWidget(
+        host(
+          Scaffold(
+            body: FamilyCheckInPanel(
+              clubId: 'family_me',
+              currentUserId: 'me',
+              canManage: true,
+              clubService: service,
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+
+      expect(find.byTooltip('Remove check-in'), findsOneWidget);
+      await tester.tap(find.byTooltip('Remove check-in'));
+      await tester.pump(const Duration(milliseconds: 200));
+
+      final rows = await db
+          .collection('clubs')
+          .doc('family_me')
+          .collection('checkIns')
+          .get();
+      expect(rows.docs, isEmpty);
+    });
   });
 
   group('Family Room identity', () {

@@ -8,6 +8,7 @@ import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/models/club_channel.dart';
 import 'package:yovoice/features/clubs/data/models/club_invite.dart';
 import 'package:yovoice/features/clubs/data/models/club_member.dart';
+import 'package:yovoice/features/clubs/data/models/family_check_in.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 
@@ -46,9 +47,19 @@ class ClubService {
   /// How many clubs the signed-in user currently owns. Used by the
   /// premium club-creation gate (entitlements.maxOwnedClubs) — a count
   /// aggregate, so no documents are downloaded.
+  ///
+  /// Counts the user's OWN membership index rather than querying
+  /// `clubs` directly. Listing `clubs` is refused outright now: a
+  /// per-document read condition does not protect a collection listing,
+  /// so an outsider could enumerate the collection and read a family
+  /// room's name out of it. `users/{uid}/clubs` carries the same role
+  /// and is already owner-only.
   Future<int> countOwnedClubs() async {
-    final snapshot = await _clubs
-        .where('ownerId', isEqualTo: _user.uid)
+    final snapshot = await _firestore
+        .collection('users')
+        .doc(_user.uid)
+        .collection('clubs')
+        .where('role', isEqualTo: ClubRole.owner.name)
         .count()
         .get();
     return snapshot.count ?? 0;
@@ -752,6 +763,60 @@ class ClubService {
         .doc(_user.uid)
         .get();
     return snapshot.exists;
+  }
+
+  // ------------------------------------------------ family check-ins
+
+  /// The family's recent check-ins, newest first.
+  ///
+  /// Readable only by members — enforced in `firestore.rules`, not here.
+  /// A non-member's listener simply errors, which is the correct
+  /// behaviour: the client is not the thing keeping this private.
+  Stream<List<FamilyCheckIn>> watchCheckIns(String clubId, {int limit = 20}) {
+    return _clubs
+        .doc(clubId)
+        .collection('checkIns')
+        .orderBy('createdAt', descending: true)
+        .limit(limit)
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map(FamilyCheckIn.fromFirestore)
+              // A value this build does not recognise is dropped rather
+              // than rendered as something it might not be.
+              .where((checkIn) => checkIn.status != null)
+              .toList(growable: false),
+        );
+  }
+
+  /// Posts a check-in as the signed-in account.
+  ///
+  /// `userId` is the caller's own uid and the timestamp is the server's —
+  /// rules reject anything else, so a check-in can never be attributed to
+  /// someone who did not send it, or back-dated.
+  Future<void> postCheckIn({
+    required String clubId,
+    required FamilyCheckInStatus status,
+  }) async {
+    final user = _user;
+    await _clubs.doc(clubId).collection('checkIns').add({
+      'userId': user.uid,
+      'clubId': clubId,
+      'displayName': _resolveUserName(user),
+      'photoUrl': user.photoURL,
+      'status': status.value,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Deletes a check-in. Rules allow this for its author and for an
+  /// organizer, matching how the rest of the club surfaces treat
+  /// member-authored content.
+  Future<void> deleteCheckIn({
+    required String clubId,
+    required String checkInId,
+  }) async {
+    await _clubs.doc(clubId).collection('checkIns').doc(checkInId).delete();
   }
 
   static String _resolveUserName(User user) {
