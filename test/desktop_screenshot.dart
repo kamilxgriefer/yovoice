@@ -18,6 +18,7 @@ import 'dart:ui' as ui;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -33,7 +34,12 @@ import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+import 'package:yovoice/features/rooms/data/models/room_experience.dart';
+import 'package:yovoice/features/rooms/data/services/room_experience_service.dart';
+import 'package:yovoice/features/rooms/data/services/room_image_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
 
 const String _me = 'preview-me';
 const String _fontRoot =
@@ -474,4 +480,56 @@ void main() {
     await _settle(tester);
     await _shoot('home-mobile-390x844');
   });
+  // The two creation wizards, at phone width and desktop, so the
+  // identity colours and the step layout are looked at rather than
+  // merely asserted.
+  for (final (label, size, experience) in <(String, Size, RoomExperience)>[
+    ('create-community-390', Size(390, 900), RoomExperience.community),
+    ('create-podcast-390', Size(390, 900), RoomExperience.broadcast),
+    ('create-community-1440', Size(1440, 900), RoomExperience.community),
+  ]) {
+    testWidgets(label, (tester) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final db = FakeFirebaseFirestore();
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: _me, displayName: 'CeoGriefer'),
+      );
+
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: _capture,
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              brightness: Brightness.dark,
+              useMaterial3: true,
+              fontFamily: 'Roboto',
+            ),
+            home: CreateRoomScreen(
+              experience: experience,
+              roomService: RoomService(firestore: db, auth: auth),
+              imageService: RoomImageService(
+                auth: auth,
+                storage: MockFirebaseStorage(),
+              ),
+              experienceService: RoomExperienceService(
+                firestore: db,
+                auth: auth,
+                notificationService: NotificationService(
+                  firestore: db,
+                  auth: auth,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await _settle(tester);
+      await _shoot(label);
+    });
+  }
 }
