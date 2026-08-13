@@ -1,57 +1,193 @@
-import 'package:flutter/material.dart';
+import 'dart:typed_data';
 
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+
+import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
+import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_experience_service.dart';
+import 'package:yovoice/features/rooms/data/services/room_image_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 
+/// Creating a Community or Podcast room, in three steps.
+///
+/// One screen serves both because they are the same shape of decision —
+/// identity, then who it is for, then how it runs. What differs is the
+/// [SpaceIdentity] it wears and the handful of options only one of them
+/// supports, and both of those are read from the experience rather than
+/// branched ad hoc through the layout.
+///
+/// Every value lives in this State, not in the step widgets, so moving
+/// back and forth never loses what was typed.
 class CreateRoomScreen extends StatefulWidget {
   const CreateRoomScreen({
     this.experience = RoomExperience.community,
+    this.roomService,
+    this.imageService,
+    this.experienceService,
     super.key,
   });
 
   final RoomExperience experience;
 
+  /// Injected in tests, as every other surface in this app does it.
+  final RoomService? roomService;
+  final RoomImageService? imageService;
+  final RoomExperienceService? experienceService;
+
   @override
   State<CreateRoomScreen> createState() => _CreateRoomScreenState();
 }
 
+enum _Step { identity, audience, experience }
+
 class _CreateRoomScreenState extends State<CreateRoomScreen> {
   static const _background = Color(0xFF080711);
-  static const _surface = Color(0xFF171121);
-  static const _border = Color(0xFF3A2C49);
-  static const _primary = Color(0xFFA226FF);
   static const _muted = Color(0xFFA69CAF);
 
-  final _formKey = GlobalKey<FormState>();
+  final _identityKey = GlobalKey<FormState>();
   final _name = TextEditingController();
   final _description = TextEditingController();
   final _topic = TextEditingController();
-  final _roomService = RoomService();
-  final _experienceService = RoomExperienceService();
+  final _guidelines = TextEditingController();
+  final _tagInput = TextEditingController();
+
+  late final RoomService _roomService = widget.roomService ?? RoomService();
+  late final RoomImageService _imageService =
+      widget.imageService ?? RoomImageService();
+  late final RoomExperienceService _experienceService =
+      widget.experienceService ?? RoomExperienceService();
+
+  _Step _step = _Step.identity;
 
   String _category = 'talk';
   String _visibility = 'public';
   String _language = 'English';
   int? _maxParticipants = 25;
   bool _handRaisingEnabled = true;
+  TargetAudience _targetAudience = TargetAudience.everyone;
+  final List<String> _tags = <String>[];
+  ConversationStyle _conversationStyle = ConversationStyle.casual;
+  bool _newcomerFriendly = false;
+  ShowFormat _showFormat = ShowFormat.solo;
+
+  XFile? _coverFile;
+  Uint8List? _coverBytes;
+  bool _pickingCover = false;
+  String? _coverError;
   bool _busy = false;
+  double? _uploadProgress;
 
   bool get _isBroadcast => widget.experience == RoomExperience.broadcast;
+
+  SpaceIdentity get _identity =>
+      _isBroadcast ? SpaceIdentity.podcast : SpaceIdentity.community;
 
   @override
   void dispose() {
     _name.dispose();
     _description.dispose();
     _topic.dispose();
+    _guidelines.dispose();
+    _tagInput.dispose();
     super.dispose();
   }
 
+  // ------------------------------------------------------------- cover
+
+  Future<void> _pickCover() async {
+    if (_pickingCover || _busy) return;
+    setState(() {
+      _pickingCover = true;
+      _coverError = null;
+    });
+    try {
+      // The SAME service the room settings screen uses — picking, the
+      // size/dimension caps and the Storage path all stay in one place.
+      final file = await _imageService.pickImage();
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (bytes.length > 8 * 1024 * 1024) {
+        throw StateError('Choose an image smaller than 8 MB.');
+      }
+      if (!mounted) return;
+      setState(() {
+        _coverFile = file;
+        _coverBytes = bytes;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _coverError = _readable(error));
+    } finally {
+      if (mounted) setState(() => _pickingCover = false);
+    }
+  }
+
+  void _removeCover() {
+    setState(() {
+      _coverFile = null;
+      _coverBytes = null;
+      _coverError = null;
+    });
+  }
+
+  String _readable(Object error) => error
+      .toString()
+      .replaceFirst('Bad state: ', '')
+      .replaceFirst('Invalid argument(s): ', '');
+
+  // -------------------------------------------------------------- tags
+
+  void _addTag() {
+    final tag = _tagInput.text.trim();
+    if (tag.isEmpty) return;
+    if (_tags.length >= RoomMetadataLimits.maxTopicTags) return;
+    if (tag.length > RoomMetadataLimits.maxTopicTagLength) return;
+    if (_tags.any((existing) => existing.toLowerCase() == tag.toLowerCase())) {
+      return;
+    }
+    setState(() {
+      _tags.add(tag);
+      _tagInput.clear();
+    });
+  }
+
+  // ------------------------------------------------------- step control
+
+  bool get _identityValid => _identityKey.currentState?.validate() ?? false;
+
+  void _next() {
+    if (_step == _Step.identity && !_identityValid) return;
+    setState(() {
+      _step = switch (_step) {
+        _Step.identity => _Step.audience,
+        _Step.audience => _Step.experience,
+        _Step.experience => _Step.experience,
+      };
+    });
+  }
+
+  void _back() {
+    setState(() {
+      _step = switch (_step) {
+        _Step.experience => _Step.audience,
+        _Step.audience => _Step.identity,
+        _Step.identity => _Step.identity,
+      };
+    });
+  }
+
+  // ------------------------------------------------------------ create
+
   Future<void> _create() async {
-    if (_busy || !(_formKey.currentState?.validate() ?? false)) return;
-    setState(() => _busy = true);
+    if (_busy || !_identityValid) return;
+    setState(() {
+      _busy = true;
+      _coverError = null;
+    });
 
     try {
       final room = await _roomService.createRoom(
@@ -62,7 +198,45 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         language: _language,
         maxParticipants: _maxParticipants,
         roomType: RoomType.temporary,
+        targetAudience: _targetAudience,
+        topicTags: _tags,
+        roomGuidelines: _guidelines.text,
+        // Type-scoped: a community room never carries a show format and a
+        // broadcast room never carries a conversation style.
+        conversationStyle: _isBroadcast ? null : _conversationStyle,
+        newcomerFriendly: _isBroadcast ? false : _newcomerFriendly,
+        showFormat: _isBroadcast ? _showFormat : null,
       );
+
+      // The cover is uploaded AFTER the room exists, because the Storage
+      // path is keyed by room id and rules authorise it against the room's
+      // host. Nothing is uploaded if creation is abandoned, so a cancelled
+      // flow cannot leave an orphaned object behind. A failure here leaves
+      // a usable room with no cover, which the host can set from room
+      // settings — it is reported, not swallowed.
+      if (_coverFile != null) {
+        setState(() => _uploadProgress = 0);
+        try {
+          final url = await _imageService.uploadRoomImage(
+            roomId: room.id,
+            file: _coverFile!,
+          );
+          await _roomService.updateImageUrl(roomId: room.id, imageUrl: url);
+        } catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'The room was created, but the cover did not upload: '
+                  '${_readable(error)}',
+                ),
+              ),
+            );
+          }
+        } finally {
+          if (mounted) setState(() => _uploadProgress = null);
+        }
+      }
 
       await _experienceService.configureRoom(
         roomId: room.id,
@@ -79,17 +253,17 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(error.toString().replaceFirst('Bad state: ', '')),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_readable(error))));
     }
   }
 
+  // ------------------------------------------------------------- build
+
   @override
   Widget build(BuildContext context) {
-    final accent = _isBroadcast ? const Color(0xFFFF3F8E) : _primary;
+    final identity = _identity;
     return Scaffold(
       backgroundColor: _background,
       appBar: AppBar(
@@ -101,174 +275,516 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
           style: const TextStyle(fontWeight: FontWeight.w900),
         ),
       ),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(18, 12, 18, 130),
-          children: [
-            _IntroCard(isBroadcast: _isBroadcast, accent: accent),
-            const SizedBox(height: 22),
-            _Field(
-              controller: _name,
-              label: _isBroadcast ? 'Show title' : 'Room name',
-              hint: _isBroadcast
-                  ? 'e.g. Flutter Weekly'
-                  : 'e.g. Late Night Talk',
-              maxLength: 50,
-              validator: (value) => (value?.trim().length ?? 0) < 3
-                  ? 'Enter at least 3 characters'
-                  : null,
-            ),
-            const SizedBox(height: 14),
-            if (_isBroadcast) ...[
-              _Field(
-                controller: _topic,
-                label: 'Episode topic',
-                hint: 'What are you discussing today?',
-                maxLength: 100,
-                validator: (value) => (value?.trim().length ?? 0) < 3
-                    ? 'Add a short topic'
-                    : null,
-              ),
-              const SizedBox(height: 14),
-            ],
-            _Field(
-              controller: _description,
-              label: 'Description',
-              hint: 'Tell people what to expect',
-              maxLength: 160,
-              maxLines: 3,
-            ),
-            const SizedBox(height: 18),
-            _Dropdown(
-              label: 'Category',
-              value: _category,
-              values: const [
-                'talk',
-                'music',
-                'gaming',
-                'chill',
-                'study',
-                'business',
-              ],
-              onChanged: (value) => setState(() => _category = value),
-            ),
-            const SizedBox(height: 14),
-            _Dropdown(
-              label: 'Visibility',
-              value: _visibility,
-              values: const ['public', 'private'],
-              onChanged: (value) => setState(() => _visibility = value),
-            ),
-            const SizedBox(height: 14),
-            _Dropdown(
-              label: 'Language',
-              value: _language,
-              values: const [
-                'English',
-                'Polish',
-                'Dutch',
-                'German',
-                'French',
-                'Spanish',
-              ],
-              onChanged: (value) => setState(() => _language = value),
-            ),
-            const SizedBox(height: 14),
-            _Dropdown(
-              label: _isBroadcast ? 'Audience capacity' : 'Voice capacity',
-              value: _maxParticipants?.toString() ?? 'Unlimited',
-              values: const ['10', '25', '50', '100', 'Unlimited'],
-              onChanged: (value) => setState(
-                () => _maxParticipants = value == 'Unlimited'
-                    ? null
-                    : int.parse(value),
-              ),
-            ),
-            if (_isBroadcast) ...[
-              const SizedBox(height: 18),
-              SwitchListTile.adaptive(
-                value: _handRaisingEnabled,
-                onChanged: (value) =>
-                    setState(() => _handRaisingEnabled = value),
-                activeTrackColor: accent,
-                title: const Text(
-                  'Allow audience to raise hands',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            // Readable measure on a wide monitor; full width on a phone.
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: Column(
+              children: [
+                _StepBar(step: _step, identity: identity),
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(18, 6, 18, 24),
+                    children: [
+                      switch (_step) {
+                        _Step.identity => _identityStep(identity),
+                        _Step.audience => _audienceStep(identity),
+                        _Step.experience => _experienceStep(identity),
+                      },
+                    ],
                   ),
                 ),
-                subtitle: const Text(
-                  'The host can invite selected listeners to the stage.',
-                  style: TextStyle(color: _muted),
+              ],
+            ),
+          ),
+        ),
+      ),
+      bottomNavigationBar: _BottomBar(
+        identity: identity,
+        step: _step,
+        busy: _busy,
+        onBack: _step == _Step.identity ? null : _back,
+        onNext: _step == _Step.experience ? null : _next,
+        onCreate: _step == _Step.experience ? _create : null,
+        createLabel: _isBroadcast ? 'Create Podcast Room' : 'Create Room',
+      ),
+    );
+  }
+
+  // ---------------------------------------------------- step: identity
+
+  Widget _identityStep(SpaceIdentity identity) {
+    return Form(
+      key: _identityKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _Hero(identity: identity, isBroadcast: _isBroadcast),
+          const SizedBox(height: 20),
+          _SectionLabel(_isBroadcast ? 'Show cover' : 'Room cover', identity),
+          const SizedBox(height: 10),
+          _CoverPicker(
+            identity: identity,
+            bytes: _coverBytes,
+            busy: _pickingCover,
+            progress: _uploadProgress,
+            error: _coverError,
+            onPick: _pickCover,
+            onRemove: _coverBytes == null ? null : _removeCover,
+          ),
+          const SizedBox(height: 18),
+          _Field(
+            controller: _name,
+            identity: identity,
+            label: _isBroadcast ? 'Show title' : 'Room name',
+            hint: _isBroadcast ? 'e.g. Flutter Weekly' : 'e.g. Late Night Talk',
+            maxLength: 50,
+            validator: (value) => (value?.trim().length ?? 0) < 3
+                ? 'Enter at least 3 characters'
+                : null,
+          ),
+          if (_isBroadcast) ...[
+            const SizedBox(height: 14),
+            _Field(
+              controller: _topic,
+              identity: identity,
+              label: 'Episode topic',
+              hint: 'What are you discussing today?',
+              maxLength: 100,
+              validator: (value) =>
+                  (value?.trim().length ?? 0) < 3 ? 'Add a short topic' : null,
+            ),
+          ],
+          const SizedBox(height: 14),
+          _Field(
+            controller: _description,
+            identity: identity,
+            label: 'Description',
+            hint: 'Tell people what to expect',
+            maxLength: 160,
+            maxLines: 3,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------- step: audience
+
+  Widget _audienceStep(SpaceIdentity identity) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionLabel('Category', identity),
+        const SizedBox(height: 10),
+        _Dropdown(
+          identity: identity,
+          label: 'Category',
+          value: _category,
+          values: const ['talk', 'music', 'gaming', 'chill', 'study', 'business'],
+          onChanged: (value) => setState(() => _category = value),
+        ),
+        const SizedBox(height: 18),
+        _SectionLabel('Topic tags', identity),
+        const SizedBox(height: 6),
+        Text(
+          'Up to ${RoomMetadataLimits.maxTopicTags}. These help people find '
+          'the room; they never decide who may join.',
+          style: const TextStyle(color: _muted, fontSize: 12.5, height: 1.35),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: _Field(
+                controller: _tagInput,
+                identity: identity,
+                label: 'Add a tag',
+                hint: 'e.g. flutter',
+                maxLength: RoomMetadataLimits.maxTopicTagLength,
+                onSubmitted: (_) => _addTag(),
+              ),
+            ),
+            const SizedBox(width: 10),
+            SizedBox(
+              height: 48,
+              child: OutlinedButton(
+                onPressed: _tags.length >= RoomMetadataLimits.maxTopicTags
+                    ? null
+                    : _addTag,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: identity.accent,
+                  side: BorderSide(color: identity.primary),
+                  shape: const StadiumBorder(),
                 ),
-                tileColor: _surface,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(18),
-                  side: const BorderSide(color: _border),
+                child: const Text('Add'),
+              ),
+            ),
+          ],
+        ),
+        if (_tags.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final tag in _tags)
+                Chip(
+                  label: Text(tag),
+                  labelStyle: TextStyle(color: identity.accent),
+                  backgroundColor: identity.wash,
+                  side: BorderSide(color: identity.primary),
+                  deleteIconColor: identity.accent,
+                  onDeleted: () => setState(() => _tags.remove(tag)),
+                ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 20),
+        _SectionLabel('Intended audience', identity),
+        const SizedBox(height: 6),
+        const Text(
+          'Descriptive only. Anyone may still join a public room.',
+          style: TextStyle(color: _muted, fontSize: 12.5, height: 1.35),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final audience in TargetAudience.values)
+              _ChoiceChip(
+                identity: identity,
+                label: audience.label,
+                selected: _targetAudience == audience,
+                onTap: () => setState(() => _targetAudience = audience),
+              ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        _SectionLabel('Visibility', identity),
+        const SizedBox(height: 10),
+        _Dropdown(
+          identity: identity,
+          label: 'Visibility',
+          value: _visibility,
+          values: const ['public', 'private'],
+          onChanged: (value) => setState(() => _visibility = value),
+        ),
+        const SizedBox(height: 14),
+        _Dropdown(
+          identity: identity,
+          label: 'Language',
+          value: _language,
+          values: const [
+            'English',
+            'Polish',
+            'Dutch',
+            'German',
+            'French',
+            'Spanish',
+          ],
+          onChanged: (value) => setState(() => _language = value),
+        ),
+      ],
+    );
+  }
+
+  // -------------------------------------------------- step: experience
+
+  Widget _experienceStep(SpaceIdentity identity) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionLabel(
+          _isBroadcast ? 'Audience capacity' : 'Voice capacity',
+          identity,
+        ),
+        const SizedBox(height: 10),
+        _Dropdown(
+          identity: identity,
+          label: _isBroadcast ? 'Audience capacity' : 'Voice capacity',
+          value: _maxParticipants?.toString() ?? 'Unlimited',
+          values: const ['10', '25', '50', '100', 'Unlimited'],
+          onChanged: (value) => setState(
+            () => _maxParticipants = value == 'Unlimited'
+                ? null
+                : int.parse(value),
+          ),
+        ),
+        const SizedBox(height: 20),
+        if (!_isBroadcast) ...[
+          _SectionLabel('Conversation style', identity),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final style in ConversationStyle.values)
+                _ChoiceChip(
+                  identity: identity,
+                  label: style.label,
+                  selected: _conversationStyle == style,
+                  onTap: () => setState(() => _conversationStyle = style),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _SwitchTile(
+            identity: identity,
+            value: _newcomerFriendly,
+            title: 'Newcomer friendly',
+            subtitle: 'Signals that first-time guests are welcome here.',
+            onChanged: (value) => setState(() => _newcomerFriendly = value),
+          ),
+        ] else ...[
+          _SectionLabel('Show format', identity),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final format in ShowFormat.values)
+                _ChoiceChip(
+                  identity: identity,
+                  label: format.label,
+                  selected: _showFormat == format,
+                  onTap: () => setState(() => _showFormat = format),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _SwitchTile(
+            identity: identity,
+            value: _handRaisingEnabled,
+            title: 'Allow audience to raise hands',
+            subtitle: 'The host can invite selected listeners to the stage.',
+            onChanged: (value) => setState(() => _handRaisingEnabled = value),
+          ),
+        ],
+        const SizedBox(height: 20),
+        _SectionLabel('Room guidelines', identity),
+        const SizedBox(height: 10),
+        _Field(
+          controller: _guidelines,
+          identity: identity,
+          label: 'Guidelines',
+          hint: 'One or two lines on how this room runs',
+          maxLength: RoomMetadataLimits.maxGuidelinesLength,
+          maxLines: 3,
+        ),
+        const SizedBox(height: 22),
+        _Summary(identity: identity, lines: _summaryLines()),
+      ],
+    );
+  }
+
+  List<(String, String)> _summaryLines() {
+    return <(String, String)>[
+      (_isBroadcast ? 'Show' : 'Room', _name.text.trim()),
+      if (_isBroadcast) ('Episode', _topic.text.trim()),
+      ('Cover', _coverBytes == null ? 'None' : 'Selected'),
+      ('Category', _category),
+      if (_tags.isNotEmpty) ('Tags', _tags.join(', ')),
+      ('Audience', _targetAudience.label),
+      ('Visibility', _visibility),
+      ('Language', _language),
+      ('Capacity', _maxParticipants?.toString() ?? 'Unlimited'),
+      if (!_isBroadcast) ('Style', _conversationStyle.label),
+      if (!_isBroadcast)
+        ('Newcomer friendly', _newcomerFriendly ? 'Yes' : 'No'),
+      if (_isBroadcast) ('Format', _showFormat.label),
+      if (_isBroadcast)
+        ('Raise hands', _handRaisingEnabled ? 'Allowed' : 'Off'),
+    ];
+  }
+}
+
+// ------------------------------------------------------------- widgets
+
+class _StepBar extends StatelessWidget {
+  const _StepBar({required this.step, required this.identity});
+
+  final _Step step;
+  final SpaceIdentity identity;
+
+  static const _labels = ['Identity', 'Audience', 'Experience'];
+
+  @override
+  Widget build(BuildContext context) {
+    final index = _Step.values.indexOf(step);
+    return Semantics(
+      label: 'Step ${index + 1} of 3, ${_labels[index]}',
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 8, 18, 12),
+        child: Row(
+          children: [
+            for (var i = 0; i < _labels.length; i++) ...[
+              if (i > 0) const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      height: 4,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        color: i <= index
+                            ? identity.primary
+                            : const Color(0xFF2E2438),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _labels[i],
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: i <= index
+                            ? identity.accent
+                            : const Color(0xFF7E7490),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ],
         ),
       ),
-      bottomNavigationBar: Container(
-        padding: EdgeInsets.fromLTRB(
-          18,
-          12,
-          18,
-          12 + MediaQuery.paddingOf(context).bottom,
-        ),
-        color: _surface,
-        child: FilledButton(
-          onPressed: _busy ? null : _create,
-          style: FilledButton.styleFrom(
-            backgroundColor: accent,
-            minimumSize: const Size.fromHeight(56),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
+    );
+  }
+}
+
+class _BottomBar extends StatelessWidget {
+  const _BottomBar({
+    required this.identity,
+    required this.step,
+    required this.busy,
+    required this.onBack,
+    required this.onNext,
+    required this.onCreate,
+    required this.createLabel,
+  });
+
+  final SpaceIdentity identity;
+  final _Step step;
+  final bool busy;
+  final VoidCallback? onBack;
+  final VoidCallback? onNext;
+  final VoidCallback? onCreate;
+  final String createLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        18,
+        12,
+        18,
+        12 + MediaQuery.paddingOf(context).bottom,
+      ),
+      color: const Color(0xFF171121),
+      child: Row(
+        children: [
+          if (onBack != null) ...[
+            SizedBox(
+              height: 52,
+              child: OutlinedButton(
+                onPressed: busy ? null : onBack,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Color(0xFF3A2C49)),
+                  shape: const StadiumBorder(),
+                  padding: const EdgeInsets.symmetric(horizontal: 22),
+                ),
+                child: const Text('Back'),
+              ),
+            ),
+            const SizedBox(width: 10),
+          ],
+          Expanded(
+            child: SizedBox(
+              height: 52,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(999),
+                  gradient: identity.ctaGradient,
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: busy ? null : (onCreate ?? onNext),
+                    child: Center(
+                      child: busy
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.4,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Text(
+                              onCreate != null ? createLabel : 'Continue',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 15,
+                              ),
+                            ),
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
-          child: _busy
-              ? const CircularProgressIndicator(color: Colors.white)
-              : Text(
-                  _isBroadcast ? 'Start podcast' : 'Start community room',
-                  style: const TextStyle(fontWeight: FontWeight.w900),
-                ),
-        ),
+        ],
       ),
     );
   }
 }
 
-class _IntroCard extends StatelessWidget {
-  const _IntroCard({required this.isBroadcast, required this.accent});
+class _Hero extends StatelessWidget {
+  const _Hero({required this.identity, required this.isBroadcast});
+
+  final SpaceIdentity identity;
   final bool isBroadcast;
-  final Color accent;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: const Color(0xFF171121),
+        color: identity.surface,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFF3A2C49)),
+        border: Border.all(color: identity.border),
+        boxShadow: [
+          BoxShadow(color: identity.glow, blurRadius: 24, spreadRadius: 1),
+        ],
       ),
       child: Row(
         children: [
-          Icon(
-            isBroadcast ? Icons.campaign_rounded : Icons.groups_rounded,
-            color: accent,
-            size: 34,
+          Container(
+            width: 54,
+            height: 54,
+            decoration: BoxDecoration(
+              color: identity.wash,
+              borderRadius: BorderRadius.circular(17),
+            ),
+            child: Icon(identity.icon, color: identity.primary, size: 28),
           ),
           const SizedBox(width: 14),
           Expanded(
             child: Text(
               isBroadcast
                   ? 'You control the stage. Listeners can request to speak.'
-                  : 'A free-flowing room where everyone can join the conversation.',
+                  : 'A free-flowing room where everyone can join the '
+                        'conversation.',
               style: const TextStyle(color: Colors.white, height: 1.4),
             ),
           ),
@@ -278,21 +794,193 @@ class _IntroCard extends StatelessWidget {
   }
 }
 
+/// The cover picker.
+///
+/// The type's gradient sits UNDER the preview, so an image that is still
+/// decoding — or one that fails — shows the room's own colours rather
+/// than a broken-image glyph.
+class _CoverPicker extends StatelessWidget {
+  const _CoverPicker({
+    required this.identity,
+    required this.bytes,
+    required this.busy,
+    required this.progress,
+    required this.error,
+    required this.onPick,
+    required this.onRemove,
+  });
+
+  final SpaceIdentity identity;
+  final Uint8List? bytes;
+  final bool busy;
+  final double? progress;
+  final String? error;
+  final VoidCallback onPick;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(
+          button: true,
+          label: bytes == null ? 'Choose a cover image' : 'Replace cover image',
+          child: InkWell(
+            onTap: busy ? null : onPick,
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              height: 156,
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: identity.border),
+                gradient: LinearGradient(
+                  colors: [identity.primary, identity.accent],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (bytes != null)
+                    Image.memory(
+                      bytes!,
+                      fit: BoxFit.cover,
+                      // Never a broken-image glyph: a preview that cannot
+                      // decode falls back to the type's own gradient.
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                    ),
+                  if (bytes == null || busy)
+                    Container(
+                      color: Colors.black.withValues(alpha: .32),
+                      alignment: Alignment.center,
+                      child: busy
+                          ? const CircularProgressIndicator(
+                              color: Colors.white,
+                            )
+                          : const Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.add_photo_alternate_rounded,
+                                  color: Colors.white,
+                                  size: 30,
+                                ),
+                                SizedBox(height: 8),
+                                Text(
+                                  'Choose cover',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                    ),
+                  if (progress != null)
+                    Align(
+                      alignment: Alignment.bottomCenter,
+                      child: LinearProgressIndicator(
+                        color: identity.accent,
+                        backgroundColor: Colors.black26,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (error != null) ...[
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  error!,
+                  style: const TextStyle(
+                    color: Color(0xFFFF9BB0),
+                    fontSize: 12.5,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: onPick,
+                style: TextButton.styleFrom(foregroundColor: identity.accent),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ],
+        if (onRemove != null) ...[
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              TextButton.icon(
+                onPressed: onPick,
+                icon: Icon(Icons.swap_horiz_rounded, color: identity.accent),
+                label: Text(
+                  'Replace',
+                  style: TextStyle(color: identity.accent),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: onRemove,
+                icon: const Icon(
+                  Icons.delete_outline_rounded,
+                  color: Color(0xFFB6ACBB),
+                ),
+                label: const Text(
+                  'Remove',
+                  style: TextStyle(color: Color(0xFFB6ACBB)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text, this.identity);
+
+  final String text;
+  final SpaceIdentity identity;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    text,
+    style: const TextStyle(
+      color: Colors.white,
+      fontSize: 15,
+      fontWeight: FontWeight.w800,
+    ),
+  );
+}
+
 class _Field extends StatelessWidget {
   const _Field({
     required this.controller,
+    required this.identity,
     required this.label,
     required this.hint,
     this.maxLength,
     this.maxLines = 1,
     this.validator,
+    this.onSubmitted,
   });
+
   final TextEditingController controller;
+  final SpaceIdentity identity;
   final String label;
   final String hint;
   final int? maxLength;
   final int maxLines;
   final String? Function(String?)? validator;
+  final ValueChanged<String>? onSubmitted;
 
   @override
   Widget build(BuildContext context) {
@@ -301,7 +989,9 @@ class _Field extends StatelessWidget {
       validator: validator,
       maxLength: maxLength,
       maxLines: maxLines,
+      onFieldSubmitted: onSubmitted,
       style: const TextStyle(color: Colors.white),
+      cursorColor: identity.primary,
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
@@ -309,7 +999,16 @@ class _Field extends StatelessWidget {
         filled: true,
         fillColor: const Color(0xFF171121),
         labelStyle: const TextStyle(color: Color(0xFFB8AFC2)),
+        floatingLabelStyle: TextStyle(color: identity.accent),
         hintStyle: const TextStyle(color: Color(0xFF746A80)),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: const BorderSide(color: Color(0xFF3A2C49)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(color: identity.focusBorder, width: 1.6),
+        ),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(18)),
       ),
     );
@@ -318,11 +1017,14 @@ class _Field extends StatelessWidget {
 
 class _Dropdown extends StatelessWidget {
   const _Dropdown({
+    required this.identity,
     required this.label,
     required this.value,
     required this.values,
     required this.onChanged,
   });
+
+  final SpaceIdentity identity;
   final String label;
   final String value;
   final List<String> values;
@@ -333,12 +1035,22 @@ class _Dropdown extends StatelessWidget {
     return DropdownButtonFormField<String>(
       initialValue: value,
       dropdownColor: const Color(0xFF21172D),
+      iconEnabledColor: identity.accent,
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         labelText: label,
         filled: true,
         fillColor: const Color(0xFF171121),
         labelStyle: const TextStyle(color: Color(0xFFB8AFC2)),
+        floatingLabelStyle: TextStyle(color: identity.accent),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: const BorderSide(color: Color(0xFF3A2C49)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(color: identity.focusBorder, width: 1.6),
+        ),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(18)),
       ),
       items: values
@@ -347,6 +1059,154 @@ class _Dropdown extends StatelessWidget {
       onChanged: (value) {
         if (value != null) onChanged(value);
       },
+    );
+  }
+}
+
+class _ChoiceChip extends StatelessWidget {
+  const _ChoiceChip({
+    required this.identity,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final SpaceIdentity identity;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Material(
+        color: selected ? identity.selected : const Color(0xFF171121),
+        shape: StadiumBorder(
+          side: BorderSide(
+            color: selected ? identity.primary : const Color(0xFF3A2C49),
+            width: selected ? 1.6 : 1,
+          ),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const StadiumBorder(),
+          child: Padding(
+            // 44pt minimum target height on a phone.
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: selected ? identity.accent : const Color(0xFFCFC6DC),
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SwitchTile extends StatelessWidget {
+  const _SwitchTile({
+    required this.identity,
+    required this.value,
+    required this.title,
+    required this.subtitle,
+    required this.onChanged,
+  });
+
+  final SpaceIdentity identity;
+  final bool value;
+  final String title;
+  final String subtitle;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SwitchListTile.adaptive(
+      value: value,
+      onChanged: onChanged,
+      activeTrackColor: identity.primary,
+      title: Text(
+        title,
+        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: const TextStyle(color: Color(0xFFA69CAF)),
+      ),
+      tileColor: const Color(0xFF171121),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: const BorderSide(color: Color(0xFF3A2C49)),
+      ),
+    );
+  }
+}
+
+class _Summary extends StatelessWidget {
+  const _Summary({required this.identity, required this.lines});
+
+  final SpaceIdentity identity;
+  final List<(String, String)> lines;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: identity.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: identity.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Before you create',
+            style: TextStyle(
+              color: identity.accent,
+              fontWeight: FontWeight.w900,
+              fontSize: 13,
+              letterSpacing: .6,
+            ),
+          ),
+          const SizedBox(height: 10),
+          for (final (label, value) in lines)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 132,
+                    child: Text(
+                      label,
+                      style: const TextStyle(
+                        color: Color(0xFF9A90AC),
+                        fontSize: 12.5,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      value.isEmpty ? '—' : value,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
+import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 
 enum RoomType {
   temporary,
@@ -51,6 +52,12 @@ class VoiceRoom {
     required this.updatedAt,
     this.experience = 'community',
     this.clubId,
+    this.targetAudience = TargetAudience.everyone,
+    this.topicTags = const <String>[],
+    this.roomGuidelines = '',
+    this.conversationStyle,
+    this.newcomerFriendly = false,
+    this.showFormat,
   });
 
   final String id;
@@ -76,6 +83,21 @@ class VoiceRoom {
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final String experience;
+
+  /// Descriptive metadata — never authorization. See room_metadata.dart.
+  /// Every one of these is optional on the document, so a room written
+  /// before they existed loads with the same safe defaults a brand-new
+  /// room would get.
+  final TargetAudience targetAudience;
+  final List<String> topicTags;
+  final String roomGuidelines;
+
+  /// Community only; null on a broadcast room.
+  final ConversationStyle? conversationStyle;
+  final bool newcomerFriendly;
+
+  /// Podcast only; null on a community room.
+  final ShowFormat? showFormat;
 
   /// Set on club-lounge rooms (written by ensureClubLounge). Older lounge
   /// documents may predate the field, so fromFirestore falls back to the
@@ -134,6 +156,17 @@ class VoiceRoom {
       createdAt: readDate(data['createdAt']),
       updatedAt: readDate(data['updatedAt']),
       experience: data['experience'] as String? ?? 'community',
+      targetAudience: TargetAudience.fromValue(data['targetAudience']),
+      topicTags: RoomMetadataLimits.normalizeTags(
+        (data['topicTags'] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<String>(),
+      ),
+      roomGuidelines: (data['roomGuidelines'] as String?)?.trim() ?? '',
+      conversationStyle: ConversationStyle.fromValue(
+        data['conversationStyle'],
+      ),
+      newcomerFriendly: data['newcomerFriendly'] as bool? ?? false,
+      showFormat: ShowFormat.fromValue(data['showFormat']),
       clubId:
           data['clubId'] as String? ??
           (document.id.startsWith('club_lounge_')

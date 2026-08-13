@@ -5,6 +5,7 @@ import 'package:yovoice/features/achievements/data/models/achievement_definition
 import 'package:yovoice/features/achievements/data/services/achievement_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
+import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 
 class RoomService {
@@ -58,6 +59,12 @@ class RoomService {
     required int? maxParticipants,
     required RoomType roomType,
     String? imageUrl,
+    TargetAudience targetAudience = TargetAudience.everyone,
+    List<String> topicTags = const <String>[],
+    String roomGuidelines = '',
+    ConversationStyle? conversationStyle,
+    bool newcomerFriendly = false,
+    ShowFormat? showFormat,
   }) async {
     final user = _user;
     final normalizedName = name.trim();
@@ -87,6 +94,25 @@ class RoomService {
       'roomType': roomType.name,
       'status': RoomStatus.active.name,
       'imageUrl': imageUrl,
+      // Descriptive metadata. Written type-scoped on purpose: a community
+      // room never carries showFormat and a broadcast room never carries
+      // conversationStyle, so neither can present itself as the other.
+      // firestore.rules refuses the cross-type write independently.
+      'targetAudience': targetAudience.value,
+      'topicTags': RoomMetadataLimits.normalizeTags(topicTags),
+      'roomGuidelines': roomGuidelines
+          .trim()
+          .substring(
+            0,
+            roomGuidelines.trim().length >
+                    RoomMetadataLimits.maxGuidelinesLength
+                ? RoomMetadataLimits.maxGuidelinesLength
+                : roomGuidelines.trim().length,
+          ),
+      if (conversationStyle != null)
+        'conversationStyle': conversationStyle.value,
+      if (newcomerFriendly) 'newcomerFriendly': true,
+      if (showFormat != null) 'showFormat': showFormat.value,
       'approvalRequired': false,
       'slowModeSeconds': 0,
       'autoMuteNewUsers': true,
