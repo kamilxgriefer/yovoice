@@ -16,6 +16,8 @@ const {
   setUserBan,
 } = require("./admin/users");
 
+const { adminDeleteMessage } = require("./admin/messages");
+
 const {
   listAdminRooms,
   getAdminRoom,
@@ -95,6 +97,7 @@ exports.assignUserRole = assignUserRole;
 exports.getUserRole = getUserRole;
 exports.listAdminUsers = listAdminUsers;
 exports.setUserBan = setUserBan;
+exports.adminDeleteMessage = adminDeleteMessage;
 
 /*
 |--------------------------------------------------------------------------

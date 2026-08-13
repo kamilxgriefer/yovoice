@@ -180,6 +180,50 @@ exports.assignUserRole = onCall(
 
     const previousRole = targetUser.customClaims?.role ?? USER_ROLES.USER;
 
+    // A super administrator may not demote themselves. Locking yourself
+    // out is not a recoverable mistake from inside the app — there is no
+    // remaining account with the authority to undo it.
+    if (targetUser.uid === caller.uid) {
+      throw new HttpsError(
+        "failed-precondition",
+        "You cannot change your own role.",
+      );
+    }
+
+    // ...and the last super administrator may not be demoted by anyone.
+    //
+    // Counted inside a TRANSACTION over the sentinel document rather than
+    // with a bare query: two concurrent demotions each reading "there are
+    // two of us" would both proceed and leave zero. The transaction
+    // serialises them, so the second sees the first's effect and fails.
+    if (previousRole === USER_ROLES.SUPER_ADMIN) {
+      const sentinel = db.collection("adminGuards").doc("superAdminCount");
+      await db.runTransaction(async (transaction) => {
+        // Read inside the transaction so the count is part of its
+        // snapshot and a concurrent demotion invalidates it.
+        await transaction.get(sentinel);
+        const supers = await db
+          .collection("users")
+          .where("role", "==", USER_ROLES.SUPER_ADMIN)
+          .count()
+          .get();
+        const remaining = (supers.data().count ?? 0) - 1;
+        if (remaining < 1) {
+          throw new HttpsError(
+            "failed-precondition",
+            "The final super administrator cannot be demoted.",
+          );
+        }
+        // Touching the sentinel is what gives the transaction something
+        // to conflict on; the value itself is incidental.
+        transaction.set(
+          sentinel,
+          { updatedAt: FieldValue.serverTimestamp() },
+          { merge: true },
+        );
+      });
+    }
+
     const existingClaims = targetUser.customClaims ?? {};
 
     await auth.setCustomUserClaims(targetUser.uid, {

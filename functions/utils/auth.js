@@ -88,7 +88,39 @@ function requireRoomManager(request) {
   );
 }
 
+/// The strongest gate this codebase has, for privileged destruction.
+///
+/// Requires BOTH the signed claim and the server-written mirror on
+/// `users/{uid}`, and refuses a restricted account — the same pair
+/// firestore.rules' isActiveStaff() insists on, and for the same reason:
+/// the claim cannot be forged, but it CAN be stale, so a super admin
+/// whose role was revoked minutes ago must not still be able to delete
+/// with the token in their hand. A freshly promoted admin whose token has
+/// not refreshed fails closed rather than open.
+async function requireActiveSuperAdmin(request) {
+  const { auth, role } = getCurrentRole(request);
+
+  // Lazily required: utils/firestore initialises the Admin app, and
+  // importing it at module load would drag that into every caller.
+  const { db } = require("./firestore");
+  const snapshot = await db.collection("users").doc(auth.uid).get();
+  const profile = snapshot.exists ? (snapshot.data() ?? {}) : {};
+
+  const claimIsSuperAdmin = role === USER_ROLES.SUPER_ADMIN;
+  const recordIsSuperAdmin = profile.role === USER_ROLES.SUPER_ADMIN;
+
+  if (!claimIsSuperAdmin || !recordIsSuperAdmin || profile.banned === true) {
+    throw new HttpsError(
+      "permission-denied",
+      "Only a super administrator can perform this action.",
+    );
+  }
+
+  return { ...auth, role };
+}
+
 module.exports = {
+  requireActiveSuperAdmin,
   requireAuthentication,
   getCurrentRole,
   requireRole,
