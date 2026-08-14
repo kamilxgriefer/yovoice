@@ -18,6 +18,7 @@ const {
   requireSuperAdmin,
   requireUserManager,
   requireVerifiedStaff,
+  requireProtectedOwner,
 } = require("../utils/auth");
 
 const {
@@ -152,13 +153,31 @@ exports.assignUserRole = onCall(
     enforceAppCheck: false,
   },
   async (request) => {
-    const caller = requireSuperAdmin(request);
+    // Role assignment is an OWNERSHIP capability: claim + server record +
+    // the protected-owner uid. A superAdmin that is not the owner is
+    // refused and recorded by the guard itself.
+    const caller = await requireProtectedOwner(request);
 
     const targetUid = normalizeText(request.data?.uid, 128);
 
     const targetEmail = normalizeEmail(request.data?.email);
 
     const requestedRole = normalizeRole(request.data?.role);
+
+    // Every assignment carries its justification into the audit log.
+    const reason = normalizeText(request.data?.reason, 500);
+
+    // Stale-result guard: the client says which role it BELIEVED the
+    // target held. If the truth moved between lookup and submit, refuse
+    // rather than silently overwrite a newer assignment.
+    const expectedRole = normalizeRole(request.data?.expectedRole);
+
+    if (reason.length < 3) {
+      throw new HttpsError(
+        "invalid-argument",
+        "A reason for the role change is required.",
+      );
+    }
 
     if (!targetUid && !targetEmail) {
       throw new HttpsError(
@@ -198,6 +217,14 @@ exports.assignUserRole = onCall(
     }
 
     const previousRole = targetUser.customClaims?.role ?? USER_ROLES.USER;
+
+    if (expectedRole && expectedRole !== previousRole) {
+      throw new HttpsError(
+        "failed-precondition",
+        "This user's role changed since you looked it up. Search again "
+          + "and retry.",
+      );
+    }
 
     // A super administrator may not demote themselves. Locking yourself
     // out is not a recoverable mistake from inside the app — there is no
@@ -265,6 +292,7 @@ exports.assignUserRole = onCall(
       details: {
         previousRole,
         newRole: requestedRole,
+        reason,
       },
     });
 
