@@ -225,6 +225,10 @@ const { getMyStaffCapabilities } = require("./staff/capabilities");
 
 exports.getMyStaffCapabilities = getMyStaffCapabilities;
 
+const { applySanction } = require("./staff/sanctions");
+
+exports.applySanction = applySanction;
+
 /*
 |--------------------------------------------------------------------------
 | Premium

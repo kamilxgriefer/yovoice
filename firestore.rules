@@ -72,6 +72,28 @@ service cloud.firestore {
       return isSignedIn() && !isRestrictedAccount(request.auth.uid);
     }
 
+    // STAFF COMMUNICATION MUTE — a server-managed restriction, distinct
+    // from a personal block (which affects only the acting user) and
+    // from a suspension (which disables the account). restrictions/{uid}
+    // is written only by the applySanction callable through the Admin
+    // SDK; no client writes exist. Expiry is time-based, so a lapsed
+    // mute stops applying on the next request with no sweeper involved.
+    function isCommunicationMuted(userId) {
+      return exists(/databases/$(database)/documents/restrictions/$(userId)) &&
+          get(/databases/$(database)/documents/restrictions/$(userId))
+            .data.get('type', '') == 'communicationMute' &&
+          (
+            get(/databases/$(database)/documents/restrictions/$(userId))
+              .data.get('expiresAt', null) == null ||
+            request.time < get(/databases/$(database)/documents/restrictions/$(userId))
+              .data.expiresAt
+          );
+    }
+
+    function canCommunicate() {
+      return isSignedIn() && !isCommunicationMuted(request.auth.uid);
+    }
+
     // STAFF AUTHORITY — the token claim AND the server-written mirror.
     //
     // `assignUserRole` (functions/admin/users.js) does two things: it
@@ -383,6 +405,13 @@ service cloud.firestore {
         allow delete: if isOneOfUsers(userId, followerId);
       }
 
+      // The personal mute list: hides that user's content for THIS
+      // account only. A preference, never a sanction — the muted person
+      // is unaffected and unaware.
+      match /muted/{mutedId} {
+        allow read, write: if isOwner(userId);
+      }
+
       match /clubs/{clubId} {
         allow read: if isOwner(userId);
         allow create: if isOwner(userId) || canManageClub(clubId);
@@ -560,6 +589,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // The holder may see WHAT restricts them and until when; nobody may
+    // write from a client. See isCommunicationMuted above.
+    match /restrictions/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false;
+    }
+
     // Complimentary VIP grants. Server-owned in exactly the same way
     // `entitlements` is: a client that could write here could grant
     // itself VIP, so no client writes at all. Readable by the holder so
@@ -703,6 +739,7 @@ service cloud.firestore {
         // should be able to see the room it is joining.
         allow create: if isVerified() &&
             isActiveAccount() &&
+            canCommunicate() &&
             channelId == 'main' &&
             // Exactly these fields, nothing smuggled alongside.
             request.resource.data.keys().hasOnly([
@@ -1057,6 +1094,7 @@ service cloud.firestore {
         match /messages/{messageId} {
           allow read: if isClubMember(clubId);
           allow create: if isVerified() &&
+              canCommunicate() &&
               isClubMember(clubId) &&
               request.resource.data.senderId == request.auth.uid &&
               request.resource.data.clubId == clubId &&
@@ -1077,6 +1115,7 @@ service cloud.firestore {
       match /moments/{momentId} {
         allow read: if isClubMember(clubId);
         allow create: if isVerified() &&
+            canCommunicate() &&
             isClubMember(clubId) &&
             request.resource.data.authorId == request.auth.uid &&
             request.resource.data.clubId == clubId;
@@ -1207,6 +1246,7 @@ service cloud.firestore {
         // hostId yet — getAfter() resolves against the state once the whole
         // transaction/batch has applied, which is what we need here.
         allow create: if isSignedIn() &&
+            canCommunicate() &&
             request.auth.uid == participantId &&
             request.resource.data.userId == request.auth.uid &&
             (
@@ -1288,6 +1328,7 @@ service cloud.firestore {
               )
             );
         allow create: if isVerified() &&
+            canCommunicate() &&
             request.resource.data.senderId == request.auth.uid &&
             (
               isRoomParticipant(roomId) ||
@@ -1327,6 +1368,7 @@ service cloud.firestore {
     match /voiceMoments/{momentId} {
       allow read: if isSignedIn();
       allow create: if isVerified() &&
+          canCommunicate() &&
           request.resource.data.authorId == request.auth.uid;
       // Non-author updates used to allow likeCount/commentCount to be set to
       // any value at all — now each write must actually correspond to the

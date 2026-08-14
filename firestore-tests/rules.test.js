@@ -18,6 +18,7 @@ const {
   updateDoc,
   writeBatch,
   serverTimestamp,
+  Timestamp,
   orderBy,
   limit,
 } = require("firebase/firestore");
@@ -3617,6 +3618,155 @@ async function main() {
       );
       await assertFails(
         updateDoc(doc(db, "users/attacker-uid"), { banned: false }),
+      );
+    },
+  );
+
+  // --- staff communication mute (restrictions/{uid}) --------------------
+
+  const mutedUser = testEnv.authenticatedContext("muted-uid", {
+    email_verified: true,
+  });
+
+  await check(
+    "MUTE SECURITY: a client cannot write its own (or anyone's) restriction",
+    async () => {
+      await assertFails(
+        setDoc(doc(mutedUser.firestore(), "restrictions/muted-uid"), {
+          type: "communicationMute",
+        }),
+      );
+      await assertFails(
+        deleteDoc(doc(mutedUser.firestore(), "restrictions/muted-uid")),
+      );
+      await assertFails(
+        setDoc(doc(attacker.firestore(), "restrictions/host-uid"), {
+          type: "communicationMute",
+        }),
+      );
+    },
+  );
+
+  function mutedGlobalMessage(id) {
+    // The COMPLETE send contract: the message plus the sender-state doc
+    // in one batch, exactly as the app writes it — the rate-limit clause
+    // requires getAfter(senders/...) to point at THIS message.
+    const mutedDb = mutedUser.firestore();
+    const batch = writeBatch(mutedDb);
+    batch.set(doc(mutedDb, `globalChat/main/messages/${id}`), {
+      senderId: "muted-uid",
+      senderName: "Muted",
+      senderPhotoUrl: null,
+      senderIsCreator: false,
+      senderIsStaff: false,
+      content: "hello from muted-uid",
+      sentAt: serverTimestamp(),
+      isDeleted: false,
+      deletedBy: null,
+      deletedAt: null,
+    });
+    batch.set(doc(mutedDb, "globalChat/main/senders/muted-uid"), {
+      lastMessageAt: serverTimestamp(),
+      lastMessageId: id,
+      windowStartAt: serverTimestamp(),
+      windowCount: 1,
+    });
+    return batch.commit();
+  }
+
+  await check(
+    "MUTE: an active mute closes every public communication path",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "users/muted-uid"), {
+          uid: "muted-uid",
+          displayName: "Muted",
+          role: "user",
+          accountType: "personal",
+        });
+      });
+      // Baseline FIRST: with no restriction, the write shape passes — so
+      // every later denial can only be the mute itself.
+      await assertSucceeds(mutedGlobalMessage("mute-m0"));
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await deleteDoc(doc(ctx.firestore(), "globalChat/main/senders/muted-uid"));
+      });
+
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "restrictions/muted-uid"), {
+          type: "communicationMute",
+          expiresAt: null, // indefinite
+        });
+      });
+      const mutedDb = mutedUser.firestore();
+
+      // Global Chat.
+      await assertFails(mutedGlobalMessage("mute-m1"));
+      // Public voice moment.
+      await assertFails(
+        setDoc(doc(mutedDb, "voiceMoments/mute-vm1"), {
+          authorId: "muted-uid",
+          caption: "x",
+          isPublished: true,
+        }),
+      );
+      // The holder can still READ their restriction and see the why.
+      await assertSucceeds(
+        getDoc(doc(mutedDb, "restrictions/muted-uid")),
+      );
+      // ...but nobody else can.
+      await assertFails(
+        getDoc(doc(attacker.firestore(), "restrictions/muted-uid")),
+      );
+    },
+  );
+
+  await check(
+    "MUTE: an EXPIRED mute stops applying with no sweeper involved",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "restrictions/muted-uid"), {
+          type: "communicationMute",
+          expiresAt: Timestamp.fromMillis(Date.now() - 60_000),
+        });
+      });
+      await assertSucceeds(mutedGlobalMessage("mute-m2"));
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await deleteDoc(doc(ctx.firestore(), "globalChat/main/senders/muted-uid"));
+      });
+    },
+  );
+
+  await check(
+    "MUTE ISOLATION: a personal block is not a staff mute — a blocked "
+      + "user still writes to public paths",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await deleteDoc(doc(ctx.firestore(), "restrictions/muted-uid"));
+        // host blocks muted-uid: a PERSONAL act.
+        await setDoc(
+          doc(ctx.firestore(), "users/host-uid/blocked/muted-uid"),
+          { blockedAt: serverTimestamp() },
+        );
+      });
+      await assertSucceeds(mutedGlobalMessage("mute-m3"));
+    },
+  );
+
+  await check(
+    "PERSONAL MUTE: a user manages their own muted list and nobody else's",
+    async () => {
+      const db = host.firestore();
+      await assertSucceeds(
+        setDoc(doc(db, "users/host-uid/muted/muted-uid"), {
+          mutedAt: serverTimestamp(),
+        }),
+      );
+      await assertSucceeds(deleteDoc(doc(db, "users/host-uid/muted/muted-uid")));
+      await assertFails(
+        setDoc(doc(attacker.firestore(), "users/host-uid/muted/x"), {
+          mutedAt: serverTimestamp(),
+        }),
       );
     },
   );
