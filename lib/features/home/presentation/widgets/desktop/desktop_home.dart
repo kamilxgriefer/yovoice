@@ -25,6 +25,7 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -69,6 +70,7 @@ class DesktopHome extends StatefulWidget {
     this.clubChatService,
     this.globalChatService,
     this.firebaseAuth,
+    this.capabilityService,
     super.key,
   });
 
@@ -104,6 +106,10 @@ class DesktopHome extends StatefulWidget {
   final GlobalChatService? globalChatService;
   final FirebaseAuth? firebaseAuth;
 
+  /// Staff capabilities, loaded once per session. Absent or failing, the
+  /// board renders the ordinary UI.
+  final StaffCapabilityService? capabilityService;
+
   @override
   State<DesktopHome> createState() => _DesktopHomeState();
 }
@@ -119,6 +125,8 @@ class _DesktopHomeState extends State<DesktopHome> {
   /// Hosts this account follows — the top ranking tier for the board.
   final Set<String> _followedHostIds = <String>{};
   StreamSubscription<List<FollowUser>>? _followingSub;
+
+  StaffCapabilities _capabilities = StaffCapabilities.none;
 
   @override
   void initState() {
@@ -162,6 +170,12 @@ class _DesktopHomeState extends State<DesktopHome> {
     } catch (_) {
       _followingSub = null;
     }
+    // Failure means the ordinary UI, never a guess.
+    (widget.capabilityService ?? StaffCapabilityService()).load().then((
+      capabilities,
+    ) {
+      if (mounted) setState(() => _capabilities = capabilities);
+    }).catchError((_) {});
   }
 
   @override
@@ -247,6 +261,7 @@ class _DesktopHomeState extends State<DesktopHome> {
                       room: room,
                       onJoin: widget.onOpenRoom,
                       roomService: _rooms,
+                      staffCapabilities: _capabilities,
                     ),
                 gap,
                 // 3. Which rooms belong to me?

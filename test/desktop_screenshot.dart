@@ -31,6 +31,7 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sideb
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
 import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
@@ -417,6 +418,7 @@ void main() {
                 roomService: RoomService(firestore: db, auth: auth),
                 friendService: FriendService(firestore: db, auth: auth),
                 followService: FollowService(firestore: db, auth: auth),
+                capabilityService: _OwnerCapabilities(),
                 profileService: ProfileService(firestore: db, auth: auth),
                 feedService: HomeFeedService(firestore: db, auth: auth),
                 globalChatService: GlobalChatService(
@@ -532,4 +534,20 @@ void main() {
       await _shoot(label);
     });
   }
+}
+
+
+/// Screenshot-only: the owner's capability set, so the crimson shield is
+/// visible in the capture without any network.
+class _OwnerCapabilities extends StaffCapabilityService {
+  @override
+  Future<StaffCapabilities> load({bool refresh = false}) async =>
+      const StaffCapabilities(
+        staffRole: 'superAdmin',
+        isOwner: true,
+        permanentDeleteSpaces: true,
+        quarantineSpaces: true,
+        endAnyRoom: true,
+        endPublicRoomWithReason: true,
+      );
 }

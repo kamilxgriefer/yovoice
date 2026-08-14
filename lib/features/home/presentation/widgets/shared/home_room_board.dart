@@ -5,7 +5,11 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.
     show RoomVisual, RoomRosterList;
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/staff/data/staff_capabilities.dart';
+import 'package:yovoice/features/staff/presentation/widgets/room_staff_menu.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// One deduplicated room list for Home, and the widgets that render it.
@@ -88,6 +92,9 @@ class HomeRoomBanner extends StatelessWidget {
     required this.onJoin,
     this.roomService,
     this.compact = false,
+    this.staffCapabilities,
+    this.staffFunctions,
+    this.onRoomDeleted,
     super.key,
   });
 
@@ -102,6 +109,13 @@ class HomeRoomBanner extends StatelessWidget {
   /// Phone density: tighter type and padding. Never a different layout —
   /// the reading order is identical on both.
   final bool compact;
+
+  /// Server-derived capabilities. Null or [StaffCapabilities.none] renders
+  /// the banner exactly as every ordinary account sees it — no shield, no
+  /// gaps, no disabled controls.
+  final StaffCapabilities? staffCapabilities;
+  final FirebaseFunctions? staffFunctions;
+  final VoidCallback? onRoomDeleted;
 
   @override
   Widget build(BuildContext context) {
@@ -145,6 +159,15 @@ class HomeRoomBanner extends StatelessWidget {
                       _StatusBadge(live: room.isLive),
                       const SizedBox(width: 9),
                       _CountChip(count: room.participantCount),
+                      if (staffCapabilities?.hasRoomModeration ?? false) ...[
+                        const Spacer(),
+                        RoomStaffMenu(
+                          room: room,
+                          capabilities: staffCapabilities!,
+                          functions: staffFunctions,
+                          onRoomDeleted: onRoomDeleted,
+                        ),
+                      ],
                     ],
                   ),
                   SizedBox(height: compact ? 10 : 12),
