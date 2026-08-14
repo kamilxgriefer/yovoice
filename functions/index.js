@@ -221,6 +221,10 @@ exports.onUserBadgeSourceChanged = onUserBadgeSourceChanged;
 exports.onVipGrantChanged = onVipGrantChanged;
 exports.getPublicBadges = getPublicBadges;
 
+const { getMyStaffCapabilities } = require("./staff/capabilities");
+
+exports.getMyStaffCapabilities = getMyStaffCapabilities;
+
 /*
 |--------------------------------------------------------------------------
 | Premium

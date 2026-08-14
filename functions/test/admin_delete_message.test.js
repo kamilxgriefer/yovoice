@@ -28,11 +28,15 @@ const { getFirestore } = require("firebase-admin/firestore");
 if (getApps().length === 0) initializeApp();
 
 const { adminDeleteMessage, safeId } = require("../admin/messages");
+const { setProtectedOwnerUidForTests } = require("../utils/roles");
 
 const db = getFirestore();
 const run = adminDeleteMessage.run ?? adminDeleteMessage;
 
+// SUPER is also the protected owner: message deletion is an OWNERSHIP
+// capability now, and superAdmin alone no longer suffices.
 const SUPER = "adm-del-super";
+const NONOWNER_SUPER = "adm-del-nonowner";
 const STALE_SUPER = "adm-del-stale";
 const BANNED_SUPER = "adm-del-banned";
 const MOD = "adm-del-mod";
@@ -55,7 +59,13 @@ function request(uid, role, data) {
 // writes is therefore prefixed `adm-del-`, it removes only what it owns,
 // and it counts only audit entries written by the action under test.
 async function wipeOwn() {
-  const ids = [SUPER, STALE_SUPER, BANNED_SUPER, MOD, PLAIN];
+  const ids = [SUPER, NONOWNER_SUPER, STALE_SUPER, BANNED_SUPER, MOD, PLAIN];
+  const alerts = await db
+    .collection("adminAuditLogs")
+    .where("action", "==", "security_alert_non_owner_super_admin")
+    .where("targetId", "==", NONOWNER_SUPER)
+    .get();
+  await Promise.all(alerts.docs.map((doc) => doc.ref.delete()));
   await Promise.all([
     ...ids.map((uid) => db.collection("users").doc(uid).delete()),
     ...["adm-del-r1", "adm-del-r-other", "adm-del-r-msg"].map((id) =>
@@ -77,10 +87,15 @@ async function ownAuditEntries() {
 }
 
 beforeEach(async () => {
+  setProtectedOwnerUidForTests(SUPER);
   await wipeOwn();
 
-  // Claim AND server record agree only for SUPER.
+  // Claim AND server record agree only for SUPER — who is also the owner.
   await db.collection("users").doc(SUPER).set({ role: "superAdmin" });
+  await db
+    .collection("users")
+    .doc(NONOWNER_SUPER)
+    .set({ role: "superAdmin" });
   // Claim says superAdmin; the server record does not (revoked role whose
   // token has not refreshed).
   await db.collection("users").doc(STALE_SUPER).set({ role: "moderator" });
@@ -174,6 +189,27 @@ describe("authorization", () => {
       () => run(request(STALE_SUPER, "superAdmin", globalArgs)),
       /super administrator/i,
     );
+  });
+
+  test("a REAL superAdmin who is not the owner is denied AND recorded", async () => {
+    await assert.rejects(
+      () => run(request(NONOWNER_SUPER, "superAdmin", globalArgs)),
+      /reserved for the application owner/,
+    );
+    const alerts = await db
+      .collection("adminAuditLogs")
+      .where("action", "==", "security_alert_non_owner_super_admin")
+      .where("targetId", "==", NONOWNER_SUPER)
+      .get();
+    assert.equal(alerts.size, 1, "the forged owner attempt must be recorded");
+    // ...and the message survived.
+    const doc = await db
+      .collection("globalChat")
+      .doc(CHANNEL)
+      .collection("messages")
+      .doc("adm-del-m1")
+      .get();
+    assert.equal(doc.data().isDeleted, false);
   });
 
   test("a BANNED super admin is denied", async () => {

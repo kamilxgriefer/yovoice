@@ -7,6 +7,7 @@ const {
   requireRole,
   requireAdminCenterAccess,
   requireRoomManager,
+  requireProtectedOwner,
 } = require("../utils/auth");
 
 const {
@@ -640,13 +641,12 @@ const adminDeleteClub = onCall(
     enforceAppCheck: false,
     timeoutSeconds: 180,
     memory: "512MiB",
+    // Permanent deletion is an OWNERSHIP capability: the uid must match
+    // the protected-owner secret, not merely carry superAdmin.
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
   },
   async (request) => {
-    const caller = requireRole(
-      request,
-      PERMANENT_DELETE_ROLES,
-      "Only an administrator can permanently delete clubs.",
-    );
+    const caller = await requireProtectedOwner(request);
 
     const clubId = normalizeText(request.data?.clubId, 128);
 

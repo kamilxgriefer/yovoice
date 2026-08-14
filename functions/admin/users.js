@@ -11,10 +11,13 @@ const {
   protectedOwnerConfigured,
 } = require("../utils/roles");
 
+const { deriveCapabilities } = require("../utils/capabilities");
+
 const {
   requireAuthentication,
   requireSuperAdmin,
   requireUserManager,
+  requireVerifiedStaff,
 } = require("../utils/auth");
 
 const {
@@ -392,7 +395,22 @@ exports.setUserBan = onCall(
     enforceAppCheck: false,
   },
   async (request) => {
-    const caller = requireUserManager(request);
+    // Tiered sanctions, straight from the capability matrix:
+    //  - the OWNER may do anything here, permanent bans included;
+    //  - a super moderator may suspend for up to 30 days, and lift
+    //    suspensions;
+    //  - a moderator may time out for up to 24 hours;
+    //  - nobody below ownership may sanction a staff account.
+    const caller = await requireVerifiedStaff(
+      request,
+      new Set([
+        USER_ROLES.MODERATOR,
+        USER_ROLES.SUPER_MODERATOR,
+        USER_ROLES.SUPER_ADMIN,
+      ]),
+      "You do not have permission to sanction users.",
+    );
+    const caps = deriveCapabilities({ uid: caller.uid, user: caller.profile });
 
     const targetUid = normalizeText(request.data?.uid, 128);
 
@@ -415,6 +433,41 @@ exports.setUserBan = onCall(
       );
     }
 
+    if (!banned && !caps.liftSuspensions) {
+      throw new HttpsError(
+        "permission-denied",
+        "Only super moderation can lift a suspension.",
+      );
+    }
+
+    if (banned && durationHours === 0 && !caps.permanentBan) {
+      // A permanent ban attempted by a superAdmin that is not the owner
+      // is the forged-role scenario — recorded, then refused.
+      if (caps.unconfirmedSuperAdmin) {
+        await writeUserAuditLog({
+          caller,
+          action: "security_alert_non_owner_super_admin",
+          userId: caller.uid,
+          details: { attempted: "permanentBan" },
+        });
+      }
+      throw new HttpsError(
+        "permission-denied",
+        "Only the application owner can ban permanently.",
+      );
+    }
+
+    if (
+      banned &&
+      caps.suspensionLimitHours !== null &&
+      (durationHours === 0 || durationHours > caps.suspensionLimitHours)
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        `Your role can suspend for at most ${caps.suspensionLimitHours} hours.`,
+      );
+    }
+
     const targetUser = await auth.getUser(targetUid);
 
     if (isProtectedOwnerUid(targetUser.uid)) {
@@ -426,14 +479,10 @@ exports.setUserBan = onCall(
 
     const targetRole = targetUser.customClaims?.role ?? USER_ROLES.USER;
 
-    if (
-      caller.role !== USER_ROLES.SUPER_ADMIN &&
-      (targetRole === USER_ROLES.SUPER_MODERATOR ||
-        targetRole === USER_ROLES.SUPER_ADMIN)
-    ) {
+    if (targetRole !== USER_ROLES.USER && !caps.sanctionStaff) {
       throw new HttpsError(
         "permission-denied",
-        "Only the super administrator can ban staff accounts.",
+        "Only the application owner can sanction staff accounts.",
       );
     }
 

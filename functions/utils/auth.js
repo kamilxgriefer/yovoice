@@ -123,7 +123,70 @@ async function requireActiveSuperAdmin(request) {
   return { ...auth, role };
 }
 
+/// The gate for DESTRUCTIVE ownership: permanent deletion, permanent
+/// bans, role management. Stricter than requireActiveSuperAdmin — the
+/// uid must match the protected-owner secret, and the secret must be
+/// PRESENT. A superAdmin that is not the owner is refused AND recorded:
+/// that combination is either a forged role or a compromised assignment,
+/// and silence would be the worst possible response.
+async function requireProtectedOwner(request) {
+  const actor = await requireActiveSuperAdmin(request);
+
+  const {
+    isProtectedOwnerUid,
+    protectedOwnerConfigured,
+  } = require("./roles");
+
+  if (!protectedOwnerConfigured()) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Owner protection is not configured.",
+    );
+  }
+
+  if (!isProtectedOwnerUid(actor.uid)) {
+    // Lazily required to avoid a load-order cycle (audit → firestore).
+    const { writeAuditLog } = require("./audit");
+    await writeAuditLog({
+      caller: actor,
+      action: "security_alert_non_owner_super_admin",
+      targetType: "account",
+      targetId: actor.uid,
+      details: { attempted: "ownerCapability" },
+    });
+    throw new HttpsError(
+      "permission-denied",
+      "This action is reserved for the application owner.",
+    );
+  }
+
+  return actor;
+}
+
+/// Claim + server record + not banned, generalised to a role set. The
+/// same double-check requireActiveSuperAdmin performs, for the tiers
+/// below ownership. Returns the profile so callers can derive
+/// capabilities without a second read.
+async function requireVerifiedStaff(request, allowedRoles, message) {
+  const { auth, role } = getCurrentRole(request);
+  const { db } = require("./firestore");
+  const snapshot = await db.collection("users").doc(auth.uid).get();
+  const profile = snapshot.exists ? (snapshot.data() ?? {}) : {};
+
+  if (
+    !allowedRoles.has(role) ||
+    profile.role !== role ||
+    profile.banned === true
+  ) {
+    throw new HttpsError("permission-denied", message);
+  }
+
+  return { ...auth, role, profile };
+}
+
 module.exports = {
+  requireVerifiedStaff,
+  requireProtectedOwner,
   requireActiveSuperAdmin,
   requireAuthentication,
   getCurrentRole,

@@ -3,7 +3,11 @@ const { FieldValue } = require("firebase-admin/firestore");
 
 const { USER_ROLES, PERMANENT_DELETE_ROLES } = require("../utils/roles");
 
-const { requireRole, requireRoomManager } = require("../utils/auth");
+const {
+  requireRole,
+  requireRoomManager,
+  requireProtectedOwner,
+} = require("../utils/auth");
 
 const {
   db,
@@ -476,13 +480,12 @@ const adminDeleteRoom = onCall(
     enforceAppCheck: false,
     timeoutSeconds: 120,
     memory: "512MiB",
+    // Permanent deletion is an OWNERSHIP capability: the uid must match
+    // the protected-owner secret, not merely carry superAdmin.
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
   },
   async (request) => {
-    const caller = requireRole(
-      request,
-      PERMANENT_DELETE_ROLES,
-      "Only an administrator can permanently delete rooms.",
-    );
+    const caller = await requireProtectedOwner(request);
 
     const roomId = normalizeText(request.data?.roomId, 128);
 

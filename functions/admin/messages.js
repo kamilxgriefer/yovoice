@@ -24,7 +24,7 @@ const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { FieldValue } = require("firebase-admin/firestore");
 const { getStorage } = require("firebase-admin/storage");
 
-const { requireActiveSuperAdmin } = require("../utils/auth");
+const { requireProtectedOwner } = require("../utils/auth");
 const { db, normalizeText } = require("../utils/firestore");
 const { writeAuditLog } = require("../utils/audit");
 
@@ -163,12 +163,15 @@ async function deleteAttachments(urls) {
 }
 
 const adminDeleteMessage = onCall(
-  { region: "europe-west1" },
+  {
+    region: "europe-west1",
+    // Deleting anyone's message is an ownership capability.
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
+  },
   async (request) => {
-    // Claim AND server-written role, and not banned. Mirrors what
-    // firestore.rules requires of staff, so a revoked super admin cannot
-    // act on a token that has not refreshed yet.
-    const actor = await requireActiveSuperAdmin(request);
+    // Claim AND server-written role AND the protected-owner uid match.
+    // A superAdmin that is not the owner is refused and audited.
+    const actor = await requireProtectedOwner(request);
 
     const data = request.data ?? {};
     const messageType = String(data.messageType ?? "");
