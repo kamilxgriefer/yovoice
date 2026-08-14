@@ -47,7 +47,7 @@ function minutesAgo(minutes) {
 async function seed() {
   await Promise.all([
     db.doc(`users/${MOD}`).set({ uid: MOD, displayName: "Mia Moderator", role: "moderator" }),
-    db.doc(`users/${ADMIN}`).set({ uid: ADMIN, displayName: "Ada Admin", role: "admin" }),
+    db.doc(`users/${ADMIN}`).set({ uid: ADMIN, displayName: "Ada Admin", role: "superModerator" }),
     db.doc(`users/${PLAIN}`).set({ uid: PLAIN, displayName: "Plain", role: "user" }),
     db.doc(`users/${BANNED_MOD}`).set({
       uid: BANNED_MOD, displayName: "Banned", role: "moderator", banned: true,
@@ -180,9 +180,9 @@ describe("listReportAuditTrail", () => {
       assert.ok(Array.isArray(result.events));
     });
 
-    test("an admin is allowed, under the same scoping as a moderator",
+    test("a super moderator is allowed, under the same scoping as a moderator",
       async () => {
-        const result = await run(request(ADMIN, "admin", { reportId: REPORT_ID }));
+        const result = await run(request(ADMIN, "superModerator", { reportId: REPORT_ID }));
         const ids = result.events.map((e) => e.id);
         assert.ok(!ids.includes("ban-entry-1"), "still scoped to the report");
       });

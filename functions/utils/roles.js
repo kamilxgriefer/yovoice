@@ -50,63 +50,39 @@ const USER_ROLES = Object.freeze({
   SUPER_ADMIN: "superAdmin",
 });
 
-// Values that still exist in production and must keep working until the
-// migration runs. `vip` becomes `user` + a complimentary grant; `admin`
-// becomes `superModerator`, which is an intentional permission reduction
-// (it loses permanent delete). Neither mapping is applied to data in this
-// pass — this set only keeps them ACCEPTED.
-const LEGACY_ROLES = Object.freeze({
-  VIP: "vip",
-  ADMIN: "admin",
-});
-
-/// What the target vocabulary will be once the migration has run.
+// The vocabulary is STRICT: the 2026-08 production dry run found zero
+// `vip` and zero `admin` documents (32 scanned: 1 protected owner + 31
+// already on the final vocabulary), so legacy acceptance ended with it.
+// The historical mapping lives in scripts/migrate_roles.js, which remains
+// as the audit record of how those values were retired.
 const STAFF_ROLES = new Set(Object.values(USER_ROLES));
 
-/// What is accepted right now: the target vocabulary plus the two legacy
-/// values still present in production documents and Auth claims.
-const ALLOWED_ROLES = new Set([
-  ...STAFF_ROLES,
-  ...Object.values(LEGACY_ROLES),
-]);
+/// Identical to STAFF_ROLES now that nothing legacy is accepted. Kept as
+/// its own export because every consumer asks the question "is this an
+/// assignable role" through this name.
+const ALLOWED_ROLES = STAFF_ROLES;
 
-/// Where a legacy value lands once migrated. Used by the migration script
-/// in a later pass, and by the compatibility helpers below so that a
-/// legacy value is reasoned about in exactly one place.
-const LEGACY_ROLE_MIGRATION = Object.freeze({
-  [LEGACY_ROLES.VIP]: USER_ROLES.USER,
-  [LEGACY_ROLES.ADMIN]: USER_ROLES.SUPER_MODERATOR,
-});
-
-// Each set keeps `admin` for now so a live admin's access is BYTE-FOR-BYTE
-// unchanged by this pass. The permission reduction happens with the
-// migration, not here.
 const ADMIN_CENTER_ROLES = new Set([
   USER_ROLES.MODERATOR,
   USER_ROLES.SUPER_MODERATOR,
-  LEGACY_ROLES.ADMIN,
   USER_ROLES.SUPER_ADMIN,
 ]);
 
-const USER_MANAGEMENT_ROLES = new Set([
-  LEGACY_ROLES.ADMIN,
-  USER_ROLES.SUPER_ADMIN,
-]);
+// User management (role listing, bans, entitlement grants) is a
+// superAdmin capability alone: the legacy admin tier that shared it was
+// retired, and superModerator deliberately does not inherit it.
+const USER_MANAGEMENT_ROLES = new Set([USER_ROLES.SUPER_ADMIN]);
 
 const ROOM_MANAGEMENT_ROLES = new Set([
   USER_ROLES.MODERATOR,
   USER_ROLES.SUPER_MODERATOR,
-  LEGACY_ROLES.ADMIN,
   USER_ROLES.SUPER_ADMIN,
 ]);
 
-// Permanent deletion stays with superAdmin and, until migration, the
-// legacy admin who has it today. superModerator is deliberately NOT here:
-// the reduction is the point of the admin→superModerator mapping.
-const PERMANENT_DELETE_ROLES = new Set([
-  LEGACY_ROLES.ADMIN,
-  USER_ROLES.SUPER_ADMIN,
-]);
+// Permanent deletion is superAdmin-only. superModerator is deliberately
+// absent — that reduction is the entire point of retiring `admin` into
+// `superModerator` rather than carrying it forward.
+const PERMANENT_DELETE_ROLES = new Set([USER_ROLES.SUPER_ADMIN]);
 
 function normalizeRole(value) {
   return String(value ?? "").trim();
@@ -128,8 +104,6 @@ function isSuperAdminRole(value) {
 
 module.exports = {
   USER_ROLES,
-  LEGACY_ROLES,
-  LEGACY_ROLE_MIGRATION,
   STAFF_ROLES,
   ALLOWED_ROLES,
   ADMIN_CENTER_ROLES,

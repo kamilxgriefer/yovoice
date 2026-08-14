@@ -27,12 +27,24 @@ const { getAuth } = require("firebase-admin/auth");
 
 const {
   USER_ROLES,
-  LEGACY_ROLES,
-  LEGACY_ROLE_MIGRATION,
   STAFF_ROLES,
   isProtectedOwnerUid,
   protectedOwnerConfigured,
 } = require("../utils/roles");
+
+// Retired from the runtime vocabulary after the 2026-08 production dry
+// run found zero accounts carrying either value. They live on HERE ONLY,
+// as the historical record this tool needs to recognise and map them —
+// utils/roles.js no longer accepts or exports them.
+const LEGACY_ROLES = Object.freeze({
+  VIP: "vip",
+  ADMIN: "admin",
+});
+
+const LEGACY_ROLE_MIGRATION = Object.freeze({
+  [LEGACY_ROLES.VIP]: USER_ROLES.USER,
+  [LEGACY_ROLES.ADMIN]: USER_ROLES.SUPER_MODERATOR,
+});
 
 const EXPECTED_PROJECT = "yovoice-ec54a";
 const CHECKPOINT_PATH = "migrationCheckpoints/roleVocabularyV1";
@@ -199,6 +211,23 @@ async function migrate({ db, auth, args, report = emptyReport() }) {
   const checkpoint = await loadCheckpoint(db);
   let cursor = args.reset ? null : (checkpoint.lastDocumentId ?? null);
 
+  // A FRESH --apply refuses when nothing legacy remains: the migration is
+  // complete, and an accidental apply should say so loudly rather than
+  // silently rescanning every account. A resume (an existing checkpoint)
+  // is exempt so an interrupted run can always finish.
+  if (args.apply && !cursor) {
+    const remaining = await db
+      .collection("users")
+      .where("role", "in", [LEGACY_ROLES.VIP, LEGACY_ROLES.ADMIN])
+      .limit(1)
+      .get();
+    if (remaining.empty) {
+      throw new Error(
+        "Nothing legacy remains — the migration is complete. Refusing --apply.",
+      );
+    }
+  }
+
   for (;;) {
     let query = db
       .collection("users")
@@ -353,6 +382,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  LEGACY_ROLES,
+  LEGACY_ROLE_MIGRATION,
   parseArgs,
   assertProject,
   planForUser,

@@ -2786,7 +2786,7 @@ async function main() {
   });
   const adminStaff = testEnv.authenticatedContext("admin-uid", {
     email_verified: true,
-    role: "admin",
+    role: "superModerator",
   });
 
   await testEnv.withSecurityRulesDisabled(async (context) => {
@@ -2805,7 +2805,7 @@ async function main() {
     await setDoc(doc(db, "users/admin-uid"), {
       uid: "admin-uid",
       displayName: "Admin",
-      role: "admin",
+      role: "superModerator",
     });
   });
 
@@ -2823,7 +2823,7 @@ async function main() {
     },
   );
 
-  await check("MODERATION: an admin can read the report queue", async () => {
+  await check("MODERATION: a super moderator can read the report queue", async () => {
     await assertSucceeds(
       getDocs(
         query(

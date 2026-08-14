@@ -1,10 +1,9 @@
 // Compatibility layer for the staff vocabulary and effective VIP.
 //
-// This pass is ADDITIVE: it must not change what any live account can do.
-// So the suite has two halves — the new behaviour, and a set of cases
-// pinning that legacy `vip` and `admin` still resolve exactly as they did
-// before, including admin keeping permanent delete until the migration
-// takes it away.
+// The vocabulary is STRICT: the 2026-08 production dry run found zero
+// legacy documents, so `vip` and `admin` acceptance was removed. Half of
+// this suite pins the new shape; the other half pins that the retired
+// values confer NOTHING — no acceptance, no VIP, no set membership.
 //
 // Pure unit tests: no emulator, no Firestore, no production data.
 
@@ -13,8 +12,6 @@ const { test, describe, afterEach } = require("node:test");
 
 const {
   USER_ROLES,
-  LEGACY_ROLES,
-  LEGACY_ROLE_MIGRATION,
   STAFF_ROLES,
   ALLOWED_ROLES,
   ADMIN_CENTER_ROLES,
@@ -99,35 +96,39 @@ describe("staff vocabulary", () => {
     assert.equal(STAFF_ROLES.has("admin"), false);
   });
 
-  test("legacy values are still ACCEPTED during compatibility", () => {
-    assert.equal(ALLOWED_ROLES.has(LEGACY_ROLES.VIP), true);
-    assert.equal(ALLOWED_ROLES.has(LEGACY_ROLES.ADMIN), true);
+  test("legacy values are NO LONGER accepted", () => {
+    assert.equal(ALLOWED_ROLES.has("vip"), false);
+    assert.equal(ALLOWED_ROLES.has("admin"), false);
   });
 
-  test("the migration mapping is declared but not applied here", () => {
-    assert.equal(LEGACY_ROLE_MIGRATION.vip, USER_ROLES.USER);
-    assert.equal(LEGACY_ROLE_MIGRATION.admin, USER_ROLES.SUPER_MODERATOR);
+  test("no legacy vocabulary remains exported from the runtime", () => {
+    const roles = require("../utils/roles");
+    assert.equal(roles.LEGACY_ROLES, undefined);
+    assert.equal(roles.LEGACY_ROLE_MIGRATION, undefined);
   });
 });
 
-describe("legacy permissions are unchanged by this pass", () => {
-  test("admin keeps every set it had, including permanent delete", () => {
+describe("the retired admin tier holds nothing", () => {
+  test("admin is in NO permission set", () => {
     for (const set of [
       ADMIN_CENTER_ROLES,
       USER_MANAGEMENT_ROLES,
       ROOM_MANAGEMENT_ROLES,
       PERMANENT_DELETE_ROLES,
     ]) {
-      assert.equal(set.has(LEGACY_ROLES.ADMIN), true);
+      assert.equal(set.has("admin"), false);
     }
   });
 
   test("superModerator does NOT get permanent delete", () => {
-    // The reduction that the admin→superModerator migration will apply.
+    // The reduction that retiring admin into superModerator applied.
     assert.equal(
       PERMANENT_DELETE_ROLES.has(USER_ROLES.SUPER_MODERATOR),
       false,
     );
+    // ...but it IS moderation staff, in the sets admin used to occupy.
+    assert.equal(ADMIN_CENTER_ROLES.has(USER_ROLES.SUPER_MODERATOR), true);
+    assert.equal(ROOM_MANAGEMENT_ROLES.has(USER_ROLES.SUPER_MODERATOR), true);
     assert.equal(PERMANENT_DELETE_ROLES.has(USER_ROLES.SUPER_ADMIN), true);
     // ...and it is not a user manager either.
     assert.equal(
@@ -177,14 +178,16 @@ describe("effective VIP", () => {
     assert.equal(result.primarySource, VIP_SOURCES.SUBSCRIPTION);
   });
 
-  test("source 2: the legacy vip role still confers VIP", () => {
-    // This is what guarantees nobody loses VIP before the migration runs.
+  test("the RETIRED vip role value confers nothing at all", () => {
+    // Safe because production holds zero of these: the dry run proved it
+    // before this acceptance was removed.
     const result = effectiveVip({ user: { role: "vip" } });
-    assert.equal(result.vip, true);
-    assert.equal(result.primarySource, VIP_SOURCES.LEGACY_ROLE);
+    assert.equal(result.vip, false);
+    assert.deepEqual(result.sources, []);
+    assert.equal(VIP_SOURCES.LEGACY_ROLE, undefined);
   });
 
-  test("source 3: a non-expiring complimentary grant", () => {
+  test("source 2: a non-expiring complimentary grant", () => {
     const result = effectiveVip({
       user: { role: "user" },
       grant: { source: "adminGrant", expiresAt: null },

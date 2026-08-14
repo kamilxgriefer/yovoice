@@ -49,7 +49,7 @@ function request(uid, role, data) {
 async function seedAccounts() {
   await Promise.all([
     db.doc(`users/${MOD}`).set({ uid: MOD, displayName: "Mod", role: "moderator" }),
-    db.doc(`users/${ADMIN}`).set({ uid: ADMIN, displayName: "Admin", role: "admin" }),
+    db.doc(`users/${ADMIN}`).set({ uid: ADMIN, displayName: "Admin", role: "superModerator" }),
     db.doc(`users/${PLAIN}`).set({ uid: PLAIN, displayName: "Plain", role: "user" }),
     // Claim says moderator, account is restricted.
     db.doc(`users/${BANNED_MOD}`).set({
@@ -195,8 +195,8 @@ describe("moderateReport", () => {
       assert.equal(result.status, "inReview");
     });
 
-    test("an admin is accepted", async () => {
-      const result = await run(request(ADMIN, "admin", {
+    test("a super moderator is accepted", async () => {
+      const result = await run(request(ADMIN, "superModerator", {
         reportId: REPORT_ID,
         action: "claim",
         requestId: "req-admin-ok",
@@ -295,7 +295,7 @@ describe("moderateReport", () => {
           requestId: "req-first-claim",
         }));
         await expectRejection(
-          run(request(ADMIN, "admin", {
+          run(request(ADMIN, "superModerator", {
             reportId: REPORT_ID,
             action: "resolve",
             requestId: "req-steal",

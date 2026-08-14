@@ -175,12 +175,25 @@ describe("decision table", () => {
     assert.equal(plan.writesDocument, true);
   });
 
-  test("superAdmin and already-migrated roles are skipped", () => {
-    assert.equal(planForUser({ uid: SUPER, user: { role: "superAdmin" } }).action, "skip");
+  test("superAdmin and already-migrated roles are skipped, and the "
+      + "categories are distinct", () => {
+    // alreadyMigrated is ONLY reachable through a valid final-vocabulary
+    // role — an unknown value lands in unknownRole instead. A dry run
+    // reporting alreadyMigrated has therefore confirmed valid no-ops.
+    const superPlan = planForUser({ uid: SUPER, user: { role: "superAdmin" } });
+    assert.equal(superPlan.action, "skip");
+    assert.equal(superPlan.conflict, "nonLegacyStaffRole");
     for (const role of ["user", "moderator", "superModerator", "auditor"]) {
       const plan = planForUser({ uid: `${P}x`, user: { role } });
       assert.equal(plan.action, "skip", role);
+      assert.equal(plan.conflict, "alreadyMigrated", role);
     }
+  });
+
+  test("the historical mapping is preserved by the tool itself", () => {
+    const script = require("../scripts/migrate_roles");
+    assert.equal(script.LEGACY_ROLE_MIGRATION.vip, "user");
+    assert.equal(script.LEGACY_ROLE_MIGRATION.admin, "superModerator");
   });
 
   test("an unknown role is skipped and categorised, never guessed", () => {
@@ -249,7 +262,7 @@ describe("dry run", () => {
 });
 
 describe("apply, idempotency and resume", () => {
-  test("applies once, then is a no-op on re-run", async () => {
+  test("applies once, then a fresh re-run refuses outright", async () => {
     const auth = fakeAuth({ [VIP_A]: "vip", [ADMIN]: "admin" });
     const first = await runScoped(scopedArgs({ apply: true }), auth);
     assert.ok(first.appliedDocumentWrites >= 3);
@@ -264,10 +277,17 @@ describe("apply, idempotency and resume", () => {
     assert.equal(grant.data().expiresAt, null);
     assert.equal(auth.roleOf(ADMIN), "superModerator");
 
-    // Second run: nothing left to do.
-    const second = await runScoped(scopedArgs({ apply: true, reset: true }), auth);
-    assert.equal(second.appliedDocumentWrites, 0);
-    assert.equal(second.appliedGrantWrites, 0);
+    // Second run: a FRESH apply refuses, because nothing legacy remains.
+    // (Deterministic only while no other suite seeds vip/admin roles —
+    // both were retired from every fixture in this cleanup.)
+    await assert.rejects(
+      () => runScoped(scopedArgs({ apply: true, reset: true }), auth),
+      /Refusing --apply/,
+    );
+
+    // A DRY RUN of the completed migration still works and reports zero.
+    const dry = await runScoped(scopedArgs({ reset: true }), auth);
+    assert.equal(dry.appliedDocumentWrites, 0);
   });
 
   test("a paid subscriber still receives the grant, keeping both sources", async () => {

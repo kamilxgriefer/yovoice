@@ -1,7 +1,6 @@
 const { HttpsError } = require("firebase-functions/v2/https");
 
 const {
-  LEGACY_ROLES,
   USER_ROLES,
   ADMIN_CENTER_ROLES,
   USER_MANAGEMENT_ROLES,
@@ -52,7 +51,7 @@ function requireSuperAdmin(request) {
 function requireAdmin(request) {
   return requireRole(
     request,
-    new Set([LEGACY_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN]),
+    new Set([USER_ROLES.SUPER_ADMIN]),
     "Only an administrator can perform this action.",
   );
 }
@@ -60,7 +59,11 @@ function requireAdmin(request) {
 function requireModerator(request) {
   return requireRole(
     request,
-    new Set([USER_ROLES.MODERATOR, LEGACY_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN]),
+    new Set([
+      USER_ROLES.MODERATOR,
+      USER_ROLES.SUPER_MODERATOR,
+      USER_ROLES.SUPER_ADMIN,
+    ]),
     "Only a moderator can perform this action.",
   );
 }

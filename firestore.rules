@@ -91,7 +91,7 @@ service cloud.firestore {
     function isStaffClaim() {
       return isSignedIn() &&
           request.auth.token.get('role', 'user') in
-              ['moderator', 'admin', 'superAdmin'];
+              ['moderator', 'superModerator', 'superAdmin'];
     }
 
     function staffRoleOf(userId) {
@@ -105,7 +105,7 @@ service cloud.firestore {
       return isStaffClaim() &&
           !isRestrictedAccount(request.auth.uid) &&
           staffRoleOf(request.auth.uid) in
-              ['moderator', 'admin', 'superAdmin'];
+              ['moderator', 'superModerator', 'superAdmin'];
     }
 
     function isBlockedPair(userA, userB) {

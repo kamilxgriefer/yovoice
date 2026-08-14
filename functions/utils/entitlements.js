@@ -1,26 +1,24 @@
 // Effective VIP, decided in ONE place.
 //
 // VIP is an entitlement, not a staff role: it coexists with every role in
-// the staff vocabulary. It can arrive from three sources, and the source
-// must stay distinguishable — a complimentary grant is not a paid
+// the staff vocabulary. It has exactly two sources, and the source must
+// stay distinguishable — a complimentary grant is not a paid
 // subscription, and billing, support and the badge all need to tell them
 // apart.
 //
 //   subscription  active premiumIdentity (the server-written mirror of a
 //                 real paid entitlement)
-//   legacyRole    role == "vip", the pre-migration representation. Kept
-//                 ONLY until the migration converts these accounts; it is
-//                 what guarantees nobody loses VIP in the meantime.
-//   adminGrant    a server-managed complimentary grant
+//   adminGrant    a server-managed complimentary grant in vipGrants/{uid}
+//
+// The transitional third source — `role == "vip"` — was retired after the
+// 2026-08 production dry run found zero accounts still carrying it. A
+// role value now confers no VIP under any circumstances.
 //
 // Absence of a grant is safe: no document means no entitlement from that
 // source, never an error and never a default-true.
 
-const { LEGACY_ROLES, normalizeRole } = require("./roles");
-
 const VIP_SOURCES = Object.freeze({
   SUBSCRIPTION: "subscription",
-  LEGACY_ROLE: "legacyRole",
   ADMIN_GRANT: "adminGrant",
 });
 
@@ -46,18 +44,15 @@ function grantIsActive(grant, now = new Date()) {
 /// document and its grant must not trigger another read, and the rule is
 /// far easier to test as a function of its inputs.
 ///
-/// Returns `{ vip, sources }` — plural, because an account can legitimately
-/// hold more than one at once (a paying subscriber who also received a
-/// complimentary grant), and collapsing that to one would lose the
-/// distinction billing needs.
+/// Returns `{ vip, sources, primarySource }` — sources is plural because
+/// an account can legitimately hold both at once (a paying subscriber who
+/// also received a complimentary grant), and collapsing that would lose
+/// the distinction billing needs.
 function effectiveVip({ user = {}, grant = null, now = new Date() } = {}) {
   const sources = [];
 
   if (user.premiumIdentity === true) {
     sources.push(VIP_SOURCES.SUBSCRIPTION);
-  }
-  if (normalizeRole(user.role) === LEGACY_ROLES.VIP) {
-    sources.push(VIP_SOURCES.LEGACY_ROLE);
   }
   if (grantIsActive(grant, now)) {
     sources.push(VIP_SOURCES.ADMIN_GRANT);
@@ -66,16 +61,13 @@ function effectiveVip({ user = {}, grant = null, now = new Date() } = {}) {
   return {
     vip: sources.length > 0,
     sources,
-    // The single source to attribute it to when only one label fits.
-    // A paid subscription outranks a complimentary grant, which outranks
-    // the legacy representation.
+    // A paid subscription outranks a complimentary grant when one label
+    // has to be chosen.
     primarySource: sources.includes(VIP_SOURCES.SUBSCRIPTION)
       ? VIP_SOURCES.SUBSCRIPTION
       : sources.includes(VIP_SOURCES.ADMIN_GRANT)
         ? VIP_SOURCES.ADMIN_GRANT
-        : sources.includes(VIP_SOURCES.LEGACY_ROLE)
-          ? VIP_SOURCES.LEGACY_ROLE
-          : null,
+        : null,
   };
 }
 

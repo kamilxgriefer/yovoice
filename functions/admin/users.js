@@ -3,7 +3,6 @@ const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { getAuth } = require("firebase-admin/auth");
 
 const {
-  LEGACY_ROLES,
   USER_ROLES,
   ALLOWED_ROLES,
   normalizeEmail,
@@ -64,7 +63,7 @@ async function getAuthUser({ uid, email }) {
 function isAdministrativeRole(role) {
   return (
     role === USER_ROLES.MODERATOR ||
-    role === LEGACY_ROLES.ADMIN ||
+    role === USER_ROLES.SUPER_MODERATOR ||
     role === USER_ROLES.SUPER_ADMIN
   );
 }
@@ -168,7 +167,8 @@ exports.assignUserRole = onCall(
     if (!ALLOWED_ROLES.has(requestedRole)) {
       throw new HttpsError(
         "invalid-argument",
-        "Role must be user, vip, moderator, admin or superAdmin.",
+        "Role must be user, guideMaster, support, auditor, moderator, "
+          + "superModerator or superAdmin.",
       );
     }
 
@@ -428,11 +428,12 @@ exports.setUserBan = onCall(
 
     if (
       caller.role !== USER_ROLES.SUPER_ADMIN &&
-      (targetRole === LEGACY_ROLES.ADMIN || targetRole === USER_ROLES.SUPER_ADMIN)
+      (targetRole === USER_ROLES.SUPER_MODERATOR ||
+        targetRole === USER_ROLES.SUPER_ADMIN)
     ) {
       throw new HttpsError(
         "permission-denied",
-        "Only the super administrator can ban administrators.",
+        "Only the super administrator can ban staff accounts.",
       );
     }
 
