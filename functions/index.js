@@ -207,6 +207,22 @@ exports.listReportAuditTrail = listReportAuditTrail;
 
 /*
 |--------------------------------------------------------------------------
+| Public badges (derived mirror — see badges/public_badges.js)
+|--------------------------------------------------------------------------
+*/
+
+const {
+  onUserBadgeSourceChanged,
+  onVipGrantChanged,
+  getPublicBadges,
+} = require("./badges/public_badges");
+
+exports.onUserBadgeSourceChanged = onUserBadgeSourceChanged;
+exports.onVipGrantChanged = onVipGrantChanged;
+exports.getPublicBadges = getPublicBadges;
+
+/*
+|--------------------------------------------------------------------------
 | Premium
 |--------------------------------------------------------------------------
 */

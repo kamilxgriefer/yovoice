@@ -3560,7 +3560,17 @@ async function main() {
   );
 
   await check(
-    "BADGE SECURITY: the public badge mirror is readable but never "
+    "BADGE SECURITY: badges cannot be LISTED — staff and VIP accounts "
+      + "are not enumerable",
+    async () => {
+      await assertFails(
+        getDocs(collection(attacker.firestore(), "publicBadges")),
+      );
+    },
+  );
+
+  await check(
+    "BADGE SECURITY: the public badge mirror is readable by GET but never "
       + "client-writable",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (ctx) => {

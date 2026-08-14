@@ -579,7 +579,12 @@ service cloud.firestore {
     // means making the rest of an account public, and readable by any
     // signed-in account because that is the point of a badge.
     match /publicBadges/{userId} {
-      allow read: if isSignedIn();
+      // GET only — a badge is looked up for a name already on screen.
+      // Listing is refused so the collection cannot be used to enumerate
+      // which accounts are staff or VIP; the batch path is the
+      // getPublicBadges callable, which is bounded and authenticated.
+      allow get: if isSignedIn();
+      allow list: if false;
       allow write: if false;
     }
 
