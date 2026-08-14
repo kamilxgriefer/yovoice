@@ -28,6 +28,8 @@ class StaffCapabilities {
     this.endPublicRoomWithReason = false,
     this.suspendUsers = false,
     this.suspensionLimitHours,
+    this.liftSuspensions = false,
+    this.sanctionStaff = false,
     this.readAuditLogs = false,
     this.supportLookup = false,
     this.guideMode = false,
@@ -53,6 +55,8 @@ class StaffCapabilities {
   final bool endPublicRoomWithReason;
   final bool suspendUsers;
   final int? suspensionLimitHours;
+  final bool liftSuspensions;
+  final bool sanctionStaff;
   final bool readAuditLogs;
   final bool supportLookup;
   final bool guideMode;
@@ -81,6 +85,8 @@ class StaffCapabilities {
       endPublicRoomWithReason: flag('endPublicRoomWithReason'),
       suspendUsers: flag('suspendUsers'),
       suspensionLimitHours: (data['suspensionLimitHours'] as num?)?.toInt(),
+      liftSuspensions: flag('liftSuspensions'),
+      sanctionStaff: flag('sanctionStaff'),
       readAuditLogs: flag('readAuditLogs'),
       supportLookup: flag('supportLookup'),
       guideMode: flag('guideMode'),

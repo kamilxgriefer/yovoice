@@ -14,6 +14,10 @@ import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart'
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import 'package:yovoice/features/staff/data/staff_capabilities.dart';
+import 'package:yovoice/features/staff/presentation/widgets/user_actions_menu.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// The one way to open "who is this person?" from anywhere in the app —
@@ -78,6 +82,8 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
 
   FriendRelationshipStatus? _relationship;
   MutualFriendsSummary? _mutuals;
+  StaffCapabilities _capabilities = StaffCapabilities.none;
+  bool _personallyMuted = false;
   bool _busyFriend = false;
   bool _busyFollow = false;
   bool _busyMessage = false;
@@ -88,6 +94,22 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
   @override
   void initState() {
     super.initState();
+    // The ••• menu's staff section renders only what the server granted;
+    // failure means the personal-only menu, never a guess.
+    StaffCapabilityService().load().then((capabilities) {
+      if (mounted) setState(() => _capabilities = capabilities);
+    }).catchError((_) {});
+    if (!_isSelf && _currentUid.isNotEmpty) {
+      FirebaseFirestore.instance
+          .collection('users')
+          .doc(_currentUid)
+          .collection('muted')
+          .doc(widget.userId)
+          .get()
+          .then((snapshot) {
+        if (mounted) setState(() => _personallyMuted = snapshot.exists);
+      }).catchError((_) {});
+    }
     if (!_isSelf) {
       unawaited(_loadRelationship());
       unawaited(
@@ -238,12 +260,51 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const SizedBox(height: 10),
-              Container(
-                width: 44,
-                height: 5,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF51475E),
-                  borderRadius: BorderRadius.circular(10),
+              // Handle centred, the ••• user-actions menu upper-right —
+              // present on every account's sheet with the personal
+              // actions, growing the staff section only when the server
+              // granted one.
+              SizedBox(
+                height: 34,
+                child: Stack(
+                  alignment: Alignment.topCenter,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Container(
+                        width: 44,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF51475E),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                    if (!_isSelf)
+                      Positioned(
+                        right: 10,
+                        top: 0,
+                        child: UserActionsMenu(
+                          targetUid: widget.userId,
+                          targetName:
+                              profile?.displayName ??
+                              widget.seedDisplayName ??
+                              'this user',
+                          capabilities: _capabilities,
+                          currentUid: _currentUid,
+                          isBlocked: _relationship ==
+                              FriendRelationshipStatus.blocked,
+                          isPersonallyMuted: _personallyMuted,
+                          onChanged: () {
+                            if (mounted) {
+                              setState(
+                                () => _personallyMuted = !_personallyMuted,
+                              );
+                            }
+                          },
+                        ),
+                      ),
+                  ],
                 ),
               ),
               Padding(

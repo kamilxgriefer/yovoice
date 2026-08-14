@@ -4,6 +4,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/role_identity.dart';
+import 'package:yovoice/features/staff/data/staff_capabilities.dart';
+import 'package:yovoice/features/staff/presentation/widgets/user_actions_menu.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// What a lookup returned: the authoritative role from the server, VIP
@@ -119,8 +121,13 @@ class UserManagementScreen extends StatefulWidget {
     this.lookup,
     this.functions,
     this.currentUid,
+    this.capabilityService,
     super.key,
   });
+
+  /// Feeds the shared ••• actions menu beside a looked-up account, so
+  /// Staff Center and the profile sheet offer the identical action set.
+  final StaffCapabilityService? capabilityService;
 
   final StaffUserLookup? lookup;
   final FirebaseFunctions? functions;
@@ -165,11 +172,22 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   }
 
   ManagedUser? _user;
+  StaffCapabilities _capabilities = StaffCapabilities.none;
   String? _selectedRole;
   bool _searching = false;
   bool _assigning = false;
   String? _message;
   bool _messageIsError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    (widget.capabilityService ?? StaffCapabilityService()).load().then((
+      capabilities,
+    ) {
+      if (mounted) setState(() => _capabilities = capabilities);
+    }).catchError((_) {});
+  }
 
   @override
   void dispose() {
@@ -391,6 +409,16 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                             color: user.banned
                                 ? RoleIdentity.ownerColor
                                 : const Color(0xFF22C55E),
+                          ),
+                          // The SAME actions component the profile sheet
+                          // uses — one matrix, two surfaces.
+                          UserActionsMenu(
+                            targetUid: user.uid,
+                            targetName: user.displayName,
+                            capabilities: _capabilities,
+                            currentUid: _myUid,
+                            functions: widget.functions,
+                            onChanged: _runLookup,
                           ),
                         ],
                       ),
