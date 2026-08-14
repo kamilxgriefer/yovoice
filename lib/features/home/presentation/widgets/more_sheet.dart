@@ -9,6 +9,7 @@ import 'package:yovoice/features/moments/presentation/screens/moments_screen.dar
 import 'package:yovoice/features/notifications/presentation/screens/notification_preferences_screen.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/settings_screen.dart';
+import 'package:yovoice/features/staff/presentation/screens/staff_center_screen.dart';
 
 enum MoreDestination {
   friends,
@@ -26,6 +27,11 @@ enum MoreDestination {
   /// mobile sheet entirely — this milestone is desktop-only, and no
   /// mobile file was touched to add it.
   moderation,
+
+  /// DESKTOP + OWNER ONLY. Listed only when the server-derived
+  /// capabilities include manageRoles — the confirmed protected owner.
+  /// The Staff Center screen re-verifies on mount regardless.
+  staffCenter,
 }
 
 /// Destinations the DESKTOP rail shows directly, so the desktop "More"
@@ -80,6 +86,7 @@ Widget moreDestinationScreen(
     // Re-checks staff authority on mount and renders an access-denied
     // state without querying anything if it fails. Menu visibility is
     // presentation; this and firestore.rules are the boundary.
+    MoreDestination.staffCenter => const StaffCenterScreen(),
     MoreDestination.moderation => ModerationCenterScreen(
       isRootTab: isRootTab,
     ),
@@ -97,6 +104,7 @@ Future<MoreDestination?> showDesktopMoreMenu(
   // presentation choice — the destination itself, firestore.rules and
   // the moderateReport callable each re-check authority.
   bool isStaff = false,
+  bool isOwner = false,
 }) {
   final items = <(MoreDestination, IconData, String, String)>[
     (
@@ -141,6 +149,13 @@ Future<MoreDestination?> showDesktopMoreMenu(
         Icons.shield_rounded,
         'Moderation',
         'Review reported content',
+      ),
+    if (isOwner)
+      (
+        MoreDestination.staffCenter,
+        Icons.admin_panel_settings_rounded,
+        'Staff Center',
+        'Roles and user management',
       ),
   ];
 

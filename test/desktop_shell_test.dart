@@ -290,6 +290,9 @@ void main() {
         // the staff check — an ordinary user never sees it. It is not
         // orphaned: for staff it is one popover entry like the rest.
         MoreDestination.moderation,
+        // Same shape, one tier stricter: listed only for the confirmed
+        // protected owner (capabilities.manageRoles).
+        MoreDestination.staffCenter,
       };
 
       final unreachable = MoreDestination.values

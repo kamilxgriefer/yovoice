@@ -34,6 +34,7 @@ import 'package:yovoice/features/moments/presentation/screens/record_voice_momen
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_screen.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_mini_bar.dart';
@@ -518,12 +519,26 @@ class _MainShellState extends State<MainShell>
   /// firestore.rules and the moderateReport callable each re-check.
   bool _isStaff = false;
 
+  /// Whether the More menu lists the Staff Center. Derived from the
+  /// getMyStaffCapabilities callable (manageRoles == the confirmed
+  /// owner); the screen re-verifies on mount, so this only decides
+  /// visibility.
+  bool _isOwner = false;
+
   Future<void> _resolveStaffAccess() async {
     try {
       final staff = await ModerationService().isActiveStaff();
       if (mounted && staff != _isStaff) setState(() => _isStaff = staff);
     } catch (_) {
       // No session or no Firebase: not staff, which is the safe default.
+    }
+    try {
+      final capabilities = await StaffCapabilityService().load();
+      if (mounted && capabilities.manageRoles != _isOwner) {
+        setState(() => _isOwner = capabilities.manageRoles);
+      }
+    } catch (_) {
+      // Not the owner, which is the safe default.
     }
   }
 
@@ -540,6 +555,7 @@ class _MainShellState extends State<MainShell>
         context,
         anchor: anchor,
         isStaff: _isStaff,
+        isOwner: _isOwner,
       );
     } else {
       destination = await showMoreSheet(context);
@@ -607,7 +623,8 @@ class _MainShellState extends State<MainShell>
       MoreDestination.achievements ||
       MoreDestination.notifications ||
       MoreDestination.settings ||
-      MoreDestination.moderation => DesktopNavItem.more,
+      MoreDestination.moderation ||
+      MoreDestination.staffCenter => DesktopNavItem.more,
       MoreDestination.profile => null,
     };
   }
