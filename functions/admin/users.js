@@ -3,12 +3,13 @@ const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { getAuth } = require("firebase-admin/auth");
 
 const {
-  SUPER_ADMIN_EMAIL,
+  LEGACY_ROLES,
   USER_ROLES,
   ALLOWED_ROLES,
   normalizeEmail,
   normalizeRole,
-  isProtectedOwnerEmail,
+  isProtectedOwnerUid,
+  protectedOwnerConfigured,
 } = require("../utils/roles");
 
 const {
@@ -63,7 +64,7 @@ async function getAuthUser({ uid, email }) {
 function isAdministrativeRole(role) {
   return (
     role === USER_ROLES.MODERATOR ||
-    role === USER_ROLES.ADMIN ||
+    role === LEGACY_ROLES.ADMIN ||
     role === USER_ROLES.SUPER_ADMIN
   );
 }
@@ -71,13 +72,23 @@ function isAdministrativeRole(role) {
 exports.bootstrapSuperAdmin = onCall(
   {
     region: "europe-west1",
+    // Bound only where the owner guard is evaluated.
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
     enforceAppCheck: false,
   },
   async (request) => {
     const authenticatedUser = requireAuthentication(request);
-    const callerEmail = normalizeEmail(authenticatedUser.token.email);
 
-    if (callerEmail !== SUPER_ADMIN_EMAIL) {
+    // Fail closed: without the secret the owner cannot be identified, so
+    // nobody may claim ownership. Never report WHICH uid is expected.
+    if (!protectedOwnerConfigured()) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Owner protection is not configured.",
+      );
+    }
+
+    if (!isProtectedOwnerUid(authenticatedUser.uid)) {
       throw new HttpsError(
         "permission-denied",
         "This account is not allowed to become the application owner.",
@@ -134,6 +145,8 @@ exports.bootstrapSuperAdmin = onCall(
 exports.assignUserRole = onCall(
   {
     region: "europe-west1",
+    // Bound only where the owner guard is evaluated.
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
     enforceAppCheck: false,
   },
   async (request) => {
@@ -171,7 +184,10 @@ exports.assignUserRole = onCall(
       email: targetEmail,
     });
 
-    if (isProtectedOwnerEmail(targetUser.email)) {
+    // Identified by immutable uid. With the secret missing this returns
+    // true for every candidate, so the owner guard refuses rather than
+    // waving everything through.
+    if (isProtectedOwnerUid(targetUser.uid)) {
       throw new HttpsError(
         "failed-precondition",
         "The application owner's role cannot be changed.",
@@ -371,6 +387,8 @@ exports.listAdminUsers = onCall(
 exports.setUserBan = onCall(
   {
     region: "europe-west1",
+    // Bound only where the owner guard is evaluated.
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
     enforceAppCheck: false,
   },
   async (request) => {
@@ -399,7 +417,7 @@ exports.setUserBan = onCall(
 
     const targetUser = await auth.getUser(targetUid);
 
-    if (isProtectedOwnerEmail(targetUser.email)) {
+    if (isProtectedOwnerUid(targetUser.uid)) {
       throw new HttpsError(
         "failed-precondition",
         "The application owner cannot be banned.",
@@ -410,7 +428,7 @@ exports.setUserBan = onCall(
 
     if (
       caller.role !== USER_ROLES.SUPER_ADMIN &&
-      (targetRole === USER_ROLES.ADMIN || targetRole === USER_ROLES.SUPER_ADMIN)
+      (targetRole === LEGACY_ROLES.ADMIN || targetRole === USER_ROLES.SUPER_ADMIN)
     ) {
       throw new HttpsError(
         "permission-denied",

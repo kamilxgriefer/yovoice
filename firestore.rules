@@ -560,6 +560,29 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Complimentary VIP grants. Server-owned in exactly the same way
+    // `entitlements` is: a client that could write here could grant
+    // itself VIP, so no client writes at all. Readable by the holder so
+    // the app can show WHY they have it (a complimentary grant is not a
+    // paid subscription and must stay distinguishable).
+    //
+    // No production grants exist yet — this pass adds the boundary, not
+    // the data.
+    match /vipGrants/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false;
+    }
+
+    // The public badge mirror: what everyone else is allowed to see about
+    // someone's role and VIP status, written only by Cloud Functions.
+    // Separate from `users/{uid}` so that making a badge public never
+    // means making the rest of an account public, and readable by any
+    // signed-in account because that is the point of a badge.
+    match /publicBadges/{userId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
     // ---------------------------------------------------------------
     // GLOBAL CHAT — the single public channel shared by the whole
     // authenticated community. Deliberately a separate top-level

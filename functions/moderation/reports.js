@@ -4,7 +4,7 @@ const { FieldValue } = require("firebase-admin/firestore");
 const { requireAuthentication } = require("../utils/auth");
 const { db, normalizeText } = require("../utils/firestore");
 const { writeAuditLog } = require("../utils/audit");
-const { USER_ROLES } = require("../utils/roles");
+const { LEGACY_ROLES, USER_ROLES } = require("../utils/roles");
 
 const REGION = "europe-west1";
 
@@ -84,7 +84,7 @@ async function requireActiveStaff(request) {
 
   const staffRoles = new Set([
     USER_ROLES.MODERATOR,
-    USER_ROLES.ADMIN,
+    LEGACY_ROLES.ADMIN,
     USER_ROLES.SUPER_ADMIN,
   ]);
 

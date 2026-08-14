@@ -3523,6 +3523,94 @@ async function main() {
     },
   );
 
+  // --- VIP grants and the public badge mirror -------------------------
+
+  await check(
+    "VIP GRANT SECURITY: a client cannot grant itself VIP",
+    async () => {
+      await assertFails(
+        setDoc(doc(host.firestore(), "vipGrants/host-uid"), {
+          source: "adminGrant",
+          expiresAt: null,
+        }),
+      );
+      // Nor anyone else.
+      await assertFails(
+        setDoc(doc(host.firestore(), "vipGrants/attacker-uid"), {
+          source: "adminGrant",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "VIP GRANT: the holder can READ their own grant, nobody else can",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "vipGrants/host-uid"), {
+          source: "adminGrant",
+          expiresAt: null,
+        });
+      });
+      await assertSucceeds(getDoc(doc(host.firestore(), "vipGrants/host-uid")));
+      await assertFails(
+        getDoc(doc(attacker.firestore(), "vipGrants/host-uid")),
+      );
+    },
+  );
+
+  await check(
+    "BADGE SECURITY: the public badge mirror is readable but never "
+      + "client-writable",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "publicBadges/host-uid"), {
+          role: "moderator",
+          vip: true,
+        });
+      });
+      // Public by design — that is what a badge is for.
+      await assertSucceeds(
+        getDoc(doc(attacker.firestore(), "publicBadges/host-uid")),
+      );
+      // But nobody may forge one, for themselves or anyone else.
+      await assertFails(
+        setDoc(doc(attacker.firestore(), "publicBadges/attacker-uid"), {
+          role: "superAdmin",
+          vip: true,
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(host.firestore(), "publicBadges/host-uid"), {
+          role: "superAdmin",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "ROLE SECURITY: a client still cannot write role or the premium mirror",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "users/attacker-uid"), {
+          uid: "attacker-uid",
+          displayName: "Attacker",
+          role: "user",
+        });
+      });
+      const db = attacker.firestore();
+      await assertFails(
+        updateDoc(doc(db, "users/attacker-uid"), { role: "superAdmin" }),
+      );
+      await assertFails(
+        updateDoc(doc(db, "users/attacker-uid"), { premiumIdentity: true }),
+      );
+      await assertFails(
+        updateDoc(doc(db, "users/attacker-uid"), { banned: false }),
+      );
+    },
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();
   process.exit(failed > 0 ? 1 : 0);
