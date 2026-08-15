@@ -82,6 +82,16 @@ permission flags).
   Direct messages and replies are now derived by the server from the message
   document.
 
+## Achievements
+
+- **FIXED — every achievement progress transaction was denied by Firestore.**
+  `AchievementService` atomically writes the metric counter, unlocked ids,
+  unlock timestamps, selected title and reconciliation timestamp, but the
+  self-update allowlist omitted `unlockedTitleTimestamps`. Firestore rejected
+  the whole transaction, while best-effort callers intentionally swallowed
+  the tracking failure so the source action could still succeed. The field is
+  now allowed and emulator-covered; Awards also reconciles counters on open.
+
 ## Moderation & safety
 
 - **FIXED — Staff Center user lookup could not find existing users.**

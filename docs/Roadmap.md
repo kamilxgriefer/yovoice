@@ -16,6 +16,16 @@ someone decide what to pick up next.
 
 ## Done
 
+- Achievements end-to-end repair (2026-08-15): fixed the Firestore self-write
+  allowlist that rejected every atomic achievement update because
+  `unlockedTitleTimestamps` was missing, added an emulator regression for the
+  full counter/unlock/timestamp/selection write, initialized timestamp maps on
+  new profiles, and made Awards reconcile real counters whenever it opens.
+  Category chips now state earned/available counts (`0/30`) instead of the
+  misleading bare zero. Verified with the source-event suite, clean static
+  analysis and all 211 Firestore rules cases. See
+  [ADR-049](Decisions.md#adr-049-achievement-updates-are-one-allowed-atomic-write-and-awards-reconciles-source-owned-counters-on-open).
+
 - Global Chat retired from the app UI; Home recent-chat preview
   (2026-08-15): the public Global Chat entry point and Home feed were
   replaced on mobile and desktop by `Your recent chats`, backed by the

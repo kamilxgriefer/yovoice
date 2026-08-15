@@ -9,13 +9,32 @@ import '../../data/services/achievement_service.dart';
 /// Self-contained entry point for the Awards / achievements hub reached
 /// from the More sheet — streams the current profile itself so callers
 /// (like [MoreDestination.achievements]) don't need to thread one through.
-class AwardsHubScreen extends StatelessWidget {
+class AwardsHubScreen extends StatefulWidget {
   const AwardsHubScreen({super.key});
+
+  @override
+  State<AwardsHubScreen> createState() => _AwardsHubScreenState();
+}
+
+class _AwardsHubScreenState extends State<AwardsHubScreen> {
+  late final ProfileService _profiles;
+  late final AchievementService _achievements;
+
+  @override
+  void initState() {
+    super.initState();
+    _profiles = ProfileService();
+    _achievements = AchievementService();
+    // Counters such as friends/followers are maintained by their source
+    // services. Reconcile them with the title catalog whenever Awards opens,
+    // so an already-earned title never waits for an unrelated future event.
+    _achievements.refreshUnlockedTitles().catchError((_) {});
+  }
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<UserProfile>(
-      stream: ProfileService().watchCurrentProfile(),
+      stream: _profiles.watchCurrentProfile(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Scaffold(
@@ -126,6 +145,13 @@ class AwardsProgress {
   int countForCategory(AchievementCategory category) {
     final metrics = _categoryMetrics[category] ?? const <String>{};
     return unlocked.where((item) => metrics.contains(item.metric)).length;
+  }
+
+  int totalForCategory(AchievementCategory category) {
+    final metrics = _categoryMetrics[category] ?? const <String>{};
+    return AchievementCatalog.all
+        .where((item) => metrics.contains(item.metric))
+        .length;
   }
 }
 
@@ -297,7 +323,7 @@ class _AwardsHeader extends StatelessWidget {
                 _CategoryChip(
                   label: 'All',
                   icon: Icons.grid_view_rounded,
-                  count: progress.unlockedCount,
+                  count: '${progress.unlockedCount}/${progress.totalCount}',
                   selected: selectedCategory == null,
                   onTap: () => onSelectCategory(null),
                 ),
@@ -306,7 +332,8 @@ class _AwardsHeader extends StatelessWidget {
                   _CategoryChip(
                     label: _categoryLabel(category),
                     icon: _categoryIcon(category),
-                    count: progress.countForCategory(category),
+                    count:
+                        '${progress.countForCategory(category)}/${progress.totalForCategory(category)}',
                     selected: selectedCategory == category,
                     onTap: () => onSelectCategory(category),
                   ),
@@ -507,7 +534,7 @@ class _CategoryChip extends StatelessWidget {
 
   final String label;
   final IconData icon;
-  final int count;
+  final String count;
   final bool selected;
   final VoidCallback onTap;
 

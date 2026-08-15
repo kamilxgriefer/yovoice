@@ -2985,3 +2985,47 @@ integrity while fully removing the feature from the current user experience.
 - `See all` routes to Chats and the empty-state action routes to Friends.
 - A future backend cleanup requires a separately planned migration and client
   compatibility window; it is not implied by this presentation change.
+
+## ADR-049: Achievement updates are one allowed atomic write and Awards reconciles source-owned counters on open
+
+### Context
+
+Achievement source events were present for messages, created rooms and
+published Moments, while friends and followers maintain their counters in
+their own services. Nevertheless every title remained at zero in production.
+`AchievementService` writes `unlockedTitleTimestamps` in the same transaction
+as the counter and unlocked ids, but that field was absent from the
+`users/{uid}` self-update allowlist. Firestore therefore rejected the entire
+transaction. Callers correctly treated tracking as best-effort so a successful
+message or room was not rolled back, which made the authorization failure
+silent to users.
+
+### Decision
+
+`unlockedTitleTimestamps` is part of the existing achievement write contract
+and is allowed only in the account owner's existing self-update field set.
+The full atomic shape — source counter, unlocked ids, timestamp map, selected
+title and `achievementsUpdatedAt` — is pinned in the rules emulator suite.
+New profiles initialize the timestamp map. Opening Awards runs one
+`refreshUnlockedTitles` reconciliation before continuing to render the live
+profile stream, ensuring counters owned by Friend/Follow services unlock their
+titles without waiting for another achievement-specific event. Category chips
+show earned/total values so zero progress cannot be mistaken for an empty
+catalog.
+
+### Reasoning
+
+Allowing the omitted field restores the transaction the service already
+designed; splitting timestamps into a second write would permit partially
+updated progress and make recent unlocks unreliable. Reconciliation belongs at
+the Awards boundary because it is idempotent, reads existing real counters and
+does not fabricate activity.
+
+### Consequences
+
+- Existing accounts self-heal when they next open Awards.
+- New source events can persist their metric and unlock in one transaction.
+- The client-side counters retain their documented vanity/progress trust model;
+  this change does not turn them into security authority.
+- Production requires the tested Firestore rules deployment in addition to the
+  client release.

@@ -194,6 +194,7 @@ class ProfileService {
       'reactionCount': 0,
       'hostMinutes': 0,
       'unlockedTitleIds': <String>[],
+      'unlockedTitleTimestamps': <String, Object?>{},
     };
   }
 

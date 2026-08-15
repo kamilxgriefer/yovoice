@@ -307,7 +307,8 @@ service cloud.firestore {
                     'roomCount', 'communityCount', 'voiceMinutes',
                     'reactionCount', 'hostMinutes', 'activeDays',
                     'momentCount', 'friendCount', 'unlockedTitleIds',
-                    'selectedTitleId', 'achievementsUpdatedAt',
+                    'unlockedTitleTimestamps', 'selectedTitleId',
+                    'achievementsUpdatedAt',
                     'notificationPreferences',
                   ]) && accountTypeChangeAllowed())
               : request.resource.data.diff(resource.data).affectedKeys()

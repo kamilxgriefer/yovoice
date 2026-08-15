@@ -295,6 +295,23 @@ async function main() {
   });
 
   await check(
+    "regression: achievement progress can atomically persist unlock timestamps",
+    async () => {
+      const db = host.firestore();
+      const ref = doc(db, "users/host-uid");
+      await assertSucceeds(
+        updateDoc(ref, {
+          roomCount: 1,
+          unlockedTitleIds: ["rooms_1"],
+          "unlockedTitleTimestamps.rooms_1": serverTimestamp(),
+          selectedTitleId: "rooms_1",
+          achievementsUpdatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
     "SECURITY: user cannot write an out-of-allowlist field to their own doc",
     async () => {
       const db = host.firestore();
