@@ -714,14 +714,19 @@ void main() {
       await tester.pumpAndSettle();
       expect(service.queries.last.status, ReportStatus.resolved);
 
-      await tester.tap(find.text('Accounts'));
+      // Target and reason live behind the toolbar's Filters door now;
+      // both are picked in one visit and land on Apply.
+      await tester.tap(find.textContaining('Filters'));
       await tester.pumpAndSettle();
-      expect(service.queries.last.targetType, ReportTargetType.user);
+      await tester.tap(find.text('Account'));
+      await tester.pump();
+      await tester.tap(find.text('Spam or scam').last);
+      await tester.pump();
+      await tester.tap(find.text('Apply filters'));
+      await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Spam or scam').first);
-      await tester.pumpAndSettle();
       expect(service.queries.last.reason, ReportReason.spam);
-      // Still carrying the earlier two — filters compose server-side.
+      // Still carrying the earlier ones — filters compose server-side.
       expect(service.queries.last.status, ReportStatus.resolved);
       expect(service.queries.last.targetType, ReportTargetType.user);
     });
@@ -745,7 +750,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(service.queries.last.limit, ModerationService.pageSize * 2);
 
-      await tester.tap(find.text('Messages'));
+      await tester.tap(find.textContaining('Filters'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Message').last);
+      await tester.pump();
+      await tester.tap(find.text('Apply filters'));
       await tester.pumpAndSettle();
 
       expect(service.queries.last.targetType, ReportTargetType.globalMessage);

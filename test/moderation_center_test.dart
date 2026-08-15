@@ -192,7 +192,9 @@ void main() {
 
       expect(find.text('Moderation'), findsOneWidget);
       expect(find.text('Moderation is staff only'), findsNothing);
-      expect(find.text('moderator'), findsOneWidget);
+      // The badge speaks human, never the internal claim vocabulary.
+      expect(find.text('Moderator'), findsOneWidget);
+      expect(find.text('moderator'), findsNothing);
     });
 
     testWidgets('an admin gets the workspace', (tester) async {
@@ -210,7 +212,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Moderation'), findsOneWidget);
-      expect(find.text('admin'), findsOneWidget);
+      expect(find.text('Admin'), findsOneWidget);
+      expect(find.text('admin'), findsNothing);
     });
   });
 
@@ -232,10 +235,14 @@ void main() {
       tester,
     ) async {
       await openAsStaff(tester);
+      expect(find.text('No reports here'), findsOneWidget);
       expect(
-        find.textContaining('Reports appear as the community files them'),
+        find.textContaining('New community reports will appear here'),
         findsOneWidget,
       );
+      // ONE coherent empty state: the detail pane stays quiet rather
+      // than competing with its own "Select a report".
+      expect(find.text('Select a report'), findsNothing);
     });
 
     testWidgets('real reports render with reason, target and status', (
@@ -244,9 +251,10 @@ void main() {
       await seedReport(id: 'r1', reason: 'spam', note: 'buying followers');
       await openAsStaff(tester);
 
-      // Once as the reason filter, once as the row's heading.
-      expect(find.text('Spam or scam'), findsNWidgets(2));
-      expect(rowsWithTarget('Global message'), findsWidgets);
+      // The permanent pill wall is gone: the reason appears ONLY on
+      // the row itself now.
+      expect(find.text('Spam or scam'), findsOneWidget);
+      expect(rowsWithTarget('Message'), findsWidgets);
       expect(find.text('buying followers'), findsOneWidget);
       expect(find.text('Open'), findsWidgets);
     });
@@ -258,15 +266,15 @@ void main() {
       await seedReport(id: 'r2', reason: 'hate', status: 'resolved');
       await openAsStaff(tester);
 
-      // Two = filter pill + row. One = filter pill only, no row.
-      expect(find.text('Spam or scam'), findsNWidgets(2));
-      expect(find.text('Hate speech'), findsOneWidget);
+      // Reasons render only on rows now: open shows spam, not hate.
+      expect(find.text('Spam or scam'), findsOneWidget);
+      expect(find.text('Hate speech'), findsNothing);
 
       await tester.tap(find.text('Resolved'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Hate speech'), findsNWidgets(2));
-      expect(find.text('Spam or scam'), findsOneWidget);
+      expect(find.text('Hate speech'), findsOneWidget);
+      expect(find.text('Spam or scam'), findsNothing);
     });
 
     testWidgets('the reason filter narrows within a status', (tester) async {
@@ -274,13 +282,22 @@ void main() {
       await seedReport(id: 'r2', reason: 'harassment');
       await openAsStaff(tester);
 
-      expect(rowsWithTarget('Global message'), findsNWidgets(2));
+      expect(rowsWithTarget('Message'), findsNWidgets(2));
 
-      // Tap the FILTER pill (the first occurrence, above the queue).
-      await tester.tap(find.text('Spam or scam').first);
+      // Filters live behind the toolbar's Filters door now: open it,
+      // pick the reason, Apply.
+      await tester.tap(find.textContaining('Filters'));
       await tester.pumpAndSettle();
-      expect(rowsWithTarget('Global message'), findsOneWidget);
-      expect(find.text('Harassment or bullying'), findsOneWidget);
+      await tester.tap(find.text('Spam or scam').last);
+      await tester.pump();
+      await tester.tap(find.text('Apply filters'));
+      await tester.pumpAndSettle();
+
+      // One matching row remains, plus the removable active-filter
+      // chip under the toolbar; the other reason is gone entirely.
+      expect(rowsWithTarget('Message'), findsOneWidget);
+      expect(find.text('Spam or scam'), findsNWidgets(2));
+      expect(find.text('Harassment or bullying'), findsNothing);
     });
 
     testWidgets('selecting a report opens its detail with the report id', (
@@ -289,8 +306,7 @@ void main() {
       await seedReport(id: 'r1', reason: 'spam', note: 'context here');
       await openAsStaff(tester);
 
-      // The row, not the filter pill.
-      await tester.tap(rowsWithTarget('Global message'));
+      await tester.tap(rowsWithTarget('Message'));
       await tester.pumpAndSettle();
 
       expect(find.text('r1'), findsOneWidget);
@@ -302,7 +318,7 @@ void main() {
       await seedReport(id: 'r1', reason: 'spam', age: const Duration(hours: 2));
       await openAsStaff(tester);
 
-      await tester.tap(rowsWithTarget('Global message'));
+      await tester.tap(rowsWithTarget('Message'));
       await tester.pumpAndSettle();
       expect(find.text('r1'), findsOneWidget);
 
@@ -316,7 +332,7 @@ void main() {
 
       // Still showing r1's detail, even though a newer row arrived.
       expect(find.text('r1'), findsOneWidget);
-      expect(rowsWithTarget('Global message'), findsNWidgets(2));
+      expect(rowsWithTarget('Message'), findsNWidgets(2));
     });
   });
 

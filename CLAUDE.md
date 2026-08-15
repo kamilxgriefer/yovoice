@@ -63,6 +63,20 @@ doc and the codebase disagree; docs can drift, code is ground truth.
   if a feature has no backend support, show it disabled and labeled
   "Coming soon" rather than faking it. This project already follows that
   convention (see the Settings/Awards/Creator Studio screens).
+- **No user-facing UI feature is complete until its mobile, tablet and
+  desktop layouts have been intentionally implemented and verified.**
+  Define narrow, medium and wide behavior for every new or modified
+  component — desktop is never a stretched phone layout and mobile is
+  never a compressed desktop one. Share state, services, permissions
+  and business logic across the variants; let only presentation and
+  navigation adapt by available width (not device labels). Verify
+  navigation, loading, empty, error, populated and long-content states,
+  text wrapping, and browser zoom at each breakpoint. Screens rendered
+  inside the desktop shell's content slots draw no app bar of their own
+  (the shell owns navigation); the same screens pushed as mobile routes
+  carry a real app bar with Back — see `isRootTab` on the More
+  destinations and ModerationCenterScreen/StaffCenterScreen for the
+  established pattern.
 
 ## After finishing a feature
 

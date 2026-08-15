@@ -210,6 +210,8 @@ void main() {
     Size(1440, 820),
     Size(1440, 620),
     Size(1100, 820),
+    Size(390, 844),
+    Size(768, 1024),
   ]) {
     testWidgets('moderation center at ${size.width}x${size.height}', (
       tester,
@@ -242,7 +244,7 @@ void main() {
               fontFamily: 'Roboto',
             ),
             home: ModerationCenterScreen(
-              isRootTab: true,
+              isRootTab: size.width >= 980,
               moderationService: service,
             ),
           ),

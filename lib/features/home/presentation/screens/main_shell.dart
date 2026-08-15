@@ -42,6 +42,34 @@ import 'package:yovoice/features/rooms/presentation/widgets/room_mini_bar.dart';
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
 
+  /// DESKTOP content slots beyond the three shared dock tabs, keyed by
+  /// IndexedStack index. Every More destination EXCEPT the two below
+  /// must own a slot, so selecting any of them swaps the centre of the
+  /// SAME shell instead of pushing a route over it:
+  ///
+  ///  * `friends` is primary tab index 2, not a popover destination;
+  ///  * `profile` pushes on purpose (it keeps a real Back button and is
+  ///    opened from the profile card, not the rail).
+  ///
+  /// Staff Center's absence from this map was the desktop page-shift
+  /// bug: with no slot it fell through to the pushed MoreDestinationHost,
+  /// which mounts a SECOND sidebar (profile card and all) and animates
+  /// the whole viewport — exactly the "page moved" symptom — while
+  /// Moderation, one entry up, swapped in place. Public so the
+  /// navigation regression suite can pin this contract.
+  @visibleForTesting
+  static const Map<int, MoreDestination> desktopSlots = {
+    3: MoreDestination.discover,
+    4: MoreDestination.notifications,
+    5: MoreDestination.moments,
+    6: MoreDestination.clubs,
+    7: MoreDestination.creatorStudio,
+    8: MoreDestination.achievements,
+    9: MoreDestination.settings,
+    10: MoreDestination.moderation,
+    11: MoreDestination.staffCenter,
+  };
+
   @override
   State<MainShell> createState() => _MainShellState();
 }
@@ -100,20 +128,12 @@ class _MainShellState extends State<MainShell>
   /// desktop destination — rail items AND everything chosen from the
   /// More popover — is one of these, so selecting any of them swaps the
   /// centre of the SAME shell instead of pushing a route over it.
-  static const Map<int, MoreDestination> _slotDestinations = {
-    _discoverSlot: MoreDestination.discover,
-    _notificationsSlot: MoreDestination.notifications,
-    5: MoreDestination.moments,
-    6: MoreDestination.clubs,
-    7: MoreDestination.creatorStudio,
-    8: MoreDestination.achievements,
-    9: MoreDestination.settings,
-    10: MoreDestination.moderation,
-  };
+  static const Map<int, MoreDestination> _slotDestinations =
+      MainShell.desktopSlots;
 
   /// The notifications FEED (the bell) is its own screen rather than a
   /// MoreDestination — Alerts (preferences) is the one in the popover.
-  static const int _slotCount = 11;
+  static const int _slotCount = 12;
 
   /// Slots are built on FIRST visit and then kept alive, so switching
   /// back is instant and scroll position survives — without mounting

@@ -143,6 +143,22 @@ class ModerationService {
     }
   }
 
+  /// One status's total, as a SERVER-SIDE aggregate — the cost of a
+  /// count, never a document download, and it obeys the same rules the
+  /// queue query does. Returns null on failure so the UI can OMIT the
+  /// number rather than invent one.
+  Future<int?> countByStatus(ReportStatus status) async {
+    try {
+      final aggregate = await _reports
+          .where('status', isEqualTo: status.name)
+          .count()
+          .get();
+      return aggregate.count;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// The queue, newest first.
   ///
   /// EVERY filter is a server-side equality clause — status, target type

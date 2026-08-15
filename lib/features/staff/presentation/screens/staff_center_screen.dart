@@ -28,6 +28,7 @@ import 'package:yovoice/features/staff/presentation/sections/staff_users_section
 /// refusal it always did.
 class StaffCenterScreen extends StatefulWidget {
   const StaffCenterScreen({
+    this.isRootTab = false,
     this.capabilityService,
     this.directoryService,
     this.overviewService,
@@ -40,6 +41,12 @@ class StaffCenterScreen extends StatefulWidget {
     this.currentUid,
     super.key,
   });
+
+  /// True when rendered as the desktop shell's content slot — the shell
+  /// owns navigation, so this screen draws NO app bar there and shows a
+  /// `Staff tools / Staff Center` context label instead. When pushed as
+  /// a route (mobile), the app bar carries Back and Home.
+  final bool isRootTab;
 
   final StaffCapabilityService? capabilityService;
   final StaffDirectoryService? directoryService;
@@ -174,17 +181,57 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
     final capabilities = _capabilities ?? StaffCapabilities.none;
     final sections = _visibleSections(capabilities);
 
+    // Inside the desktop shell's content slot the shell owns navigation
+    // and this screen must not add its own chrome; pushed as a mobile
+    // route it carries a real app bar with Back and Home so it is never
+    // a navigation dead end.
+    final inShellSlot =
+        widget.isRootTab && MediaQuery.sizeOf(context).width >= 980;
+
     return Scaffold(
       backgroundColor: StaffCenterStyle.background,
-      appBar: AppBar(
-        backgroundColor: StaffCenterStyle.background,
-        foregroundColor: Colors.white,
-        centerTitle: true,
-        title: const Text(
-          'Staff Center',
-          style: TextStyle(fontWeight: FontWeight.w900),
-        ),
-      ),
+      appBar: inShellSlot
+          ? null
+          : AppBar(
+              backgroundColor: StaffCenterStyle.background,
+              foregroundColor: Colors.white,
+              centerTitle: false,
+              titleSpacing: 0,
+              leading: Navigator.of(context).canPop()
+                  ? const BackButton()
+                  : null,
+              title: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.admin_panel_settings_rounded,
+                    size: 18,
+                    color: Color(0xFFD3A5FF),
+                  ),
+                  SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      'Staff Center',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                IconButton(
+                  tooltip: 'Home',
+                  onPressed: () => Navigator.of(
+                    context,
+                  ).popUntil((route) => route.isFirst),
+                  icon: const Icon(Icons.home_rounded),
+                ),
+              ],
+            ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : sections.isEmpty
@@ -244,6 +291,20 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(12, 16, 12, 16),
         children: [
+          // The desktop slot has no app bar; this is where the page says
+          // where it lives.
+          const Padding(
+            padding: EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Text(
+              'Staff tools / Staff Center',
+              style: TextStyle(
+                color: StaffCenterStyle.faint,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+                letterSpacing: .4,
+              ),
+            ),
+          ),
           for (final section in sections)
             Padding(
               padding: const EdgeInsets.only(bottom: 4),

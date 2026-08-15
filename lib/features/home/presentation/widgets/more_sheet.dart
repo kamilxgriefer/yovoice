@@ -92,7 +92,7 @@ Widget moreDestinationScreen(
     // Re-checks staff authority on mount and renders an access-denied
     // state without querying anything if it fails. Menu visibility is
     // presentation; this and firestore.rules are the boundary.
-    MoreDestination.staffCenter => const StaffCenterScreen(),
+    MoreDestination.staffCenter => StaffCenterScreen(isRootTab: isRootTab),
     MoreDestination.moderation => ModerationCenterScreen(
       isRootTab: isRootTab,
     ),
