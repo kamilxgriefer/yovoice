@@ -44,11 +44,11 @@ class MobileSectionHeader extends StatelessWidget {
       padding: const EdgeInsets.only(top: 18, bottom: 10),
       child: Row(
         children: [
-          Flexible(
+          Expanded(
             child: Text(
               title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              maxLines: 2,
+              overflow: TextOverflow.visible,
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 16.5,
@@ -68,7 +68,7 @@ class MobileSectionHeader extends StatelessWidget {
             ),
           ],
           if (onSeeAll != null) ...[
-            const Spacer(),
+            const SizedBox(width: 8),
             TextButton(
               onPressed: onSeeAll,
               style: TextButton.styleFrom(
