@@ -356,9 +356,16 @@ flutter build web --release --dart-define=YOVOICE_WEB_PUSH_VAPID_KEY=THE_PUBLIC_
   one line saying why. The in-app activity feed, badge, iOS and Android
   push are all unaffected.
 
-Android and iOS need nothing new: the default notification channel is
-declared in `AndroidManifest.xml`, and `remote-notification` is already
-in the iOS `UIBackgroundModes`.
+Android's default notification channel is declared in
+`AndroidManifest.xml`. The production iOS app is registered as
+`app.yovoice` under Apple Team `C3R59P53KB`, and its Firebase app ID is
+`1:80235878542:ios:0b3303647c76596a1351df`. APNs key `3288VCBHFD` is
+uploaded in Firebase for both Development and Production. The private
+`.p8` is intentionally outside the repository in the operator secret
+backup (`~/Documents/YO Voice Secrets/AuthKey_3288VCBHFD.p8`) and cannot
+be downloaded from Apple a second time. `remote-notification` is enabled
+in `UIBackgroundModes`, and the Xcode target uses automatic signing for
+the Apple team above.
 
 ## App Check rollout (not enabled — staged plan)
 

@@ -60,11 +60,11 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyDZFVCb39HuAAbQ49vDkPVC77r1r2zvRKc',
-    appId: '1:80235878542:ios:6e9b8f6cff5ec88f1351df',
+    appId: '1:80235878542:ios:0b3303647c76596a1351df',
     messagingSenderId: '80235878542',
     projectId: 'yovoice-ec54a',
     storageBucket: 'yovoice-ec54a.firebasestorage.app',
-    iosBundleId: 'com.example.yoVoice',
+    iosBundleId: 'app.yovoice',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
