@@ -16,6 +16,19 @@ someone decide what to pick up next.
 
 ## Done
 
+- One-shell navigation + Moderation console redesign (2026-08-15):
+  every More destination (Staff Center included) now swaps the desktop
+  shell's content slot in place — the page-shift on opening Staff
+  Center is gone, pinned by a slot-contract test — and staff screens
+  adapt chrome to context (shell slot: breadcrumb, no app bar; pushed
+  route: Back + Home + human role badge). The Moderation Center became
+  a responsive console: summary aggregates, status segmented control,
+  search + filter sheet/dialog with active chips, 900px master-detail,
+  coherent empty/loading/error states. CLAUDE.md now carries the
+  three-breakpoint completeness rule. See
+  [ADR-047](Decisions.md#adr-047-one-shell-one-slot-per-more-destination-staff-screens-adapt-chrome-to-how-they-were-opened-three-breakpoint-completeness-is-a-hard-rule).
+
+
 - Staff Center redesign + owner user search that actually finds people
   (2026-08-15): the production lookup failure (mixed-case usernames
   stored as typed vs. a lowercased case-sensitive equality) is fixed by

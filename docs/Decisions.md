@@ -2903,3 +2903,49 @@ the operations their capabilities grant.
   case, and 15 Staff Center widget tests (gating, real counts, debounce,
   duplicate names, error-vs-empty, pagination, drawer payloads with the
   expectedRole guard, double-submit, 1100px and mobile layouts).
+
+## ADR-047: One shell, one slot per More destination; staff screens adapt chrome to how they were opened; three-breakpoint completeness is a hard rule
+
+### Context
+
+Opening Staff Center from the desktop More popover visibly shifted the
+whole page while Moderation opened cleanly. Root cause: `staffCenter`
+was the only More destination missing from the shell's desktop slot
+map, so it fell through to the pushed `MoreDestinationHost` — which
+mounts a SECOND `DesktopSidebar` (whose profile card resolves
+asynchronously and pops in) and animates the entire viewport. On
+mobile, Moderation was a navigation dead end: the screen accepted
+`isRootTab` but never consumed it — no app bar, no Back, no Home — and
+its header printed raw claim vocabulary (`superAdmin`).
+
+### Decision
+
+The slot map (`MainShell.desktopSlots`, now public) covers EVERY More
+destination except deliberately-pushed Profile, and a contract test
+pins that set — a future destination added without a slot fails CI.
+Staff screens follow one chrome rule: rendered in a desktop shell slot
+(`isRootTab` + wide) they draw NO app bar and show a
+`Staff tools / …` context label; pushed as a route they carry a real
+app bar with Back, Home and a human-readable role badge (Moderator /
+Super Moderator / Admin — never internal claim names). The Moderation
+workspace became a console: truthful summary (count() aggregates via
+the new `ModerationService.countByStatus`, loaded-count otherwise,
+nothing invented), a one-selected status segmented control, search
+over the loaded page, filters behind an Apply/Cancel/Clear sheet or
+dialog with removable active chips, a 400px master queue splitting at
+900px, and cause-specific empty states that never compete. CLAUDE.md
+now carries the rule that no user-facing UI feature is complete until
+narrow, medium and wide layouts are intentionally implemented and
+verified.
+
+### Consequences
+
+- Selecting any More destination swaps the IndexedStack slot: sidebar
+  static, no route push, no document scroll, popover closes itself.
+- All moderation services, statuses, permissions, confirmation dialogs,
+  audit flows, rules and indexes are untouched; the redesign is
+  presentation only plus one additive aggregate read.
+- Suites updated to the new interface (status tabs and the Filters
+  door replaced the pill wall); new `staff_shell_navigation_test.dart`
+  holds the slot contract, slot-vs-pushed chrome, Back/Home behavior
+  and the phone list→detail flow.
