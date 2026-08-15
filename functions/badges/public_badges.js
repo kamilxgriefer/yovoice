@@ -26,23 +26,24 @@ const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { FieldValue } = require("firebase-admin/firestore");
 
 const { STAFF_ROLES, USER_ROLES } = require("../utils/roles");
+const { isConfirmedOwner } = require("../utils/capabilities");
 const { effectiveVip } = require("../utils/entitlements");
 const { requireAuthentication } = require("../utils/auth");
+const { writeAuditLog } = require("../utils/audit");
 const { db, normalizeText } = require("../utils/firestore");
 
 const BADGE_SCHEMA_VERSION = 1;
 const MAX_BATCH_UIDS = 50;
 
-/// Derives the badge that SHOULD exist for this user, from already-loaded
-/// documents. Pure, so the whole decision is unit-testable and the
-/// backfill can reuse it byte-for-byte.
-///
-/// Returns null when no document should exist.
-function deriveBadge({ user = null, grant = null, now = new Date() } = {}) {
-  // No user document — a deleted account — means no badge, whatever
-  // grant documents might linger.
-  if (user === null || user === undefined) return null;
-
+/// The role the mirror may PUBLISH for this account — which is not always
+/// the role the user document claims. `superAdmin` is the owner's badge,
+/// and the owner is a uid held in Secret Manager, not a Firestore field:
+/// a forged or stale `superAdmin` on any other uid is published as the
+/// tier the capability matrix actually grants it (super moderation),
+/// exactly mirroring deriveCapabilities()' fail-safe. Same rule when the
+/// secret is unavailable: with no way to confirm the owner, nobody is
+/// published as the owner.
+function derivePublicRole(uid, user) {
   const rawRole = String(user.role ?? USER_ROLES.USER).trim();
   // The mirror must never publish a value outside the vocabulary. An
   // unknown role is treated as `user` FOR THE BADGE ONLY — the backfill
@@ -50,6 +51,30 @@ function deriveBadge({ user = null, grant = null, now = new Date() } = {}) {
   // mirror fails to the least-claiming value rather than repeating an
   // anomaly to every signed-in reader.
   const staffRole = STAFF_ROLES.has(rawRole) ? rawRole : USER_ROLES.USER;
+
+  if (staffRole !== USER_ROLES.SUPER_ADMIN) {
+    return { staffRole, unconfirmedSuperAdmin: false };
+  }
+  if (isConfirmedOwner(uid)) {
+    return { staffRole, unconfirmedSuperAdmin: false };
+  }
+  return {
+    staffRole: USER_ROLES.SUPER_MODERATOR,
+    unconfirmedSuperAdmin: true,
+  };
+}
+
+/// Derives the badge that SHOULD exist for this user, from already-loaded
+/// documents. Pure, so the whole decision is unit-testable and the
+/// backfill can reuse it byte-for-byte.
+///
+/// Returns null when no document should exist.
+function deriveBadge({ uid = null, user = null, grant = null, now = new Date() } = {}) {
+  // No user document — a deleted account — means no badge, whatever
+  // grant documents might linger.
+  if (user === null || user === undefined) return null;
+
+  const { staffRole } = derivePublicRole(uid, user);
 
   const { vip } = effectiveVip({ user, grant, now });
 
@@ -78,8 +103,25 @@ async function syncPublicBadgeForUser(uid) {
     db.collection("vipGrants").doc(cleanUid),
   );
 
+  const user = userSnapshot.exists ? userSnapshot.data() : null;
+
+  // A superAdmin role on a uid that is not the protected owner is a
+  // security event, not a display nuance — same alert the capability
+  // callable raises, so both derivations light up the one log. The badge
+  // itself fails safe below regardless of whether this write lands.
+  if (user !== null && derivePublicRole(cleanUid, user).unconfirmedSuperAdmin) {
+    await writeAuditLog({
+      caller: { uid: cleanUid, role: String(user.role ?? USER_ROLES.USER) },
+      action: "security_alert_non_owner_super_admin",
+      targetType: "account",
+      targetId: cleanUid,
+      details: { attempted: "badgeDerivation" },
+    });
+  }
+
   const badge = deriveBadge({
-    user: userSnapshot.exists ? userSnapshot.data() : null,
+    uid: cleanUid,
+    user,
     grant: grantSnapshot.exists ? grantSnapshot.data() : null,
   });
 
@@ -113,8 +155,15 @@ async function syncPublicBadgeForUser(uid) {
 // when expiring grants ship, their creation flow must come with a
 // scheduled sweep. Until then this is a documented non-case, not a gap.
 
+// Both triggers bind the owner secret: derivePublicRole() needs it to
+// confirm — never to grant — the owner badge. Without it every superAdmin
+// would fail safe to superModerator, including the real owner.
 const onUserBadgeSourceChanged = onDocumentWritten(
-  { document: "users/{uid}", region: "europe-west1" },
+  {
+    document: "users/{uid}",
+    region: "europe-west1",
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
+  },
   async (event) => {
     // Only the uid is taken from the event; state is re-read inside the
     // sync so out-of-order deliveries converge instead of racing.
@@ -123,7 +172,11 @@ const onUserBadgeSourceChanged = onDocumentWritten(
 );
 
 const onVipGrantChanged = onDocumentWritten(
-  { document: "vipGrants/{uid}", region: "europe-west1" },
+  {
+    document: "vipGrants/{uid}",
+    region: "europe-west1",
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
+  },
   async (event) => {
     await syncPublicBadgeForUser(event.params.uid);
   },
@@ -136,7 +189,16 @@ const onVipGrantChanged = onDocumentWritten(
 // prevent. Bounded, deduplicated, authenticated, and it returns only the
 // four public fields whatever the stored document contains.
 
-const getPublicBadges = onCall({ region: "europe-west1" }, async (request) => {
+const getPublicBadges = onCall(
+  {
+    region: "europe-west1",
+    // Defense in depth: a STORED superAdmin row that predates the owner
+    // guard (or was planted by anything that slips past the rules) is
+    // demoted in the response until a sync or backfill heals the
+    // document itself. Confirming the owner needs the secret.
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
+  },
+  async (request) => {
   requireAuthentication(request);
 
   const rawUids = request.data?.uids;
@@ -177,9 +239,14 @@ const getPublicBadges = onCall({ region: "europe-west1" }, async (request) => {
     if (!snapshot.exists) continue;
     const data = snapshot.data() ?? {};
     // Explicit field picking: whatever the stored document holds, the
-    // response carries exactly the public schema and nothing else.
+    // response carries exactly the public schema and nothing else. The
+    // stored role passes through the same owner confirmation as the
+    // derivation, so a stale superAdmin row cannot badge a non-owner.
+    const { staffRole } = derivePublicRole(snapshot.id, {
+      role: data.staffRole,
+    });
     badges[snapshot.id] = {
-      staffRole: String(data.staffRole ?? USER_ROLES.USER),
+      staffRole,
       isVip: data.isVip === true,
       schemaVersion: Number(data.schemaVersion ?? BADGE_SCHEMA_VERSION),
       updatedAt:
@@ -190,12 +257,14 @@ const getPublicBadges = onCall({ region: "europe-west1" }, async (request) => {
   }
 
   return { badges };
-});
+  },
+);
 
 module.exports = {
   BADGE_SCHEMA_VERSION,
   MAX_BATCH_UIDS,
   deriveBadge,
+  derivePublicRole,
   syncPublicBadgeForUser,
   onUserBadgeSourceChanged,
   onVipGrantChanged,

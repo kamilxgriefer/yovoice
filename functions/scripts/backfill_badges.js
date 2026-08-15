@@ -5,6 +5,11 @@
 //   node scripts/backfill_badges.js --project yovoice-ec54a            # dry run
 //   node scripts/backfill_badges.js --project yovoice-ec54a --apply    # writes
 //
+// YOVOICE_PROTECTED_OWNER_UID must be exported in the environment (same
+// value as the Secret Manager secret) — derivation refuses to run
+// without the owner guard, because failing safe would demote the real
+// owner's badge.
+//
 // Derives the badge every account SHOULD have — through the same
 // deriveBadge() the triggers use, so the two can never disagree — and
 // reports the difference against what exists. Dry run is the default;
@@ -33,8 +38,16 @@ if (getApps().length === 0) {
   });
 }
 
-const { STAFF_ROLES, USER_ROLES } = require("../utils/roles");
-const { deriveBadge, BADGE_SCHEMA_VERSION } = require("../badges/public_badges");
+const {
+  STAFF_ROLES,
+  USER_ROLES,
+  protectedOwnerConfigured,
+} = require("../utils/roles");
+const {
+  deriveBadge,
+  derivePublicRole,
+  BADGE_SCHEMA_VERSION,
+} = require("../badges/public_badges");
 
 const EXPECTED_PROJECT = "yovoice-ec54a";
 const BATCH_SIZE = 200;
@@ -70,6 +83,19 @@ function assertProject(args, resolvedProject) {
   }
 }
 
+/// The owner guard must be evaluable BEFORE any derivation runs. Without
+/// the secret, derivePublicRole() fails safe and would demote the real
+/// owner's badge to superModerator — a wrong write this script must
+/// refuse to plan, let alone apply.
+function assertOwnerGuard() {
+  if (!protectedOwnerConfigured()) {
+    throw new Error(
+      "YOVOICE_PROTECTED_OWNER_UID is not set; refusing to derive badges " +
+        "without the owner guard.",
+    );
+  }
+}
+
 function emptyReport() {
   return {
     scannedUsers: 0,
@@ -82,6 +108,7 @@ function emptyReport() {
     toDelete: 0,
     upToDate: 0,
     invalidRoles: 0,
+    unconfirmedSuperAdmins: 0,
     conflicts: 0,
     appliedWrites: 0,
     appliedDeletes: 0,
@@ -131,13 +158,19 @@ async function scan({ db, args, uidPrefix = null, report = emptyReport() }) {
 
       const rawRole = String(user.role ?? USER_ROLES.USER).trim();
       if (!STAFF_ROLES.has(rawRole)) report.invalidRoles += 1;
+      // Counted, not blocking: the fail-safe (superModerator) badge is
+      // exactly what should be written for a forged superAdmin — refusing
+      // to apply would preserve whatever badge the anomaly already has.
+      if (derivePublicRole(uid, user).unconfirmedSuperAdmin) {
+        report.unconfirmedSuperAdmins += 1;
+      }
 
       const grantSnapshot = await db.collection("vipGrants").doc(uid).get();
       const grant = grantSnapshot.exists ? grantSnapshot.data() : null;
       const badgeSnapshot = await db.collection("publicBadges").doc(uid).get();
       const existing = badgeSnapshot.exists ? badgeSnapshot.data() : null;
 
-      const derived = deriveBadge({ user, grant });
+      const derived = deriveBadge({ uid, user, grant });
 
       if (derived === null) {
         if (existing) {
@@ -195,6 +228,7 @@ async function scan({ db, args, uidPrefix = null, report = emptyReport() }) {
 }
 
 async function backfill({ db, args, uidPrefix = null }) {
+  assertOwnerGuard();
   const { report, plans } = await scan({ db, args, uidPrefix });
 
   if (!args.apply) return report;
@@ -242,6 +276,7 @@ if (require.main === module) {
 module.exports = {
   parseArgs,
   assertProject,
+  assertOwnerGuard,
   badgeMatches,
   scan,
   backfill,

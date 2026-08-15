@@ -31,24 +31,35 @@ if (getApps().length === 0) initializeApp();
 
 const {
   deriveBadge,
+  derivePublicRole,
   syncPublicBadgeForUser,
   getPublicBadges,
   MAX_BATCH_UIDS,
 } = require("../badges/public_badges");
 
-const { backfill, emptyReport, EXPECTED_PROJECT } = require("../scripts/backfill_badges");
+const {
+  backfill,
+  assertOwnerGuard,
+  emptyReport,
+  EXPECTED_PROJECT,
+} = require("../scripts/backfill_badges");
+
+const { setProtectedOwnerUidForTests } = require("../utils/roles");
 
 const db = getFirestore();
 const runBatch = getPublicBadges.run ?? getPublicBadges;
 
 const P = "pb-";
-const STAFF_VOCAB = [
+// The one uid the owner badge may attach to, injected as the protected
+// owner for every test below. superAdmin is exercised separately from
+// this list because its published value depends on the uid.
+const OWNER_UID = `${P}owner`;
+const NON_OWNER_VOCAB = [
   "guideMaster",
   "support",
   "auditor",
   "moderator",
   "superModerator",
-  "superAdmin",
 ];
 
 const FIXTURES = [
@@ -58,7 +69,9 @@ const FIXTURES = [
   `${P}staff-vip`,
   `${P}invalid`,
   `${P}orphan`,
-  ...STAFF_VOCAB.map((role) => `${P}${role}`),
+  `${P}forged`,
+  OWNER_UID,
+  ...NON_OWNER_VOCAB.map((role) => `${P}${role}`),
 ];
 
 async function wipeOwn() {
@@ -75,12 +88,15 @@ function caller(uid = `${P}reader`) {
   return { auth: { uid, token: {} } };
 }
 
-beforeEach(wipeOwn);
+beforeEach(() => {
+  setProtectedOwnerUidForTests(OWNER_UID);
+  return wipeOwn();
+});
 
 describe("derivation", () => {
   test("every staff role derives a badge with exactly the four-field shape", () => {
-    for (const role of STAFF_VOCAB) {
-      const badge = deriveBadge({ user: { role } });
+    for (const role of NON_OWNER_VOCAB) {
+      const badge = deriveBadge({ uid: `${P}${role}`, user: { role } });
       assert.deepEqual(Object.keys(badge).sort(), [
         "isVip",
         "schemaVersion",
@@ -88,6 +104,45 @@ describe("derivation", () => {
       ]);
       assert.equal(badge.staffRole, role);
       assert.equal(badge.isVip, false);
+    }
+  });
+
+  test("the confirmed owner — and only the owner — derives superAdmin", () => {
+    const owner = deriveBadge({
+      uid: OWNER_UID,
+      user: { role: "superAdmin" },
+    });
+    assert.equal(owner.staffRole, "superAdmin");
+
+    // A forged or stale superAdmin on any other uid fails safe to the
+    // tier the capability matrix actually grants it.
+    const forged = deriveBadge({
+      uid: `${P}forged`,
+      user: { role: "superAdmin" },
+    });
+    assert.equal(forged.staffRole, "superModerator");
+    assert.equal(
+      derivePublicRole(`${P}forged`, { role: "superAdmin" })
+        .unconfirmedSuperAdmin,
+      true,
+    );
+
+    // With the secret unavailable nobody can be confirmed, so nobody is
+    // published as the owner — the real owner included.
+    setProtectedOwnerUidForTests(null);
+    const previousEnv = process.env.YOVOICE_PROTECTED_OWNER_UID;
+    delete process.env.YOVOICE_PROTECTED_OWNER_UID;
+    try {
+      const unguarded = deriveBadge({
+        uid: OWNER_UID,
+        user: { role: "superAdmin" },
+      });
+      assert.equal(unguarded.staffRole, "superModerator");
+    } finally {
+      if (previousEnv !== undefined) {
+        process.env.YOVOICE_PROTECTED_OWNER_UID = previousEnv;
+      }
+      setProtectedOwnerUidForTests(OWNER_UID);
     }
   });
 
@@ -195,6 +250,41 @@ describe("sync", () => {
     assert.equal("grantSource" in data, false);
   });
 
+  test("a forged superAdmin syncs as superModerator and raises the alert", async () => {
+    const uid = `${P}forged`;
+    await db.collection("users").doc(uid).set({ role: "superAdmin" });
+
+    await syncPublicBadgeForUser(uid);
+
+    const badge = (await db.collection("publicBadges").doc(uid).get()).data();
+    assert.equal(badge.staffRole, "superModerator");
+
+    const alerts = await db
+      .collection("adminAuditLogs")
+      .where("targetId", "==", uid)
+      .where("action", "==", "security_alert_non_owner_super_admin")
+      .get();
+    assert.ok(alerts.size >= 1, "the invalid state must be audited");
+  });
+
+  test("the confirmed owner syncs as superAdmin, without an alert", async () => {
+    await db.collection("users").doc(OWNER_UID).set({ role: "superAdmin" });
+
+    await syncPublicBadgeForUser(OWNER_UID);
+
+    const badge = (
+      await db.collection("publicBadges").doc(OWNER_UID).get()
+    ).data();
+    assert.equal(badge.staffRole, "superAdmin");
+
+    const alerts = await db
+      .collection("adminAuditLogs")
+      .where("targetId", "==", OWNER_UID)
+      .where("action", "==", "security_alert_non_owner_super_admin")
+      .get();
+    assert.equal(alerts.size, 0, "the owner is not an anomaly");
+  });
+
   test("a malformed uid is refused without touching anything", async () => {
     assert.deepEqual(await syncPublicBadgeForUser("a/b"), {
       outcome: "invalidUid",
@@ -265,6 +355,29 @@ describe("getPublicBadges", () => {
     );
   });
 
+  test("a STALE stored superAdmin row is demoted in the response", async () => {
+    // Planted directly, as if it predated the owner guard: the stored
+    // document says superAdmin for a uid that is not the owner.
+    await db.collection("publicBadges").doc(`${P}forged`).set({
+      staffRole: "superAdmin",
+      isVip: false,
+      schemaVersion: 1,
+    });
+    await db.collection("publicBadges").doc(OWNER_UID).set({
+      staffRole: "superAdmin",
+      isVip: true,
+      schemaVersion: 1,
+    });
+
+    const result = await runBatch({
+      ...caller(),
+      data: { uids: [`${P}forged`, OWNER_UID] },
+    });
+
+    assert.equal(result.badges[`${P}forged`].staffRole, "superModerator");
+    assert.equal(result.badges[OWNER_UID].staffRole, "superAdmin");
+  });
+
   test("stored private fields never reach the response", async () => {
     const uid = `${P}guideMaster`;
     await db.collection("publicBadges").doc(uid).set({
@@ -293,9 +406,15 @@ describe("backfill", () => {
         .collection("users")
         .doc(`${P}vip-sub`)
         .set({ role: "user", premiumIdentity: true }),
+      // A forged superAdmin (not the injected owner uid) …
       db
         .collection("users")
         .doc(`${P}staff-vip`)
+        .set({ role: "superAdmin", premiumIdentity: true }),
+      // … and the real owner.
+      db
+        .collection("users")
+        .doc(OWNER_UID)
         .set({ role: "superAdmin", premiumIdentity: true }),
       db.collection("vipGrants").doc(`${P}vip-grant`).set({ expiresAt: null }),
       db.collection("users").doc(`${P}vip-grant`).set({ role: "user" }),
@@ -318,6 +437,10 @@ describe("backfill", () => {
     assert.ok(report.staffVipBadges >= 1);
     assert.ok(report.toCreate >= 4);
     assert.ok(report.toDelete >= 1, "the orphan must be planned away");
+    assert.ok(
+      report.unconfirmedSuperAdmins >= 1,
+      "the forged superAdmin must be counted",
+    );
 
     // Nothing was actually created.
     assert.equal(
@@ -345,6 +468,18 @@ describe("backfill", () => {
       (await db.collection("publicBadges").doc(`${P}moderator`).get()).data()
         .staffRole,
       "moderator",
+    );
+    // The owner's badge survives as superAdmin; the forged one is
+    // written as the tier it actually holds.
+    assert.equal(
+      (await db.collection("publicBadges").doc(OWNER_UID).get()).data()
+        .staffRole,
+      "superAdmin",
+    );
+    assert.equal(
+      (await db.collection("publicBadges").doc(`${P}staff-vip`).get()).data()
+        .staffRole,
+      "superModerator",
     );
     assert.equal(
       (await db.collection("publicBadges").doc(`${P}plain`).get()).exists,
@@ -382,5 +517,23 @@ describe("backfill", () => {
     // The dry run still reports the anomaly rather than refusing.
     const report = await backfill({ db, args, uidPrefix: P });
     assert.ok(report.invalidRoles >= 1);
+  });
+
+  test("the backfill refuses to run without the owner guard", async () => {
+    setProtectedOwnerUidForTests(null);
+    const previousEnv = process.env.YOVOICE_PROTECTED_OWNER_UID;
+    delete process.env.YOVOICE_PROTECTED_OWNER_UID;
+    try {
+      assert.throws(() => assertOwnerGuard(), /YOVOICE_PROTECTED_OWNER_UID/);
+      await assert.rejects(
+        () => backfill({ db, args, uidPrefix: P }),
+        /YOVOICE_PROTECTED_OWNER_UID/,
+      );
+    } finally {
+      if (previousEnv !== undefined) {
+        process.env.YOVOICE_PROTECTED_OWNER_UID = previousEnv;
+      }
+      setProtectedOwnerUidForTests(OWNER_UID);
+    }
   });
 });
