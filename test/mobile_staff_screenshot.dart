@@ -10,7 +10,6 @@
 //   flutter test test/mobile_staff_screenshot.dart
 
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
