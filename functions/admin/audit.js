@@ -14,6 +14,9 @@ const REGION = "europe-west1";
 function mapAuditLog(document) {
   const data = document.data() ?? {};
 
+  // writeAuditLog stores a FLAT document (actorId/actorRole/targetType/
+  // targetId/targetLabel); the nested reads below it are kept only for
+  // any historical row written before that shape existed.
   return {
     id: document.id,
 
@@ -21,15 +24,15 @@ function mapAuditLog(document) {
     action: data.action ?? "unknown",
 
     actor: {
-      uid: data.actor?.uid ?? null,
-      email: data.actor?.email ?? null,
-      role: data.actor?.role ?? null,
+      uid: data.actorId ?? data.actor?.uid ?? null,
+      email: data.actorEmail ?? data.actor?.email ?? null,
+      role: data.actorRole ?? data.actor?.role ?? null,
     },
 
     target: {
-      type: data.target?.type ?? null,
-      id: data.target?.id ?? null,
-      name: data.target?.name ?? null,
+      type: data.targetType ?? data.target?.type ?? null,
+      id: data.targetId ?? data.target?.id ?? null,
+      name: data.targetLabel ?? data.target?.name ?? null,
       email: data.target?.email ?? null,
     },
 
@@ -109,13 +112,13 @@ const listAdminAuditLogs = onCall(
     } else if (actorUid) {
       query = db
         .collection("adminAuditLogs")
-        .where("actor.uid", "==", actorUid)
+        .where("actorId", "==", actorUid)
         .orderBy("createdAt", "desc")
         .limit(limit);
     } else if (targetId) {
       query = db
         .collection("adminAuditLogs")
-        .where("target.id", "==", targetId)
+        .where("targetId", "==", targetId)
         .orderBy("createdAt", "desc")
         .limit(limit);
     }

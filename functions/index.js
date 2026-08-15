@@ -231,6 +231,28 @@ exports.applySanction = applySanction;
 
 /*
 |--------------------------------------------------------------------------
+| Staff directory & overview (owner-only — see staff/directory.js)
+|--------------------------------------------------------------------------
+*/
+
+const {
+  onDirectoryUserChanged,
+  onDirectoryVipGrantChanged,
+  onDirectoryRestrictionChanged,
+  searchUserDirectory,
+} = require("./staff/directory");
+
+exports.onDirectoryUserChanged = onDirectoryUserChanged;
+exports.onDirectoryVipGrantChanged = onDirectoryVipGrantChanged;
+exports.onDirectoryRestrictionChanged = onDirectoryRestrictionChanged;
+exports.searchUserDirectory = searchUserDirectory;
+
+const { getStaffOverview } = require("./staff/overview");
+
+exports.getStaffOverview = getStaffOverview;
+
+/*
+|--------------------------------------------------------------------------
 | Premium
 |--------------------------------------------------------------------------
 */

@@ -3600,6 +3600,39 @@ async function main() {
   );
 
   await check(
+    "DIRECTORY SECURITY: the staff user directory is invisible to every "
+      + "client — no get, no list, no write, owner session included",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "userDirectory/host-uid"), {
+          displayName: "Host",
+          usernameLower: "host",
+          emailLower: "host@example.com",
+          staffRole: "user",
+        });
+      });
+      // Not even the document's own subject may read it: the ONLY road
+      // is the owner-authorized callable. A client read here would be a
+      // user-enumeration oracle carrying emails.
+      await assertFails(
+        getDoc(doc(host.firestore(), "userDirectory/host-uid")),
+      );
+      await assertFails(
+        getDoc(doc(attacker.firestore(), "userDirectory/host-uid")),
+      );
+      await assertFails(
+        getDocs(collection(attacker.firestore(), "userDirectory")),
+      );
+      await assertFails(
+        setDoc(doc(attacker.firestore(), "userDirectory/attacker-uid"), {
+          displayName: "Fake",
+          staffRole: "superAdmin",
+        }),
+      );
+    },
+  );
+
+  await check(
     "ROLE SECURITY: a client still cannot write role or the premium mirror",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (ctx) => {

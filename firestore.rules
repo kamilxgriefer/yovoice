@@ -624,6 +624,17 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // The staff user directory: a SERVER-ONLY search index (normalized
+    // usernames/display names, emails, filter flags) written by Cloud
+    // Functions and queried exclusively through the owner-only
+    // searchUserDirectory callable. Any client read here would be a
+    // user-enumeration oracle carrying emails, so there is none — not
+    // even for the owner's own session.
+    match /userDirectory/{userId} {
+      allow read: if false;
+      allow write: if false;
+    }
+
     // ---------------------------------------------------------------
     // GLOBAL CHAT — the single public channel shared by the whole
     // authenticated community. Deliberately a separate top-level
