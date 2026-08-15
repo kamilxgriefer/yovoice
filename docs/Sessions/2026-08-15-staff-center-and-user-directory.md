@@ -77,3 +77,32 @@ stripped; resolution ran client-side.
 Functions + rules + indexes first, then the directory backfill (dry-run
 → verify aggregates → apply), then the client push (Hosting
 auto-deploys on push). Separate backend and client commits.
+
+## Mobile parity (same day, follow-up commit)
+
+The mobile More sheet gained a capability-driven **Staff** section —
+below the six tiles, above Settings, derived from
+`getMyStaffCapabilities` flags alone (never a role string): owner →
+crimson Staff Center; super-moderation tier (liftSuspensions /
+viewAllQueues — which is also what a FORGED superAdmin actually
+receives) → coral Staff Center; moderation tier → violet Moderation
+Center. Auditor/Support/Guide Master get no entry until their surfaces
+exist; ordinary and VIP accounts keep the exact sheet they had, no gap.
+The section header carries the account's own authoritative badges. The
+sheet routes through the existing `MoreDestination.staffCenter` /
+`moderation` machinery — no second admin system, no new services, no
+permission changes (nothing backend-side changed at all).
+
+Two real narrow-width bugs surfaced and were fixed: the section
+header's trailing action overflowed phones (now stacks below the title
+under 520px) and the More grid tiles overflowed 11px at 320pt (aspect
+ratio now relaxes below 340px; ≥360px layouts unchanged).
+
+Verification: `mobile_staff_parity_test.dart` (11 tests — unchanged
+ordinary sheet, per-tier entries with badges, forged-superAdmin denial,
+capability cache clearing on account switch, 320/390/430 layouts,
+safe-area + keyboard, mobile search cards, reason-gated confirmations)
+plus `mobile_staff_screenshot.dart` rendering the 390×844 owner and
+moderator More sheets and Staff Centers to PNGs that were actually
+inspected; the live owner session was inspected at 390×844 after the
+Hosting deploy.

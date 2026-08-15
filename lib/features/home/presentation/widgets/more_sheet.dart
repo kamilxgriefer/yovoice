@@ -1,4 +1,6 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/achievements/presentation/screens/achievements_screen.dart';
 import 'package:yovoice/features/clubs/presentation/screens/clubs_screen.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_studio_screen.dart';
@@ -9,7 +11,9 @@ import 'package:yovoice/features/moments/presentation/screens/moments_screen.dar
 import 'package:yovoice/features/notifications/presentation/screens/notification_preferences_screen.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/settings_screen.dart';
+import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/presentation/screens/staff_center_screen.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 
 enum MoreDestination {
   friends,
@@ -22,15 +26,17 @@ enum MoreDestination {
   settings,
   profile,
 
-  /// DESKTOP + STAFF ONLY. Listed in the desktop More popover only when
-  /// the signed-in account passes the staff check, and absent from the
-  /// mobile sheet entirely — this milestone is desktop-only, and no
-  /// mobile file was touched to add it.
+  /// STAFF ONLY. On desktop, listed in the More popover behind the
+  /// staff check; on mobile, surfaced through the sheet's
+  /// capability-driven Staff section (moderation tier → violet
+  /// Moderation Center card). The destination re-checks authority on
+  /// mount regardless.
   moderation,
 
-  /// DESKTOP + OWNER ONLY. Listed only when the server-derived
-  /// capabilities include manageRoles — the confirmed protected owner.
-  /// The Staff Center screen re-verifies on mount regardless.
+  /// On desktop, listed only for the owner; on mobile, the Staff
+  /// section shows it for the owner (crimson) and the super-moderation
+  /// tier (coral) — the screen itself renders only the sections each
+  /// tier's SERVER capabilities back, and re-verifies on mount.
   staffCenter,
 }
 
@@ -226,8 +232,60 @@ Future<MoreDestination?> showDesktopMoreMenu(
   );
 }
 
-class MoreSheet extends StatelessWidget {
-  const MoreSheet({super.key});
+/// What the MOBILE sheet's staff section shows for one account — derived
+/// from SERVER capabilities alone, never from a local role string.
+///
+/// The tiers map to the doors that actually exist behind them:
+///   owner (manageRoles)                    Staff Center, crimson
+///   super moderation (liftSuspensions /
+///   viewAllQueues)                         Staff Center, coral — it opens
+///                                          with exactly Reports, Rooms &
+///                                          Spaces and Sanctions
+///   moderation (handleAssignedReports)     Moderation Center, violet
+///
+/// Auditor, Support and Guide Master deliberately get NOTHING here: their
+/// capabilities are flags whose surfaces have not shipped (see
+/// utils/capabilities.js — "a capability is not a promise of a button"),
+/// and an entry with no real backend read would be a decorative control.
+/// VIP and ordinary accounts get no section and no empty gap.
+({MoreDestination destination, String label, String subtitle, Color color})?
+staffEntryFor(StaffCapabilities capabilities) {
+  if (capabilities.manageRoles) {
+    return (
+      destination: MoreDestination.staffCenter,
+      label: 'Staff Center',
+      subtitle: 'Owner console — every section',
+      color: AppColors.roleOwner,
+    );
+  }
+  if (capabilities.liftSuspensions || capabilities.viewAllQueues) {
+    return (
+      destination: MoreDestination.staffCenter,
+      label: 'Staff Center',
+      subtitle: 'Reports, rooms and sanctions',
+      color: AppColors.roleSuperModerator,
+    );
+  }
+  if (capabilities.handleAssignedReports) {
+    return (
+      destination: MoreDestination.moderation,
+      label: 'Moderation Center',
+      subtitle: 'Review reported content',
+      color: AppColors.roleModerator,
+    );
+  }
+  return null;
+}
+
+class MoreSheet extends StatefulWidget {
+  const MoreSheet({this.capabilityService, this.currentUid, super.key});
+
+  /// Injected in tests; production asks the shared service, whose cache
+  /// is keyed by uid and cleared on account switch.
+  final StaffCapabilityService? capabilityService;
+
+  /// Injected in tests; production reads the signed-in session.
+  final String? currentUid;
 
   static const _surface = Color(0xFF151020);
   static const _card = Color(0xFF20172C);
@@ -236,13 +294,42 @@ class MoreSheet extends StatelessWidget {
   static const _primary = Color(0xFF9D20FF);
 
   @override
+  State<MoreSheet> createState() => _MoreSheetState();
+}
+
+class _MoreSheetState extends State<MoreSheet> {
+  StaffCapabilities _capabilities = StaffCapabilities.none;
+
+  String get _currentUid {
+    if (widget.currentUid != null) return widget.currentUid!;
+    try {
+      return FirebaseAuth.instance.currentUser?.uid ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // Until the server answers, the sheet is exactly the ordinary
+    // layout — the staff section appears only on a positive answer, so
+    // an ordinary account never sees a flash or a gap.
+    (widget.capabilityService ?? StaffCapabilityService()).load().then((
+      capabilities,
+    ) {
+      if (mounted) setState(() => _capabilities = capabilities);
+    }).catchError((_) {});
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 10, 18, 22),
       decoration: const BoxDecoration(
-        color: _surface,
+        color: MoreSheet._surface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-        border: Border(top: BorderSide(color: _border)),
+        border: Border(top: BorderSide(color: MoreSheet._border)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -273,7 +360,7 @@ class MoreSheet extends StatelessWidget {
                     SizedBox(height: 3),
                     Text(
                       'Everything else, kept one tap away.',
-                      style: TextStyle(color: _muted, fontSize: 13),
+                      style: TextStyle(color: MoreSheet._muted, fontSize: 13),
                     ),
                   ],
                 ),
@@ -281,14 +368,18 @@ class MoreSheet extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 18),
-          GridView.count(
-            crossAxisCount: 3,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 11,
-            crossAxisSpacing: 11,
-            childAspectRatio: .93,
-            children: const [
+          LayoutBuilder(
+            builder: (context, constraints) => GridView.count(
+              crossAxisCount: 3,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              mainAxisSpacing: 11,
+              crossAxisSpacing: 11,
+              // A 320pt phone leaves ~87pt per tile; the tile's content
+              // needs more height than .93 allows there. Wider layouts
+              // keep the ratio they always had.
+              childAspectRatio: constraints.maxWidth < 340 ? .76 : .93,
+              children: const [
               // Friends graduated to the primary bottom navigation;
               // Profile moved here in its place (still one tap away via
               // any of your own avatars too).
@@ -328,10 +419,16 @@ class MoreSheet extends StatelessWidget {
                 label: 'Creator',
                 subtitle: 'Studio',
               ),
-            ],
+              ],
+            ),
           ),
+          // The staff section: BELOW the six tiles, ABOVE Settings, and
+          // present only when the server-derived capabilities back a
+          // real door. Ordinary and VIP accounts render the exact layout
+          // this sheet always had.
+          ..._staffSection(),
           const SizedBox(height: 11),
-          _WideMoreTile(
+          const _WideMoreTile(
             destination: MoreDestination.settings,
             icon: Icons.settings_rounded,
             label: 'Settings',
@@ -340,6 +437,42 @@ class MoreSheet extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  List<Widget> _staffSection() {
+    final entry = staffEntryFor(_capabilities);
+    if (entry == null) return const [];
+    final uid = _currentUid;
+    return [
+      const SizedBox(height: 14),
+      Row(
+        children: [
+          const Text(
+            'Staff',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+              letterSpacing: .3,
+            ),
+          ),
+          const SizedBox(width: 8),
+          // The signed-in account's own authoritative badges — same
+          // shared components and repository as every other surface.
+          if (uid.isNotEmpty) Flexible(child: UserIdentityBadges(uid: uid)),
+        ],
+      ),
+      const SizedBox(height: 9),
+      _WideMoreTile(
+        destination: entry.destination,
+        icon: entry.destination == MoreDestination.staffCenter
+            ? Icons.admin_panel_settings_rounded
+            : Icons.shield_rounded,
+        label: entry.label,
+        subtitle: entry.subtitle,
+        accentColor: entry.color,
+      ),
+    ];
   }
 }
 
@@ -419,6 +552,7 @@ class _WideMoreTile extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.subtitle,
+    this.accentColor,
   });
 
   final MoreDestination destination;
@@ -426,8 +560,13 @@ class _WideMoreTile extends StatelessWidget {
   final String label;
   final String subtitle;
 
+  /// Staff entries carry their tier's color from the theme; everything
+  /// else keeps the sheet's violet accent.
+  final Color? accentColor;
+
   @override
   Widget build(BuildContext context) {
+    final accent = accentColor ?? const Color(0xFFD28AFF);
     return Material(
       color: MoreSheet._card,
       borderRadius: BorderRadius.circular(19),
@@ -438,7 +577,9 @@ class _WideMoreTile extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(19),
-            border: Border.all(color: MoreSheet._border),
+            border: Border.all(
+              color: accentColor?.withValues(alpha: .5) ?? MoreSheet._border,
+            ),
           ),
           child: Row(
             children: [
@@ -446,10 +587,12 @@ class _WideMoreTile extends StatelessWidget {
                 width: 42,
                 height: 42,
                 decoration: BoxDecoration(
-                  color: MoreSheet._primary.withValues(alpha: .18),
+                  color: (accentColor ?? MoreSheet._primary).withValues(
+                    alpha: .18,
+                  ),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Icon(icon, color: const Color(0xFFD28AFF)),
+                child: Icon(icon, color: accent),
               ),
               const SizedBox(width: 12),
               Expanded(

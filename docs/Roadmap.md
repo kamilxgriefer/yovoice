@@ -28,7 +28,13 @@ someone decide what to pick up next.
   Spaces / Sanctions / Staff & Roles / Audit Log) behind an internal
   rail, every counter a real `count()` aggregate and every list a real
   query, with a user detail drawer carrying authoritative status,
-  history and confirm-with-reason owner actions. See
+  history and confirm-with-reason owner actions. Full mobile parity
+  landed the same day: the mobile More sheet gained a capability-driven
+  Staff section (owner/super-moderation → Staff Center, moderation →
+  Moderation Center, derived from getMyStaffCapabilities alone), the
+  same screens rendering natively at phone widths with tab chips and
+  full-width detail drawers, verified at 320/390/430 with rendered and
+  live 390×844 inspections. See
   [ADR-046](Decisions.md#adr-046-user-search-lives-in-a-server-only-directory-behind-an-owner-callable-staff-center-becomes-seven-capability-gated-sections).
 
 - Authoritative identity badges on every surface (2026-08-15): one
