@@ -37,6 +37,8 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>YO Voice uses camera access so you can take photos to share in chats and use as profile, room, or club images.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>YoVoice uses your microphone so you can talk in voice rooms.</string>
 	<key>UIBackgroundModes</key>
