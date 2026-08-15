@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -386,6 +387,8 @@ class _MessageRow extends StatelessWidget {
                           ),
                         ),
                       ),
+                      const SizedBox(width: 6),
+                      UserIdentityBadges(uid: message.senderId),
                     ],
                   ),
                   const SizedBox(height: 3),

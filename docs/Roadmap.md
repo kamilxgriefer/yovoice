@@ -16,6 +16,27 @@ someone decide what to pick up next.
 
 ## Done
 
+- Authoritative identity badges on every surface (2026-08-15): one
+  shared badge system (`OfficialRoleBadge` / `VipBadge` /
+  `UserIdentityBadges` / `DecoratedUserAvatar`) renders the official
+  role — USER included, always visible — plus a separate VIP badge on
+  every identity surface: profile card/headers/preview sheet, Global
+  Chat, DMs, room chat, Club & Family chat, stages, rosters, participant
+  sheets, Moments and comments, the People & Moments rail,
+  friends/follow lists, search, Discover cards, Top creators,
+  notifications, Staff Center and Moderation Center. Resolution goes
+  through a batched `PublicIdentityRepository` over the `getPublicBadges`
+  callable (no N+1 reads, USER fallback, cache cleared on account
+  switch, invalidated after role changes); message-embedded staff flags
+  are no longer trusted for rendering. Server-side, badge derivation is
+  now owner-guarded: a forged non-owner `superAdmin` publishes as
+  `superModerator` and raises the security audit event, with the same
+  demotion applied to stale stored rows in the batch callable, and the
+  backfill refusing to run without the owner secret. `AchievementStyle`
+  is reserved (cosmetics only, contract documented) but deliberately not
+  built. See
+  [ADR-045](Decisions.md#adr-045-one-authoritative-identity-badge-system--owner-guarded-derivation-a-batched-client-repository-and-a-single-family-of-badge-widgets).
+
 - Server-derived social notifications (2026-08-12): friend requests,
   acceptances and follows are no longer a best-effort second client
   write. Three Firestore triggers derive them from the authoritative

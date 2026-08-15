@@ -8,6 +8,8 @@ import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// "Moments from your circle" — the desktop Home strip that sits between
@@ -485,16 +487,29 @@ class _MomentTile extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 7),
-            Text(
-              moment.authorName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
-              ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Flexible(
+                  child: Text(
+                    moment.authorName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 3),
+                UserIdentityBadges(
+                  uid: moment.authorId,
+                  variant: IdentityBadgeVariant.icon,
+                ),
+              ],
             ),
             const SizedBox(height: 1),
             Text(
@@ -618,16 +633,29 @@ class _FollowablePersonTileState extends State<_FollowablePersonTile> {
             ),
           ),
           const SizedBox(height: 5),
-          Text(
-            person.displayName,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
-            ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Flexible(
+                child: Text(
+                  person.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 3),
+              UserIdentityBadges(
+                uid: person.id,
+                variant: IdentityBadgeVariant.icon,
+              ),
+            ],
           ),
           const SizedBox(height: 2),
           SizedBox(

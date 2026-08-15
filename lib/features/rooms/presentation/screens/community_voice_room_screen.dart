@@ -15,6 +15,7 @@ import 'package:yovoice/features/rooms/presentation/widgets/recent_room_messages
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -916,14 +917,21 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                             ),
                           ),
                         ),
-                        title: Text(
-                          self
-                              ? '${participant.displayName} (you)'
-                              : participant.displayName,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                          ),
+                        title: Wrap(
+                          spacing: 6,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Text(
+                              self
+                                  ? '${participant.displayName} (you)'
+                                  : participant.displayName,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            UserIdentityBadges(uid: participant.userId),
+                          ],
                         ),
                         subtitle: Text(
                           host

@@ -1,17 +1,22 @@
 import 'package:flutter/material.dart';
 
-/// The visual identity of each staff tier and of VIP — colours and labels
-/// only. Capabilities come from the server; this file just knows how a
-/// role looks once the server has said it exists.
+import 'package:yovoice/core/theme/app_colors.dart';
+
+/// String-keyed access to the role palette for MANAGEMENT surfaces
+/// (Staff Center works with raw role values, where a non-owner
+/// `superAdmin` legitimately reads SUPER ADMIN rather than the owner
+/// badge). Public identity everywhere else renders through
+/// OfficialRoleBadge/VipBadge. The colors themselves live in [AppColors]
+/// — the one palette source — and are only aliased here.
 abstract final class RoleIdentity {
-  static const ownerColor = Color(0xFFFF3344); // crimson
-  static const superModeratorColor = Color(0xFFFF6B81); // coral
-  static const moderatorColor = Color(0xFFA855F7); // violet
-  static const auditorColor = Color(0xFF818CF8); // indigo
-  static const supportColor = Color(0xFF38BDF8); // cyan
-  static const guideMasterColor = Color(0xFF35E58D); // emerald
-  static const vipColor = Color(0xFFFFD166); // gold
-  static const userColor = Color(0xFF9189A6); // neutral
+  static const ownerColor = AppColors.roleOwner; // crimson
+  static const superModeratorColor = AppColors.roleSuperModerator; // coral
+  static const moderatorColor = AppColors.roleModerator; // violet
+  static const auditorColor = AppColors.roleAuditor; // indigo
+  static const supportColor = AppColors.roleSupport; // cyan
+  static const guideMasterColor = AppColors.roleGuideMaster; // emerald
+  static const vipColor = AppColors.vipGold; // gold
+  static const userColor = AppColors.roleUser; // neutral
 
   /// The colour a role wears. The owner outranks the plain superAdmin
   /// label — ownership is confirmed by the server, never assumed here.

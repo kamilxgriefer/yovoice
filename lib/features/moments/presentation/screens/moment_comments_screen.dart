@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 
 class MomentCommentsScreen extends StatefulWidget {
   const MomentCommentsScreen({required this.moment, super.key});
@@ -137,6 +138,7 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                       final type = data['type'] as String? ?? 'text';
                       return _CommentCard(
                         name: name,
+                        authorId: data['authorId'] as String? ?? '',
                         photo: photo,
                         data: data,
                         isVoice: type == 'voice',
@@ -202,11 +204,13 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
 class _CommentCard extends StatefulWidget {
   const _CommentCard({
     required this.name,
+    required this.authorId,
     required this.photo,
     required this.data,
     required this.isVoice,
   });
   final String name;
+  final String authorId;
   final String? photo;
   final Map<String, dynamic> data;
   final bool isVoice;
@@ -275,12 +279,20 @@ class _CommentCardState extends State<_CommentCard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  widget.name,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                  ),
+                Wrap(
+                  spacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      widget.name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (widget.authorId.isNotEmpty)
+                      UserIdentityBadges(uid: widget.authorId),
+                  ],
                 ),
                 if (widget.isVoice) ...[
                   const SizedBox(height: 8),

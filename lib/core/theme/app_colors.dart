@@ -54,6 +54,23 @@ class AppColors {
   static const Color live = Color(0xFFFF335C);
 
   // =========================
+  // Identity badges
+  // =========================
+  // The official-role palette. One color per role in the staff
+  // vocabulary, plus VIP — an entitlement rendered separately, never a
+  // role. Referenced only through OfficialRoleBadge/VipBadge; no surface
+  // may define its own role color.
+
+  static const Color roleUser = Color(0xFF9189A6);
+  static const Color roleGuideMaster = Color(0xFF35E58D);
+  static const Color roleSupport = Color(0xFF38BDF8);
+  static const Color roleAuditor = Color(0xFF818CF8);
+  static const Color roleModerator = Color(0xFFA855F7);
+  static const Color roleSuperModerator = Color(0xFFFF6B81);
+  static const Color roleOwner = Color(0xFFFF3344);
+  static const Color vipGold = Color(0xFFFFD166);
+
+  // =========================
   // Misc
   // =========================
 

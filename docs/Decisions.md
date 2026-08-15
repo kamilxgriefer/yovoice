@@ -2708,3 +2708,112 @@ existing space and expose its metadata to every signed-in account.
   is protected by Firestore rules and Storage rules, nothing stronger.
 - 16 new emulator cases in `firestore-tests/rules.test.js` cover the
   boundary; the 173 pre-existing cases still pass unchanged.
+
+## ADR-045: One authoritative identity-badge system — owner-guarded derivation, a batched client repository, and a single family of badge widgets
+
+### Context
+
+The public badge mirror (`publicBadges/{uid}`, ADR-list: derived by
+Cloud Functions from the authoritative role and `effectiveVip()`) shipped
+with no client consumer beyond a one-off read in Staff Center. Meanwhile
+surfaces had begun growing their own identity renderings: Global Chat
+trusted a `senderIsStaff` flag EMBEDDED IN THE MESSAGE (whatever the
+sender's client claimed at write time), the desktop profile card ran its
+own capability lookup, and `RoleIdentity` in `core/theme` duplicated the
+role palette by hand. Three separate concepts — official role, VIP
+entitlement, future achievement cosmetics — were one refactor away from
+blurring together. The derivation also had one real hole: `deriveBadge()`
+never saw the uid, so a forged or stale `superAdmin` role value in a user
+document would have been mirrored — and rendered — as the owner badge.
+
+### Decision
+
+**Server.** `derivePublicRole(uid, user)` is the one function that says
+what role the mirror may publish. `superAdmin` passes through only for
+the confirmed protected owner (`isConfirmedOwner`, secret present AND
+matched — same fail-closed-in-both-directions rule as the capability
+matrix); any other uid carrying it is published as `superModerator` (the
+tier deriveCapabilities() actually grants it) and raises the existing
+`security_alert_non_owner_super_admin` audit event with
+`attempted: badgeDerivation`. The `getPublicBadges` callable applies the
+same demotion to STORED rows as defense in depth, and both badge
+triggers plus the callable now bind `YOVOICE_PROTECTED_OWNER_UID`. The
+backfill refuses to run at all without the owner guard in the
+environment — failing safe there would demote the real owner's badge —
+and reports `unconfirmedSuperAdmins` as an aggregate count without
+blocking apply (the fail-safe badge is exactly the write that heals a
+forged row).
+
+**Client.** `PublicIdentityRepository` is the only way a client learns
+anyone's role/VIP: it wraps `getPublicBadges` with flush-window batching
+(one request per screenful, chunked to the 50-uid bound), in-memory
+caching, in-flight dedup, cache clearing on account switch, a
+`revision` notifier so a Staff Center role change refreshes every
+mounted badge, and `PublicIdentity.fallback` (USER, no VIP) on any
+failure. Absence of a badge document is the DESIGNED answer for an
+ordinary account, and caches as USER. No surface reads role or VIP from
+message documents or other client-written fields anymore.
+
+**Presentation.** One family of widgets in `shared/widgets/identity/` —
+`OfficialRoleBadge`, `VipBadge`, `UserIdentityBadges`,
+`DecoratedUserAvatar` — renders identity everywhere: profile surfaces,
+all four chat kinds, room stages/rosters/participant sheets, Moments,
+the People & Moments rail, friends/follow lists, search, Discover, Top
+creators, notifications, Staff Center and the Moderation Center. Labels
+and colors live once: hexes in `AppColors` (roleUser #9189A6,
+guideMaster #35E58D, support #38BDF8, auditor #818CF8, moderator
+#A855F7, superModerator #FF6B81, owner #FF3344, vipGold #FFD166),
+vocabulary in the `OfficialRole` enum (`superAdmin` on the wire renders
+`OWNER · SUPER ADMIN` — safe because the server only publishes it for
+the confirmed owner). `RoleIdentity` survives ONLY as the string-keyed
+management-surface adapter (Staff Center legitimately shows a non-owner
+`superAdmin` as `SUPER ADMIN`), aliasing `AppColors` so the palette
+cannot fork again. Three variants (`full`, `compact`, `icon` with
+tooltip) plus `Wrap` layout and a `Flexible` label inside the pill keep
+narrow surfaces overflow-free without ever hiding the official role. An
+ordinary account renders `USER` — visibly, everywhere, on purpose.
+
+**Reserved, not built:** `AchievementStyle` (rank label, rank color,
+frame colors, frame asset) is the cosmetic slot for the Achievement Rank
+milestone. The contract it must honor when it ships: selection only of a
+server-validated, actually-unlocked achievement; cosmetics change rank
+text/color/frame ONLY; official role and VIP badges always render first
+and cannot be replaced or restyled; reserved names (Owner, Admin,
+Moderator, Support, and official-role variants) are refused server-side;
+removal/invalidation of an achievement resets the style safely; other
+users receive it through the public identity projection, never from
+client-supplied fields. Nothing constructs an AchievementStyle today —
+there is no selection flow until server-authoritative achievement data
+exists.
+
+### Reasoning
+
+The mirror was built precisely so identity could be public without the
+user document being public; leaving surfaces to trust message-embedded
+flags defeated it. The owner-guard gap was the same class of bug the
+capability matrix already solved — solving it AGAIN in the badge path,
+with the same fail-safe tier and the same audit event, keeps one
+security story rather than two. A repository with flush-window batching
+is what makes "badge beside every chat message" affordable: N rows in a
+frame collapse to one callable invocation instead of N Firestore reads.
+
+### Consequences
+
+- Global Chat's `senderIsStaff`-driven "Team" chip is gone; the field
+  remains in the schema (still written, still validated at send time)
+  but renders nothing. The "Creator" chip stays — account type is not a
+  role.
+- The desktop profile card no longer calls getMyStaffCapabilities for
+  display; `DesktopSidebar.capabilityService` remains accepted for
+  construction compatibility but feeds nothing.
+- Deploy order: Functions (owner-guarded derivation + batch callable
+  demotion) BEFORE the client that renders from it; rules are unchanged
+  this pass. Backfill re-run (dry-run, then apply) with
+  `YOVOICE_PROTECTED_OWNER_UID` exported, to converge any stored row
+  written before the guard.
+- 21 Functions badge tests (owner vs forged vs unguarded secret, stale
+  stored rows, backfill refusal), the rules suite's existing
+  publicBadges denials, and a new `identity_badges_test.dart` Flutter
+  suite (exact labels/colors, role×VIP coexistence and order, USER
+  fallback, batching/chunking/dedup/cache/account-switch, overflow at
+  120px, cosmetics-cannot-replace-badges) hold the boundary.

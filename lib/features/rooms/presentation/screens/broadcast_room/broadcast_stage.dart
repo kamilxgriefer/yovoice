@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 
 class BroadcastTopBar extends StatelessWidget {
   const BroadcastTopBar({
@@ -190,6 +191,10 @@ class BroadcastHostStage extends StatelessWidget {
               fontWeight: FontWeight.w900,
             ),
           ),
+          if (participant != null) ...[
+            const SizedBox(height: 6),
+            UserIdentityBadges(uid: participant!.userId),
+          ],
           const SizedBox(height: 4),
           const Text(
             'HOST • ON AIR',

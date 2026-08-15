@@ -3,9 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/sidebar_clock.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
-import 'package:yovoice/core/theme/role_identity.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// The desktop-only left rail. Presentation shell for the SAME
@@ -50,8 +50,9 @@ class DesktopSidebar extends StatelessWidget {
   final VoidCallback onOpenProfileSettings;
   final ProfileService? profileService;
 
-  /// Feeds the compact role indicator on the profile card. Optional and
-  /// failure-safe: without it the card looks exactly as it always did.
+  /// Retained for construction compatibility. The profile card's role
+  /// and VIP badges now come from the shared identity components
+  /// (UserIdentityBadges) rather than a capability lookup.
   final StaffCapabilityService? capabilityService;
 
   /// Anchors the desktop More popover to the rail item.
@@ -143,7 +144,6 @@ class DesktopSidebar extends StatelessWidget {
           const SizedBox(height: 4),
           _ProfileCard(
             profileService: profileService,
-            capabilityService: capabilityService,
             onTap: onOpenProfile,
             onSettings: onOpenProfileSettings,
           ),
@@ -430,21 +430,11 @@ class _ProfileCard extends StatelessWidget {
     required this.onTap,
     required this.onSettings,
     this.profileService,
-    this.capabilityService,
   });
 
   final VoidCallback onTap;
   final VoidCallback onSettings;
   final ProfileService? profileService;
-  final StaffCapabilityService? capabilityService;
-
-  Future<StaffCapabilities> _capabilities() async {
-    try {
-      return await (capabilityService ?? StaffCapabilityService()).load();
-    } catch (_) {
-      return StaffCapabilities.none;
-    }
-  }
 
   /// The signed-in profile stream, or null when there is no usable
   /// session (sign-out in flight, dev harness). The card then renders its
@@ -501,32 +491,15 @@ class _ProfileCard extends StatelessWidget {
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
-                            FutureBuilder<StaffCapabilities>(
-                              future: _capabilities(),
-                              builder: (context, capsSnapshot) {
-                                final caps =
-                                    capsSnapshot.data ??
-                                    StaffCapabilities.none;
-                                final label = RoleIdentity.labelFor(
-                                  caps.staffRole,
-                                  isOwner: caps.isOwner,
-                                );
-                                if (label.isEmpty && !caps.isVip) {
-                                  return const SizedBox.shrink();
-                                }
-                                return Padding(
-                                  padding: const EdgeInsets.only(top: 2),
-                                  child: _RoleChipRow(
-                                    label: label,
-                                    color: RoleIdentity.colorFor(
-                                      caps.staffRole,
-                                      isOwner: caps.isOwner,
-                                    ),
-                                    isVip: caps.isVip,
-                                  ),
-                                );
-                              },
-                            ),
+                            // The one shared identity rendering — same
+                            // badges everyone else sees for this account,
+                            // resolved from the public projection. An
+                            // ordinary account shows USER, on purpose.
+                            if (profile != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: UserIdentityBadges(uid: profile.uid),
+                              ),
                             if (profile != null &&
                                 profile.username.trim().isNotEmpty)
                               Text(
@@ -576,69 +549,3 @@ class _ProfileCard extends StatelessWidget {
 }
 
 
-/// The compact role indicator: the staff badge first, then a small gold
-/// VIP mark when both apply. Text always accompanies colour.
-class _RoleChipRow extends StatelessWidget {
-  const _RoleChipRow({
-    required this.label,
-    required this.color,
-    required this.isVip,
-  });
-
-  final String label;
-  final Color color;
-  final bool isVip;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (label.isNotEmpty)
-          Flexible(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: .16),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: color.withValues(alpha: .55)),
-              ),
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 8.5,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: .5,
-                ),
-              ),
-            ),
-          ),
-        if (isVip) ...[
-          if (label.isNotEmpty) const SizedBox(width: 4),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-            decoration: BoxDecoration(
-              color: RoleIdentity.vipColor.withValues(alpha: .16),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: RoleIdentity.vipColor.withValues(alpha: .55),
-              ),
-            ),
-            child: const Text(
-              'VIP',
-              style: TextStyle(
-                color: RoleIdentity.vipColor,
-                fontSize: 8.5,
-                fontWeight: FontWeight.w900,
-                letterSpacing: .5,
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}

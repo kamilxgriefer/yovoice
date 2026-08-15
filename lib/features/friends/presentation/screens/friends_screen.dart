@@ -10,6 +10,7 @@ import 'package:yovoice/features/friends/presentation/screens/friend_profile_scr
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 
 enum _FriendsFilter { all, online, requests }
 
@@ -619,15 +620,22 @@ class _FriendCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      friend.displayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                      ),
+                    Wrap(
+                      spacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          friend.displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        UserIdentityBadges(uid: friend.id),
+                      ],
                     ),
                     const SizedBox(height: 4),
                     Text(

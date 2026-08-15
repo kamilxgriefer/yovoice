@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
 import 'package:yovoice/features/achievements/presentation/widgets/title_badge.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -213,25 +215,32 @@ class ProfileHeader extends StatelessWidget {
                         fontSize: 15,
                       ),
                     ),
-                  // The identity chips row (board screen 5): account type +
-                  // the server-mirrored Premium mark. Only truthful chips —
+                  // The identity chips row (board screen 5). The official
+                  // role badge leads and ALWAYS renders — an ordinary
+                  // account reads USER — with VIP beside it when held,
+                  // both resolved from the server-written public badge
+                  // projection. After them: account type + the
+                  // server-mirrored Premium mark. Only truthful chips —
                   // premiumIdentity is written by Cloud Functions, never
                   // computed locally.
-                  if (profile.accountType != AccountType.personal ||
-                      profile.premiumIdentity)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 7),
-                      child: Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          if (profile.accountType != AccountType.personal)
-                            AccountTypeBadge(accountType: profile.accountType),
-                          if (profile.premiumIdentity)
-                            const PremiumIdentityChip(),
-                        ],
-                      ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 7),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        UserIdentityBadges(
+                          uid: profile.uid,
+                          variant: IdentityBadgeVariant.full,
+                        ),
+                        if (profile.accountType != AccountType.personal)
+                          AccountTypeBadge(accountType: profile.accountType),
+                        if (profile.premiumIdentity)
+                          const PremiumIdentityChip(),
+                      ],
                     ),
+                  ),
                   if (title != null) ...[
                     const SizedBox(height: 8),
                     TitleBadge(achievement: title!),

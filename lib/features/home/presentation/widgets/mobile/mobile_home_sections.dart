@@ -10,6 +10,8 @@ import 'package:yovoice/features/premium/data/premium_plans.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
+import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// Mobile-native presentations of the desktop Home sections.
@@ -557,6 +559,10 @@ class MobileVoiceTrending extends StatelessWidget {
             for (final person in people)
               _MiniRow(
                 title: person.displayName,
+                titleBadge: UserIdentityBadges(
+                  uid: person.uid,
+                  variant: IdentityBadgeVariant.icon,
+                ),
                 subtitle: person.username.isEmpty
                     ? 'On YO Voice'
                     : '@${person.username}',
@@ -648,6 +654,7 @@ class _MiniRow extends StatelessWidget {
     required this.leading,
     required this.onTap,
     this.trailing,
+    this.titleBadge,
   });
 
   final String title;
@@ -655,6 +662,9 @@ class _MiniRow extends StatelessWidget {
   final Widget leading;
   final Widget? trailing;
   final VoidCallback onTap;
+
+  /// Identity badges rendered beside the title when the row is a person.
+  final Widget? titleBadge;
 
   @override
   Widget build(BuildContext context) {
@@ -672,15 +682,25 @@ class _MiniRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      if (titleBadge != null) ...[
+                        const SizedBox(width: 4),
+                        titleBadge!,
+                      ],
+                    ],
                   ),
                   if (subtitle.trim().isNotEmpty)
                     Text(
@@ -886,6 +906,10 @@ class MobileTopCreators extends StatelessWidget {
             for (final creator in creators.take(4))
               _MiniRow(
                 title: creator.displayName,
+                titleBadge: UserIdentityBadges(
+                  uid: creator.uid,
+                  variant: IdentityBadgeVariant.icon,
+                ),
                 subtitle: creator.username.isEmpty
                     ? 'On YO Voice'
                     : '@${creator.username}',

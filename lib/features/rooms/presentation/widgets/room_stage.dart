@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// The Rooms 2.0 stage system — pure, data-driven widgets shared by the
@@ -289,6 +291,14 @@ class SpeakerTile extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
+                ),
+                // The tile is the app's narrowest identity surface: the
+                // official role (and VIP) shrink to icon dots with the
+                // full label in the tooltip — compact, never hidden.
+                const SizedBox(width: 4),
+                UserIdentityBadges(
+                  uid: speaker.userId,
+                  variant: IdentityBadgeVariant.icon,
                 ),
               ],
             ),

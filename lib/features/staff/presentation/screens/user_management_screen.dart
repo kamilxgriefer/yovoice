@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/theme/role_identity.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/presentation/widgets/user_actions_menu.dart';
+import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// What a lookup returned: the authoritative role from the server, VIP
@@ -41,17 +42,28 @@ class ManagedUser {
 /// public badge mirror, because a grant document is private to its
 /// holder even from this screen.
 class StaffUserLookup {
-  StaffUserLookup({FirebaseFunctions? functions, FirebaseFirestore? firestore})
-    : _functionsOverride = functions,
-      _firestoreOverride = firestore;
+  StaffUserLookup({
+    FirebaseFunctions? functions,
+    FirebaseFirestore? firestore,
+    PublicIdentityRepository? identities,
+  }) : _functionsOverride = functions,
+       _firestoreOverride = firestore,
+       _identitiesOverride = identities;
 
   final FirebaseFunctions? _functionsOverride;
   final FirebaseFirestore? _firestoreOverride;
+  final PublicIdentityRepository? _identitiesOverride;
 
   FirebaseFunctions get _functions =>
       _functionsOverride ?? FirebaseFunctions.instanceFor(region: 'europe-west1');
   FirebaseFirestore get _firestore =>
       _firestoreOverride ?? FirebaseFirestore.instance;
+
+  /// The same batched repository every badge in the app resolves
+  /// through; the screen also invalidates it after a role change so
+  /// already-rendered badges for that account refresh everywhere.
+  PublicIdentityRepository get identities =>
+      _identitiesOverride ?? PublicIdentityRepository.instance;
 
   Future<ManagedUser?> lookup(String rawInput) async {
     final input = rawInput.trim();
@@ -86,12 +98,12 @@ class StaffUserLookup {
     final data = Map<String, dynamic>.from(result.data);
     final resolvedUid = data['uid'] as String;
 
-    // VIP from the public mirror — derived server-side, readable by GET.
+    // VIP from the public mirror — derived server-side, resolved through
+    // the one shared repository (batched, cached, USER/no-VIP on
+    // failure).
     bool isVip = false;
     try {
-      final badge =
-          await _firestore.collection('publicBadges').doc(resolvedUid).get();
-      isVip = badge.data()?['isVip'] == true;
+      isVip = (await identities.resolve(resolvedUid)).isVip;
     } catch (_) {
       isVip = false;
     }
@@ -259,6 +271,10 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
         'expectedRole': user.role,
       });
       if (!mounted) return;
+      // The account's public badge just changed: forget the cached
+      // identity so every badge rendered for this uid — here and on any
+      // other open surface — re-resolves.
+      _lookup.identities.invalidate(user.uid);
       await _runLookup();
       if (!mounted) return;
       setState(() {

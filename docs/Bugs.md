@@ -84,6 +84,18 @@ permission flags).
 
 ## Moderation & safety
 
+- **FIXED — a forged non-owner `superAdmin` role would have been
+  mirrored, and rendered, as the owner badge.** `deriveBadge()` never
+  saw the uid, so a stale or planted `superAdmin` value in a user
+  document reached `publicBadges` verbatim. Fixed 2026-08-15
+  ([ADR-045](Decisions.md#adr-045-one-authoritative-identity-badge-system--owner-guarded-derivation-a-batched-client-repository-and-a-single-family-of-badge-widgets)):
+  derivation is owner-guarded (publishes `superModerator` + writes the
+  `security_alert_non_owner_super_admin` audit event), the batch
+  callable demotes stale stored rows, and the backfill refuses to run
+  without the owner secret. Global Chat also no longer renders identity
+  from the message-embedded `senderIsStaff` flag — badges resolve by
+  sender uid from the projection.
+
 - **Production is running a client that is ahead of its backend.**
   Pushing to `main` auto-deploys Hosting, so the Global Chat and
   Moderation Center *clients* went live with commits `24353d4` and

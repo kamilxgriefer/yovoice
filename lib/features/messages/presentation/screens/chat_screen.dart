@@ -10,6 +10,7 @@ import 'package:yovoice/features/achievements/data/services/achievement_service.
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -454,6 +455,7 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Column(
             children: [
               _ChatHeader(
+                userId: widget.otherUserId,
                 displayName: widget.otherDisplayName,
                 photoUrl: widget.otherPhotoUrl,
                 presenceStream: _presence,
@@ -571,6 +573,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
 class _ChatHeader extends StatelessWidget {
   const _ChatHeader({
+    required this.userId,
     required this.displayName,
     required this.photoUrl,
     required this.presenceStream,
@@ -581,6 +584,7 @@ class _ChatHeader extends StatelessWidget {
     required this.onProfileTap,
   });
 
+  final String userId;
   final String displayName;
   final String photoUrl;
   final Stream<ChatPresence> presenceStream;
@@ -628,15 +632,22 @@ class _ChatHeader extends StatelessWidget {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      displayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w900,
-                      ),
+                    Wrap(
+                      spacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        UserIdentityBadges(uid: userId),
+                      ],
                     ),
                     const SizedBox(height: 2),
                     Text(

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
+import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 
 class BroadcastSpeakerTile extends StatelessWidget {
   const BroadcastSpeakerTile({
@@ -57,6 +59,14 @@ class BroadcastSpeakerTile extends StatelessWidget {
               color: Colors.white,
               fontWeight: FontWeight.w800,
             ),
+          ),
+          const SizedBox(height: 4),
+          // Icon dots on the tile: full labels live in the tooltip and
+          // in the participants sheet — never hidden, never overflowing
+          // a 150px card.
+          UserIdentityBadges(
+            uid: participant.userId,
+            variant: IdentityBadgeVariant.icon,
           ),
           const SizedBox(height: 5),
           Row(

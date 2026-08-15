@@ -6,6 +6,7 @@ import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/features/clubs/data/models/club_channel.dart';
 import 'package:yovoice/features/clubs/data/models/club_message.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 
 class ClubChatScreen extends StatefulWidget {
   const ClubChatScreen({
@@ -276,9 +277,11 @@ class _ClubMessageTile extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Expanded(
+                        Flexible(
                           child: Text(
                             message.senderName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               color: isMine
                                   ? const Color(0xFFD8A9FF)
@@ -288,6 +291,9 @@ class _ClubMessageTile extends StatelessWidget {
                             ),
                           ),
                         ),
+                        const SizedBox(width: 6),
+                        UserIdentityBadges(uid: message.senderId),
+                        const Spacer(),
                         Text(
                           _formatTime(message.sentAt),
                           style: const TextStyle(

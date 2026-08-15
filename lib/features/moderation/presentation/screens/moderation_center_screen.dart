@@ -7,6 +7,7 @@ import 'package:yovoice/features/moderation/data/services/moderation_service.dar
 import 'package:yovoice/features/moderation/data/services/report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_message_sheet.dart';
 import 'package:yovoice/features/moderation/presentation/widgets/report_audit_timeline.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// The staff Moderation Center — the report queue and its detail panel,
@@ -1242,15 +1243,22 @@ class _ReportedAccount extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      profile?.displayName?.isNotEmpty == true
-                          ? profile!.displayName!
-                          : 'Loading…',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    Wrap(
+                      spacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          profile?.displayName?.isNotEmpty == true
+                              ? profile!.displayName!
+                              : 'Loading…',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        UserIdentityBadges(uid: userId),
+                      ],
                     ),
                     Text(
                       userId,

@@ -71,6 +71,14 @@ pattern throughout: fake the Firebase backends
   header at 7 widths, auth link tap targets) and
   `auth_service_verification_test.dart`, the original template for the
   service-with-mocks shape.
+- **`identity_badges_test.dart`** — the authoritative identity-badge
+  system (ADR-045): exact role labels and hex colors, role×VIP
+  coexistence and ordering, owner wire-value mapping, USER fallback,
+  repository batching (one request per flush window, 50-uid chunking,
+  in-flight dedup), cache invalidation and account-switch clearing,
+  overflow at 120px, and achievement cosmetics being unable to replace
+  official badges. `global_chat_test.dart` additionally proves message
+  rows badge by SENDER UID from the projection, not by message flags.
 
 **What this means in practice**: coverage is regression-driven — deep
 where something once broke (profile media, notifications, navigation,

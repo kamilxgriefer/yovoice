@@ -18,6 +18,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/presentation/widgets/user_actions_menu.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// The one way to open "who is this person?" from anywhere in the app —
@@ -312,6 +313,7 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
                 child: snapshot.hasError
                     ? _ErrorBody(error: snapshot.error!)
                     : _Body(
+                        userId: widget.userId,
                         profile: profile,
                         seedDisplayName: widget.seedDisplayName,
                         seedPhotoUrl: widget.seedPhotoUrl,
@@ -359,6 +361,7 @@ class FriendRequestLike {
 
 class _Body extends StatelessWidget {
   const _Body({
+    required this.userId,
     required this.profile,
     required this.seedDisplayName,
     required this.seedPhotoUrl,
@@ -375,6 +378,7 @@ class _Body extends StatelessWidget {
     required this.onFollow,
   });
 
+  final String userId;
   final UserProfile? profile;
   final String? seedDisplayName;
   final String? seedPhotoUrl;
@@ -462,7 +466,12 @@ class _Body extends StatelessWidget {
                   Wrap(
                     spacing: 6,
                     runSpacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
+                      // The authoritative identity leads: official role
+                      // always, VIP beside it when held. The chips after
+                      // are account/social facts, not roles.
+                      UserIdentityBadges(uid: userId),
                       if (profile?.accountType == AccountType.creator)
                         const _Chip(
                           icon: Icons.auto_awesome_rounded,

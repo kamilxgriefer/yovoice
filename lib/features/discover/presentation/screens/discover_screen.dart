@@ -7,6 +7,8 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
+import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 
 class DiscoverScreen extends StatefulWidget {
   const DiscoverScreen({this.isRootTab = false, super.key});
@@ -1009,6 +1011,11 @@ class _FeaturedRoomCard extends StatelessWidget {
                             ),
                           ),
                         ),
+                        const SizedBox(width: 4),
+                        UserIdentityBadges(
+                          uid: room.hostId,
+                          variant: IdentityBadgeVariant.icon,
+                        ),
                         const SizedBox(width: 8),
                         Icon(
                           room.isBroadcast
@@ -1187,15 +1194,26 @@ class _PremiumRoomCard extends StatelessWidget {
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: Text(
-                            room.hostName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
+                          child: Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  room.hostName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              UserIdentityBadges(
+                                uid: room.hostId,
+                                variant: IdentityBadgeVariant.icon,
+                              ),
+                            ],
                           ),
                         ),
                       ],

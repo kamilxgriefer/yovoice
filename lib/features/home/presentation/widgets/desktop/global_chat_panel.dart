@@ -6,6 +6,7 @@ import 'package:yovoice/features/messages/data/models/global_message.dart';
 import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
 import 'package:yovoice/features/moderation/data/services/report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_message_sheet.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -480,16 +481,14 @@ class _MessageRowState extends State<_MessageRow> {
                           ),
                         ),
                       ),
-                      // Both badges are validated server-side at send
-                      // time — the creator flag against the profile
-                      // document, the staff flag against the role claim.
-                      if (message.senderIsStaff) ...[
-                        const SizedBox(width: 6),
-                        const _SenderBadge(
-                          label: 'Team',
-                          color: Color(0xFF5CE1E6),
-                        ),
-                      ] else if (message.senderIsCreator) ...[
+                      // Identity comes from the public badge projection,
+                      // resolved by uid — the message's own staff flag is
+                      // client-era history and is not trusted for
+                      // rendering identity. Creator remains an account
+                      // type, not a role, so its chip stays.
+                      const SizedBox(width: 6),
+                      UserIdentityBadges(uid: message.senderId),
+                      if (message.senderIsCreator) ...[
                         const SizedBox(width: 6),
                         const _SenderBadge(
                           label: 'Creator',

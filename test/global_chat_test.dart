@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/home/presentation/widgets/desktop/global_chat_panel.dart';
 import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
+import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/features/moderation/data/services/report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_message_sheet.dart';
 
@@ -525,8 +526,8 @@ void main() {
   });
 
   group('panel', () {
-    testWidgets('renders real messages with their real badges, and marks a '
-        'moderator removal as such', (tester) async {
+    testWidgets('renders real messages with authoritative identity badges, '
+        'and marks a moderator removal as such', (tester) async {
       await seed(
         id: 'g1',
         senderId: 'creator-1',
@@ -553,6 +554,21 @@ void main() {
         deletedBy: 'mod-1',
       );
 
+      // Identity comes from the public badge projection by SENDER UID —
+      // the message's own isStaff flag no longer renders anything. The
+      // projection says Ola is a moderator; Marta has no badge document
+      // and reads USER.
+      final previousRepository = PublicIdentityRepository.instance;
+      PublicIdentityRepository.instance = PublicIdentityRepository(
+        auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: uid)),
+        fetchOverride: (uids) async => {
+          if (uids.contains('staff-1'))
+            'staff-1': {'staffRole': 'moderator', 'isVip': true},
+        },
+        flushDelay: const Duration(milliseconds: 1),
+      );
+      addTearDown(() => PublicIdentityRepository.instance = previousRepository);
+
       await tester.pumpWidget(
         host(
           GlobalChatPanel(
@@ -562,12 +578,20 @@ void main() {
         ),
       );
       await tester.pump(const Duration(milliseconds: 150));
+      await tester.pump(const Duration(milliseconds: 50));
 
       expect(find.text('Doors open in ten minutes'), findsOneWidget);
       expect(find.text('Marta'), findsOneWidget);
       expect(find.text('Creator'), findsOneWidget);
+      expect(find.text('USER'), findsOneWidget,
+          reason: 'an ordinary sender always shows the USER badge');
       expect(find.text('Ola'), findsOneWidget);
-      expect(find.text('Team'), findsOneWidget);
+      expect(find.text('MODERATOR'), findsOneWidget,
+          reason: "Ola's badge comes from the projection, not the message");
+      expect(find.text('VIP'), findsOneWidget,
+          reason: 'VIP renders beside the staff badge, never instead');
+      // The old message-embedded staff flag renders nothing.
+      expect(find.text('Team'), findsNothing);
       // A removed message keeps its slot and says who removed it.
       expect(find.text('Message removed by a moderator'), findsOneWidget);
       expect(find.text('Spammer'), findsNothing);

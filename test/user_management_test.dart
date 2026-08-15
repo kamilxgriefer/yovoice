@@ -6,6 +6,7 @@ import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/presentation/screens/staff_center_screen.dart';
 import 'package:yovoice/features/staff/presentation/screens/user_management_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
+import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
 /// The owner's role-assignment surface.
 ///
@@ -281,6 +282,16 @@ class _FakeLookup implements StaffUserLookup {
   _FakeLookup(this.result);
 
   final ManagedUser result;
+
+  /// A quiet repository: the screen invalidates it after a role change,
+  /// and invalidation must not blow up the success path.
+  final _identities = PublicIdentityRepository(
+    fetchOverride: (_) async => <String, dynamic>{},
+    flushDelay: const Duration(milliseconds: 1),
+  );
+
+  @override
+  PublicIdentityRepository get identities => _identities;
 
   @override
   Future<ManagedUser?> lookup(String rawInput) async =>

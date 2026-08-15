@@ -9,6 +9,8 @@ import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
+import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 
 class FriendProfileScreen extends StatefulWidget {
   const FriendProfileScreen({required this.friend, super.key});
@@ -246,6 +248,13 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                                   fontSize: 15,
                                 ),
                               ),
+                            const SizedBox(height: 8),
+                            Center(
+                              child: UserIdentityBadges(
+                                uid: widget.friend.id,
+                                variant: IdentityBadgeVariant.full,
+                              ),
+                            ),
                             const SizedBox(height: 12),
                             Center(child: _status()),
                             if ((profile?.bio ?? '').trim().isNotEmpty) ...[
