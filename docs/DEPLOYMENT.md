@@ -334,22 +334,22 @@ Function only makes its clients fail, it destroys nothing.
 
 `web/firebase-messaging-sw.js` is in the repository and is copied into
 `build/web` by `flutter build web`. The remaining prerequisite is the
-**VAPID public key**, which is not in the repository on purpose:
+**VAPID public key**. The production key is included in the Hosting build
+command because it is public client configuration (the private half remains
+inside Firebase):
 
 - **Where to get it**: Firebase Console → Project settings → Cloud
   Messaging → Web configuration → *Web Push certificates*. Use the
   **public** key of the key pair.
-- **Where to supply it**: as a build-time define, so it never lands in
-  source:
+- **Where to supply it**: as a build-time define:
 
 ```bash
 flutter build web --release --dart-define=YOVOICE_WEB_PUSH_VAPID_KEY=THE_PUBLIC_KEY
 ```
 
-  The Hosting CI workflow builds without it today, so **production web
-  builds currently ship with web push disabled**. Adding it means adding
-  the define to `.github/workflows/firebase-hosting-merge.yml`, with the
-  value stored as a repository secret.
+  The Hosting CI workflow already supplies the production public key, so
+  builds from `main` ship with web push enabled. Local release builds must
+  pass the same define when they are intended for deployment.
 - **Behaviour without it**: the app skips web push setup entirely — it
   does not request notification permission (a browser only grants that
   prompt once), does not call `getToken()`, and writes no token. It logs

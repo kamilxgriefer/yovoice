@@ -53,7 +53,9 @@ jobs:
             'npm --prefix firestore-tests run test:storage'
 
       - name: Build Flutter Web
-        run: flutter build web --release
+        run: >-
+          flutter build web --release
+          --dart-define=YOVOICE_WEB_PUSH_VAPID_KEY=BGa6os6npm6shnDdNP4rbqFS8wC5brGTY0RVzt59mZvpOhX3EeaCUpOaZRw2TmQeXK5gpZ1whEKvJEhmSD0mikU
 
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0

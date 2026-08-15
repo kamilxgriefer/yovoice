@@ -2556,9 +2556,9 @@ rather than saying so.
 - The feed's own error state is **retryable** and distinguishes a
   permission denial from a connection failure.
 - Web push is **configuration-gated**: the VAPID public key comes from
-  `--dart-define=YOVOICE_WEB_PUSH_VAPID_KEY` and is absent from source.
-  With no key the app skips web push setup entirely rather than
-  half-attempting it.
+  `--dart-define=YOVOICE_WEB_PUSH_VAPID_KEY`. The production key is public
+  client configuration and is supplied by the Hosting workflow; with no key
+  the app skips web push setup entirely rather than half-attempting it.
 
 ### Reasoning
 
@@ -2575,9 +2575,9 @@ that cannot work costs the user the chance to enable push later.
 - `NotificationsScreen` gained optional service and `currentUserId`
   parameters, used only by tests — the auxiliary streams have to be made
   to fail on demand for either regression to be testable at all.
-- Production web builds ship with web push disabled until the define is
-  added to the Hosting workflow; DEPLOYMENT.md records where the key
-  comes from and where it goes.
+- Production web builds supply the VAPID public key from the Hosting workflow;
+  DEPLOYMENT.md records where the key comes from and how local deploy builds
+  receive it.
 - Notification-path `catch (_) {}` blocks now log a bounded diagnostic
   with no tokens, emails or message content. Behaviour is unchanged;
   only the silence is gone.

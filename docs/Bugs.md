@@ -63,15 +63,14 @@ permission flags).
   client could write "X accepted your friend request" with no friendship
   existing; rules cannot check that. The three types were removed from
   the client-creatable list, and the trigger reads the friendship itself.
-- **PARTLY FIXED — web push.** The service worker
+- **FIXED — web push configuration.** The service worker
   (`web/firebase-messaging-sw.js`) now exists and ships in the build, and
   `getToken()` passes a `vapidKey` from
-  `--dart-define=YOVOICE_WEB_PUSH_VAPID_KEY`. **Still blocked on the key
-  itself**, which is a per-project configuration value and deliberately
-  not in the repository. Without it the app now skips web push setup
-  entirely — no permission prompt spent, no `getToken()` call, no empty
-  token written, one clear log line — instead of failing obscurely.
-  Unverified until someone supplies the key and tests in a real browser.
+  `--dart-define=YOVOICE_WEB_PUSH_VAPID_KEY`. The production public key is
+  generated in Firebase and supplied by the Hosting workflow. Without a key,
+  local builds still skip web push setup entirely — no permission prompt
+  spent, no `getToken()` call, no empty token written, one clear log line.
+  End-to-end delivery still needs a signed-in real-browser smoke test.
 - **FIXED — the Notifications screen collapsed on an unrelated failure.**
   It returned one "Could not load notifications" state if ANY of three
   streams errored, including the unrelated conversations stream, and
@@ -79,8 +78,9 @@ permission flags).
   depend on the activity feed alone; an auxiliary failure degrades to a
   small notice above the feed, which keeps rendering.
 - **OPEN — remaining client-written notification types still fail
-  silently.** Club/room invites, `directMessage`, `mention` and `reply`
-  keep the old best-effort path.
+  silently.** Club/room invites and `mention` keep the old best-effort path.
+  Direct messages and replies are now derived by the server from the message
+  document.
 
 ## Moderation & safety
 
