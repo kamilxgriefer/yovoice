@@ -46,7 +46,10 @@ Flutter client writes the notification document directly (see
 into an actual push via FCM. Has a title-builder per notification type,
 mirroring the in-app copy in `app_notification.dart`, and respects each
 user's per-type notification preferences (`notification_preferences_screen.dart`
-→ `NotificationService.setPreference`).
+→ `NotificationService.setPreference`). The shared, unit-tested payload sets
+the high-importance `yovoice_default` Android channel with default sound and
+vibration, APNs default sound with active interruption level, and web icon/
+badge metadata.
 
 ## Friends
 

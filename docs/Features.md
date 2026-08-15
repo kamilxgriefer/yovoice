@@ -119,4 +119,6 @@ UI language switching.
 deep-link tap routing, a preferences screen (per-type push toggles), and
 real push delivery via the `onNotificationCreated` Cloud Function trigger
 (see [Backend.md](Backend.md)). Triggered from real friend/follow/club/
-room/message events, not simulated.
+room/message events, not simulated. Native foreground and background pushes
+use an audible high-priority system notification; a focused web tab shows a
+compact floating banner with an Open action and an alert sound request.

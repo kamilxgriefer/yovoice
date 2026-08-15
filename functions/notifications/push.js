@@ -3,6 +3,7 @@ const { getMessaging } = require("firebase-admin/messaging");
 const { logger } = require("firebase-functions/v2");
 
 const { db } = require("../utils/firestore");
+const { buildPushMessage } = require("./push_payload");
 
 const REGION = "europe-west1";
 
@@ -80,18 +81,14 @@ exports.onNotificationCreated = onDocumentCreated(
       const title = buildTitle(actorName, notification.targetLabel || null);
       const tokens = tokensSnap.docs.map((doc) => doc.id);
 
-      const response = await getMessaging().sendEachForMulticast({
+      const response = await getMessaging().sendEachForMulticast(buildPushMessage({
         tokens,
-        notification: { title },
-        data: {
-          type: String(type),
-          targetId: notification.targetId ? String(notification.targetId) : "",
-          actorId: notification.actorId ? String(notification.actorId) : "",
-          notificationId,
-        },
-        android: { priority: "high" },
-        apns: { payload: { aps: { sound: "default" } } },
-      });
+        type,
+        targetId: notification.targetId,
+        actorId: notification.actorId,
+        notificationId,
+        title,
+      }));
 
       const staleTokens = [];
       response.responses.forEach((result, index) => {

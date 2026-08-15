@@ -3029,3 +3029,39 @@ does not fabricate activity.
   this change does not turn them into security authority.
 - Production requires the tested Firestore rules deployment in addition to the
   client release.
+
+## ADR-050: Push presentation is explicit per platform and focused web tabs use an in-app banner
+
+### Context
+
+The activity feed and bell badge proved that notification documents arrived,
+but presentation was not guaranteed. Android referenced a channel id without
+creating that channel, the server payload did not explicitly select sound or
+vibration on Android, and browsers intentionally do not display an incoming
+FCM notification automatically while their tab is focused.
+
+### Decision
+
+Create `yovoice_default` as a high-importance, sound-and-vibration-enabled
+Android channel before subscribing to foreground messages. Native foreground
+delivery uses explicit Android and Darwin presentation settings. The server
+payload selects the same channel and default sound/vibration on Android,
+default sound and active interruption on APNs, and icon/badge metadata on web.
+A focused web tab routes the foreground event into one floating in-app banner,
+requests the platform alert sound, and exposes the same deep-link action as a
+system notification.
+
+### Reasoning
+
+The Firestore activity record remains the durable source of truth while FCM is
+best-effort presentation. Explicit platform configuration prevents device
+defaults from silently downgrading the experience, and the in-app web banner
+fills the foreground behavior browsers deliberately leave to applications.
+
+### Consequences
+
+- Users receive more than a bell count when notification permission is granted.
+- The compact banner replaces the current banner rather than stacking alerts.
+- Tapping `Open` follows the existing `NotificationRouter` destination.
+- OS/browser permission, Focus/Do Not Disturb and mute settings remain outside
+  application control; no implementation can override them.

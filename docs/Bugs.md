@@ -51,6 +51,16 @@ permission flags).
 
 ## Notifications
 
+- **FIXED — notification activity could stop at the numeric bell badge.**
+  Android referenced `yovoice_default` but never created the channel, the
+  server payload did not select a channel or default sound/vibration, and a
+  focused browser tab did not present foreground FCM messages. The app now
+  creates a high-importance audible channel, explicitly presents native
+  foreground alerts with sound, shows a compact actionable web banner, and
+  sends platform-specific audible/visible payload options. Device/browser
+  notification permission, Focus/Do Not Disturb and mute settings remain OS
+  controls and cannot be overridden by an app.
+
 - **FIXED — friend requests, acceptances and follows could silently
   produce no notification.** All three were a second client write issued
   after the authoritative write, inside `try { ... } catch (_) {}`. Any

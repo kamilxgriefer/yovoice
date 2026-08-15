@@ -73,6 +73,19 @@ class PushNotificationService {
   void Function(NotificationType type, String? targetId, String? actorId)?
   onNotificationTap;
 
+  /// Web browsers do not automatically present a `notification` payload
+  /// while the tab is focused. The app layer uses this hook for one modest
+  /// in-app banner; native foreground messages are presented by the local
+  /// notifications plugin with the same system sound as background pushes.
+  void Function(
+    String title,
+    String? body,
+    NotificationType type,
+    String? targetId,
+    String? actorId,
+  )?
+  onWebForegroundNotification;
+
   /// Call once, after the user is signed in — token registration needs a
   /// uid to write `users/{uid}/fcmTokens/{token}` under, and requesting
   /// permission before there's any account to attach it to would just mean
@@ -269,12 +282,37 @@ class PushNotificationService {
         onNotificationTap?.call(type, targetId, actorId);
       },
     );
+
+    if (Platform.isAndroid) {
+      const channel = AndroidNotificationChannel(
+        'yovoice_default',
+        'YO Voice notifications',
+        description: 'Messages, invitations and activity from YO Voice',
+        importance: Importance.high,
+        playSound: true,
+        enableVibration: true,
+      );
+      await _localNotifications
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.createNotificationChannel(channel);
+    }
   }
 
   Future<void> _showLocalNotification(RemoteMessage message) async {
-    if (kIsWeb) return;
     final notification = message.notification;
     if (notification == null) return;
+    if (kIsWeb) {
+      onWebForegroundNotification?.call(
+        notification.title ?? 'YO Voice',
+        notification.body,
+        NotificationType.fromName(message.data['type'] as String?),
+        message.data['targetId'] as String?,
+        message.data['actorId'] as String?,
+      );
+      return;
+    }
     try {
       await _localNotifications.show(
         id: notification.hashCode,
@@ -284,10 +322,19 @@ class PushNotificationService {
           android: AndroidNotificationDetails(
             'yovoice_default',
             'YO Voice notifications',
+            channelDescription:
+                'Messages, invitations and activity from YO Voice',
             importance: Importance.high,
             priority: Priority.high,
+            playSound: true,
+            enableVibration: true,
           ),
-          iOS: DarwinNotificationDetails(),
+          iOS: DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+            sound: 'default',
+          ),
         ),
         payload:
             '${message.data['type'] ?? ''}|${message.data['targetId'] ?? ''}'

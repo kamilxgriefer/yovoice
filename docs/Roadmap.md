@@ -16,6 +16,14 @@ someone decide what to pick up next.
 
 ## Done
 
+- Audible and visible push-notification presentation (2026-08-15): created
+  the missing high-importance Android notification channel, made foreground
+  native pushes request alert/sound/vibration, added a compact actionable
+  banner for focused web tabs, and hardened the FCM payload for Android, APNs
+  and web. The payload contract is unit-tested and the banner is covered at
+  320, 390 and 430 px. See
+  [ADR-050](Decisions.md#adr-050-push-presentation-is-explicit-per-platform-and-focused-web-tabs-use-an-in-app-banner).
+
 - Achievements end-to-end repair (2026-08-15): fixed the Firestore self-write
   allowlist that rejected every atomic achievement update because
   `unlockedTitleTimestamps` was missing, added an emulator regression for the
