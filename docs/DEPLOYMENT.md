@@ -375,6 +375,16 @@ Distribution, and `ios/ExportOptions.plist`. Build an uploadable IPA with:
 flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
 ```
 
+The App Store Connect record is `YO Voice` (Apple ID `6801898909`). To upload
+an already-built archive directly to App Store Connect/TestFlight, run:
+
+```sh
+xcodebuild -exportArchive \
+  -archivePath build/ios/archive/Runner.xcarchive \
+  -exportPath build/ios/app-store-upload \
+  -exportOptionsPlist ios/ExportOptionsUpload.plist
+```
+
 The matching distribution private key, certificate, CSR, and provisioning
 profile are intentionally stored outside the repository under
 `~/Documents/YO Voice Secrets/`. Keep that directory backed up securely;
