@@ -10,6 +10,23 @@ plugins {
     id("com.google.firebase.crashlytics")
 }
 
+val uploadKeystoreFile = file("yovoice-upload-keystore.jks")
+val uploadKeyPassword = providers.environmentVariable(
+    "YOVOICE_UPLOAD_KEY_PASSWORD",
+).orElse(
+    providers.exec {
+        commandLine(
+            "security",
+            "find-generic-password",
+            "-a",
+            "yovoice",
+            "-s",
+            "yovoice-upload-keystore",
+            "-w",
+        )
+    }.standardOutput.asText.map(String::trim),
+)
+
 android {
     namespace = "app.yovoice"
 
@@ -34,9 +51,24 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            if (!uploadKeystoreFile.exists()) {
+                throw GradleException(
+                    "Missing android/app/yovoice-upload-keystore.jks. " +
+                        "Restore the YO Voice upload key before building release.",
+                )
+            }
+            keyAlias = "upload"
+            keyPassword = uploadKeyPassword.get()
+            storeFile = uploadKeystoreFile
+            storePassword = uploadKeyPassword.get()
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }

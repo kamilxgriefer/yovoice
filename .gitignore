@@ -44,6 +44,10 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# Production signing material is generated locally and stored in the macOS
+# Keychain. Never commit the upload keystore itself.
+/android/app/yovoice-upload-keystore.jks
+
 # Widget Preview related
 .widget_preview/
 .claude/
