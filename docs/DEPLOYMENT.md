@@ -364,8 +364,21 @@ uploaded in Firebase for both Development and Production. The private
 `.p8` is intentionally outside the repository in the operator secret
 backup (`~/Documents/YO Voice Secrets/AuthKey_3288VCBHFD.p8`) and cannot
 be downloaded from Apple a second time. `remote-notification` is enabled
-in `UIBackgroundModes`, and the Xcode target uses automatic signing for
-the Apple team above.
+in `UIBackgroundModes`.
+
+App Store releases use manual signing for the Release configuration with
+the `YO Voice App Store` provisioning profile (UUID
+`1a59a340-37ab-43a5-bdb2-bdc29d60600d`, expires 2027-08-15), Apple
+Distribution, and `ios/ExportOptions.plist`. Build an uploadable IPA with:
+
+```sh
+flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
+```
+
+The matching distribution private key, certificate, CSR, and provisioning
+profile are intentionally stored outside the repository under
+`~/Documents/YO Voice Secrets/`. Keep that directory backed up securely;
+without the private key this Mac cannot use the distribution certificate.
 
 ## App Check rollout (not enabled — staged plan)
 
