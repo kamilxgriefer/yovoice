@@ -4,8 +4,8 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
-import 'package:yovoice/features/messages/presentation/screens/global_chat_screen.dart';
+import 'package:yovoice/features/messages/data/services/message_service.dart';
+import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
@@ -62,6 +62,30 @@ void main() {
         });
   }
 
+  Future<void> seedConversation({
+    required String id,
+    required String otherName,
+    required String lastMessage,
+    required Duration age,
+    int unread = 0,
+  }) async {
+    final otherId = 'friend-$id';
+    await db.collection('conversations').doc(id).set({
+      'participantIds': [uid, otherId],
+      'participantNames': {uid: 'Kamil', otherId: otherName},
+      'participantEmails': {uid: 'me@yovoice.app', otherId: '$id@yovoice.app'},
+      'participantPhotoUrls': <String, String>{},
+      'unreadCounts': {uid: unread, otherId: 0},
+      'lastMessage': lastMessage,
+      'lastMessageType': 'text',
+      'lastMessageSenderId': otherId,
+      'updatedAt': Timestamp.fromDate(DateTime.now().subtract(age)),
+      'createdAt': Timestamp.now(),
+      'archivedBy': <String>[],
+      'mutedBy': <String>[],
+    });
+  }
+
   setUp(() async {
     ProfileService.resetCurrentProfileCache();
     db = FakeFirebaseFirestore();
@@ -81,6 +105,7 @@ void main() {
     VoidCallback? onFriends,
     VoidCallback? onCreateMoment,
     VoidCallback? onCreateRoom,
+    ValueChanged<Conversation>? onOpenConversation,
   }) {
     final firebaseAuth = auth();
     return MobileHome(
@@ -92,11 +117,13 @@ void main() {
       onCreateMoment: onCreateMoment ?? () {},
       onCreateRoom: onCreateRoom ?? () {},
       onOpenComments: (_) {},
+      onOpenConversation: onOpenConversation ?? (_) {},
+      onSeeAllChats: () {},
       roomService: RoomService(firestore: db, auth: firebaseAuth),
       friendService: FriendService(firestore: db, auth: firebaseAuth),
       profileService: ProfileService(firestore: db, auth: firebaseAuth),
       feedService: HomeFeedService(firestore: db, auth: firebaseAuth),
-      globalChatService: GlobalChatService(firestore: db, auth: firebaseAuth),
+      messageService: MessageService(firestore: db, auth: firebaseAuth),
       currentUserId: uid,
     );
   }
@@ -130,12 +157,12 @@ void main() {
     expect(find.text('Moments from your circle'), findsOneWidget);
     expect(find.text('Rooms for you'), findsOneWidget);
     expect(find.text('Your active rooms'), findsOneWidget);
-    expect(find.text('Global Chat'), findsOneWidget);
+    expect(find.text('Your recent chats'), findsOneWidget);
 
     double y(String label) => tester.getTopLeft(find.text(label)).dy;
     expect(y('Moments from your circle'), lessThan(y('Rooms for you')));
     expect(y('Rooms for you'), lessThan(y('Your active rooms')));
-    expect(y('Your active rooms'), lessThan(y('Global Chat')));
+    expect(y('Your active rooms'), lessThan(y('Your recent chats')));
 
     // The room appears ONCE, on one board — not in three sections.
     expect(find.text('Evening Talks'), findsOneWidget);
@@ -205,10 +232,7 @@ void main() {
     await tester.pumpWidget(host(buildHome()));
     await tester.pump(const Duration(milliseconds: 150));
 
-    expect(
-      find.textContaining('No rooms to show yet'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('No rooms to show yet'), findsOneWidget);
     // The recommended list hides rather than showing filler rows.
     expect(find.text('Recommended now'), findsNothing);
     expect(tester.takeException(), isNull);
@@ -234,132 +258,44 @@ void main() {
       },
     );
   }
-  group('Global conversations', () {
-    Future<void> seedGlobal({
-      required String id,
-      required String sender,
-      required String content,
-      bool isDeleted = false,
-      Duration age = const Duration(minutes: 1),
-    }) async {
-      await db
-          .collection('globalChat')
-          .doc('main')
-          .collection('messages')
-          .doc(id)
-          .set(<String, dynamic>{
-            'senderId': sender,
-            'senderName': sender,
-            'senderPhotoUrl': null,
-            'senderIsCreator': false,
-            'senderIsStaff': false,
-            'content': isDeleted ? '' : content,
-            'sentAt': Timestamp.fromDate(DateTime.now().subtract(age)),
-            'isDeleted': isDeleted,
-            'deletedBy': isDeleted ? 'mod' : null,
-            'deletedAt': null,
-          });
-    }
-
-    testWidgets('renders real messages and opens the existing Global Chat '
-        'screen', (tester) async {
-      usePhone(tester, const Size(390, 2600));
-      await seedGlobal(id: 'm1', sender: 'Ola', content: 'hello world');
-      await seedGlobal(
-        id: 'm2',
-        sender: 'Jonas',
-        content: 'anyone up for a room',
-        age: const Duration(minutes: 2),
-      );
-
-      await tester.pumpWidget(host(buildHome()));
-      await tester.pump(const Duration(milliseconds: 200));
-
-      expect(find.text('Global conversations'), findsOneWidget);
-      expect(find.text('hello world'), findsOneWidget);
-      expect(find.text('anyone up for a room'), findsOneWidget);
-
-      await tester.tap(find.text('Open Global Chat'));
-      await tester.pumpAndSettle();
-
-      // The real screen, hosting the canonical panel.
-      expect(find.byType(GlobalChatScreen), findsOneWidget);
-    });
-
-    testWidgets('a moderated message never appears in the preview', (
+  group('Your recent chats', () {
+    testWidgets('shows only the three newest conversations and opens one', (
       tester,
     ) async {
       usePhone(tester, const Size(390, 2600));
-      await seedGlobal(id: 'm1', sender: 'Ola', content: 'still here');
-      await seedGlobal(
-        id: 'm2',
-        sender: 'Spammer',
-        content: 'buy followers',
-        isDeleted: true,
-        age: const Duration(seconds: 30),
+      for (var index = 0; index < 4; index++) {
+        await seedConversation(
+          id: 'c$index',
+          otherName: 'Friend $index',
+          lastMessage: 'Message $index',
+          age: Duration(minutes: index),
+          unread: index,
+        );
+      }
+      Conversation? opened;
+      await tester.pumpWidget(
+        host(buildHome(onOpenConversation: (value) => opened = value)),
       );
-
-      await tester.pumpWidget(host(buildHome()));
       await tester.pump(const Duration(milliseconds: 200));
-
-      expect(find.text('still here'), findsOneWidget);
-      expect(find.text('buy followers'), findsNothing);
-      expect(find.text('Spammer'), findsNothing);
+      expect(find.text('Friend 0'), findsOneWidget);
+      expect(find.text('Friend 1'), findsOneWidget);
+      expect(find.text('Friend 2'), findsOneWidget);
+      expect(find.text('Friend 3'), findsNothing);
+      await tester.tap(find.text('Friend 0'));
+      expect(opened?.id, 'c0');
     });
 
-    testWidgets('an empty channel says so rather than showing nothing', (
+    testWidgets('an empty list offers the real friends destination', (
       tester,
     ) async {
       usePhone(tester, const Size(390, 2600));
       await tester.pumpWidget(host(buildHome()));
       await tester.pump(const Duration(milliseconds: 200));
-
-      expect(find.text('Global conversations'), findsOneWidget);
       expect(
-        find.text('No messages yet — say the first thing.'),
+        find.text('Your latest chats with friends will appear here.'),
         findsOneWidget,
       );
-    });
-
-    testWidgets('the section fits a 320pt phone without overflow', (
-      tester,
-    ) async {
-      usePhone(tester, const Size(320, 640));
-      await seedGlobal(
-        id: 'm1',
-        sender: 'SomebodyWithAVeryLongDisplayName',
-        content:
-            'a long message that would happily run past the edge of a '
-            'narrow phone if nothing constrained it',
-      );
-
-      await tester.pumpWidget(host(buildHome()));
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('the preview subscription is dropped with the widget', (
-      tester,
-    ) async {
-      usePhone(tester, const Size(390, 2600));
-      await seedGlobal(id: 'm1', sender: 'Ola', content: 'hello world');
-
-      await tester.pumpWidget(host(buildHome()));
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(find.text('hello world'), findsOneWidget);
-
-      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
-      await tester.pump(const Duration(milliseconds: 100));
-
-      // A write after teardown must not reach a live listener.
-      await seedGlobal(
-        id: 'm2',
-        sender: 'Late',
-        content: 'after disposal',
-        age: Duration.zero,
-      );
-      await tester.pump(const Duration(milliseconds: 150));
-      expect(tester.takeException(), isNull);
+      expect(find.text('Find friends'), findsOneWidget);
     });
   });
 }

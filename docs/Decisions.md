@@ -2949,3 +2949,39 @@ verified.
   door replaced the pill wall); new `staff_shell_navigation_test.dart`
   holds the slot contract, slot-vs-pushed chrome, Back/Home behavior
   and the phone list→detail flow.
+
+## ADR-048: Global Chat is retired from the app UI and Home previews three real private conversations
+
+### Context
+
+The public Global Chat feed no longer fits the product direction. Home
+should instead help a signed-in person resume their own recent conversations
+with friends. Deleting its Firestore collection, rules and moderation history
+would be a breaking and destructive migration for older clients.
+
+### Decision
+
+Remove Global Chat entry points and live listeners from the mobile and desktop
+Home surfaces. Replace them with `Your recent chats`, reading the same
+`MessageService.watchConversations` stream used by the inbox. The stream is
+already newest-first and excludes conversations archived by the current user;
+Home takes at most three and presents them side by side. Each card uses real
+conversation metadata, unread state and the existing DM navigation path.
+Loading, empty and error states remain explicit. Existing Global Chat backend
+data, security rules and moderation references stay in place as a compatibility
+boundary, but current navigation exposes no route to the public channel.
+
+### Reasoning
+
+Reusing the inbox stream avoids a second recency definition, query or schema.
+Keeping dormant backend records preserves backward compatibility and audit
+integrity while fully removing the feature from the current user experience.
+
+### Consequences
+
+- Home opens an existing `ChatScreen`; it does not create conversations or
+  fabricate contacts.
+- Three cards is the hard display maximum at narrow, medium and wide widths.
+- `See all` routes to Chats and the empty-state action routes to Friends.
+- A future backend cleanup requires a separately planned migration and client
+  compatibility window; it is not implied by this presentation change.

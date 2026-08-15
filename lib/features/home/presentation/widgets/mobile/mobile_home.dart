@@ -5,8 +5,9 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
-import 'package:yovoice/features/messages/presentation/screens/global_chat_screen.dart';
-import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/recent_chats.dart';
+import 'package:yovoice/features/messages/data/models/conversation.dart';
+import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home_sections.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
@@ -45,11 +46,13 @@ class MobileHome extends StatefulWidget {
     required this.onCreateMoment,
     required this.onCreateRoom,
     required this.onOpenComments,
+    required this.onOpenConversation,
+    required this.onSeeAllChats,
     this.roomService,
     this.friendService,
     this.profileService,
     this.feedService,
-    this.globalChatService,
+    this.messageService,
     this.currentUserId,
     super.key,
   });
@@ -65,6 +68,8 @@ class MobileHome extends StatefulWidget {
   /// this used to be wired to by mistake.
   final VoidCallback onCreateRoom;
   final ValueChanged<VoiceMoment> onOpenComments;
+  final ValueChanged<Conversation> onOpenConversation;
+  final VoidCallback onSeeAllChats;
 
   final RoomService? roomService;
   final FriendService? friendService;
@@ -74,9 +79,7 @@ class MobileHome extends StatefulWidget {
   /// Injected in tests for the same reason the others are: production
   /// passes nothing and resolves its own, which needs a Firebase app.
 
-  /// The canonical Global Chat service. Injected in tests; production
-  /// resolves its own, exactly as the others do.
-  final GlobalChatService? globalChatService;
+  final MessageService? messageService;
 
   /// The signed-in uid. Optional so tests need no Firebase app.
   final String? currentUserId;
@@ -92,11 +95,7 @@ class _MobileHomeState extends State<MobileHome> {
   Stream<UserProfile>? _profile;
   Stream<List<VoiceMoment>>? _feed;
 
-  /// ONE subscription to the community channel, owned here and handed to
-  /// the preview. The full screen opens its own when pushed; Home never
-  /// keeps a second live listener on the same collection.
-  GlobalChatService? _globalChat;
-  Stream<GlobalChatFeed>? _globalFeed;
+  Stream<List<Conversation>>? _conversations;
   Stream<List<VoiceRoom>>? _owned;
 
   @override
@@ -126,12 +125,10 @@ class _MobileHomeState extends State<MobileHome> {
       _feed = null;
     }
     try {
-      _globalChat = widget.globalChatService ?? GlobalChatService();
-      // A short window: this is a three-message preview, not a feed.
-      _globalFeed = _globalChat!.watchMessages(limit: 8);
+      _conversations = (widget.messageService ?? MessageService())
+          .watchConversations();
     } catch (_) {
-      _globalChat = null;
-      _globalFeed = null;
+      _conversations = null;
     }
   }
 
@@ -150,21 +147,6 @@ class _MobileHomeState extends State<MobileHome> {
       MaterialPageRoute<void>(builder: (_) => RoomSettingsScreen(room: room)),
     );
   }
-
-  void _openGlobalChat() {
-    // Single seam: the future Global Hub onboarding redirects from here
-    // rather than from inside the card. See MobileGlobalConversations.
-    Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => GlobalChatScreen(
-          currentUserId: _resolvedUserId,
-          chatService: widget.globalChatService,
-        ),
-      ),
-    );
-  }
-
-
 
   @override
   Widget build(BuildContext context) {
@@ -246,14 +228,18 @@ class _MobileHomeState extends State<MobileHome> {
                     compact: true,
                   ),
                 ),
-                const MobileSectionHeader(title: 'Global Chat'),
-                StreamBuilder<GlobalChatFeed>(
-                  stream: _globalFeed,
-                  builder: (context, globalSnapshot) =>
-                      MobileGlobalConversations(
-                        feed: globalSnapshot,
-                        onOpenGlobalChat: _openGlobalChat,
-                      ),
+                MobileSectionHeader(
+                  title: 'Your recent chats',
+                  onSeeAll: widget.onSeeAllChats,
+                ),
+                StreamBuilder<List<Conversation>>(
+                  stream: _conversations,
+                  builder: (context, conversationSnapshot) => RecentChats(
+                    snapshot: conversationSnapshot,
+                    currentUserId: _resolvedUserId,
+                    onOpenConversation: widget.onOpenConversation,
+                    onFindFriends: widget.onOpenFriends,
+                  ),
                 ),
               ],
             );

@@ -1,0 +1,125 @@
+<config xmlns="http://www.xfa.org/schema/xci/2.8/"
+><agent name="designer"
+><destination
+>pdf</destination
+><pdf
+><!--  [0..n]  --><fontInfo
+/></pdf
+></agent
+><present
+><!--  [0..n]  --><pdf
+><!--  [0..n]  --><version
+>1.7</version
+><adobeExtensionLevel
+>3</adobeExtensionLevel
+><renderPolicy
+>client</renderPolicy
+><creator
+>Adobe LiveCycle Designer ES 8.2</creator
+><producer
+>Adobe LiveCycle Designer ES 8.2</producer
+><scriptModel
+>XFA</scriptModel
+><interactive
+>1</interactive
+><tagged
+>1</tagged
+><fontInfo
+><embed
+>1</embed
+></fontInfo
+><compression
+><level
+>6</level
+><compressLogicalStructure
+>1</compressLogicalStructure
+><compressObjectStream
+>1</compressObjectStream
+></compression
+><linearized
+>1</linearized
+><silentPrint
+><addSilentPrint
+>0</addSilentPrint
+><printerName
+/></silentPrint
+><viewerPreferences
+><addViewerPreferences
+>0</addViewerPreferences
+><duplexOption
+>simplex</duplexOption
+><numberOfCopies
+>0</numberOfCopies
+></viewerPreferences
+></pdf
+><common
+><data
+><xsl
+><uri
+/></xsl
+><outputXSL
+><uri
+/></outputXSL
+></data
+><log
+><to
+>memory</to
+><mode
+>overwrite</mode
+></log
+><template
+><base
+>\\intranet.fr\sgdsn\utilisateurs_mercure\bureaux\pujol\DematCourrier\NouveauxFormulairesFusionnés\FormulaireRemplissableV2\</base
+></template
+></common
+><cache
+><macroCache
+/></cache
+><script
+><runScripts
+>server</runScripts
+></script
+><xdp
+><packets
+>*</packets
+></xdp
+><destination
+>pdf</destination
+><output
+><to
+>uri</to
+><uri
+>\\intranet.fr\sgdsn\utilisateurs_mercure\bureaux\pujol\DematCourrier\NouveauxFormulairesFusionnés\FormulaireRemplissableV2\Formulaire Annexe I.pdf</uri
+></output
+></present
+><psMap
+><font typeface="Calibri" psName="Calibri-Bold" weight="bold" posture="normal"
+/><font typeface="Calibri" psName="Calibri" weight="normal" posture="normal"
+/></psMap
+><acrobat
+><acrobat7
+><dynamicRender
+>required</dynamicRender
+></acrobat7
+><common
+><versionControl sourceBelow="maintain"
+/><data
+><xsl
+><uri
+/></xsl
+><outputXSL
+><uri
+/></outputXSL
+></data
+><template
+><base
+>\\intranet.fr\sgdsn\utilisateurs_mercure\bureaux\pujol\DematCourrier\NouveauxFormulairesFusionnés\FormulaireRemplissableV2\</base
+><relevant
+/><uri
+/></template
+></common
+><validate
+>preSubmit</validate
+></acrobat
+></config
+>

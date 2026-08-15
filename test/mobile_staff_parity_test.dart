@@ -3,9 +3,9 @@
 // What must hold:
 //  1. An ordinary (or VIP-only) account's More sheet is EXACTLY the
 //     layout it always was — no staff section, no gap.
-//  2. Owner / super moderator / moderator each get their own entry,
-//     derived from server capabilities alone (crimson Staff Center /
-//     coral Staff Center / violet Moderation Center).
+//  2. Every available mobile staff destination is derived from server
+//     capabilities alone. Owner/super moderator retain Staff Center and
+//     also get the violet Moderation destination available on desktop.
 //  3. A forged non-owner superAdmin — whose SERVER capabilities are the
 //     super-moderation tier — never receives the owner entry or the
 //     owner sections.
@@ -198,7 +198,9 @@ void useSize(WidgetTester tester, Size size) {
 }
 
 Widget sheetHost(Widget sheet) => MaterialApp(
-  home: Scaffold(body: Align(alignment: Alignment.bottomCenter, child: sheet)),
+  home: Scaffold(
+    body: Align(alignment: Alignment.bottomCenter, child: sheet),
+  ),
 );
 
 Future<void> settle(WidgetTester tester) async {
@@ -210,52 +212,55 @@ Future<void> settle(WidgetTester tester) async {
 void main() {
   group('staff entry derivation (capabilities only, never a role string)', () {
     test('tiers map to their doors and theme colors', () {
-      final owner = staffEntryFor(_ownerCaps)!;
-      expect(owner.destination, MoreDestination.staffCenter);
-      expect(owner.label, 'Staff Center');
-      expect(owner.color, AppColors.roleOwner);
+      final owner = staffEntriesFor(_ownerCaps);
+      expect(owner.map((entry) => entry.destination), [
+        MoreDestination.moderation,
+        MoreDestination.staffCenter,
+      ]);
+      expect(owner.last.label, 'Staff Center');
+      expect(owner.last.color, AppColors.roleOwner);
 
-      final superMod = staffEntryFor(_superModCaps)!;
-      expect(superMod.destination, MoreDestination.staffCenter);
-      expect(superMod.color, AppColors.roleSuperModerator);
+      final superMod = staffEntriesFor(_superModCaps);
+      expect(superMod.map((entry) => entry.destination), [
+        MoreDestination.moderation,
+        MoreDestination.staffCenter,
+      ]);
+      expect(superMod.last.color, AppColors.roleSuperModerator);
 
-      final mod = staffEntryFor(_modCaps)!;
+      final mod = staffEntriesFor(_modCaps).single;
       expect(mod.destination, MoreDestination.moderation);
-      expect(mod.label, 'Moderation Center');
+      expect(mod.label, 'Moderation');
       expect(mod.color, AppColors.roleModerator);
 
       // Ordinary, VIP-only, and shipped-nothing staff roles get NO entry
       // (their capability flags have no surfaces yet).
-      expect(staffEntryFor(StaffCapabilities.none), isNull);
+      expect(staffEntriesFor(StaffCapabilities.none), isEmpty);
+      expect(staffEntriesFor(const StaffCapabilities(isVip: true)), isEmpty);
       expect(
-        staffEntryFor(const StaffCapabilities(isVip: true)),
-        isNull,
-      );
-      expect(
-        staffEntryFor(
+        staffEntriesFor(
           const StaffCapabilities(staffRole: 'auditor', readAuditLogs: true),
         ),
-        isNull,
+        isEmpty,
       );
       expect(
-        staffEntryFor(
+        staffEntriesFor(
           const StaffCapabilities(staffRole: 'support', supportLookup: true),
         ),
-        isNull,
+        isEmpty,
       );
       expect(
-        staffEntryFor(
+        staffEntriesFor(
           const StaffCapabilities(staffRole: 'guideMaster', guideMode: true),
         ),
-        isNull,
+        isEmpty,
       );
     });
 
     test('a FORGED superAdmin — the tier the server actually grants it — '
         'gets the coral super-moderation entry, never the owner one', () {
-      final forged = staffEntryFor(_forgedSuperAdminCaps)!;
-      expect(forged.color, AppColors.roleSuperModerator);
-      expect(forged.color, isNot(AppColors.roleOwner));
+      final forged = staffEntriesFor(_forgedSuperAdminCaps);
+      expect(forged.last.color, AppColors.roleSuperModerator);
+      expect(forged.last.color, isNot(AppColors.roleOwner));
       // Even though the LOCAL role string says superAdmin — proof the
       // string is never consulted.
       expect(_forgedSuperAdminCaps.staffRole, 'superAdmin');
@@ -293,8 +298,9 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('a VIP-only account sees the same ordinary sheet',
-        (tester) async {
+    testWidgets('a VIP-only account sees the same ordinary sheet', (
+      tester,
+    ) async {
       useSize(tester, const Size(390, 844));
       await tester.pumpWidget(
         sheetHost(
@@ -312,8 +318,9 @@ void main() {
     });
 
     testWidgets('owner, super moderator and moderator each get their own '
-        'entry, with the account badges beside the section title',
-        (tester) async {
+        'entry, with the account badges beside the section title', (
+      tester,
+    ) async {
       useSize(tester, const Size(390, 844));
       final previous = PublicIdentityRepository.instance;
       addTearDown(() => PublicIdentityRepository.instance = previous);
@@ -321,7 +328,7 @@ void main() {
       for (final (caps, expectedEntry, badgeRole) in [
         (_ownerCaps, 'Staff Center', 'superAdmin'),
         (_superModCaps, 'Staff Center', 'superModerator'),
-        (_modCaps, 'Moderation Center', 'moderator'),
+        (_modCaps, 'Moderation', 'moderator'),
       ]) {
         PublicIdentityRepository.instance = PublicIdentityRepository(
           auth: MockFirebaseAuth(
@@ -351,6 +358,9 @@ void main() {
           findsOneWidget,
           reason: '${caps.staffRole} → $expectedEntry',
         );
+        if (caps.handleAssignedReports) {
+          expect(find.text('Moderation'), findsOneWidget);
+        }
         // The section carries the account's own authoritative badges —
         // official role AND the separate VIP badge.
         expect(find.text('VIP'), findsOneWidget, reason: caps.staffRole);
@@ -385,10 +395,7 @@ void main() {
       );
       final functions = _CountingFunctions()
         ..capabilitiesPayload = const {'staffRole': 'moderator'};
-      final service = StaffCapabilityService(
-        functions: functions,
-        auth: auth,
-      );
+      final service = StaffCapabilityService(functions: functions, auth: auth);
 
       await service.load();
       await service.load();
@@ -465,8 +472,9 @@ void main() {
       }
     });
 
-    testWidgets('safe areas and an open keyboard do not break the layout',
-        (tester) async {
+    testWidgets('safe areas and an open keyboard do not break the layout', (
+      tester,
+    ) async {
       useSize(tester, const Size(390, 844));
       await tester.pumpWidget(
         MediaQuery(
@@ -483,8 +491,9 @@ void main() {
     });
 
     testWidgets('the forged superAdmin sees only Reports, Rooms & Spaces '
-        'and Sanctions — no Users, no role management, no audit',
-        (tester) async {
+        'and Sanctions — no Users, no role management, no audit', (
+      tester,
+    ) async {
       useSize(tester, const Size(390, 844));
       await tester.pumpWidget(
         MaterialApp(home: mobileScreen(caps: _forgedSuperAdminCaps)),
@@ -529,8 +538,11 @@ void main() {
       await tester.tap(find.text('Ban account'));
       await settle(tester);
       final confirm = find.widgetWithText(FilledButton, 'Ban');
-      expect(tester.widget<FilledButton>(confirm).onPressed, isNull,
-          reason: 'no reason typed yet — confirm stays disabled');
+      expect(
+        tester.widget<FilledButton>(confirm).onPressed,
+        isNull,
+        reason: 'no reason typed yet — confirm stays disabled',
+      );
       await tester.enterText(
         find.widgetWithText(TextField, 'Reason (required)'),
         'abuse',

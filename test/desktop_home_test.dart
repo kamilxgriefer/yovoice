@@ -13,7 +13,6 @@ import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
-import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
@@ -138,6 +137,7 @@ void main() {
     required String otherName,
     required String lastMessage,
     int unread = 0,
+    Duration age = Duration.zero,
   }) async {
     await db.collection('conversations').doc(id).set({
       'participantIds': [uid, otherId],
@@ -151,41 +151,11 @@ void main() {
       'lastMessage': lastMessage,
       'lastMessageType': 'text',
       'lastMessageSenderId': otherId,
-      'updatedAt': Timestamp.now(),
+      'updatedAt': Timestamp.fromDate(DateTime.now().subtract(age)),
       'createdAt': Timestamp.now(),
       'archivedBy': <String>[],
       'mutedBy': <String>[],
     });
-  }
-
-  /// Writes straight into the canonical channel the app reads, so these
-  /// tests exercise the same path production uses.
-  Future<void> seedGlobalMessage({
-    required String id,
-    required String senderId,
-    required String senderName,
-    required String content,
-    Duration age = const Duration(minutes: 2),
-    bool isDeleted = false,
-    String? deletedBy,
-  }) async {
-    await db
-        .collection('globalChat')
-        .doc(GlobalChatService.channelId)
-        .collection('messages')
-        .doc(id)
-        .set({
-          'senderId': senderId,
-          'senderName': senderName,
-          'senderPhotoUrl': null,
-          'senderIsCreator': false,
-          'senderIsStaff': false,
-          'content': content,
-          'sentAt': Timestamp.fromDate(DateTime.now().subtract(age)),
-          'isDeleted': isDeleted,
-          'deletedBy': deletedBy,
-          'deletedAt': null,
-        });
   }
 
   setUp(() async {
@@ -247,10 +217,6 @@ void main() {
         notificationService: notifications,
       ),
       clubChatService: ClubChatService(firestore: db, auth: firebaseAuth),
-      globalChatService: GlobalChatService(
-        firestore: db,
-        auth: firebaseAuth,
-      ),
       firebaseAuth: firebaseAuth,
     );
   }
@@ -264,9 +230,7 @@ void main() {
   setUp(ProfileService.resetCurrentProfileCache);
   tearDown(ProfileService.resetCurrentProfileCache);
 
-  testWidgets('answers its four questions in order, once each', (
-    tester,
-  ) async {
+  testWidgets('answers its four questions in order, once each', (tester) async {
     useDesktop(tester, const Size(1440, 2600));
     await seedRoom(id: 'r1', name: 'Evening Talks', description: 'Real talk');
     await tester.pumpWidget(host(buildHome()));
@@ -277,14 +241,14 @@ void main() {
     for (final heading in [
       'Rooms for you',
       'Your active rooms',
-      'Global Chat',
+      'Your recent chats',
     ]) {
       expect(find.text(heading), findsOneWidget, reason: heading);
     }
 
     double y(String label) => tester.getTopLeft(find.text(label)).dy;
     expect(y('Rooms for you'), lessThan(y('Your active rooms')));
-    expect(y('Your active rooms'), lessThan(y('Global Chat')));
+    expect(y('Your active rooms'), lessThan(y('Your recent chats')));
 
     // The removed compositions must not come back.
     for (final gone in [
@@ -462,9 +426,7 @@ void main() {
     );
 
     var started = 0;
-    await tester.pumpWidget(
-      host(buildHome(onStartRoom: () => started++)),
-    );
+    await tester.pumpWidget(host(buildHome(onStartRoom: () => started++)));
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 60));
     }
@@ -497,42 +459,29 @@ void main() {
     expect(find.byTooltip('Room settings'), findsNothing);
   });
 
-  testWidgets('Global Chat previews real messages and hides moderated ones', (
+  testWidgets('recent chats shows at most the three newest conversations', (
     tester,
   ) async {
     useDesktop(tester, const Size(1440, 2600));
-    await seedGlobalMessage(
-      id: 'g1',
-      senderId: 'luna',
-      senderName: 'LunaVibes',
-      content: 'That voice moment was incredible!',
-    );
-    await seedGlobalMessage(
-      id: 'g2',
-      senderId: 'echo',
-      senderName: 'EchoWave',
-      content: 'Anyone up for a late night talk?',
-      age: const Duration(minutes: 8),
-    );
-    // Moderated away: it must never reach the preview.
-    await seedGlobalMessage(
-      id: 'g3',
-      senderId: 'spammer',
-      senderName: 'Spammer',
-      content: 'Removed by a moderator',
-      age: const Duration(minutes: 12),
-      isDeleted: true,
-      deletedBy: 'mod-uid',
-    );
+    for (var index = 0; index < 4; index++) {
+      await seedConversation(
+        id: 'c$index',
+        otherId: 'friend-$index',
+        otherName: 'Friend $index',
+        lastMessage: 'Message $index',
+        age: Duration(minutes: 4 - index),
+      );
+    }
 
     await tester.pumpWidget(host(buildHome()));
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 60));
     }
 
-    expect(find.text('That voice moment was incredible!'), findsOneWidget);
-    expect(find.text('Anyone up for a late night talk?'), findsOneWidget);
-    expect(find.text('Removed by a moderator'), findsNothing);
+    expect(find.text('Friend 3'), findsOneWidget);
+    expect(find.text('Friend 2'), findsOneWidget);
+    expect(find.text('Friend 1'), findsOneWidget);
+    expect(find.text('Friend 0'), findsNothing);
   });
 
   group('Moments from your circle', () {
@@ -565,8 +514,8 @@ void main() {
 
       await tester.pumpWidget(host(buildHome()));
       for (var i = 0; i < 6; i++) {
-      await tester.pump(const Duration(milliseconds: 60));
-    }
+        await tester.pump(const Duration(milliseconds: 60));
+      }
 
       expect(find.text('Your Moment'), findsOneWidget);
       expect(find.text('Ola'), findsWidgets);
@@ -604,8 +553,8 @@ void main() {
         ),
       );
       for (var i = 0; i < 6; i++) {
-      await tester.pump(const Duration(milliseconds: 60));
-    }
+        await tester.pump(const Duration(milliseconds: 60));
+      }
 
       await tester.tap(find.text('Ola').first);
       await tester.pump();
@@ -638,10 +587,7 @@ void main() {
       // Ola is followable; Zosia and Marek are not.
       expect(find.text('Follow'), findsOneWidget);
       expect(
-        find.ancestor(
-          of: find.text('Ola'),
-          matching: find.byType(Column),
-        ),
+        find.ancestor(of: find.text('Ola'), matching: find.byType(Column)),
         findsWidgets,
       );
       expect(find.text('Zosia'), findsNothing);
@@ -685,8 +631,8 @@ void main() {
 
       await tester.pumpWidget(host(buildHome(onSeeAll: () => discover++)));
       for (var i = 0; i < 6; i++) {
-      await tester.pump(const Duration(milliseconds: 60));
-    }
+        await tester.pump(const Duration(milliseconds: 60));
+      }
 
       expect(find.text('People & Moments'), findsOneWidget);
       // Creation stays reachable even with nothing to show.
@@ -733,5 +679,4 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
-
 }

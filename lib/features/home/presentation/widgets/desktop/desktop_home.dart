@@ -5,9 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:yovoice/features/rooms/presentation/screens/room_settings_screen.dart';
-import 'package:yovoice/features/messages/presentation/screens/global_chat_screen.dart';
-import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home_sections.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/recent_chats.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
@@ -15,7 +14,6 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_moments_strip.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
-import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
@@ -39,7 +37,7 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 ///  - `Your active rooms`   → [RoomService.watchOwnedRooms]
 ///  - greeting identity     → [ProfileService.watchCurrentProfile]
 ///  - Moments from the circle → [HomeFeedService.watchSocialMoments]
-///  - Global Chat preview   → [GlobalChatService.watchMessages]
+///  - recent chats preview → [MessageService.watchConversations]
 ///
 /// Navigation is delegated: the callbacks below are wired by MainShell
 /// to the SAME fixed-shell content-slot mechanism the rail uses, so
@@ -68,7 +66,6 @@ class DesktopHome extends StatefulWidget {
     this.messageService,
     this.clubService,
     this.clubChatService,
-    this.globalChatService,
     this.firebaseAuth,
     this.capabilityService,
     super.key,
@@ -103,7 +100,6 @@ class DesktopHome extends StatefulWidget {
   final MessageService? messageService;
   final ClubService? clubService;
   final ClubChatService? clubChatService;
-  final GlobalChatService? globalChatService;
   final FirebaseAuth? firebaseAuth;
 
   /// Staff capabilities, loaded once per session. Absent or failing, the
@@ -119,8 +115,7 @@ class _DesktopHomeState extends State<DesktopHome> {
   Stream<List<VoiceRoom>>? _liveRooms;
   Stream<UserProfile>? _profile;
   Stream<List<VoiceRoom>>? _owned;
-  Stream<GlobalChatFeed>? _globalFeed;
-  GlobalChatService? _globalChat;
+  Stream<List<Conversation>>? _conversations;
 
   /// Hosts this account follows — the top ranking tier for the board.
   final Set<String> _followedHostIds = <String>{};
@@ -142,10 +137,10 @@ class _DesktopHomeState extends State<DesktopHome> {
       _owned = null;
     }
     try {
-      _globalChat = widget.globalChatService ?? GlobalChatService();
-      _globalFeed = _globalChat!.watchMessages(limit: 8);
+      _conversations = (widget.messageService ?? MessageService())
+          .watchConversations();
     } catch (_) {
-      _globalFeed = null;
+      _conversations = null;
     }
     try {
       _profile = (widget.profileService ?? ProfileService())
@@ -171,11 +166,12 @@ class _DesktopHomeState extends State<DesktopHome> {
       _followingSub = null;
     }
     // Failure means the ordinary UI, never a guess.
-    (widget.capabilityService ?? StaffCapabilityService()).load().then((
-      capabilities,
-    ) {
-      if (mounted) setState(() => _capabilities = capabilities);
-    }).catchError((_) {});
+    (widget.capabilityService ?? StaffCapabilityService())
+        .load()
+        .then((capabilities) {
+          if (mounted) setState(() => _capabilities = capabilities);
+        })
+        .catchError((_) {});
   }
 
   @override
@@ -189,17 +185,6 @@ class _DesktopHomeState extends State<DesktopHome> {
     // refuse a non-host write regardless of what the UI offers.
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(builder: (_) => RoomSettingsScreen(room: room)),
-    );
-  }
-
-  void _openGlobalChat() {
-    Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => GlobalChatScreen(
-          currentUserId: widget.currentUserId,
-          chatService: widget.globalChatService,
-        ),
-      ),
     );
   }
 
@@ -241,15 +226,15 @@ class _DesktopHomeState extends State<DesktopHome> {
                   onCreateMoment: widget.onCreateMoment,
                   onSeeAll: widget.onSeeAllMoments,
                   onDiscover: widget.onSeeAllRooms,
-                  onOpenProfile: (userId) => showProfilePreview(
-                    context,
-                    userId: userId,
-                  ),
+                  onOpenProfile: (userId) =>
+                      showProfilePreview(context, userId: userId),
                 ),
                 gap,
                 // 2. Which rooms can I join?
-                _HomeSectionTitle('Rooms for you',
-                    onViewAll: widget.onSeeAllRooms),
+                _HomeSectionTitle(
+                  'Rooms for you',
+                  onViewAll: widget.onSeeAllRooms,
+                ),
                 if (board.isEmpty)
                   const _HomeSectionNote(
                     'No rooms to show yet — start one and your community '
@@ -265,8 +250,10 @@ class _DesktopHomeState extends State<DesktopHome> {
                     ),
                 gap,
                 // 3. Which rooms belong to me?
-                _HomeSectionTitle('Your active rooms',
-                    onViewAll: widget.onSeeAllRooms),
+                _HomeSectionTitle(
+                  'Your active rooms',
+                  onViewAll: widget.onSeeAllRooms,
+                ),
                 StreamBuilder<List<VoiceRoom>>(
                   stream: _owned,
                   builder: (context, ownedSnapshot) => HomeActiveRooms(
@@ -278,15 +265,19 @@ class _DesktopHomeState extends State<DesktopHome> {
                   ),
                 ),
                 gap,
-                // 4. Where is Global Chat?
-                const _HomeSectionTitle('Global Chat'),
-                StreamBuilder<GlobalChatFeed>(
-                  stream: _globalFeed,
-                  builder: (context, globalSnapshot) =>
-                      MobileGlobalConversations(
-                        feed: globalSnapshot,
-                        onOpenGlobalChat: _openGlobalChat,
-                      ),
+                // 4. Who did I speak with most recently?
+                _HomeSectionTitle(
+                  'Your recent chats',
+                  onViewAll: widget.onSeeAllChats,
+                ),
+                StreamBuilder<List<Conversation>>(
+                  stream: _conversations,
+                  builder: (context, conversationSnapshot) => RecentChats(
+                    snapshot: conversationSnapshot,
+                    currentUserId: widget.currentUserId,
+                    onOpenConversation: widget.onOpenConversation,
+                    onFindFriends: widget.onViewAllFriends,
+                  ),
                 ),
               ],
             );

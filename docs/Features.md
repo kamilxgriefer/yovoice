@@ -56,6 +56,11 @@ Direct messages (`conversations/{id}/messages`) and club channel chat
 (`clubs/{clubId}/channels/{channelId}/messages`) — `lib/features/messages/`
 and `lib/features/chats/`.
 
+Home surfaces the three most recently updated non-archived direct
+conversations as `Your recent chats`. Global Chat is retired from the app
+UI; its existing backend data remains compatibility-only for older clients
+and historical moderation records.
+
 ## Voice Moments
 
 Short (≤60s) recorded audio posts (`lib/features/moments/`): likes,

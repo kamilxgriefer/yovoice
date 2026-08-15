@@ -84,18 +84,14 @@ Widget moreDestinationScreen(
       isRootTab: isRootTab,
     ),
     MoreDestination.achievements => const AwardsHubScreen(),
-    MoreDestination.creatorStudio => CreatorStudioScreen(
-      isRootTab: isRootTab,
-    ),
+    MoreDestination.creatorStudio => CreatorStudioScreen(isRootTab: isRootTab),
     MoreDestination.settings => SettingsScreen(isRootTab: isRootTab),
     MoreDestination.profile => const ProfileScreen(),
     // Re-checks staff authority on mount and renders an access-denied
     // state without querying anything if it fails. Menu visibility is
     // presentation; this and firestore.rules are the boundary.
     MoreDestination.staffCenter => StaffCenterScreen(isRootTab: isRootTab),
-    MoreDestination.moderation => ModerationCenterScreen(
-      isRootTab: isRootTab,
-    ),
+    MoreDestination.moderation => ModerationCenterScreen(isRootTab: isRootTab),
   };
 }
 
@@ -236,7 +232,7 @@ Future<MoreDestination?> showDesktopMoreMenu(
 /// from SERVER capabilities alone, never from a local role string.
 ///
 /// The tiers map to the doors that actually exist behind them:
-///   owner (manageRoles)                    Staff Center, crimson
+///   owner (manageRoles)                    Moderation Center + Staff Center
 ///   super moderation (liftSuspensions /
 ///   viewAllQueues)                         Staff Center, coral — it opens
 ///                                          with exactly Reports, Rooms &
@@ -248,33 +244,48 @@ Future<MoreDestination?> showDesktopMoreMenu(
 /// utils/capabilities.js — "a capability is not a promise of a button"),
 /// and an entry with no real backend read would be a decorative control.
 /// VIP and ordinary accounts get no section and no empty gap.
-({MoreDestination destination, String label, String subtitle, Color color})?
-staffEntryFor(StaffCapabilities capabilities) {
+List<
+  ({MoreDestination destination, String label, String subtitle, Color color})
+>
+staffEntriesFor(StaffCapabilities capabilities) {
+  final entries =
+      <
+        ({
+          MoreDestination destination,
+          String label,
+          String subtitle,
+          Color color,
+        })
+      >[];
+
+  // Moderation is its own destination on desktop and mobile. Do not let
+  // the broader Staff Center entry replace it for accounts that have both
+  // capabilities (notably the owner and super moderators).
+  if (capabilities.handleAssignedReports) {
+    entries.add((
+      destination: MoreDestination.moderation,
+      label: 'Moderation',
+      subtitle: 'Review reported content',
+      color: AppColors.roleModerator,
+    ));
+  }
+
   if (capabilities.manageRoles) {
-    return (
+    entries.add((
       destination: MoreDestination.staffCenter,
       label: 'Staff Center',
       subtitle: 'Owner console — every section',
       color: AppColors.roleOwner,
-    );
-  }
-  if (capabilities.liftSuspensions || capabilities.viewAllQueues) {
-    return (
+    ));
+  } else if (capabilities.liftSuspensions || capabilities.viewAllQueues) {
+    entries.add((
       destination: MoreDestination.staffCenter,
       label: 'Staff Center',
       subtitle: 'Reports, rooms and sanctions',
       color: AppColors.roleSuperModerator,
-    );
+    ));
   }
-  if (capabilities.handleAssignedReports) {
-    return (
-      destination: MoreDestination.moderation,
-      label: 'Moderation Center',
-      subtitle: 'Review reported content',
-      color: AppColors.roleModerator,
-    );
-  }
-  return null;
+  return entries;
 }
 
 class MoreSheet extends StatefulWidget {
@@ -315,11 +326,12 @@ class _MoreSheetState extends State<MoreSheet> {
     // Until the server answers, the sheet is exactly the ordinary
     // layout — the staff section appears only on a positive answer, so
     // an ordinary account never sees a flash or a gap.
-    (widget.capabilityService ?? StaffCapabilityService()).load().then((
-      capabilities,
-    ) {
-      if (mounted) setState(() => _capabilities = capabilities);
-    }).catchError((_) {});
+    (widget.capabilityService ?? StaffCapabilityService())
+        .load()
+        .then((capabilities) {
+          if (mounted) setState(() => _capabilities = capabilities);
+        })
+        .catchError((_) {});
   }
 
   @override
@@ -380,45 +392,45 @@ class _MoreSheetState extends State<MoreSheet> {
               // keep the ratio they always had.
               childAspectRatio: constraints.maxWidth < 340 ? .76 : .93,
               children: const [
-              // Friends graduated to the primary bottom navigation;
-              // Profile moved here in its place (still one tap away via
-              // any of your own avatars too).
-              _MoreTile(
-                destination: MoreDestination.profile,
-                icon: Icons.person_rounded,
-                label: 'Profile',
-                subtitle: 'You',
-              ),
-              _MoreTile(
-                destination: MoreDestination.discover,
-                icon: Icons.explore_rounded,
-                label: 'Discover',
-                subtitle: 'Find rooms',
-              ),
-              _MoreTile(
-                destination: MoreDestination.clubs,
-                icon: Icons.groups_2_rounded,
-                label: 'Clubs',
-                subtitle: 'Communities',
-              ),
-              _MoreTile(
-                destination: MoreDestination.notifications,
-                icon: Icons.notifications_rounded,
-                label: 'Alerts',
-                subtitle: 'Updates',
-              ),
-              _MoreTile(
-                destination: MoreDestination.achievements,
-                icon: Icons.emoji_events_rounded,
-                label: 'Awards',
-                subtitle: 'Progress',
-              ),
-              _MoreTile(
-                destination: MoreDestination.creatorStudio,
-                icon: Icons.auto_graph_rounded,
-                label: 'Creator',
-                subtitle: 'Studio',
-              ),
+                // Friends graduated to the primary bottom navigation;
+                // Profile moved here in its place (still one tap away via
+                // any of your own avatars too).
+                _MoreTile(
+                  destination: MoreDestination.profile,
+                  icon: Icons.person_rounded,
+                  label: 'Profile',
+                  subtitle: 'You',
+                ),
+                _MoreTile(
+                  destination: MoreDestination.discover,
+                  icon: Icons.explore_rounded,
+                  label: 'Discover',
+                  subtitle: 'Find rooms',
+                ),
+                _MoreTile(
+                  destination: MoreDestination.clubs,
+                  icon: Icons.groups_2_rounded,
+                  label: 'Clubs',
+                  subtitle: 'Communities',
+                ),
+                _MoreTile(
+                  destination: MoreDestination.notifications,
+                  icon: Icons.notifications_rounded,
+                  label: 'Alerts',
+                  subtitle: 'Updates',
+                ),
+                _MoreTile(
+                  destination: MoreDestination.achievements,
+                  icon: Icons.emoji_events_rounded,
+                  label: 'Awards',
+                  subtitle: 'Progress',
+                ),
+                _MoreTile(
+                  destination: MoreDestination.creatorStudio,
+                  icon: Icons.auto_graph_rounded,
+                  label: 'Creator',
+                  subtitle: 'Studio',
+                ),
               ],
             ),
           ),
@@ -440,8 +452,8 @@ class _MoreSheetState extends State<MoreSheet> {
   }
 
   List<Widget> _staffSection() {
-    final entry = staffEntryFor(_capabilities);
-    if (entry == null) return const [];
+    final entries = staffEntriesFor(_capabilities);
+    if (entries.isEmpty) return const [];
     final uid = _currentUid;
     return [
       const SizedBox(height: 14),
@@ -463,15 +475,18 @@ class _MoreSheetState extends State<MoreSheet> {
         ],
       ),
       const SizedBox(height: 9),
-      _WideMoreTile(
-        destination: entry.destination,
-        icon: entry.destination == MoreDestination.staffCenter
-            ? Icons.admin_panel_settings_rounded
-            : Icons.shield_rounded,
-        label: entry.label,
-        subtitle: entry.subtitle,
-        accentColor: entry.color,
-      ),
+      for (var index = 0; index < entries.length; index++) ...[
+        if (index > 0) const SizedBox(height: 9),
+        _WideMoreTile(
+          destination: entries[index].destination,
+          icon: entries[index].destination == MoreDestination.staffCenter
+              ? Icons.admin_panel_settings_rounded
+              : Icons.shield_rounded,
+          label: entries[index].label,
+          subtitle: entries[index].subtitle,
+          accentColor: entries[index].color,
+        ),
+      ],
     ];
   }
 }

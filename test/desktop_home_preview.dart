@@ -72,34 +72,45 @@ Future<FakeFirebaseFirestore> _seed() async {
     });
     for (var i = 0; i < 7; i++) {
       final reasons = [
-        'harassment', 'spam', 'hate', 'impersonation',
-        'violence', 'sexual', 'other',
+        'harassment',
+        'spam',
+        'hate',
+        'impersonation',
+        'violence',
+        'sexual',
+        'other',
       ];
-      await db.collection('reports').doc('reporter-${i}_globalMessage_m$i').set({
-        'reporterId': 'reporter-$i',
-        'targetType': i == 6 ? 'user' : 'globalMessage',
-        'targetId': i == 6 ? 'ola' : 'gm$i',
-        'reportedUserId': i == 6 ? 'ola' : 'jonas',
-        'contextPath': 'globalChat/main/messages/gm$i',
-        'reason': reasons[i],
-        'note': i.isEven ? 'They kept going after being asked to stop.' : '',
-        'createdAt': Timestamp.fromDate(ago(Duration(minutes: 4 + i * 37))),
-        'status': 'open',
-      });
+      await db.collection('reports').doc('reporter-${i}_globalMessage_m$i').set(
+        {
+          'reporterId': 'reporter-$i',
+          'targetType': i == 6 ? 'user' : 'globalMessage',
+          'targetId': i == 6 ? 'ola' : 'gm$i',
+          'reportedUserId': i == 6 ? 'ola' : 'jonas',
+          'contextPath': 'globalChat/main/messages/gm$i',
+          'reason': reasons[i],
+          'note': i.isEven ? 'They kept going after being asked to stop.' : '',
+          'createdAt': Timestamp.fromDate(ago(Duration(minutes: 4 + i * 37))),
+          'status': 'open',
+        },
+      );
     }
-    await db.collection('globalChat').doc('main').collection('messages')
-        .doc('gm0').set({
-      'senderId': 'jonas',
-      'senderName': 'Jonas',
-      'senderPhotoUrl': null,
-      'senderIsCreator': false,
-      'senderIsStaff': false,
-      'content': 'The reported message content sits here for review.',
-      'sentAt': Timestamp.fromDate(ago(const Duration(minutes: 6))),
-      'isDeleted': false,
-      'deletedBy': null,
-      'deletedAt': null,
-    });
+    await db
+        .collection('globalChat')
+        .doc('main')
+        .collection('messages')
+        .doc('gm0')
+        .set({
+          'senderId': 'jonas',
+          'senderName': 'Jonas',
+          'senderPhotoUrl': null,
+          'senderIsCreator': false,
+          'senderIsStaff': false,
+          'content': 'The reported message content sits here for review.',
+          'sentAt': Timestamp.fromDate(ago(const Duration(minutes: 6))),
+          'isDeleted': false,
+          'deletedBy': null,
+          'deletedAt': null,
+        });
     await db.collection('users').doc('jonas').set({
       'uid': 'jonas',
       'displayName': 'Jonas',
@@ -123,12 +134,8 @@ Future<FakeFirebaseFirestore> _seed() async {
       .doc(id)
       .set({'friendId': id, 'createdAt': Timestamp.now()});
 
-  Future<void> following(String id, String name) => db
-      .collection('users')
-      .doc(_uid)
-      .collection('following')
-      .doc(id)
-      .set({
+  Future<void> following(String id, String name) =>
+      db.collection('users').doc(_uid).collection('following').doc(id).set({
         'uid': id,
         'displayName': name,
         'username': name.toLowerCase().replaceAll(' ', ''),
@@ -302,29 +309,93 @@ Future<FakeFirebaseFirestore> _seed() async {
     category: 'music',
   );
 
-  await moment('m1', 'ola', 'Ola Kwiatkowska', 'Morning thoughts',
-      const Duration(minutes: 24), 42);
-  await moment('m2', 'marta', 'Marta Nowak', 'Studio update',
-      const Duration(hours: 3), 95);
-  await moment('m3', 'sieeema', 'Sieeema', 'Tonight at nine',
-      const Duration(hours: 9), 18);
-  await moment('m4', 'bartek', 'Bartek', 'Track preview',
-      const Duration(days: 2), 57);
-  await moment('m5', 'jonas', 'Jonas', 'Answering questions',
-      const Duration(days: 4), 131);
-  await moment('m6', _uid, 'CeoGriefer', 'Shipping notes',
-      const Duration(hours: 5), 33);
+  await moment(
+    'm1',
+    'ola',
+    'Ola Kwiatkowska',
+    'Morning thoughts',
+    const Duration(minutes: 24),
+    42,
+  );
+  await moment(
+    'm2',
+    'marta',
+    'Marta Nowak',
+    'Studio update',
+    const Duration(hours: 3),
+    95,
+  );
+  await moment(
+    'm3',
+    'sieeema',
+    'Sieeema',
+    'Tonight at nine',
+    const Duration(hours: 9),
+    18,
+  );
+  await moment(
+    'm4',
+    'bartek',
+    'Bartek',
+    'Track preview',
+    const Duration(days: 2),
+    57,
+  );
+  await moment(
+    'm5',
+    'jonas',
+    'Jonas',
+    'Answering questions',
+    const Duration(days: 4),
+    131,
+  );
+  await moment(
+    'm6',
+    _uid,
+    'CeoGriefer',
+    'Shipping notes',
+    const Duration(hours: 5),
+    33,
+  );
 
-  await conversation('c1', 'sieeema', 'Sieeema', 'See you in the room tonight',
-      3, const Duration(minutes: 4));
-  await conversation('c2', 'ola', 'Ola Kwiatkowska', 'You: sent the draft over',
-      0, const Duration(hours: 2));
   await conversation(
-      'c3', 'piotr', 'Piotr', 'Hey — saw your Moment', 1, const Duration(hours: 7));
-  await conversation('c4', 'bartek', 'Bartek', 'Voice message', 0,
-      const Duration(days: 2));
-  await club('club-1', 'Night Owls', 'Welcome everyone 👋',
-      const Duration(minutes: 40));
+    'c1',
+    'sieeema',
+    'Sieeema',
+    'See you in the room tonight',
+    3,
+    const Duration(minutes: 4),
+  );
+  await conversation(
+    'c2',
+    'ola',
+    'Ola Kwiatkowska',
+    'You: sent the draft over',
+    0,
+    const Duration(hours: 2),
+  );
+  await conversation(
+    'c3',
+    'piotr',
+    'Piotr',
+    'Hey — saw your Moment',
+    1,
+    const Duration(hours: 7),
+  );
+  await conversation(
+    'c4',
+    'bartek',
+    'Bartek',
+    'Voice message',
+    0,
+    const Duration(days: 2),
+  );
+  await club(
+    'club-1',
+    'Night Owls',
+    'Welcome everyone 👋',
+    const Duration(minutes: 40),
+  );
 
   Future<void> globalMessage(
     String id,
@@ -353,23 +424,51 @@ Future<FakeFirebaseFirestore> _seed() async {
         'deletedAt': null,
       });
 
-  await globalMessage('gm1', 'marta', 'Marta Nowak',
-      'Doors open in ten minutes — bring your work.',
-      const Duration(minutes: 2), creator: true);
-  await globalMessage('gm2', 'ola', 'Ola Kwiatkowska',
-      'Just posted a Moment about the redesign, would love notes.',
-      const Duration(minutes: 9));
-  await globalMessage('gm3', 'sieeema', 'Sieeema',
-      'Keep it kind in here, everyone.',
-      const Duration(minutes: 21), staff: true);
-  await globalMessage('gm4', 'spammer', 'Spammer', '',
-      const Duration(minutes: 34), deleted: true);
-  await globalMessage('gm5', 'jonas', 'Jonas',
-      'Anyone up for a freestyle room tonight?',
-      const Duration(hours: 2));
-  await globalMessage('gm6', _uid, 'CeoGriefer',
-      'Shipping the new desktop Home today.',
-      const Duration(hours: 3));
+  await globalMessage(
+    'gm1',
+    'marta',
+    'Marta Nowak',
+    'Doors open in ten minutes — bring your work.',
+    const Duration(minutes: 2),
+    creator: true,
+  );
+  await globalMessage(
+    'gm2',
+    'ola',
+    'Ola Kwiatkowska',
+    'Just posted a Moment about the redesign, would love notes.',
+    const Duration(minutes: 9),
+  );
+  await globalMessage(
+    'gm3',
+    'sieeema',
+    'Sieeema',
+    'Keep it kind in here, everyone.',
+    const Duration(minutes: 21),
+    staff: true,
+  );
+  await globalMessage(
+    'gm4',
+    'spammer',
+    'Spammer',
+    '',
+    const Duration(minutes: 34),
+    deleted: true,
+  );
+  await globalMessage(
+    'gm5',
+    'jonas',
+    'Jonas',
+    'Anyone up for a freestyle room tonight?',
+    const Duration(hours: 2),
+  );
+  await globalMessage(
+    'gm6',
+    _uid,
+    'CeoGriefer',
+    'Shipping the new desktop Home today.',
+    const Duration(hours: 3),
+  );
 
   return db;
 }
@@ -386,8 +485,7 @@ class _PreviewApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final moderationPreview =
-        Uri.base.queryParameters['moderation'] == '1';
+    final moderationPreview = Uri.base.queryParameters['moderation'] == '1';
     final auth = MockFirebaseAuth(
       signedIn: true,
       mockUser: MockUser(
@@ -416,7 +514,7 @@ class _PreviewApp extends StatelessWidget {
               unreadNotificationCount: 2,
               onSelect: (_) {},
               onCreateRoom: () {},
-            onCreateMoment: () {},
+              onCreateMoment: () {},
               onOpenProfile: () {},
               onOpenProfileSettings: () {},
               profileService: ProfileService(firestore: db, auth: auth),
@@ -431,75 +529,71 @@ class _PreviewApp extends StatelessWidget {
                       ),
                     )
                   : DesktopHome(
-                currentUserId: _uid,
-                onOpenRoom: (_) {},
-                onSeeAllRooms: () {},
-                onViewAllFriends: () {},
-                onStartRoom: () {},
-                onOpenMoment: (_) {},
-                onCreateMoment: () {},
-                onSeeAllMoments: () {},
-                onOpenConversation: (_) {},
-                onOpenClub: (_) {},
-                onSeeAllChats: () {},
-                onOpenClubs: () {},
-                roomService: rooms,
-                friendService: FriendService(firestore: db, auth: auth),
-                profileService: ProfileService(firestore: db, auth: auth),
-                feedService: HomeFeedService(firestore: db, auth: auth),
-                messageService: MessageService(
-                  firestore: db,
-                  auth: auth,
-                  notificationService: notifications,
-                ),
-                clubService: ClubService(
-                  firestore: db,
-                  auth: auth,
-                  storage: MockFirebaseStorage(),
-                  notificationService: notifications,
-                ),
-                clubChatService: ClubChatService(firestore: db, auth: auth),
-                globalChatService: GlobalChatService(
-                  firestore: db,
-                  auth: auth,
-                ),
-                firebaseAuth: auth,
-              ),
+                      currentUserId: _uid,
+                      onOpenRoom: (_) {},
+                      onSeeAllRooms: () {},
+                      onViewAllFriends: () {},
+                      onStartRoom: () {},
+                      onOpenMoment: (_) {},
+                      onCreateMoment: () {},
+                      onSeeAllMoments: () {},
+                      onOpenConversation: (_) {},
+                      onOpenClub: (_) {},
+                      onSeeAllChats: () {},
+                      onOpenClubs: () {},
+                      roomService: rooms,
+                      friendService: FriendService(firestore: db, auth: auth),
+                      profileService: ProfileService(firestore: db, auth: auth),
+                      feedService: HomeFeedService(firestore: db, auth: auth),
+                      messageService: MessageService(
+                        firestore: db,
+                        auth: auth,
+                        notificationService: notifications,
+                      ),
+                      clubService: ClubService(
+                        firestore: db,
+                        auth: auth,
+                        storage: MockFirebaseStorage(),
+                        notificationService: notifications,
+                      ),
+                      clubChatService: ClubChatService(
+                        firestore: db,
+                        auth: auth,
+                      ),
+                      firebaseAuth: auth,
+                    ),
             ),
             // Production renders Home's right column only for slot 0, so
             // the moderation preview must not either — otherwise the
             // centre is 344px narrower than the real thing and the panel
             // takes its narrow branch when it would not.
             if (!moderationPreview)
-            SizedBox(
-              width: 344,
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(6, 20, 20, 20),
-                children: [
-                  VoiceTrendingCard(
-                    roomService: rooms,
-                    profileService: ProfileService(firestore: db, auth: auth),
-                    onOpenRoom: (_) {},
-                    onSeeAll: () {},
-                  ),
-                  const SizedBox(height: 16),
-                  PremiumDesktopCard(onCheckPlans: () {}),
-                  const SizedBox(height: 16),
-                  FollowedCreatorsCard(
-                    currentUserId: _uid,
-                    onOpenCreator: (_) {},
-                    onViewAll: () {},
-                    onDiscover: () {},
-                    followService: FollowService(
-                      firestore: db,
-                      auth: auth,
+              SizedBox(
+                width: 344,
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(6, 20, 20, 20),
+                  children: [
+                    VoiceTrendingCard(
+                      roomService: rooms,
+                      profileService: ProfileService(firestore: db, auth: auth),
+                      onOpenRoom: (_) {},
+                      onSeeAll: () {},
                     ),
-                    feedService: HomeFeedService(firestore: db, auth: auth),
-                    roomService: rooms,
-                  ),
-                ],
+                    const SizedBox(height: 16),
+                    PremiumDesktopCard(onCheckPlans: () {}),
+                    const SizedBox(height: 16),
+                    FollowedCreatorsCard(
+                      currentUserId: _uid,
+                      onOpenCreator: (_) {},
+                      onViewAll: () {},
+                      onDiscover: () {},
+                      followService: FollowService(firestore: db, auth: auth),
+                      feedService: HomeFeedService(firestore: db, auth: auth),
+                      roomService: rooms,
+                    ),
+                  ],
+                ),
               ),
-            ),
           ],
         ),
       ),

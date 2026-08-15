@@ -29,7 +29,7 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
-import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
+import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
@@ -43,8 +43,15 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
 
 const String _me = 'preview-me';
-const String _fontRoot =
-    '/usr/local/share/flutter/bin/cache/artifacts/material_fonts';
+String get _fontRoot {
+  const candidates = [
+    '/opt/homebrew/share/flutter/bin/cache/artifacts/material_fonts',
+    '/usr/local/share/flutter/bin/cache/artifacts/material_fonts',
+  ];
+  return candidates.firstWhere(
+    (path) => File('$path/Roboto-Regular.ttf').existsSync(),
+  );
+}
 
 final _capture = GlobalKey();
 
@@ -124,6 +131,32 @@ Future<FakeFirebaseFirestore> _seed({required bool live}) async {
       });
     }
   }
+  for (final (index, name) in ['Sieeema', 'Ola', 'Marek'].indexed) {
+    final otherId = 'chat-friend-$index';
+    await db.collection('conversations').doc('preview-chat-$index').set({
+      'participantIds': [_me, otherId],
+      'participantNames': {_me: 'CeoGriefer', otherId: name},
+      'participantEmails': {
+        _me: 'me@yovoice.app',
+        otherId: '$name@yovoice.app',
+      },
+      'participantPhotoUrls': <String, String>{},
+      'unreadCounts': {_me: index == 0 ? 2 : 0, otherId: 0},
+      'lastMessage': [
+        'Are you joining?',
+        'That was fun',
+        'Voice later?',
+      ][index],
+      'lastMessageType': 'text',
+      'lastMessageSenderId': otherId,
+      'updatedAt': Timestamp.fromDate(
+        DateTime.now().subtract(Duration(minutes: index + 1)),
+      ),
+      'createdAt': Timestamp.now(),
+      'archivedBy': <String>[],
+      'mutedBy': <String>[],
+    });
+  }
   return db;
 }
 
@@ -139,12 +172,9 @@ Future<void> _seedCircle(FakeFirebaseFirestore db) async {
       'isOnline': true,
       'premiumIdentity': index == 1,
     });
-    await db
-        .collection('users')
-        .doc(_me)
-        .collection('friends')
-        .doc(id)
-        .set(<String, dynamic>{'friendId': id, 'createdAt': Timestamp.now()});
+    await db.collection('users').doc(_me).collection('friends').doc(id).set(
+      <String, dynamic>{'friendId': id, 'createdAt': Timestamp.now()},
+    );
   }
   await db.collection('voiceMoments').doc('m1').set(<String, dynamic>{
     'authorId': 'friend-0',
@@ -421,10 +451,6 @@ void main() {
                 capabilityService: _OwnerCapabilities(),
                 profileService: ProfileService(firestore: db, auth: auth),
                 feedService: HomeFeedService(firestore: db, auth: auth),
-                globalChatService: GlobalChatService(
-                  firestore: db,
-                  auth: auth,
-                ),
               ),
             ),
           ),
@@ -469,11 +495,13 @@ void main() {
               onCreateMoment: () {},
               onCreateRoom: () {},
               onOpenComments: (_) {},
+              onOpenConversation: (_) {},
+              onSeeAllChats: () {},
               roomService: RoomService(firestore: db, auth: auth),
               friendService: FriendService(firestore: db, auth: auth),
               profileService: ProfileService(firestore: db, auth: auth),
               feedService: HomeFeedService(firestore: db, auth: auth),
-              globalChatService: GlobalChatService(firestore: db, auth: auth),
+              messageService: MessageService(firestore: db, auth: auth),
             ),
           ),
         ),
@@ -535,7 +563,6 @@ void main() {
     });
   }
 }
-
 
 /// Screenshot-only: the owner's capability set, so the crimson shield is
 /// visible in the capture without any network.

@@ -132,9 +132,11 @@ permission flags).
   is now inline beneath the events, and Retry resumes from the same
   cursor.
 
-- **Moderation has no mobile surface.** The Moderation Center is
-  desktop-only by design in this milestone; a moderator on a phone
-  cannot triage. Deliberate, not an oversight.
+- **FIXED — Mobile More could hide Moderation behind Staff Center.** The
+  capability mapping returned only one staff destination, so owners and
+  super moderators saw Staff Center but lost the separate Moderation entry
+  available on desktop. Mobile now lists every destination their server
+  capabilities grant; ordinary accounts remain unchanged.
 - **`adminAuditLogs` has no BROAD staff-facing view.** Entries are
   written deterministically and stay unreadable by every client, staff
   included. A moderator can now see one report's own history through the

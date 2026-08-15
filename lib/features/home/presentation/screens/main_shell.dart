@@ -185,6 +185,9 @@ class _MainShellState extends State<MainShell>
         ),
       ),
     ),
+    onOpenConversation: (conversation) =>
+        unawaited(_openConversation(conversation)),
+    onSeeAllChats: () => _onDestinationSelected(1),
   );
 
   /// Desktop Home. Every tab-level destination below goes through

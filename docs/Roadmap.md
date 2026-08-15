@@ -16,6 +16,16 @@ someone decide what to pick up next.
 
 ## Done
 
+- Global Chat retired from the app UI; Home recent-chat preview
+  (2026-08-15): the public Global Chat entry point and Home feed were
+  replaced on mobile and desktop by `Your recent chats`, backed by the
+  existing private `conversations` stream. It shows at most the three
+  newest non-archived chats side by side, with real avatars, previews,
+  unread counts, direct navigation to the existing DM screen and honest
+  loading/empty/error states. Existing Global Chat Firestore data and
+  compatibility rules remain untouched so older clients and moderation
+  history are not broken. See [ADR-048](Decisions.md#adr-048-global-chat-is-retired-from-the-app-ui-and-home-previews-three-real-private-conversations).
+
 - One-shell navigation + Moderation console redesign (2026-08-15):
   every More destination (Staff Center included) now swaps the desktop
   shell's content slot in place — the page-shift on opening Staff
@@ -43,8 +53,8 @@ someone decide what to pick up next.
   query, with a user detail drawer carrying authoritative status,
   history and confirm-with-reason owner actions. Full mobile parity
   landed the same day: the mobile More sheet gained a capability-driven
-  Staff section (owner/super-moderation → Staff Center, moderation →
-  Moderation Center, derived from getMyStaffCapabilities alone), the
+  Staff section (owner/super-moderation → Moderation plus Staff Center,
+  moderation → Moderation, derived from getMyStaffCapabilities alone), the
   same screens rendering natively at phone widths with tab chips and
   full-width detail drawers, verified at 320/390/430 with rendered and
   live 390×844 inspections. See

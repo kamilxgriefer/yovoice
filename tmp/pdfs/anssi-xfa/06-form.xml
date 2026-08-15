@@ -1,0 +1,151 @@
+<form checksum="cDp68XHgd4fM/bMfn57e9UatpHE=" xmlns="http://www.xfa.org/schema/xfa-form/2.8/"
+><subform name="FormulaireAnnexeI"
+><instanceManager name="_Page1"
+/><subform name="Page1"
+><field name="CurrentPageNumber"
+><value
+><float
+>1.00000000</float
+></value
+></field
+><field name="NumberofPages"
+><value
+><float
+>9.00000000</float
+></value
+></field
+></subform
+><instanceManager name="_Page2"
+/><subform name="Page2"
+><field name="CurrentPageNumber"
+><value
+><float
+>2.00000000</float
+></value
+></field
+><field name="NumberofPages"
+><value
+><float
+>9.00000000</float
+></value
+></field
+></subform
+><instanceManager name="_Page3"
+/><subform name="Page3"
+><field name="CurrentPageNumber"
+><value
+><float
+>3.00000000</float
+></value
+></field
+><field name="NumberofPages"
+><value
+><float
+>9.00000000</float
+></value
+></field
+></subform
+><instanceManager name="_"
+/><subform
+><field name="CurrentPageNumber"
+><value
+><float
+>4.00000000</float
+></value
+></field
+><field name="NumberofPages"
+><value
+><float
+>9.00000000</float
+></value
+></field
+></subform
+><instanceManager name="_"
+/><subform
+><field name="CurrentPageNumber"
+><value
+><float
+>5.00000000</float
+></value
+></field
+><field name="NumberofPages"
+><value
+><float
+>9.00000000</float
+></value
+></field
+></subform
+><instanceManager name="_Page4"
+/><subform name="Page4"
+><field name="NumberofPages"
+><value
+><float
+>9.00000000</float
+></value
+></field
+><field name="CurrentPageNumber"
+><value
+><float
+>6.00000000</float
+></value
+></field
+></subform
+><instanceManager name="_Page5"
+/><subform name="Page5"
+><field name="NumberofPages"
+><value
+><float
+>9.00000000</float
+></value
+></field
+><field name="CurrentPageNumber"
+><value
+><float
+>7.00000000</float
+></value
+></field
+></subform
+><instanceManager name="_Page6"
+/><subform name="Page6"
+><field name="CurrentPageNumber"
+><value
+><float
+>8.00000000</float
+></value
+></field
+><field name="NumberofPages"
+><value
+><float
+>9.00000000</float
+></value
+></field
+></subform
+><instanceManager name="_Page7"
+/><subform name="Page7"
+><field name="CurrentPageNumber"
+><value
+><float
+>9.00000000</float
+></value
+></field
+><field name="NumberofPages"
+><value
+><float
+>9.00000000</float
+></value
+></field
+></subform
+><pageSet
+><pageArea name="PageArea1"
+/><pageArea name="PageArea1"
+/><pageArea name="PageArea1"
+/><pageArea name="PageArea1"
+/><pageArea name="PageArea1"
+/><pageArea name="PageArea1"
+/><pageArea name="PageArea1"
+/><pageArea name="PageArea1"
+/><pageArea name="PageArea1"
+/></pageSet
+></subform
+></form
+>
