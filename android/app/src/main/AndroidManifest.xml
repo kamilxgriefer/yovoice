@@ -18,7 +18,7 @@
         android:required="false" />
 
     <application
-        android:label="yo_voice"
+        android:label="YO Voice"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
