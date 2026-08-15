@@ -85,6 +85,10 @@ const {
   onFriendRequestResolved,
   onFollowerCreated,
 } = require("./notifications/social");
+const {
+  onDirectMessageCreated,
+  onRoomLiveChanged,
+} = require("./notifications/activity");
 
 /*
 |--------------------------------------------------------------------------
@@ -180,6 +184,8 @@ exports.onNotificationCreated = onNotificationCreated;
 exports.onFriendRequestCreated = onFriendRequestCreated;
 exports.onFriendRequestResolved = onFriendRequestResolved;
 exports.onFollowerCreated = onFollowerCreated;
+exports.onDirectMessageCreated = onDirectMessageCreated;
+exports.onRoomLiveChanged = onRoomLiveChanged;
 
 /*
 |--------------------------------------------------------------------------

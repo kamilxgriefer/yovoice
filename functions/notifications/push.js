@@ -24,6 +24,8 @@ const PUSH_TITLES = {
     label ? `${actor} invited you to ${label}` : `${actor} invited you to a room`,
   broadcastInvite: (actor, label) =>
     label ? `${actor} invited you to ${label}` : `${actor} invited you to a broadcast`,
+  liveStarted: (actor, label) =>
+    label ? `${actor} is live: ${label}` : `${actor} is live now`,
   directMessage: (actor) => `${actor} sent you a message`,
   mention: (actor, label) =>
     label ? `${actor} mentioned you in ${label}` : `${actor} mentioned you`,

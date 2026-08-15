@@ -47,6 +47,7 @@ class NotificationRouter {
           await _openClub(navigator, targetId);
         case NotificationType.roomInvite:
         case NotificationType.broadcastInvite:
+        case NotificationType.liveStarted:
           await _openRoom(navigator, targetId);
         case NotificationType.directMessage:
         case NotificationType.mention:

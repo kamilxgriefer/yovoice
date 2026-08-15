@@ -25,7 +25,11 @@ const _kPreferenceGroups = [
   ),
   _PreferenceGroup(
     title: 'Rooms',
-    types: [NotificationType.roomInvite, NotificationType.broadcastInvite],
+    types: [
+      NotificationType.roomInvite,
+      NotificationType.broadcastInvite,
+      NotificationType.liveStarted,
+    ],
   ),
   _PreferenceGroup(
     title: 'Messages',
@@ -53,6 +57,8 @@ String _labelFor(NotificationType type) {
       return 'Room invitations';
     case NotificationType.broadcastInvite:
       return 'Podcast invitations';
+    case NotificationType.liveStarted:
+      return 'People you follow go live';
     case NotificationType.directMessage:
       return 'Direct messages';
     case NotificationType.mention:

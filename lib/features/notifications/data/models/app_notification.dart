@@ -8,6 +8,7 @@ enum NotificationType {
   clubInviteAccepted,
   roomInvite,
   broadcastInvite,
+  liveStarted,
   directMessage,
   mention,
   reply,
@@ -96,6 +97,10 @@ class AppNotification {
         return targetLabel == null
             ? '$actorName invited you to a broadcast'
             : '$actorName invited you to $targetLabel';
+      case NotificationType.liveStarted:
+        return targetLabel == null
+            ? '$actorName is live now'
+            : '$actorName is live: $targetLabel';
       case NotificationType.directMessage:
         // Friend DMs never reach the bell (bellSuppressed), so a
         // directMessage row here is a non-friend reaching out — the

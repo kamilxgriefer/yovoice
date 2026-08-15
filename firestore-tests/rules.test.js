@@ -914,11 +914,11 @@ async function main() {
   });
 
   await check(
-    "notification routing: an ACTUAL FRIEND can write a bell-suppressed DM record",
+    "SECURITY: even a friend cannot forge a server-derived DM notification",
     async () => {
       const db = host.firestore();
       const ref = doc(db, "users/invitee-uid/notifications/notif-dm-suppressed");
-      await assertSucceeds(
+      await assertFails(
         setDoc(ref, {
           type: "directMessage",
           actorId: "host-uid",
@@ -960,11 +960,11 @@ async function main() {
   );
 
   await check(
-    "notification routing: a non-friend's VISIBLE message request is allowed",
+    "SECURITY: a non-friend cannot forge a visible message request either",
     async () => {
       const db = attacker.firestore();
       const ref = doc(db, "users/invitee-uid/notifications/notif-dm-request");
-      await assertSucceeds(
+      await assertFails(
         setDoc(ref, {
           type: "directMessage",
           actorId: "attacker-uid",

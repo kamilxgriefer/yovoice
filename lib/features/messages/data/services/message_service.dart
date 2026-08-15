@@ -18,14 +18,16 @@ class MessageService {
   MessageService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
+    // Compatibility injection for existing previews/tests. Notification
+    // delivery is now derived by the backend from the committed message.
     NotificationService? notificationService,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
-       _notifications = notificationService ?? NotificationService();
+       _legacyNotificationService = notificationService;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
-  final NotificationService _notifications;
+  final NotificationService? _legacyNotificationService;
 
   CollectionReference<Map<String, dynamic>> get _conversations =>
       _firestore.collection('conversations');
@@ -242,74 +244,43 @@ class MessageService {
 
     await batch.commit();
 
-    final isReplyToRecipient =
-        replyTo != null && replyTo.senderId == recipientId;
-
-    // Routing decision, made at the source: a DM to an EXISTING FRIEND
-    // already surfaces through the conversation's unreadCounts (Chats
-    // badge, unread cards), so its notification record is written
-    // bell-suppressed — it still exists (that document is what fires the
-    // push) but never duplicates into the global bell. A non-friend's
-    // message keeps the bell entry: that IS the message-request moment.
-    var suppressBell = false;
-    try {
-      final friendDoc = await _users
-          .doc(currentUserId)
-          .collection('friends')
-          .doc(recipientId)
-          .get();
-      suppressBell = friendDoc.exists;
-    } catch (error) {
-      // Fail OPEN: if friendship can't be read, keep the bell entry — a
-      // redundant bell row for a friend beats silently hiding a
-      // stranger's message request. Swallowing is intentional and cannot
-      // hide a lost notification, because the fallback is the MORE
-      // visible routing, not the less.
-      debugPrint(
-        'MessageService: friendship lookup failed (${error.runtimeType}); '
-        'routing this message notification to the bell to be safe.',
-      );
-    }
-
-    final type = isReplyToRecipient
-        ? NotificationType.reply
-        : NotificationType.directMessage;
-    try {
-      await _notifications.notify(
-        recipientId: recipientId,
-        type: type,
-        targetId: conversationId,
-        suppressBell: suppressBell,
-      );
-    } catch (error) {
-      debugPrint(
-        'MessageService: suppressed notification rejected '
-        '(${error.runtimeType}); retrying as a visible record.',
-      );
-      // The rules only accept a SUPPRESSED record when the recipient's
-      // own friends list contains the sender. If our sender-side read
-      // said "friend" but the write was rejected (asymmetric state, e.g.
-      // mid-unfriend), fail toward VISIBLE so the recipient still gets
-      // the record — and its push — rather than nothing.
-      if (suppressBell) {
-        try {
-          await _notifications.notify(
+    // Production delivery is server-derived from the message document.
+    // This compatibility path exists only for deterministic unit tests and
+    // previews that explicitly inject an in-memory NotificationService.
+    final legacyNotifications = _legacyNotificationService;
+    if (legacyNotifications != null) {
+      var suppressBell = false;
+      try {
+        suppressBell =
+            (await _users
+                    .doc(recipientId)
+                    .collection('friends')
+                    .doc(currentUserId)
+                    .get())
+                .exists;
+      } catch (error) {
+        debugPrint('MessageService test notification lookup failed: $error');
+      }
+      try {
+        await legacyNotifications.notify(
+          recipientId: recipientId,
+          type: replyTo?.senderId == recipientId
+              ? NotificationType.reply
+              : NotificationType.directMessage,
+          targetId: conversationId,
+          suppressBell: suppressBell,
+        );
+      } catch (error) {
+        if (suppressBell) {
+          await legacyNotifications.notify(
             recipientId: recipientId,
-            type: type,
+            type: replyTo?.senderId == recipientId
+                ? NotificationType.reply
+                : NotificationType.directMessage,
             targetId: conversationId,
-          );
-        } catch (error) {
-          // Best-effort — the message itself already sent above — but a
-          // recipient silently losing both the bell row AND its push is
-          // exactly the class of failure that hid the friend-request
-          // outage, so it is named here.
-          debugPrint(
-            'MessageService: no notification could be written for this '
-            'message (${error.runtimeType}). The message itself sent.',
           );
         }
       }
-      // Best-effort — the message itself already sent above.
     }
   }
 

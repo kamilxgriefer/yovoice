@@ -75,10 +75,9 @@ class NotificationService {
         for (final notification in [...?fromBase, ...?fromVisible])
           if (!notification.bellSuppressed) notification.id: notification,
       };
-      final list = byId.values.toList(growable: false)
-        ..sort(
-          (a, b) => effectiveCreatedAt(b).compareTo(effectiveCreatedAt(a)),
-        );
+      final list = byId.values.toList(
+        growable: false,
+      )..sort((a, b) => effectiveCreatedAt(b).compareTo(effectiveCreatedAt(a)));
       if (!controller.isClosed) {
         controller.add(list.take(limit).toList(growable: false));
       }
@@ -245,7 +244,8 @@ class NotificationService {
     if (recipientId == actor.uid) return;
     if (type == NotificationType.system ||
         type == NotificationType.moderation ||
-        type == NotificationType.achievementUnlocked) {
+        type == NotificationType.achievementUnlocked ||
+        type == NotificationType.liveStarted) {
       throw ArgumentError.value(
         type,
         'type',
