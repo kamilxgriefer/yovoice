@@ -16,6 +16,21 @@ someone decide what to pick up next.
 
 ## Done
 
+- Staff Center redesign + owner user search that actually finds people
+  (2026-08-15): the production lookup failure (mixed-case usernames
+  stored as typed vs. a lowercased case-sensitive equality) is fixed by
+  a server-only `userDirectory` index with normalized search fields,
+  searched exclusively through the owner-only `searchUserDirectory`
+  callable — exact uid, case-insensitive email, username with or
+  without `@`, exact display name, and case-insensitive prefix over
+  both, always as a result list. Staff Center itself became seven
+  capability-gated sections (Overview / Users / Reports / Rooms &
+  Spaces / Sanctions / Staff & Roles / Audit Log) behind an internal
+  rail, every counter a real `count()` aggregate and every list a real
+  query, with a user detail drawer carrying authoritative status,
+  history and confirm-with-reason owner actions. See
+  [ADR-046](Decisions.md#adr-046-user-search-lives-in-a-server-only-directory-behind-an-owner-callable-staff-center-becomes-seven-capability-gated-sections).
+
 - Authoritative identity badges on every surface (2026-08-15): one
   shared badge system (`OfficialRoleBadge` / `VipBadge` /
   `UserIdentityBadges` / `DecoratedUserAvatar`) renders the official

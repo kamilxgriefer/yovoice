@@ -84,6 +84,17 @@ permission flags).
 
 ## Moderation & safety
 
+- **FIXED — Staff Center user lookup could not find existing users.**
+  `users.username` is stored AS TYPED (seeded verbatim from the display
+  name, e.g. `Sieeema`) while the lookup lowercased the input into a
+  case-sensitive Firestore equality — so every casing the owner could
+  type missed, and display-name search did not exist at all. Reproduced
+  against the emulator with the exact client query, fixed 2026-08-15
+  ([ADR-046](Decisions.md#adr-046-user-search-lives-in-a-server-only-directory-behind-an-owner-callable-staff-center-becomes-seven-capability-gated-sections)):
+  search now runs server-side over the normalized `userDirectory` index
+  (owner-only callable), and `listAdminAuditLogs` was remapped to the
+  flat audit schema its queries never actually matched.
+
 - **FIXED — a forged non-owner `superAdmin` role would have been
   mirrored, and rendered, as the owner badge.** `deriveBadge()` never
   saw the uid, so a stale or planted `superAdmin` value in a user

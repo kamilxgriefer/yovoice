@@ -2817,3 +2817,89 @@ frame collapse to one callable invocation instead of N Firestore reads.
   suite (exact labels/colors, role×VIP coexistence and order, USER
   fallback, batching/chunking/dedup/cache/account-switch, overflow at
   120px, cosmetics-cannot-replace-badges) hold the boundary.
+
+## ADR-046: User search lives in a server-only directory behind an owner callable; Staff Center becomes seven capability-gated sections
+
+### Context
+
+Staff Center's user lookup was broken in production: `users.username` is
+stored AS TYPED (seeded verbatim from the display name — "Sieeema"),
+while the client lowercased the input into a case-sensitive Firestore
+equality — so `sieeema` could never match `Sieeema`, and typing the
+exact stored value failed too because the client lowercased it first.
+Display-name search did not exist at all, `@` was not stripped, and the
+resolution ran as a CLIENT query against `users`. Meanwhile the screen
+itself was one card above an empty page.
+
+### Decision
+
+**Directory.** `userDirectory/{uid}` is a server-written search index:
+names/username/email as stored PLUS normalized forms (NFKC, trimmed,
+whitespace-collapsed, lowercased), the PUBLIC effective role (through
+derivePublicRole — a forged superAdmin cannot wear the owner label
+here either), VIP/banned/restricted flags and the Auth creation time.
+Auth is authoritative for existence: an account with no profile document
+is still discoverable. Three triggers (users, vipGrants, restrictions)
+keep it converged; `scripts/backfill_directory.js` (dry-run default,
+owner-guard env required, aggregate-only output, batched joins — never
+one read per account) seeds and heals it. firestore.rules denies every
+client read and write: a readable directory would be a user-enumeration
+oracle carrying emails.
+
+**Search.** `searchUserDirectory`, PROTECTED-OWNER-ONLY through
+requireProtectedOwner (claim + server record + secret-confirmed uid;
+forged superAdmin audited on the way out). Modes decided from the
+normalized input: exact uid (raw, case-sensitive), email (Auth first —
+case-insensitive by construction — then directory equality), name/
+username (leading `@` stripped, ≥2 chars, case-insensitive PREFIX over
+both normalized fields, exact matches first, always a LIST because
+display names are not unique), and filter browse (all/staff/vip/
+restricted/banned/recent) over composite-indexed flags. Pages are ≤20
+rows; name mode pages a bounded (100/branch) deterministically-ordered
+candidate set by offset cursor — honest about its bound instead of
+pretending to scan the collection.
+
+**Staff Center.** One screen, seven sections behind an internal rail
+(≥980px) or tab chips: Overview, Users, Reports, Rooms & Spaces,
+Sanctions, Staff & Roles, Audit Log. Every section renders only when
+the SERVER-derived capability backing it exists (owner: all; moderation
+tiers: Reports/Rooms/Sanctions) and every number is a real read:
+`getStaffOverview` (owner-only count() aggregates + real lists),
+ModerationService's live queue, RoomService's live rooms,
+`listAdminAuditLogs` (remapped to the FLAT audit schema writeAuditLog
+actually stores — the nested mapping it shipped with matched nothing).
+The user detail drawer carries authoritative status (getUserRole),
+history (audit browser by targetId), hosted public rooms, and the
+owner's role/ban actions plus the shared ••• sanctions menu — every
+action confirm-with-reason, double-submit-guarded, server-confirmed
+before the UI updates, and re-verified server-side.
+
+### Reasoning
+
+Firestore cannot search case-insensitively; the honest fix is a
+normalized index maintained where writes already are (triggers), read
+where authorization already is (an owner callable). Reusing
+derivePublicRole and requireProtectedOwner keeps ONE owner story across
+badges, capabilities and search. The one-card screen was replaced with
+sections that only exist where a real server operation backs them — no
+placeholder counters, and the sections moderation tiers see are exactly
+the operations their capabilities grant.
+
+### Consequences
+
+- The client no longer queries `users` for lookup; `StaffUserLookup`
+  remains for the authoritative getUserRole detail path.
+- New composite indexes: userDirectory flags × createdAt (4), and
+  adminAuditLogs action/actorId/targetId × createdAt (3) for the audit
+  browser's real filters.
+- Deploy order: Functions + rules + indexes, then the directory
+  backfill (dry-run, verify aggregates, apply), THEN the client push —
+  Hosting auto-deploys on push, so the backend must exist first.
+- 21 directory Functions tests (the Sieeema case under five spellings,
+  uid/email modes, duplicates, missing profiles, pagination walking all
+  matches exactly once, denial for user/mod/superMod/forged-superAdmin
+  with the forged case audited, backfill idempotency + orphan sweep +
+  owner-guard refusal), 2 overview tests, a userDirectory rules denial
+  case, and 15 Staff Center widget tests (gating, real counts, debounce,
+  duplicate names, error-vs-empty, pagination, drawer payloads with the
+  expectedRole guard, double-submit, 1100px and mobile layouts).

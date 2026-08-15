@@ -194,8 +194,8 @@ void main() {
   });
 
   group('owner gating', () {
-    testWidgets('Staff Center opens for manageRoles and refuses everyone '
-        'else', (tester) async {
+    testWidgets('Staff Center opens owner sections for manageRoles and '
+        'refuses accounts with no backing capability', (tester) async {
       useSize(tester, const Size(1440, 900));
       await tester.pumpWidget(
         host(
@@ -205,26 +205,34 @@ void main() {
                 staffRole: 'superAdmin',
                 isOwner: true,
                 manageRoles: true,
+                fullAuditAccess: true,
               ),
             ),
+            currentUid: 'owner-uid',
           ),
         ),
       );
       await tester.pump();
       await tester.pump();
       await tester.pump();
-      expect(find.text('User Management'), findsOneWidget);
+      // The owner's rail carries the owner sections.
+      expect(find.text('Users'), findsWidgets);
+      expect(find.text('Staff & Roles'), findsWidgets);
+      expect(find.text('Audit Log'), findsWidgets);
 
+      // An account whose capabilities back NO section is refused —
+      // including a super moderator fixture that carries only a queue
+      // flag no section is built on.
       for (final caps in const [
         StaffCapabilities(staffRole: 'superModerator', viewAllQueues: true),
-        StaffCapabilities(staffRole: 'moderator'),
         StaffCapabilities.none,
       ]) {
         await tester.pumpWidget(
           host(
             StaffCenterScreen(
-              key: ValueKey(caps.staffRole),
+              key: ValueKey('denied-${caps.staffRole}'),
               capabilityService: _FakeCapabilities(caps),
+              currentUid: 'someone',
             ),
           ),
         );
@@ -236,7 +244,7 @@ void main() {
           findsOneWidget,
           reason: caps.staffRole,
         );
-        expect(find.text('User Management'), findsNothing);
+        expect(find.text('Users'), findsNothing);
       }
     });
 
