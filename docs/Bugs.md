@@ -49,6 +49,16 @@ permission flags).
   until production room documents are confirmed migrated to `broadcast`.
   See [ADR-001](Decisions.md#adr-001-legacy-podcast-room-experience-stays-supported).
 
+## Branding
+
+- **FIXED — native launcher/store icons still contained the retired black
+  square.** Web favicons had already moved to the transparent canonical mark,
+  but `flutter_launcher_icons` continued reading the old opaque `logo.png`.
+  Android adaptive, Android legacy, iOS/App Store, macOS, Windows and the
+  in-app compact logo now derive from the favicon artwork. Opaque platforms
+  receive only the required full-bleed product background, without a second
+  black tile around the symbol.
+
 ## Notifications
 
 - **FIXED — notification activity could stop at the numeric bell badge.**

@@ -29,11 +29,16 @@ void main() {
   /// above, above-left) are outside the image and defined as zero.
   int cornerAlpha(File file) {
     final bytes = file.readAsBytesSync();
-    expect(
-      bytes.sublist(0, 8),
-      const [137, 80, 78, 71, 13, 10, 26, 10],
-      reason: '${file.path} is not a PNG',
-    );
+    expect(bytes.sublist(0, 8), const [
+      137,
+      80,
+      78,
+      71,
+      13,
+      10,
+      26,
+      10,
+    ], reason: '${file.path} is not a PNG');
 
     // IHDR always comes first: length(4) type(4) then w(4) h(4) depth(1)
     // colour(1) compression(1) filter(1) interlace(1).
@@ -156,6 +161,42 @@ void main() {
         // The artwork is transparent with ~8% padding: declaring it
         // maskable would let the platform crop into the mark.
         expect(icon['purpose'], 'any');
+      }
+    });
+  });
+
+  group('native launcher icons', () {
+    final config = File('pubspec.yaml').readAsStringSync();
+
+    test('uses the favicon mark instead of the retired squared artwork', () {
+      expect(config, contains('image_path: assets/images/app-store-icon.png'));
+      expect(
+        config,
+        contains(
+          'adaptive_icon_foreground: '
+          'assets/images/yo-voice-favicon-512.png',
+        ),
+      );
+      expect(
+        config,
+        isNot(contains('adaptive_icon_foreground: assets/images/logo.png')),
+      );
+      expect(config, contains('adaptive_icon_background: "#0B1026"'));
+      expect(config, contains('adaptive_icon_foreground_inset: 8'));
+    });
+
+    test('all generated store and desktop masters exist', () {
+      for (final path in [
+        'assets/images/app-store-icon.png',
+        'ios/Runner/Assets.xcassets/AppIcon.appiconset/'
+            'Icon-App-1024x1024@1x.png',
+        'android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png',
+        'android/app/src/main/res/drawable-xxxhdpi/'
+            'ic_launcher_foreground.png',
+        'macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_1024.png',
+        'windows/runner/resources/app_icon.ico',
+      ]) {
+        expect(File(path).existsSync(), isTrue, reason: '$path is missing');
       }
     });
   });

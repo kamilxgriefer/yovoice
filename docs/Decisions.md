@@ -3065,3 +3065,38 @@ fills the foreground behavior browsers deliberately leave to applications.
 - Tapping `Open` follows the existing `NotificationRouter` destination.
 - OS/browser permission, Focus/Do Not Disturb and mute settings remain outside
   application control; no implementation can override them.
+
+## ADR-051: The transparent favicon mark is the canonical logo source for every platform
+
+### Context
+
+The browser favicon had already been corrected to use the clean transparent
+YO Voice mark, but native launcher generation still read a retired opaque
+asset with a black square baked around the symbol. Consequently App Store and
+Google Play surfaces could disagree with the favicon even after the web fix.
+
+### Decision
+
+Use `assets/images/yo-voice-favicon-512.png` as the canonical transparent mark
+for the Android adaptive foreground and in-app compact logo. Build the opaque
+`assets/images/app-store-icon.png` from that exact mark, enlarged slightly for
+launcher legibility, on a full-bleed `#0B1026` navy canvas, then derive iOS,
+legacy Android, macOS and Windows launchers from it. Keep the web favicon set
+transparent. Android uses a reduced adaptive-icon inset so the OS does not
+shrink the mark twice.
+
+### Reasoning
+
+One artwork source prevents platform drift. iOS store icons cannot contain
+alpha, while adaptive Android and browser icons benefit from transparency, so
+separating the mark from the required platform canvas preserves the same
+identity without reintroducing an inner square.
+
+### Consequences
+
+- App Store and Google Play use the same symbol and proportions as the
+  favicon, at a deliberately larger launcher scale.
+- Opaque launcher formats show the product background at their outer edge,
+  not a black rectangle around the artwork.
+- Future logo changes start from the favicon master and regenerate launchers;
+  the retired squared artwork is not a valid generator input.

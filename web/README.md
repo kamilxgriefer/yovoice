@@ -71,3 +71,14 @@ Then **bump `?v=` in `index.html` and `site.webmanifest`**. Browsers and
 the Hosting CDN cache icons aggressively; without the bump a deploy can
 keep serving the old mark. `firebase.json` also sends `no-cache` for
 these specific filenames so a future change propagates on reload.
+
+## Native and desktop launchers
+
+The same transparent master is the Android adaptive foreground and the
+in-app compact mark. App Store, legacy Android, macOS and Windows icons use
+`assets/images/app-store-icon.png`: the identical favicon artwork, enlarged
+slightly for launcher legibility, on a full-bleed `#0B1026` navy canvas.
+Apple requires an opaque App Store icon;
+the canvas replaces transparency only and must never contain an additional
+black square around the mark. Regenerate Android and iOS assets with
+`dart run flutter_launcher_icons` after changing the master.

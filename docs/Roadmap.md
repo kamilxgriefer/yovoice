@@ -16,6 +16,13 @@ someone decide what to pick up next.
 
 ## Done
 
+- One canonical logo across favicon and app launchers (2026-08-16): replaced
+  the retired black-square source used by native generation with the exact
+  favicon mark, regenerated Android adaptive/legacy and iOS/App Store icons,
+  and aligned macOS, Windows and the in-app compact logo. Opaque store assets
+  use only the required full-bleed product background. See
+  [ADR-051](Decisions.md#adr-051-the-transparent-favicon-mark-is-the-canonical-logo-source-for-every-platform).
+
 - Audible and visible push-notification presentation (2026-08-15): created
   the missing high-importance Android notification channel, made foreground
   native pushes request alert/sound/vibration, added a compact actionable
