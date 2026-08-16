@@ -1,3 +1,5 @@
+import 'dart:async' show TimeoutException;
+
 import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:record/record.dart' show Amplitude;
 
@@ -8,7 +10,30 @@ import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 /// The recording contract, re-exported so callers depend on one entry point
 /// rather than reaching into the platform-split files.
 export 'package:yovoice/features/moments/data/services/audio_capture/audio_capture.dart'
-    show CaptureSupport, VoiceRecorderBackend, kVoiceMomentRecordConfig;
+    show
+        CaptureSupport,
+        MicrophoneAccess,
+        MicrophoneOutcome,
+        VoiceRecorderBackend,
+        kVoiceMomentRecordConfig;
+
+/// Translates a microphone outcome into the problem the UI branches on.
+///
+/// Kept as a total switch so a new [MicrophoneOutcome] cannot silently
+/// fall back to "blocked" — the collapse this whole taxonomy exists to
+/// undo.
+VoiceRecordingProblem problemForMicrophoneOutcome(MicrophoneOutcome outcome) {
+  return switch (outcome) {
+    MicrophoneOutcome.granted => VoiceRecordingProblem.captureFailed,
+    MicrophoneOutcome.blocked => VoiceRecordingProblem.microphoneBlocked,
+    MicrophoneOutcome.dismissed =>
+      VoiceRecordingProblem.microphonePromptDismissed,
+    MicrophoneOutcome.notFound => VoiceRecordingProblem.microphoneNotFound,
+    MicrophoneOutcome.unavailable =>
+      VoiceRecordingProblem.microphoneUnavailable,
+    MicrophoneOutcome.failed => VoiceRecordingProblem.captureFailed,
+  };
+}
 
 /// Drives one Voice Moment recording from support check to uploadable
 /// audio, identically on every platform.
@@ -23,9 +48,17 @@ class VoiceMomentRecorder {
     VoiceRecorderBackend? backend,
     AudioCapture? capture,
     Stopwatch? clock,
+    this.microphoneTimeout = const Duration(seconds: 20),
   }) : _backend = backend ?? RecordPackageBackend(),
        _capture = capture ?? createAudioCapture(),
        _clock = clock ?? Stopwatch();
+
+  /// How long to wait for an answer to the microphone request.
+  ///
+  /// A browser that never resolves `getUserMedia` — the prompt is ignored,
+  /// or the page is backgrounded while it is open — otherwise strands the
+  /// caller on a spinner with no way out.
+  final Duration microphoneTimeout;
 
   final VoiceRecorderBackend _backend;
   final AudioCapture _capture;
@@ -108,9 +141,18 @@ class VoiceMomentRecorder {
       );
     }
 
-    final bool permitted;
+    final MicrophoneAccess access;
     try {
-      permitted = await _backend.hasPermission();
+      access = await _capture
+          .requestMicrophone(_backend)
+          .timeout(microphoneTimeout);
+    } on TimeoutException catch (error) {
+      throw VoiceRecordingException(
+        VoiceRecordingProblem.captureFailed,
+        'Your browser did not answer the microphone request.',
+        action: 'Start recording again, and choose Allow when asked.',
+        cause: error,
+      );
     } on MissingPluginException catch (error) {
       throw VoiceRecordingException(
         VoiceRecordingProblem.platformCannotRecord,
@@ -119,19 +161,18 @@ class VoiceMomentRecorder {
       );
     } catch (error) {
       throw VoiceRecordingException(
-        VoiceRecordingProblem.microphoneBlocked,
-        'YO Voice could not get access to your microphone.',
-        action: 'Check your microphone permission and try again.',
+        VoiceRecordingProblem.captureFailed,
+        'YO Voice could not reach your microphone.',
+        action: 'Try again.',
         cause: error,
       );
     }
 
-    if (!permitted) {
-      throw const VoiceRecordingException(
-        VoiceRecordingProblem.microphoneBlocked,
-        'Your browser blocked microphone access for YO Voice.',
-        action:
-            'Allow the microphone for this site, then start recording again.',
+    if (!access.isGranted) {
+      throw VoiceRecordingException(
+        problemForMicrophoneOutcome(access.outcome),
+        access.message!,
+        action: access.action,
       );
     }
 

@@ -179,12 +179,9 @@ void main() {
       await tester.tap(find.byIcon(Icons.mic_rounded));
       await tester.pumpAndSettle();
 
+      expect(find.textContaining('is blocked in this browser'), findsOneWidget);
       expect(
-        find.textContaining('blocked microphone access'),
-        findsOneWidget,
-      );
-      expect(
-        find.textContaining('Allow the microphone for this site'),
+        find.textContaining("browser's site settings"),
         findsOneWidget,
       );
       // Recoverable: the screen stays usable rather than becoming terminal.
@@ -605,6 +602,247 @@ void main() {
 
       expect(find.text('Recording is not available here'), findsOneWidget);
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('visual regressions from the rendered-UI audit', () {
+    testWidgets('V1: a full-length take never renders 0:60', (tester) async {
+      useSurface(tester, medium);
+      final harness = build();
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+
+      expect(find.text('0:00 / 1:00'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.mic_rounded));
+      await tester.pump();
+      await tester.pump();
+
+      harness.clock.value = const Duration(seconds: 5);
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text('0:05 / 1:00'), findsOneWidget);
+
+      // The 60 s auto-stop lands the user straight on the widest value the
+      // clock can show, which used to be the impossible 0:60.
+      harness.clock.value = const Duration(seconds: 60);
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
+
+      expect(find.text('0:60 / 1:00'), findsNothing);
+      expect(find.text('1:00 / 1:00'), findsOneWidget);
+      expect(find.text('Publish'), findsOneWidget, reason: 'auto-stopped');
+    });
+
+    testWidgets('V2: sustained silence is visibly distinct from idle', (
+      tester,
+    ) async {
+      useSurface(tester, medium);
+      final harness = build();
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+
+      const hint = 'No sound detected — check your microphone.';
+      expect(find.text(hint), findsNothing, reason: 'idle shows no hint');
+
+      await tester.tap(find.byIcon(Icons.mic_rounded));
+      await tester.pump();
+      await tester.pump();
+
+      for (final ms in <int>[0, 1000, 2000]) {
+        harness.clock.value = Duration(milliseconds: ms);
+        harness.backend.amplitudes.add(Amplitude(current: -160, max: -160));
+        await tester.pump();
+      }
+      expect(find.text(hint), findsNothing, reason: 'not yet three seconds');
+
+      harness.clock.value = const Duration(milliseconds: 3200);
+      harness.backend.amplitudes.add(Amplitude(current: -160, max: -160));
+      await tester.pump();
+      expect(find.text(hint), findsOneWidget);
+
+      // Sound returning clears it — the hint tracks the signal, it does not
+      // latch.
+      harness.clock.value = const Duration(milliseconds: 3600);
+      harness.backend.amplitudes.add(Amplitude(current: -12, max: -12));
+      await tester.pump();
+      expect(find.text(hint), findsNothing);
+    });
+
+    testWidgets('V3: the unavailable panel is not stretched at 1440', (
+      tester,
+    ) async {
+      useSurface(tester, wide);
+      final harness = build(
+        support: const CaptureSupport.unsupported(
+          reason: 'This browser cannot record MP4/AAC audio.',
+          action: 'Open YO Voice in Chrome, Edge or Safari to record.',
+        ),
+      );
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+
+      final button = tester.getRect(
+        find.ancestor(
+          of: find.text('Go back'),
+          matching: find.byType(OutlinedButton),
+        ),
+      );
+      expect(
+        button.width,
+        lessThan(560),
+        reason: 'a ~920px button is a phone stack inflated to desktop width',
+      );
+    });
+
+    testWidgets('V4: the desktop column reports the take, not pre-flight tips',
+        (tester) async {
+      useSurface(tester, wide);
+      final harness = build();
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Before you start'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.mic_rounded));
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.text('Before you start'),
+        findsNothing,
+        reason: 'advice for a moment that has already passed',
+      );
+      expect(find.text('Recording'), findsOneWidget);
+      expect(find.text('Input level'), findsOneWidget);
+      expect(find.text('Remaining'), findsOneWidget);
+    });
+
+    testWidgets('V4: the desktop stage shares one alignment axis', (
+      tester,
+    ) async {
+      useSurface(tester, wide);
+      final harness = build();
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+
+      final title = tester.getRect(find.text('Share your voice'));
+      final clock = tester.getRect(find.text('0:00 / 1:00'));
+      final button = tester.getRect(find.byIcon(Icons.mic_rounded));
+
+      expect((title.center.dx - clock.center.dx).abs(), lessThan(2));
+      expect((title.center.dx - button.center.dx).abs(), lessThan(2));
+    });
+
+    testWidgets('V5: the retry stays on screen at 375x812', (tester) async {
+      useSurface(tester, const Size(375, 812));
+      final harness = build();
+      harness.service.failure = StateError(
+        'Your Voice Moment could not be uploaded because the connection '
+        'dropped partway through the upload and could not be resumed.',
+      );
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+      await recordFor(tester, harness.clock, seconds: 3);
+
+      await tester.ensureVisible(find.text('Publish'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Publish'));
+      await tester.pumpAndSettle();
+
+      final retry = tester.getRect(find.text('Try again'));
+      expect(retry.top, greaterThanOrEqualTo(0));
+      expect(retry.bottom, lessThanOrEqualTo(812));
+    });
+
+    testWidgets('V6: a stalled microphone prompt can be cancelled', (
+      tester,
+    ) async {
+      useSurface(tester, medium);
+      final harness = build();
+      harness.capture.microphoneGate = Completer<MicrophoneAccess>();
+
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.mic_rounded));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('Waiting for microphone access…'), findsOneWidget);
+      expect(find.text('Cancel'), findsOneWidget);
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tap the microphone to start.'), findsOneWidget);
+      expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+
+      // A late answer to the abandoned request must not resurrect it.
+      harness.capture.microphoneGate!.complete(
+        const MicrophoneAccess.granted(),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Tap the microphone to start.'), findsOneWidget);
+      expect(find.byIcon(Icons.stop_rounded), findsNothing);
+    });
+
+    testWidgets('V6: a prompt that never answers times out with a reason', (
+      tester,
+    ) async {
+      useSurface(tester, medium);
+      final backend = FakeRecorderBackend();
+      final capture = FakeAudioCapture()
+        ..result = FakeRecordedAudio()
+        ..microphoneGate = Completer<MicrophoneAccess>();
+
+      await tester.pumpWidget(
+        host(
+          RecordVoiceMomentScreen(
+            recorder: VoiceMomentRecorder(
+              backend: backend,
+              capture: capture,
+              microphoneTimeout: const Duration(milliseconds: 40),
+            ),
+            momentService: StubMomentService(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.mic_rounded));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('did not answer the microphone request'),
+        findsOneWidget,
+      );
+      expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+    });
+
+    testWidgets('V7: controls meet the 44x44 minimum in docs/UI.md', (
+      tester,
+    ) async {
+      useSurface(tester, medium);
+      final harness = build();
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+
+      final back = tester.getRect(
+        find.byWidgetPredicate((w) => w is IconButton && w.tooltip == 'Back'),
+      );
+      expect(back.width, greaterThanOrEqualTo(44));
+      expect(back.height, greaterThanOrEqualTo(44));
+
+      await recordFor(tester, harness.clock, seconds: 3);
+
+      // The painted box, not merely the padded hit area.
+      for (final finder in <Finder>[
+        find.byType(FilledButton),
+        find.byType(OutlinedButton),
+      ]) {
+        final box = tester.getRect(finder);
+        expect(box.height, greaterThanOrEqualTo(44), reason: '$finder');
+      }
     });
   });
 }

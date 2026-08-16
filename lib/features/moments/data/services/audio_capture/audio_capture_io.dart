@@ -29,6 +29,24 @@ class NativeAudioCapture implements AudioCapture {
     );
   }
 
+  /// Native platforms answer through the OS permission dialog, which
+  /// `record` already funnels into a single boolean. There is no
+  /// device-level detail to recover here, so a refusal is reported as the
+  /// standing denial it is on iOS and Android.
+  @override
+  Future<MicrophoneAccess> requestMicrophone(
+    VoiceRecorderBackend backend,
+  ) async {
+    if (await backend.hasPermission()) {
+      return const MicrophoneAccess.granted();
+    }
+    return const MicrophoneAccess.denied(
+      outcome: MicrophoneOutcome.blocked,
+      message: 'YO Voice does not have permission to use your microphone.',
+      action: 'Allow the microphone for YO Voice in your device settings.',
+    );
+  }
+
   @override
   Future<String> newRecordingTarget() async {
     final directory = await getTemporaryDirectory();

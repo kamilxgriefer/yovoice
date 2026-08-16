@@ -62,9 +62,21 @@ enum VoiceRecordingProblem {
   /// Nothing the user does in this browser will help; they need another one.
   platformCannotRecord,
 
-  /// The microphone was refused — by the browser permission prompt, by a
-  /// site permission that was previously denied, or by the OS.
+  /// The microphone was refused by a standing permission decision — the
+  /// site or app permission is denied and the page cannot re-prompt.
   microphoneBlocked,
+
+  /// The permission prompt was dismissed rather than answered. Unlike
+  /// [microphoneBlocked] this is recoverable in place: asking again works.
+  microphonePromptDismissed,
+
+  /// No microphone is connected. Nothing about permissions will help, so
+  /// telling the user to allow access would send them nowhere.
+  microphoneNotFound,
+
+  /// A microphone exists but the OS would not hand it over — usually
+  /// another application is holding it.
+  microphoneUnavailable,
 
   /// The recorder itself failed while capturing.
   captureFailed,

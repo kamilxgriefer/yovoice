@@ -1,12 +1,20 @@
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
 
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:web/web.dart' as web;
 
 import 'package:yovoice/features/moments/data/services/audio_capture/audio_capture.dart';
+import 'package:yovoice/features/moments/data/services/audio_capture/web_microphone_errors.dart';
 import 'package:yovoice/features/moments/data/services/audio_capture/web_mime_negotiation.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
+
+/// `navigator.permissions.query()` takes a descriptor object; `package:web`
+/// types the argument as an opaque `JSObject`.
+extension type _PermissionDescriptor._(JSObject _) implements JSObject {
+  external factory _PermissionDescriptor({String name});
+}
 
 /// Web capture: `record_web` drives a `MediaRecorder` and hands back a blob
 /// object URL. There is no filesystem, so the bytes are read out of the
@@ -41,6 +49,93 @@ class WebAudioCapture implements AudioCapture {
       // No MediaRecorder on this browser at all.
       return false;
     }
+  }
+
+  /// Asks for the microphone directly rather than through
+  /// `record.hasPermission()`.
+  ///
+  /// The plugin's implementation catches every `getUserMedia` rejection and
+  /// returns `false`, which erases the difference between a denial, a
+  /// dismissed prompt, absent hardware and a device another app is
+  /// holding. Calling it here keeps `DOMException.name`, at the cost of one
+  /// extra `getUserMedia` — the same count as before, since the plugin's
+  /// own probe is what this replaces. The tracks are stopped immediately;
+  /// `record_web.start()` reacquires without prompting again.
+  @override
+  Future<MicrophoneAccess> requestMicrophone(
+    VoiceRecorderBackend backend,
+  ) async {
+    // A standing denial is worth catching before the call, because
+    // `getUserMedia` rejects instantly and indistinguishably in that case.
+    if (await _permissionState() == 'denied') {
+      return blockedMicrophoneAccess();
+    }
+
+    try {
+      final stream = await web.window.navigator.mediaDevices
+          .getUserMedia(web.MediaStreamConstraints(audio: true.toJS))
+          .toDart;
+      for (final track in stream.getAudioTracks().toDart) {
+        track.stop();
+      }
+      return const MicrophoneAccess.granted();
+    } catch (error) {
+      return microphoneAccessForError(
+        _errorName(error),
+        permissionStateAfter: await _permissionState(),
+      );
+    }
+  }
+
+  /// `granted` / `denied` / `prompt`, or `null` where the browser does not
+  /// implement the microphone permission descriptor (Firefox does not).
+  static Future<String?> _permissionState() async {
+    try {
+      final status = await web.window.navigator.permissions
+          .query(_PermissionDescriptor(name: 'microphone'))
+          .toDart;
+      return status.state;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Recovers `DOMException.name` from a rejected promise.
+  ///
+  /// Layered because how a JS rejection surfaces in Dart depends on the
+  /// compiler: usually a `JSObject` carrying `name`, but the string form is
+  /// kept as a fallback so an unexpected shape still classifies rather than
+  /// collapsing into the generic case.
+  static String _errorName(Object error) {
+    try {
+      final object = error as JSObject;
+      if (object.has('name')) {
+        final value = object.getProperty<JSAny?>('name'.toJS);
+        if (value != null) {
+          final name = (value as JSString).toDart;
+          if (name.isNotEmpty) return name;
+        }
+      }
+    } catch (_) {
+      // Not a JS object, or no readable `name` — fall through.
+    }
+
+    const known = <String>[
+      'NotAllowedError',
+      'PermissionDeniedError',
+      'SecurityError',
+      'NotFoundError',
+      'DevicesNotFoundError',
+      'OverconstrainedError',
+      'NotReadableError',
+      'TrackStartError',
+      'AbortError',
+    ];
+    final text = error.toString();
+    for (final candidate in known) {
+      if (text.contains(candidate)) return candidate;
+    }
+    return '';
   }
 
   /// `record_web` ignores the path, but the plugin API requires one and the

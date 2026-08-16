@@ -10,7 +10,11 @@
 //
 // `?state=` mounts the same production screen with the capture half faked,
 // so the states that need hardware or a signed-in user can still be looked
-// at: unsupported, review, publishing, failed.
+// at: unsupported, review, publishing, failed, silent, waiting, max.
+//
+// It renders under AppTheme.darkTheme — the production theme, Inter and
+// the real InputDecorationTheme — because a harness on ThemeData.dark()
+// produces screenshots of a theme nobody ships.
 //
 // Self-contained doubles on purpose — the shared ones in
 // voice_moment_test_doubles.dart pull in firebase_storage_mocks, which
@@ -22,6 +26,7 @@ import 'package:flutter/material.dart';
 import 'package:record/record.dart' show Amplitude, AudioEncoder, RecordConfig;
 import 'package:web/web.dart' as web;
 
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/moments/data/services/audio_capture/audio_capture.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
@@ -45,7 +50,7 @@ class _RecordPreviewApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Voice Moment recording preview',
-      theme: ThemeData.dark(useMaterial3: true),
+      theme: AppTheme.darkTheme,
       home: _Preview(state: state),
     );
   }
@@ -79,9 +84,20 @@ class _PreviewState extends State<_Preview> {
           ),
           momentService: _PreviewMomentService(),
         );
+      case 'waiting':
+        // A microphone prompt that never answers.
+        return RecordVoiceMomentScreen(
+          recorder: VoiceMomentRecorder(
+            backend: _PreviewBackend(),
+            capture: _PreviewCapture(hang: true),
+          ),
+          momentService: _PreviewMomentService(),
+        );
       case 'review':
       case 'publishing':
       case 'failed':
+      case 'silent':
+      case 'max':
         return _ScriptedCapture(state: widget.state!);
       default:
         return const RecordVoiceMomentScreen();
@@ -101,9 +117,18 @@ class _ScriptedCapture extends StatefulWidget {
 }
 
 class _ScriptedCaptureState extends State<_ScriptedCapture> {
-  late final _PreviewClock clock = _PreviewClock();
+  late final _PreviewClock clock = _PreviewClock(
+    offset: switch (widget.state) {
+      // Pinned at the limit so the 60 s auto-stop is what is on screen.
+      'max' => const Duration(seconds: 60),
+      // Starts at zero: the silence watch needs three real seconds.
+      'silent' => Duration.zero,
+      _ => const Duration(seconds: 12),
+    },
+  );
+  late final _PreviewBackend backend = _PreviewBackend();
   late final VoiceMomentRecorder recorder = VoiceMomentRecorder(
-    backend: _PreviewBackend(),
+    backend: backend,
     capture: _PreviewCapture(),
     clock: clock,
   );
@@ -119,24 +144,40 @@ class _ScriptedCaptureState extends State<_ScriptedCapture> {
 
   final GlobalKey _key = GlobalKey();
 
+  Timer? _feed;
+  int _pointer = 0;
+
   @override
   void initState() {
     super.initState();
-    clock.value = const Duration(seconds: 12);
     WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_run()));
+  }
+
+  @override
+  void dispose() {
+    _feed?.cancel();
+    super.dispose();
   }
 
   Future<void> _run() async {
     // Let the screen resolve support, then walk it to the target state
     // through its real controls.
-    await Future<void>.delayed(const Duration(milliseconds: 250));
+    await Future<void>.delayed(const Duration(milliseconds: 900));
     final context = _key.currentContext;
     if (context == null) return;
     await _tap(Icons.mic_rounded);
-    await Future<void>.delayed(const Duration(milliseconds: 250));
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    if (widget.state == 'silent') {
+      // Real silence, fed through the real amplitude stream: -160 dBFS is
+      // what `record` reports for a muted or dead input.
+      _feed = Timer.periodic(const Duration(milliseconds: 120), (_) {
+        backend.amplitudes.add(Amplitude(current: -160, max: -160));
+      });
+      return;
+    }
     await _tap(Icons.stop_rounded);
-    if (widget.state == 'review') return;
-    await Future<void>.delayed(const Duration(milliseconds: 350));
+    if (widget.state == 'review' || widget.state == 'max') return;
+    await Future<void>.delayed(const Duration(milliseconds: 900));
     await _tap(Icons.publish_rounded);
   }
 
@@ -148,11 +189,17 @@ class _ScriptedCaptureState extends State<_ScriptedCapture> {
     final centre = renderObject.localToGlobal(renderObject.size.center(
       Offset.zero,
     ));
+    // A tap has to win the gesture arena: down and up need distinct
+    // frames and a consistent pointer id, or the recognizer never fires.
+    _pointer += 1;
     WidgetsBinding.instance.handlePointerEvent(
-      PointerDownEvent(position: centre),
+      PointerDownEvent(pointer: _pointer, position: centre),
     );
-    WidgetsBinding.instance.handlePointerEvent(PointerUpEvent(position: centre));
-    await Future<void>.delayed(const Duration(milliseconds: 120));
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    WidgetsBinding.instance.handlePointerEvent(
+      PointerUpEvent(pointer: _pointer, position: centre),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 400));
   }
 
   Element? _findByIcon(Element root, IconData icon) {
@@ -181,32 +228,37 @@ class _ScriptedCaptureState extends State<_ScriptedCapture> {
   }
 }
 
+/// A real stopwatch offset to a chosen starting point, so a preview can
+/// open mid-take and still have time genuinely pass — the silence watch and
+/// the countdown both depend on elapsed time advancing.
 class _PreviewClock implements Stopwatch {
-  Duration value = Duration.zero;
-  bool _running = false;
+  _PreviewClock({this.offset = Duration.zero});
+
+  final Duration offset;
+  final Stopwatch _real = Stopwatch();
 
   @override
-  Duration get elapsed => value;
+  Duration get elapsed => offset + _real.elapsed;
   @override
-  bool get isRunning => _running;
+  bool get isRunning => _real.isRunning;
   @override
-  void start() => _running = true;
+  void start() => _real.start();
   @override
-  void stop() => _running = false;
+  void stop() => _real.stop();
   @override
-  void reset() {}
+  void reset() => _real.reset();
   @override
-  int get frequency => 1000000;
+  int get frequency => _real.frequency;
   @override
-  int get elapsedTicks => value.inMicroseconds;
+  int get elapsedTicks => _real.elapsedTicks;
   @override
-  int get elapsedMicroseconds => value.inMicroseconds;
+  int get elapsedMicroseconds => elapsed.inMicroseconds;
   @override
-  int get elapsedMilliseconds => value.inMilliseconds;
+  int get elapsedMilliseconds => elapsed.inMilliseconds;
 }
 
 class _PreviewBackend implements VoiceRecorderBackend {
-  final StreamController<Amplitude> _amplitudes =
+  final StreamController<Amplitude> amplitudes =
       StreamController<Amplitude>.broadcast();
 
   @override
@@ -217,23 +269,35 @@ class _PreviewBackend implements VoiceRecorderBackend {
   Future<void> start(RecordConfig config, {required String path}) async {}
   @override
   Stream<Amplitude> onAmplitudeChanged(Duration interval) =>
-      _amplitudes.stream;
+      amplitudes.stream;
   @override
   Future<String?> stop() async => 'preview-handle';
   @override
   Future<void> cancel() async {}
   @override
-  Future<void> dispose() async => _amplitudes.close();
+  Future<void> dispose() async => amplitudes.close();
 }
 
 class _PreviewCapture implements AudioCapture {
-  _PreviewCapture({this.support = const CaptureSupport.supported()});
+  _PreviewCapture({
+    this.support = const CaptureSupport.supported(),
+    this.hang = false,
+  });
 
   final CaptureSupport support;
+  final bool hang;
 
   @override
   Future<CaptureSupport> probeSupport(VoiceRecorderBackend backend) async =>
       support;
+  @override
+  Future<MicrophoneAccess> requestMicrophone(
+    VoiceRecorderBackend backend,
+  ) async {
+    if (hang) return Completer<MicrophoneAccess>().future;
+    return const MicrophoneAccess.granted();
+  }
+
   @override
   Future<String> newRecordingTarget() async => 'preview.m4a';
   @override

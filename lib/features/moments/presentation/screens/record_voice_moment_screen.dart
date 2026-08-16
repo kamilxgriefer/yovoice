@@ -2,12 +2,15 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:record/record.dart' show Amplitude;
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 
 /// The states this screen can actually be in.
 ///
@@ -52,16 +55,49 @@ class RecordVoiceMomentScreen extends StatefulWidget {
 }
 
 class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
-  static const Color _background = Color(0xFF080711);
-  static const Color _surface = Color(0xFF151020);
-  static const Color _border = Color(0xFF382A47);
-  static const Color _muted = Color(0xFF9D95AD);
-  static const Color _primary = Color(0xFF9D20FF);
-  static const Color _danger = Color(0xFFFF416C);
+  // Every colour on this screen resolves from AppColors, the project's
+  // single source of truth for the palette. The file previously defined
+  // its own purple (0xFF9D20FF), visibly different from the AppColors
+  // purple used by moments_screen.dart directly beside it. Local names are
+  // kept for readability; none of them is a raw hex value.
+  static const Color _background = AppColors.background;
+  static const Color _surface = AppColors.surface;
+  static const Color _inset = AppColors.background;
+  static const Color _border = AppColors.border;
+  static const Color _muted = AppColors.textSecondary;
+  static const Color _primary = AppColors.primary;
+
+  /// The cosmic backdrop's top stop, shared with [AppGradients.background].
+  static const Color _skyTop = Color(0xFF130A22);
+
+  /// Recording is a live state, not an error state.
+  static const Color _live = AppColors.live;
+  static const Color _error = AppColors.error;
+  static const Color _warning = AppColors.warning;
 
   static const int _maxSeconds = 60;
   static const int _meterBarCount = 27;
   static const int _compactMeterBarCount = 19;
+  static const int _captionMaxLength = 140;
+
+  /// Coarse level names for the meter's semantics value. Coarse on
+  /// purpose: a precise dB figure re-read every sample is unusable.
+  static const String _meterSilent = 'Silent';
+  static const String _meterQuiet = 'Quiet';
+  static const String _meterGood = 'Good level';
+  static const String _meterUnknown = 'Input level unavailable';
+
+  /// The amplitude stream samples about eight times a second. Publishing a
+  /// new semantics value that often would flood the announcement queue.
+  static const Duration _meterValueInterval = Duration(seconds: 1);
+
+  /// How long a completely silent input runs before it is called out. A
+  /// dead or muted microphone is otherwise indistinguishable from a quiet
+  /// room for someone who cannot see the meter.
+  static const Duration _silenceWarningAfter = Duration(seconds: 3);
+
+  /// One warning near the limit, in place of a live-region clock.
+  static const int _limitWarningAtSeconds = 50;
 
   late final VoiceMomentRecorder _recorder;
   MomentService? _momentService;
@@ -81,10 +117,32 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
 
   RecordedAudio? _recording;
 
+  /// Keeps the primary action reachable: a null `onPressed` drops focus to
+  /// the route scope, which is how the retry became unreachable after a
+  /// failed publish.
+  final FocusNode _publishFocus = FocusNode(debugLabel: 'Publish Voice Moment');
+  final GlobalKey _publishKey = GlobalKey();
+
+  String _meterValue = _meterSilent;
+  Duration _meterValueAt = Duration.zero;
+  Duration? _silentSince;
+  bool _silenceAnnounced = false;
+
+  /// Silence has lasted long enough to show a visible hint. Without it the
+  /// meter at -160 dBFS is pixel-identical to the idle state.
+  bool _silenceDetected = false;
+  bool _limitWarned = false;
+
+  /// Identifies the in-flight microphone request, so a cancelled one can
+  /// be ignored when it finally resolves.
+  int _accessAttempt = 0;
+  bool _captionLimitAnnounced = false;
+
   @override
   void initState() {
     super.initState();
     _recorder = widget.recorder ?? VoiceMomentRecorder();
+    _captionController.addListener(_onCaptionChanged);
     unawaited(_resolveSupport());
   }
 
@@ -92,7 +150,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
   void dispose() {
     _ticker?.cancel();
     unawaited(_levels?.cancel());
-    _captionController.dispose();
+    _publishFocus.dispose();
+    _captionController
+      ..removeListener(_onCaptionChanged)
+      ..dispose();
     unawaited(_recording?.discard());
     unawaited(_recorder.dispose());
     super.dispose();
@@ -102,6 +163,61 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
       MomentService());
 
   bool get _isReply => widget.replyToMomentId != null;
+
+  /// Speaks [message] on the assertive channel.
+  ///
+  /// Flutter web does not put `aria-live` on semantics nodes: every polite
+  /// live region writes into one shared `flt-announcement-polite` element,
+  /// so two polite updates in the same frame overwrite each other. The
+  /// assertive channel is a separate element, which is why errors travel
+  /// this way instead of via a second live region.
+  void _announce(String message, {bool assertive = true}) {
+    final text = message.trim();
+    if (!mounted || text.isEmpty) return;
+    SemanticsService.sendAnnouncement(
+      View.of(context),
+      text,
+      Directionality.of(context),
+      assertiveness: assertive
+          ? Assertiveness.assertive
+          : Assertiveness.polite,
+    );
+  }
+
+  /// The single path by which a recoverable problem reaches the user, so
+  /// the announcement can never be forgotten at one of the call sites.
+  void _showNotice(
+    VoiceRecordingException notice, {
+    required VoiceMomentRecordingPhase phase,
+  }) {
+    setState(() {
+      _phase = phase;
+      _notice = notice;
+    });
+    _announce('${notice.message} ${notice.action ?? ''}');
+  }
+
+  void _onCaptionChanged() {
+    if (!mounted) return;
+    final length = _captionController.text.length;
+    if (length >= _captionMaxLength) {
+      if (!_captionLimitAnnounced) {
+        _captionLimitAnnounced = true;
+        // Input is silently dropped past the limit otherwise.
+        _announce('Caption limit reached: $_captionMaxLength characters.');
+      }
+    } else {
+      _captionLimitAnnounced = false;
+    }
+    // Refreshes the field's semantic counter text.
+    setState(() {});
+  }
+
+  String _meterValueFor(double level) {
+    if (level <= 0) return _meterSilent;
+    if (level < 0.25) return _meterQuiet;
+    return _meterGood;
+  }
 
   Future<void> _resolveSupport() async {
     final support = await _recorder.checkSupport();
@@ -134,36 +250,37 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
 
     await _discardRecording();
     if (!mounted) return;
+    final attempt = ++_accessAttempt;
     setState(() {
       _notice = null;
+      _silenceDetected = false;
       _phase = VoiceMomentRecordingPhase.requestingAccess;
     });
 
     try {
       await _recorder.start();
     } on VoiceRecordingException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        // A platform that cannot record at all is terminal for this
-        // session; a blocked microphone or a failed start is not, so the
-        // user lands back on a screen they can retry from.
-        if (error.problem == VoiceRecordingProblem.platformCannotRecord) {
+      if (!mounted || attempt != _accessAttempt) return;
+      // A platform that cannot record at all is terminal for this session;
+      // a refused microphone, absent hardware or a failed start is not, so
+      // the user lands back on a screen they can retry from.
+      if (error.problem == VoiceRecordingProblem.platformCannotRecord) {
+        setState(() {
           _phase = VoiceMomentRecordingPhase.unavailable;
           _unsupported = CaptureSupport.unsupported(
             reason: error.message,
             action: error.action,
           );
-        } else {
-          _phase = VoiceMomentRecordingPhase.idle;
-          _notice = error;
-        }
-      });
+        });
+        _announce('${error.message} ${error.action ?? ''}');
+      } else {
+        _showNotice(error, phase: VoiceMomentRecordingPhase.idle);
+      }
       return;
     } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _phase = VoiceMomentRecordingPhase.idle;
-        _notice = VoiceRecordingException(
+      if (!mounted || attempt != _accessAttempt) return;
+      _showNotice(
+        VoiceRecordingException(
           VoiceRecordingProblem.captureFailed,
           intentionalOrFriendly(
             error,
@@ -171,25 +288,40 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
           ),
           action: 'Try again.',
           cause: error,
-        );
-      });
+        ),
+        phase: VoiceMomentRecordingPhase.idle,
+      );
       return;
     }
 
-    if (!mounted) {
+    // The user gave up on the prompt while it was open, or left.
+    if (!mounted || attempt != _accessAttempt) {
       await _recorder.cancel();
       return;
     }
 
     _meter.fillRange(0, _meter.length, 0);
+    _meterValue = _meterSilent;
+    _meterValueAt = Duration.zero;
+    _silentSince = null;
+    _silenceAnnounced = false;
+    _silenceDetected = false;
+    _limitWarned = false;
     setState(() => _phase = VoiceMomentRecordingPhase.recording);
 
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(milliseconds: 200), (_) {
       if (!mounted) return;
-      if (_recorder.elapsed.inSeconds >= _maxSeconds) {
+      final elapsed = _recorder.elapsed;
+      if (elapsed.inSeconds >= _maxSeconds) {
         unawaited(_stopRecording());
         return;
+      }
+      // The clock is deliberately not a live region — at 200 ms it would
+      // flood the queue — so the limit gets one spoken warning instead.
+      if (!_limitWarned && elapsed.inSeconds >= _limitWarningAtSeconds) {
+        _limitWarned = true;
+        _announce('Ten seconds left.');
       }
       setState(() {});
     });
@@ -199,16 +331,53 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
       (amplitude) {
         if (!mounted) return;
         final level = VoiceMomentRecorder.normalizeAmplitude(amplitude.current);
+        final now = _recorder.elapsed;
+
+        if (level <= 0) {
+          _silentSince ??= now;
+          if (now - _silentSince! >= _silenceWarningAfter) {
+            _silenceDetected = true;
+            if (!_silenceAnnounced) {
+              _silenceAnnounced = true;
+              _announce(
+                'No sound is reaching the microphone. Check that the right '
+                'microphone is selected and not muted.',
+              );
+            }
+          }
+        } else {
+          _silentSince = null;
+          _silenceDetected = false;
+        }
+
         setState(() {
           for (var i = 0; i < _meter.length - 1; i++) {
             _meter[i] = _meter[i + 1];
           }
           _meter[_meter.length - 1] = level;
+          if (now - _meterValueAt >= _meterValueInterval) {
+            _meterValueAt = now;
+            _meterValue = _meterValueFor(level);
+          }
         });
       },
-      // A meter that stops updating is a cosmetic loss; it must not take
-      // the recording down with it.
-      onError: (_) {},
+      // Losing the level stream does not stop the recording, but it does
+      // mean the meter can no longer tell silence from sound. Saying so is
+      // the honest answer; flat bars would read as silence.
+      onError: (Object error) {
+        if (!mounted) return;
+        setState(() {
+          _meterValue = _meterUnknown;
+          _silenceDetected = false;
+        });
+        if (!_silenceAnnounced) {
+          _silenceAnnounced = true;
+          _announce(
+            'Microphone level is unavailable, so YO Voice cannot tell you '
+            'whether sound is being picked up. Recording continues.',
+          );
+        }
+      },
     );
   }
 
@@ -226,16 +395,12 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
       audio = await _recorder.stop();
     } on VoiceRecordingException catch (error) {
       if (!mounted) return;
-      setState(() {
-        _phase = VoiceMomentRecordingPhase.idle;
-        _notice = error;
-      });
+      _showNotice(error, phase: VoiceMomentRecordingPhase.idle);
       return;
     } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _phase = VoiceMomentRecordingPhase.idle;
-        _notice = VoiceRecordingException(
+      _showNotice(
+        VoiceRecordingException(
           VoiceRecordingProblem.captureFailed,
           intentionalOrFriendly(
             error,
@@ -243,8 +408,9 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
           ),
           action: 'Record again.',
           cause: error,
-        );
-      });
+        ),
+        phase: VoiceMomentRecordingPhase.idle,
+      );
       return;
     }
 
@@ -253,15 +419,15 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
     if (captured.inMilliseconds < 1000) {
       await audio.discard();
       if (!mounted) return;
-      setState(() {
-        _phase = VoiceMomentRecordingPhase.idle;
-        _notice = const VoiceRecordingException(
+      _showNotice(
+        const VoiceRecordingException(
           VoiceRecordingProblem.recordingUnusable,
           'That was too short to publish — a Voice Moment needs at least '
           'one second.',
           action: 'Hold on a little longer this time.',
-        );
-      });
+        ),
+        phase: VoiceMomentRecordingPhase.idle,
+      );
       return;
     }
 
@@ -273,6 +439,21 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
       _recording = audio;
       _phase = VoiceMomentRecordingPhase.reviewing;
     });
+  }
+
+  /// Abandons a microphone request that is still waiting for an answer.
+  ///
+  /// A browser that never resolves the prompt would otherwise leave the
+  /// user on a spinner with Back as the only escape.
+  void _cancelAccessRequest() {
+    if (_phase != VoiceMomentRecordingPhase.requestingAccess) return;
+    _accessAttempt++;
+    unawaited(_recorder.cancel());
+    setState(() {
+      _notice = null;
+      _phase = VoiceMomentRecordingPhase.idle;
+    });
+    _announce('Microphone request cancelled.');
   }
 
   Future<void> _discardRecording() async {
@@ -313,9 +494,8 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
       if (!mounted) return;
       // The recording is kept: the capture succeeded, only publishing
       // failed, and making the user re-record would lose good audio.
-      setState(() {
-        _phase = VoiceMomentRecordingPhase.reviewing;
-        _notice = VoiceRecordingException(
+      _showNotice(
+        VoiceRecordingException(
           VoiceRecordingProblem.uploadFailed,
           intentionalOrFriendly(
             error,
@@ -323,7 +503,26 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
           ),
           action: 'Your recording is still here — try publishing again.',
           cause: error,
-        );
+        ),
+        phase: VoiceMomentRecordingPhase.reviewing,
+      );
+      // The notice pushes the actions down, and off-screen descendants are
+      // flagged hidden to assistive technology. Bring the retry back into
+      // view and put focus on it rather than making the user traverse the
+      // whole screen to find out where it went.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final target = _publishKey.currentContext;
+        if (target != null) {
+          unawaited(
+            Scrollable.ensureVisible(
+              target,
+              duration: const Duration(milliseconds: 200),
+              alignment: 0.5,
+            ),
+          );
+        }
+        _publishFocus.requestFocus();
       });
       return;
     }
@@ -335,12 +534,21 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
 
   int get _durationSeconds => _recorder.durationSeconds;
 
-  String get _timeLabel {
-    final seconds = _phase == VoiceMomentRecordingPhase.recording
-        ? math.min(_recorder.elapsed.inSeconds, _maxSeconds)
-        : (_recording == null ? 0 : _durationSeconds);
-    return '0:${seconds.toString().padLeft(2, '0')} / 1:00';
+  int get _elapsedSeconds => _phase == VoiceMomentRecordingPhase.recording
+      ? math.min(_recorder.elapsed.inSeconds, _maxSeconds)
+      : (_recording == null ? 0 : _durationSeconds);
+
+  /// A real clock format. The old one hard-coded the minute as `0:`, so a
+  /// full-length take — which the 60 s auto-stop lands on directly —
+  /// rendered as the impossible `0:60 / 1:00`.
+  static String _formatDuration(int totalSeconds) {
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
+
+  String get _timeLabel =>
+      '${_formatDuration(_elapsedSeconds)} / ${_formatDuration(_maxSeconds)}';
 
   // ------------------------------------------------------------------- view
 
@@ -358,7 +566,11 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
             gradient: RadialGradient(
               center: Alignment(0, -0.8),
               radius: 1.1,
-              colors: [Color(0xFF31104D), Color(0xFF120B1B), _background],
+              colors: [
+                _skyTop,
+                AppColors.surface,
+                _background,
+              ],
             ),
           ),
           child: SafeArea(
@@ -390,6 +602,12 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
           IconButton(
             onPressed: busy ? null : () => Navigator.pop(context),
             tooltip: 'Back',
+            // Material 3's default IconButton padding yields a 40x40 box;
+            // docs/UI.md sets a 44x44 floor.
+            style: IconButton.styleFrom(
+              minimumSize: const Size(48, 48),
+              tapTargetSize: MaterialTapTargetSize.padded,
+            ),
             icon: const Icon(
               Icons.arrow_back_ios_new_rounded,
               color: Colors.white,
@@ -447,30 +665,50 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
           child: _card(
             padding: const EdgeInsets.fromLTRB(34, 32, 34, 30),
             child: switch (_phase) {
+              // These two have no second column to fill. Left to the
+              // stretch layout they produced a ~920 px wide "Go back"
+              // button — a phone stack inflated to desktop width.
               VoiceMomentRecordingPhase.checkingSupport ||
-              VoiceMomentRecordingPhase.unavailable => Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _intro(),
-                  const SizedBox(height: 26),
-                  ..._stage(compact: false, stackActions: false),
-                ],
+              VoiceMomentRecordingPhase.unavailable => Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 520),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _intro(),
+                      const SizedBox(height: 26),
+                      ..._stage(compact: false, stackActions: false),
+                    ],
+                  ),
+                ),
               ),
               _ => Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                // Centred, not top-aligned: the right column is shorter
+                // than the capture stage, and anchoring both to the top
+                // left the bottom-right quadrant empty.
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Expanded(
                     flex: 6,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        _intro(alignment: TextAlign.left),
+                        // Centred like everything beneath it. Left-aligned
+                        // copy over a centred stage read as two half
+                        // designs sharing one column.
+                        _intro(),
                         const SizedBox(height: 28),
-                        _meterBlock(compact: false),
+                        _meterBlock(compact: false, showSilenceHint: false),
                         const SizedBox(height: 20),
                         _recordButton(),
                         const SizedBox(height: 16),
                         _statusLine(),
+                        if (_phase ==
+                            VoiceMomentRecordingPhase.requestingAccess) ...[
+                          const SizedBox(height: 6),
+                          _cancelAccessButton(),
+                        ],
                       ],
                     ),
                   ),
@@ -558,6 +796,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
           _recordButton(),
           const SizedBox(height: 14),
           _statusLine(),
+          if (_phase == VoiceMomentRecordingPhase.requestingAccess) ...[
+            const SizedBox(height: 6),
+            _cancelAccessButton(),
+          ],
           if (_phase == VoiceMomentRecordingPhase.reviewing ||
               _phase == VoiceMomentRecordingPhase.publishing) ...[
             const SizedBox(height: 24),
@@ -571,18 +813,98 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
 
   /// The desktop right-hand column.
   Widget _sidePanel() {
-    if (_phase == VoiceMomentRecordingPhase.reviewing ||
-        _phase == VoiceMomentRecordingPhase.publishing) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _captionField(),
-          const SizedBox(height: 12),
-          _actions(stacked: false),
-        ],
-      );
+    switch (_phase) {
+      case VoiceMomentRecordingPhase.reviewing:
+      case VoiceMomentRecordingPhase.publishing:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _captionField(),
+            const SizedBox(height: 12),
+            _actions(stacked: false),
+          ],
+        );
+      case VoiceMomentRecordingPhase.recording:
+        // "Before you start" mid-take is advice for a moment that has
+        // already passed. Report the take instead.
+        return _liveCard();
+      default:
+        return _guidanceCard();
     }
-    return _guidanceCard();
+  }
+
+  /// The right-hand column while recording: the state of the take, drawn
+  /// from the same measured values as the meter. Nothing invented.
+  Widget _liveCard() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
+      decoration: BoxDecoration(
+        color: _inset,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 9,
+                height: 9,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _live,
+                ),
+              ),
+              const SizedBox(width: 9),
+              const Text(
+                'Recording',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _liveRow(Icons.graphic_eq_rounded, 'Input level', _meterValue),
+          const SizedBox(height: 10),
+          _liveRow(
+            Icons.timer_outlined,
+            'Remaining',
+            _formatDuration(_maxSeconds - _elapsedSeconds),
+          ),
+          if (_silenceDetected) ...[
+            const SizedBox(height: 14),
+            _silenceHint(),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _liveRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, size: 17, color: _muted),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(color: _muted, fontSize: 13),
+          ),
+        ),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _checkingCard() {
@@ -613,10 +935,15 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
   /// button that fails when tapped.
   Widget _unavailableCard() {
     final support = _unsupported;
-    return Container(
+    // The only live region rendered in the `unavailable` phase: the status
+    // line is not built here, so there is nothing to collide with.
+    return Semantics(
+      liveRegion: true,
+      container: true,
+      child: Container(
       padding: const EdgeInsets.fromLTRB(22, 24, 22, 22),
       decoration: BoxDecoration(
-        color: const Color(0xFF0D0914),
+        color: _inset,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: _border),
       ),
@@ -628,14 +955,14 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
             alignment: Alignment.center,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: const Color(0xFFFFB547).withValues(alpha: .12),
+              color: _warning.withValues(alpha: .12),
               border: Border.all(
-                color: const Color(0xFFFFB547).withValues(alpha: .4),
+                color: _warning.withValues(alpha: .4),
               ),
             ),
             child: const Icon(
               Icons.mic_off_rounded,
-              color: Color(0xFFFFD08A),
+              color: _warning,
               size: 28,
             ),
           ),
@@ -662,7 +989,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
               support!.action!,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                color: Color(0xFFD8CFEA),
+                color: AppColors.textPrimary,
                 fontSize: 13.5,
                 height: 1.5,
                 fontWeight: FontWeight.w700,
@@ -678,6 +1005,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
                 foregroundColor: Colors.white,
                 side: const BorderSide(color: _border),
                 padding: const EdgeInsets.symmetric(vertical: 14),
+                minimumSize: const Size.fromHeight(48),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
                 ),
@@ -687,14 +1015,26 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
           ),
         ],
       ),
+      ),
     );
   }
 
   Widget _noticeCard(VoiceRecordingException notice) {
-    final blocked = notice.problem == VoiceRecordingProblem.microphoneBlocked;
-    final accent = blocked ? const Color(0xFFFFB547) : _danger;
+    final blocked = switch (notice.problem) {
+      VoiceRecordingProblem.microphoneBlocked ||
+      VoiceRecordingProblem.microphonePromptDismissed ||
+      VoiceRecordingProblem.microphoneNotFound ||
+      VoiceRecordingProblem.microphoneUnavailable => true,
+      _ => false,
+    };
+    final accent = blocked ? _warning : _error;
+    // Deliberately NOT a live region. The status line below is this
+    // screen's single polite live region, and Flutter web funnels every
+    // polite announcement through one shared DOM element — a second one
+    // in the same frame silently overwrites the first. Errors are spoken
+    // through the assertive channel by `_showNotice` instead.
     return Semantics(
-      liveRegion: true,
+      container: true,
       child: Container(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
         decoration: BoxDecoration(
@@ -753,7 +1093,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
       decoration: BoxDecoration(
-        color: const Color(0xFF0D0914),
+        color: _inset,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: _border),
       ),
@@ -794,7 +1134,9 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
     );
   }
 
-  Widget _meterBlock({required bool compact}) {
+  /// [showSilenceHint] is false in the wide layout, where the right-hand
+  /// Recording panel already carries the hint — one screen, one warning.
+  Widget _meterBlock({required bool compact, bool showSilenceHint = true}) {
     return Column(
       children: [
         SizedBox(
@@ -809,21 +1151,79 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
                 levels: _meter,
                 barCount: barCount,
                 live: _phase == VoiceMomentRecordingPhase.recording,
+                value: _meterValue,
               );
             },
           ),
         ),
+        if (_silenceDetected && showSilenceHint) ...[
+          const SizedBox(height: 10),
+          _silenceHint(),
+        ],
         const SizedBox(height: 12),
-        Text(
-          _timeLabel,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 15,
-            fontWeight: FontWeight.w800,
-            fontFeatures: [FontFeature.tabularFigures()],
+        // A value, not a live region: this rebuilds every 200 ms and a
+        // live region would flood the announcement queue. The approaching
+        // limit is covered by one spoken warning from the ticker.
+        Semantics(
+          label: 'Recording length',
+          value: '$_elapsedSeconds of $_maxSeconds seconds',
+          excludeSemantics: true,
+          child: Text(
+            _timeLabel,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
           ),
         ),
       ],
+    );
+  }
+
+  /// Shown once silence has persisted. Not a live region — the assertive
+  /// announcement carries it to screen readers; this is the visual half,
+  /// and without it a silent meter is pixel-identical to the idle one.
+  Widget _silenceHint() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: _warning.withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _warning.withValues(alpha: .4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.mic_off_rounded, size: 16, color: _warning),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              'No sound detected — check your microphone.',
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The cancel escape from a microphone prompt that never resolves.
+  Widget _cancelAccessButton() {
+    return Center(
+      child: TextButton(
+        onPressed: _cancelAccessRequest,
+        style: TextButton.styleFrom(
+          foregroundColor: _muted,
+          minimumSize: const Size(88, 48),
+        ),
+        child: const Text('Cancel'),
+      ),
     );
   }
 
@@ -835,21 +1235,28 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
         _phase == VoiceMomentRecordingPhase.reviewing ||
         recording;
 
-    final color = recording ? _danger : _primary;
+    final color = recording ? _live : _primary;
 
+    // AccessibleTapRegion, not a bare InkWell: this screen paints an opaque
+    // gradient and card over the Scaffold's root Material, so every ink
+    // feature — focus ring included — landed on a covered canvas and
+    // keyboard focus was invisible. It brings its own transparent Material
+    // and paints the ring above the child.
     return Center(
-      child: Semantics(
-        button: true,
-        enabled: enabled,
-        label: recording
+      child: AccessibleTapRegion(
+        onTap: enabled ? _toggleRecording : null,
+        // Two controls used to answer to "Record again". This one discards
+        // the take and goes live immediately; the outlined button returns
+        // to idle. The label names the consequence so picking the wrong
+        // one cannot silently destroy a recording.
+        semanticLabel: recording
             ? 'Stop recording'
             : (_phase == VoiceMomentRecordingPhase.reviewing
-                  ? 'Record again'
+                  ? 'Discard this take and start recording now'
                   : 'Start recording'),
-        child: InkWell(
-          onTap: enabled ? _toggleRecording : null,
-          customBorder: const CircleBorder(),
-          child: AnimatedContainer(
+        circular: true,
+        minimumSize: const Size(86, 86),
+        child: AnimatedContainer(
             duration: const Duration(milliseconds: 220),
             width: 86,
             height: 86,
@@ -882,7 +1289,6 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
                     color: Colors.white,
                     size: 38,
                   ),
-          ),
         ),
       ),
     );
@@ -912,41 +1318,76 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
     return TextField(
       controller: _captionController,
       enabled: _phase != VoiceMomentRecordingPhase.publishing,
-      maxLength: 140,
+      maxLength: _captionMaxLength,
       maxLines: 3,
       minLines: 3,
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
+        // A real label, not just a hint: a hint is the field's only
+        // accessible name until the user types, and then it disappears
+        // and the field becomes anonymous.
+        labelText: 'Caption',
+        labelStyle: const TextStyle(color: _muted),
+        floatingLabelStyle: const TextStyle(color: AppColors.textPrimary),
         hintText: 'Add a caption…',
         hintStyle: const TextStyle(color: _muted),
         counterStyle: const TextStyle(color: _muted),
+        // The visible counter is a detached node that screen readers do
+        // not associate with the field; this is what is actually read.
+        semanticCounterText:
+            '${_captionController.text.length} of $_captionMaxLength '
+            'characters',
         filled: true,
-        fillColor: const Color(0xFF0D0914),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide.none,
-        ),
+        fillColor: _inset,
+        // Stated explicitly rather than left to `border:`, which the
+        // production InputDecorationTheme's enabled/focused borders
+        // override — the harness and the app were not showing the same
+        // field. A visible boundary and a real focus ring are also what
+        // 1.4.11 and 2.4.7 ask for.
+        border: _captionBorder(_border),
+        enabledBorder: _captionBorder(_border),
+        focusedBorder: _captionBorder(_primary, width: 2),
+        disabledBorder: _captionBorder(_border.withValues(alpha: .5)),
       ),
     );
   }
+
+  static OutlineInputBorder _captionBorder(Color color, {double width = 1}) {
+    return OutlineInputBorder(
+      borderRadius: BorderRadius.circular(16),
+      borderSide: BorderSide(color: color, width: width),
+    );
+  }
+
+  /// Activation is disabled while publishing; focusability is not.
+  ///
+  /// A null `onPressed` makes the framework drop focus to the route scope,
+  /// which is what left the retry unreachable after a failed publish, so
+  /// the busy state is expressed through the label and styling instead.
+  void _ignoreWhileBusy() {}
 
   Widget _actions({required bool stacked}) {
     final publishing = _phase == VoiceMomentRecordingPhase.publishing;
 
     final again = OutlinedButton.icon(
-      onPressed: publishing ? null : _recordAgain,
+      onPressed: publishing ? _ignoreWhileBusy : _recordAgain,
       icon: const Icon(Icons.refresh_rounded),
       label: const Text('Record again', overflow: TextOverflow.ellipsis),
       style: OutlinedButton.styleFrom(
-        foregroundColor: Colors.white,
-        side: const BorderSide(color: _border),
+        foregroundColor: publishing ? Colors.white38 : Colors.white,
+        side: BorderSide(
+          color: publishing ? _border.withValues(alpha: .5) : _border,
+        ),
         padding: const EdgeInsets.symmetric(vertical: 15),
+        minimumSize: const Size.fromHeight(48),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
     );
 
     final publish = FilledButton.icon(
-      onPressed: publishing ? null : _publish,
+      key: _publishKey,
+      focusNode: _publishFocus,
+      onPressed: publishing ? _ignoreWhileBusy : _publish,
       icon: publishing
           ? const SizedBox(
               width: 18,
@@ -966,11 +1407,12 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
         overflow: TextOverflow.ellipsis,
       ),
       style: FilledButton.styleFrom(
-        backgroundColor: _primary,
-        foregroundColor: Colors.white,
-        disabledBackgroundColor: _primary.withValues(alpha: .5),
-        disabledForegroundColor: Colors.white70,
+        backgroundColor: publishing ? _primary.withValues(alpha: .5) : _primary,
+        foregroundColor: publishing ? Colors.white70 : Colors.white,
         padding: const EdgeInsets.symmetric(vertical: 15),
+        // The painted height, not just the padded hit area: docs/UI.md's
+        // 44x44 floor is about what the user can see and aim at.
+        minimumSize: const Size.fromHeight(48),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
     );
@@ -1000,11 +1442,17 @@ class _LevelMeter extends StatelessWidget {
     required this.levels,
     required this.barCount,
     required this.live,
+    required this.value,
   });
 
   final List<double> levels;
   final int barCount;
   final bool live;
+
+  /// Coarse input level, exposed as the node's semantics value so the
+  /// meter is not a purely visual signal. Not a live region: sustained
+  /// silence is called out by a single assertive announcement instead.
+  final String value;
 
   static const double _restHeight = 6;
   static const double _maxHeight = 96;
@@ -1016,7 +1464,8 @@ class _LevelMeter extends StatelessWidget {
     final visible = levels.sublist(start);
 
     return Semantics(
-      label: live ? 'Recording level meter' : 'Recording level meter, idle',
+      label: live ? 'Microphone level' : 'Microphone level, not recording',
+      value: value,
       excludeSemantics: true,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -1037,10 +1486,10 @@ class _LevelMeter extends StatelessWidget {
                       begin: Alignment.bottomCenter,
                       end: Alignment.topCenter,
                       colors: live
-                          ? const [Color(0xFF6A00FF), Color(0xFFC53AFF)]
+                          ? const [AppColors.primary, AppColors.secondary]
                           : [
-                              const Color(0xFF6A00FF).withValues(alpha: .35),
-                              const Color(0xFFC53AFF).withValues(alpha: .35),
+                              AppColors.primary.withValues(alpha: .35),
+                              AppColors.secondary.withValues(alpha: .35),
                             ],
                     ),
                     borderRadius: BorderRadius.circular(20),

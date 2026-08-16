@@ -1,18 +1,16 @@
-import 'dart:typed_data';
-
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:record/record.dart' show Amplitude, AudioEncoder, RecordConfig;
+import 'package:record/record.dart' show AudioEncoder;
 
-import 'package:yovoice/features/moments/data/services/audio_capture/audio_capture.dart';
 import 'package:yovoice/features/moments/data/services/audio_capture/web_mime_negotiation.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dart';
+
+import 'voice_moment_test_doubles.dart';
 
 /// Voice Moment recording was broken for every web user: the screen called
 /// `getTemporaryDirectory()` before starting the recorder, `path_provider`
@@ -116,12 +114,12 @@ void main() {
 
   group('validateRecordedAudio', () {
     test('accepts a normal mp4 recording', () {
-      expect(validateRecordedAudio(_FakeRecordedAudio()), isNull);
+      expect(validateRecordedAudio(FakeRecordedAudio()), isNull);
     });
 
     test('refuses a container the backend cannot accept', () {
       final problem = validateRecordedAudio(
-        _FakeRecordedAudio(contentType: 'audio/webm'),
+        FakeRecordedAudio(contentType: 'audio/webm'),
       );
       expect(problem?.problem, VoiceRecordingProblem.recordingUnusable);
       expect(problem?.message, contains('audio/webm'));
@@ -130,13 +128,13 @@ void main() {
     test('refuses payloads outside the Storage rules byte bounds', () {
       // storage.rules: size >= 1024 && size <= 12 MiB.
       expect(
-        validateRecordedAudio(_FakeRecordedAudio(byteLength: 1023))?.problem,
+        validateRecordedAudio(FakeRecordedAudio(byteLength: 1023))?.problem,
         VoiceRecordingProblem.recordingUnusable,
       );
-      expect(validateRecordedAudio(_FakeRecordedAudio(byteLength: 1024)), isNull);
+      expect(validateRecordedAudio(FakeRecordedAudio(byteLength: 1024)), isNull);
       expect(
         validateRecordedAudio(
-          _FakeRecordedAudio(byteLength: 12 * 1024 * 1024 + 1),
+          FakeRecordedAudio(byteLength: 12 * 1024 * 1024 + 1),
         )?.problem,
         VoiceRecordingProblem.recordingUnusable,
       );
@@ -145,8 +143,8 @@ void main() {
 
   group('VoiceMomentRecorder failure taxonomy', () {
     test('an unsupported platform never asks for the microphone', () async {
-      final backend = _FakeBackend();
-      final capture = _FakeCapture()
+      final backend = FakeRecorderBackend();
+      final capture = FakeAudioCapture()
         ..support = const CaptureSupport.unsupported(
           reason: 'This browser cannot record MP4/AAC audio.',
           action: 'Open YO Voice in Chrome, Edge or Safari to record.',
@@ -172,9 +170,9 @@ void main() {
     });
 
     test('support is probed once and cached', () async {
-      final capture = _FakeCapture();
+      final capture = FakeAudioCapture();
       final recorder = VoiceMomentRecorder(
-        backend: _FakeBackend(),
+        backend: FakeRecorderBackend(),
         capture: capture,
       );
       await recorder.checkSupport();
@@ -185,8 +183,8 @@ void main() {
     test('a refused microphone is microphoneBlocked, not a generic failure',
         () async {
       final recorder = VoiceMomentRecorder(
-        backend: _FakeBackend()..permission = false,
-        capture: _FakeCapture(),
+        backend: FakeRecorderBackend()..permission = false,
+        capture: FakeAudioCapture(),
       );
 
       await expectLater(
@@ -211,8 +209,8 @@ void main() {
         // implementation, `getTemporaryDirectory()` threw this, and a broad
         // catch reported "Could not start recording".
         final recorder = VoiceMomentRecorder(
-          backend: _FakeBackend(),
-          capture: _FakeCapture()
+          backend: FakeRecorderBackend(),
+          capture: FakeAudioCapture()
             ..targetError = MissingPluginException(
               'No implementation found for method getTemporaryDirectory',
             ),
@@ -237,8 +235,8 @@ void main() {
 
     test('a recorder that will not start is captureFailed', () async {
       final recorder = VoiceMomentRecorder(
-        backend: _FakeBackend()..startError = StateError('device busy'),
-        capture: _FakeCapture(),
+        backend: FakeRecorderBackend()..startError = StateError('device busy'),
+        capture: FakeAudioCapture(),
       );
 
       await expectLater(
@@ -257,8 +255,8 @@ void main() {
     test('a missing recorder plugin degrades to an honest unsupported state',
         () async {
       final recorder = VoiceMomentRecorder(
-        backend: _FakeBackend(),
-        capture: _FakeCapture()
+        backend: FakeRecorderBackend(),
+        capture: FakeAudioCapture()
           ..probeError = MissingPluginException('no recorder'),
       );
 
@@ -269,11 +267,11 @@ void main() {
     });
 
     test('a normal capture yields uploadable audio', () async {
-      final audio = _FakeRecordedAudio();
-      final backend = _FakeBackend();
+      final audio = FakeRecordedAudio();
+      final backend = FakeRecorderBackend();
       final recorder = VoiceMomentRecorder(
         backend: backend,
-        capture: _FakeCapture()..result = audio,
+        capture: FakeAudioCapture()..result = audio,
       );
 
       await recorder.start();
@@ -290,10 +288,10 @@ void main() {
       // A browser that negotiated something the pre-flight probe did not
       // predict: the bytes are real, but they cannot be published, and
       // keeping them would leak.
-      final audio = _FakeRecordedAudio(contentType: 'audio/webm');
+      final audio = FakeRecordedAudio(contentType: 'audio/webm');
       final recorder = VoiceMomentRecorder(
-        backend: _FakeBackend(),
-        capture: _FakeCapture()..result = audio,
+        backend: FakeRecorderBackend(),
+        capture: FakeAudioCapture()..result = audio,
       );
 
       await recorder.start();
@@ -353,7 +351,7 @@ void main() {
 
     test('uploads through the platform seam with the metadata the Storage '
         'rules require', () async {
-      final audio = _FakeRecordedAudio();
+      final audio = FakeRecordedAudio();
 
       final momentId = await service.publishRecordedMoment(
         audio: audio,
@@ -384,7 +382,7 @@ void main() {
         () async {
       // Uploading it would be rejected by the rules, leaving a reserved
       // draft that can never finalize.
-      final audio = _FakeRecordedAudio(contentType: 'audio/webm');
+      final audio = FakeRecordedAudio(contentType: 'audio/webm');
 
       await expectLater(
         service.publishRecordedMoment(
@@ -403,7 +401,7 @@ void main() {
         'authorId': 'someone-else',
         'isPublished': true,
       });
-      final audio = _FakeRecordedAudio();
+      final audio = FakeRecordedAudio();
 
       final commentId = await service.publishRecordedMoment(
         audio: audio,
@@ -426,116 +424,4 @@ void main() {
       expect(audio.uploadedMetadata!.contentType, 'audio/mp4');
     });
   });
-}
-
-// --------------------------------------------------------------- test doubles
-
-class _FakeRecordedAudio extends RecordedAudio {
-  _FakeRecordedAudio({
-    this.contentType = kVoiceMomentContentType,
-    this.byteLength = 4096,
-  });
-
-  @override
-  final String contentType;
-
-  @override
-  final int byteLength;
-
-  int uploadCalls = 0;
-  String? uploadedPath;
-  SettableMetadata? uploadedMetadata;
-  bool discarded = false;
-
-  @override
-  Future<String> uploadTo(Reference reference, SettableMetadata metadata) async {
-    uploadCalls++;
-    uploadedPath = reference.fullPath;
-    uploadedMetadata = metadata;
-    // Stand in for the platform upload against the real Reference, so the
-    // service's follow-up calls (download URL, cleanup) behave as they do
-    // in production rather than against a hole in the double.
-    await reference.putData(Uint8List(byteLength), metadata);
-    return '1700000000000001';
-  }
-
-  @override
-  Future<void> discard() async {
-    discarded = true;
-  }
-}
-
-class _FakeBackend implements VoiceRecorderBackend {
-  bool encoderSupported = true;
-  bool permission = true;
-  Object? startError;
-  Object? stopError;
-  String? stopResult = 'handle';
-
-  int permissionCalls = 0;
-  int startCalls = 0;
-  int cancelCalls = 0;
-  int disposeCalls = 0;
-  RecordConfig? startedConfig;
-
-  @override
-  Future<bool> hasPermission() async {
-    permissionCalls++;
-    return permission;
-  }
-
-  @override
-  Future<bool> isEncoderSupported(AudioEncoder encoder) async =>
-      encoderSupported;
-
-  @override
-  Future<void> start(RecordConfig config, {required String path}) async {
-    startCalls++;
-    startedConfig = config;
-    if (startError != null) throw startError!;
-  }
-
-  @override
-  Stream<Amplitude> onAmplitudeChanged(Duration interval) =>
-      const Stream<Amplitude>.empty();
-
-  @override
-  Future<String?> stop() async {
-    if (stopError != null) throw stopError!;
-    return stopResult;
-  }
-
-  @override
-  Future<void> cancel() async => cancelCalls++;
-
-  @override
-  Future<void> dispose() async => disposeCalls++;
-}
-
-class _FakeCapture implements AudioCapture {
-  CaptureSupport support = const CaptureSupport.supported();
-  Object? probeError;
-  Object? targetError;
-  Object? materializeError;
-  RecordedAudio? result;
-  int probeCalls = 0;
-
-  @override
-  Future<CaptureSupport> probeSupport(VoiceRecorderBackend backend) async {
-    probeCalls++;
-    if (probeError != null) throw probeError!;
-    return support;
-  }
-
-  @override
-  Future<String> newRecordingTarget() async {
-    if (targetError != null) throw targetError!;
-    return 'target.m4a';
-  }
-
-  @override
-  Future<RecordedAudio> materialize(String? stopResult) async {
-    if (materializeError != null) throw materializeError!;
-    return result ?? _FakeRecordedAudio();
-  }
 }

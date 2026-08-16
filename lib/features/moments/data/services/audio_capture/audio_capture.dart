@@ -89,10 +89,64 @@ class CaptureSupport {
   bool get isSupported => reason == null;
 }
 
+/// The outcome of asking for the microphone.
+///
+/// `record`'s `hasPermission()` collapses every one of these into a bare
+/// `false`, which is why the old flow blamed the user for a missing or
+/// busy microphone. Each value here needs a different action, so each is
+/// carried separately all the way to the copy the user reads.
+enum MicrophoneOutcome {
+  granted,
+
+  /// A standing denial. The page cannot re-prompt; only site/app settings
+  /// can change it.
+  blocked,
+
+  /// The prompt was dismissed rather than answered — asking again works.
+  dismissed,
+
+  /// No input device is connected.
+  notFound,
+
+  /// A device exists but could not be opened, usually because another
+  /// application holds it.
+  unavailable,
+
+  /// Something else went wrong acquiring the device.
+  failed,
+}
+
+/// A microphone request result, carrying copy that is already specific.
+class MicrophoneAccess {
+  const MicrophoneAccess.granted()
+    : outcome = MicrophoneOutcome.granted,
+      message = null,
+      action = null;
+
+  const MicrophoneAccess.denied({
+    required this.outcome,
+    required String this.message,
+    this.action,
+  });
+
+  final MicrophoneOutcome outcome;
+  final String? message;
+  final String? action;
+
+  bool get isGranted => outcome == MicrophoneOutcome.granted;
+}
+
 /// Everything about recording that genuinely differs between web and
-/// native: where the bytes go while recording, and how they are collected
-/// afterwards. Nothing else in the feature is platform-aware.
+/// native: where the bytes go while recording, how the microphone is
+/// requested, and how the bytes are collected afterwards. Nothing else in
+/// the feature is platform-aware.
 abstract class AudioCapture {
+  /// Requests microphone access, preserving *why* it was refused.
+  ///
+  /// Owned by the platform half because only the platform can tell a
+  /// standing denial from a dismissed prompt from absent hardware.
+  Future<MicrophoneAccess> requestMicrophone(VoiceRecorderBackend backend);
+
   /// Whether this platform can capture audio in a publishable container.
   /// Checked before the microphone is ever requested, so an unsupported
   /// browser explains itself instead of failing at the permission prompt.

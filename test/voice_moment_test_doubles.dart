@@ -150,8 +150,37 @@ class FakeAudioCapture implements AudioCapture {
   Object? probeError;
   Object? targetError;
   Object? materializeError;
+  Object? microphoneError;
   RecordedAudio? result;
   int probeCalls = 0;
+  int microphoneCalls = 0;
+
+  /// Defaults to granted; set an outcome to exercise a specific refusal.
+  MicrophoneAccess microphone = const MicrophoneAccess.granted();
+
+  /// When set, the request hangs on it — a browser that never answers the
+  /// permission prompt.
+  Completer<MicrophoneAccess>? microphoneGate;
+
+  @override
+  Future<MicrophoneAccess> requestMicrophone(
+    VoiceRecorderBackend backend,
+  ) async {
+    microphoneCalls++;
+    if (microphoneError != null) throw microphoneError!;
+    if (microphoneGate != null) return microphoneGate!.future;
+    // Mirrors the real implementations, which all consult the backend's
+    // permission state before deciding.
+    if (microphone.isGranted && !await backend.hasPermission()) {
+      return const MicrophoneAccess.denied(
+        outcome: MicrophoneOutcome.blocked,
+        message: 'Microphone access for YO Voice is blocked in this browser.',
+        action: "Allow the microphone in your browser's site settings for "
+            'YO Voice, then reload this page.',
+      );
+    }
+    return microphone;
+  }
 
   @override
   Future<CaptureSupport> probeSupport(VoiceRecorderBackend backend) async {
