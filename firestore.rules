@@ -2026,13 +2026,22 @@ service cloud.firestore {
       //
       // The ternary SELECTOR stays `resource.data.hostId == request.auth.uid`
       // on purpose; the account-status check belongs inside
-      // hostRoomUpdateAllowed(), not here. Moving it into the selector would
-      // read as the tighter change and is in fact the looser one: a
-      // suspended host would stop matching the host branch and fall through
-      // to the non-host transition set, where roomMemberJoinTransitionAllowed
-      // would hand a disabled host a self-join path it does not have today.
-      // Keeping the selector broad keeps the host branch a CLOSED set — an
-      // inactive host is denied outright rather than rerouted.
+      // hostRoomUpdateAllowed(), not here.
+      //
+      // CORRECTED 2026-08-16 — an earlier version of this comment claimed
+      // that moving isActiveAccount() into the selector would be LOOSER,
+      // because a suspended host would fall through to the non-host
+      // transition set and gain a self-join path. That was measured and is
+      // false as this file now stands: an audit built the variant and it is
+      // exactly as tight, denial for denial. The fall-through it described
+      // was real only against the PREVIOUS roomMembers create rule, and the
+      // same commit closed that by requiring isActiveAccount() there — so
+      // the comment was justifying this shape with a mechanism its own
+      // commit had already removed. Left as written because a closed host
+      // branch does not depend on roomMembers create staying tight, which
+      // is the more durable property; not because the selector form is
+      // unsafe. If you move it, prove the variant rather than trusting
+      // either version of this paragraph.
       allow update: if isSignedIn() &&
           roomMetadataValid(request.resource.data) &&
           roomTypeFieldsScoped(request.resource.data) &&
