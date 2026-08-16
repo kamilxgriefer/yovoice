@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "2026-08-16.v1",
+  "defaultThresholds": [1, 10, 50, 100, 250, 500, 1000, 2500, 5000, 10000],
+  "rarities": [
+    "common",
+    "common",
+    "uncommon",
+    "uncommon",
+    "rare",
+    "rare",
+    "epic",
+    "epic",
+    "legendary",
+    "mythic"
+  ],
+  "xpByRarity": {
+    "common": 10,
+    "uncommon": 25,
+    "rare": 60,
+    "epic": 150,
+    "legendary": 400,
+    "mythic": 1000
+  },
+  "tracks": [
+    {
+      "metric": "messages",
+      "descriptionNoun": "written messages",
+      "titles": [
+        "First Word",
+        "Icebreaker",
+        "Conversation Starter",
+        "Daily Talker",
+        "Message Maker",
+        "Social Spark",
+        "Thousand Voices",
+        "Chat Vanguard",
+        "Chat Legend",
+        "Voice of the Crowd"
+      ]
+    },
+    {
+      "metric": "followers",
+      "descriptionNoun": "followers",
+      "titles": [
+        "Noticed",
+        "Small Circle",
+        "Rising Voice",
+        "Crowd Magnet",
+        "Community Favourite",
+        "Voice Influencer",
+        "Public Figure",
+        "Spotlight",
+        "Network Star",
+        "YO Voice Icon"
+      ]
+    },
+    {
+      "metric": "voiceMinutes",
+      "descriptionNoun": "voice minutes",
+      "thresholds": [1, 30, 120, 300, 600, 1200, 3000, 6000, 12000, 30000],
+      "titles": [
+        "Mic Check",
+        "First Conversation",
+        "Open Mic",
+        "Night Talker",
+        "Voice Regular",
+        "Airwave Rider",
+        "Voice Veteran",
+        "Sound Voyager",
+        "Airwave Master",
+        "Eternal Voice"
+      ]
+    },
+    {
+      "metric": "rooms",
+      "descriptionNoun": "created rooms",
+      "titles": [
+        "Room Opener",
+        "Gatherer",
+        "Room Founder",
+        "Social Host",
+        "Community Builder",
+        "Room Curator",
+        "Room Architect",
+        "Network Founder",
+        "Realm Builder",
+        "Realm Founder"
+      ]
+    },
+    {
+      "metric": "communities",
+      "descriptionNoun": "joined communities",
+      "titles": [
+        "Newcomer",
+        "Explorer",
+        "Community Hopper",
+        "Local",
+        "Connector",
+        "Networker",
+        "Citizen of YO Voice",
+        "World Listener",
+        "Community Nomad",
+        "Everywhere at Once"
+      ]
+    },
+    {
+      "metric": "friends",
+      "descriptionNoun": "friends",
+      "titles": [
+        "First Connection",
+        "Friendly Face",
+        "Social Circle",
+        "Trusted Contact",
+        "People Person",
+        "Friend Collector",
+        "Social Anchor",
+        "Community Heart",
+        "Universal Friend",
+        "Everyone Knows You"
+      ]
+    },
+    {
+      "metric": "reactions",
+      "descriptionNoun": "received reactions",
+      "titles": [
+        "First Applause",
+        "Well Received",
+        "Crowd Pleaser",
+        "Good Energy",
+        "Reaction Magnet",
+        "Fan Favourite",
+        "Audience Choice",
+        "Standing Ovation",
+        "Beloved Voice",
+        "Universal Applause"
+      ]
+    },
+    {
+      "metric": "hostMinutes",
+      "descriptionNoun": "hosted voice minutes",
+      "thresholds": [1, 30, 120, 300, 600, 1200, 3000, 6000, 12000, 30000],
+      "titles": [
+        "First Host",
+        "Room Guide",
+        "Conversation Lead",
+        "Voice Captain",
+        "Voice Director",
+        "Stage Keeper",
+        "Podcast Master",
+        "Community Conductor",
+        "Grand Host",
+        "Grand Voicekeeper"
+      ]
+    },
+    {
+      "metric": "activeDays",
+      "descriptionNoun": "active days",
+      "thresholds": [1, 3, 7, 14, 30, 60, 100, 180, 365, 730],
+      "titles": [
+        "Hello YO Voice",
+        "Back Again",
+        "Weekly Regular",
+        "Two Week Flame",
+        "Monthly Regular",
+        "Dedicated Voice",
+        "Century Streak",
+        "Half Year Habit",
+        "Year of Voice",
+        "Timeless Member"
+      ]
+    },
+    {
+      "metric": "moments",
+      "descriptionNoun": "published Voice Moments",
+      "titles": [
+        "First Moment",
+        "Story Teller",
+        "Moment Maker",
+        "Voice Journal",
+        "Audio Creator",
+        "Moment Curator",
+        "Voice Publisher",
+        "Moment Star",
+        "Audio Celebrity",
+        "Voice Moment Legend"
+      ]
+    }
+  ]
+}

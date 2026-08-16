@@ -7,7 +7,7 @@ import 'package:yovoice/features/messages/data/models/global_message.dart';
 import 'package:yovoice/features/moderation/data/models/moderation_report.dart';
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
 import 'package:yovoice/features/moderation/data/services/report_service.dart';
-import 'package:yovoice/features/moderation/presentation/report_message_sheet.dart';
+import 'package:yovoice/features/moderation/presentation/report_reason_labels.dart';
 import 'package:yovoice/features/moderation/presentation/widgets/report_audit_timeline.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -187,9 +187,8 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
               actions: [
                 IconButton(
                   tooltip: 'Home',
-                  onPressed: () => Navigator.of(
-                    context,
-                  ).popUntil((route) => route.isFirst),
+                  onPressed: () =>
+                      Navigator.of(context).popUntil((route) => route.isFirst),
                   icon: const Icon(Icons.home_rounded),
                 ),
               ],
@@ -395,7 +394,9 @@ class _ModerationWorkspace extends StatelessWidget {
             report.note.toLowerCase().contains(query) ||
             report.targetId.toLowerCase().contains(query) ||
             (report.reason != null &&
-                reportReasonLabel(report.reason!).toLowerCase().contains(query)))
+                reportReasonLabel(
+                  report.reason!,
+                ).toLowerCase().contains(query)))
           report,
     ];
   }
@@ -406,7 +407,8 @@ class _ModerationWorkspace extends StatelessWidget {
     // StreamBuilder to the EXACT active query, so when a filter changes
     // Flutter tears down the old subscription and its state — a late
     // snapshot from the previous query cannot repaint the new queue.
-    final queryKey = '${status.name}'
+    final queryKey =
+        '${status.name}'
         '|${targetFilter?.name ?? '*'}'
         '|${reasonFilter?.name ?? '*'}'
         '|$limit';
@@ -486,7 +488,7 @@ class _ModerationWorkspace extends StatelessWidget {
             return Align(
               alignment: Alignment.topCenter,
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1600),
+                constraints: const BoxConstraints(maxWidth: 1440),
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(
                     narrow ? 14 : 24,
@@ -660,10 +662,7 @@ class _WorkspaceHeader extends StatelessWidget {
             IconButton(
               tooltip: 'Refresh',
               onPressed: onRefresh,
-              icon: const Icon(
-                Icons.refresh_rounded,
-                color: Color(0xFFA69CAF),
-              ),
+              icon: const Icon(Icons.refresh_rounded, color: Color(0xFFA69CAF)),
             ),
           ],
         ),
@@ -724,10 +723,7 @@ class _SummaryStrip extends StatelessWidget {
       ],
     );
     if (!narrow) return row;
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: row,
-    );
+    return SingleChildScrollView(scrollDirection: Axis.horizontal, child: row);
   }
 }
 
@@ -1124,9 +1120,7 @@ class _FilterPanelState extends State<_FilterPanel> {
             ),
             const SizedBox(width: 6),
             FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.primary,
-              ),
+              style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
               onPressed: () => Navigator.of(context).pop((_target, _reason)),
               child: const Text('Apply filters'),
             ),
@@ -1141,9 +1135,7 @@ class _FilterPanelState extends State<_FilterPanel> {
           18,
           widget.asSheet ? 14 : 18,
           18,
-          widget.asSheet
-              ? 14 + MediaQuery.viewInsetsOf(context).bottom
-              : 18,
+          widget.asSheet ? 14 + MediaQuery.viewInsetsOf(context).bottom : 18,
         ),
         child: body,
       ),
@@ -1321,6 +1313,16 @@ class _QueueRow extends StatefulWidget {
 
 class _QueueRowState extends State<_QueueRow> {
   bool _hover = false;
+  bool _focused = false;
+  final FocusNode _focusNode = FocusNode(
+    debugLabel: 'Moderation report queue row',
+  );
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   static String age(DateTime? at) {
     if (at == null) return '';
@@ -1344,98 +1346,105 @@ class _QueueRowState extends State<_QueueRow> {
       child: MouseRegion(
         onEnter: (_) => setState(() => _hover = true),
         onExit: (_) => setState(() => _hover = false),
-        child: GestureDetector(
-          onTap: widget.onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 130),
-            margin: const EdgeInsets.only(bottom: 6),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              color: widget.selected
-                  ? AppColors.primary.withValues(alpha: .16)
-                  : _hover
-                  ? Colors.white.withValues(alpha: .04)
-                  : Colors.transparent,
-              border: Border.all(
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            focusNode: _focusNode,
+            onTap: widget.onTap,
+            onFocusChange: (value) => setState(() => _focused = value),
+            borderRadius: BorderRadius.circular(14),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 130),
+              margin: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
                 color: widget.selected
-                    ? AppColors.primary.withValues(alpha: .5)
+                    ? AppColors.primary.withValues(alpha: .16)
+                    : _hover || _focused
+                    ? Colors.white.withValues(alpha: .04)
                     : Colors.transparent,
+                border: Border.all(
+                  color: widget.selected || _focused
+                      ? AppColors.primary.withValues(alpha: .5)
+                      : Colors.transparent,
+                ),
               ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        reason == null ? 'Report' : reportReasonLabel(reason),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w800,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          reason == null ? 'Report' : reportReasonLabel(reason),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      age(report.createdAt),
-                      style: const TextStyle(
-                        color: Color(0xFF7E7895),
-                        fontSize: 10.5,
+                      const SizedBox(width: 8),
+                      Text(
+                        age(report.createdAt),
+                        style: const TextStyle(
+                          color: Color(0xFF7E7895),
+                          fontSize: 10.5,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  report.targetType == null
-                      ? report.targetId
-                      : _Filters.targetLabel(report.targetType!),
-                  style: const TextStyle(
-                    color: Color(0xFF9A90AC),
-                    fontSize: 11.5,
+                    ],
                   ),
-                ),
-                if (report.note.isNotEmpty) ...[
                   const SizedBox(height: 3),
                   Text(
-                    report.note,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    report.targetType == null
+                        ? report.targetId
+                        : _Filters.targetLabel(report.targetType!),
                     style: const TextStyle(
-                      color: Color(0xFFB3A8C4),
+                      color: Color(0xFF9A90AC),
                       fontSize: 11.5,
-                      fontStyle: FontStyle.italic,
                     ),
                   ),
-                ],
-                const SizedBox(height: 7),
-                Row(
-                  children: [
-                    _StatusChip(status: report.status),
-                    if (report.assignedTo != null) ...[
-                      const SizedBox(width: 6),
-                      const Icon(
-                        Icons.person_pin_rounded,
-                        size: 12,
-                        color: Color(0xFF7E7895),
+                  if (report.note.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      report.note,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFFB3A8C4),
+                        fontSize: 11.5,
+                        fontStyle: FontStyle.italic,
                       ),
-                    ],
-                    if (report.contentRemoved) ...[
-                      const SizedBox(width: 6),
-                      const Icon(
-                        Icons.block_rounded,
-                        size: 12,
-                        color: Color(0xFFFF7A93),
-                      ),
-                    ],
+                    ),
                   ],
-                ),
-              ],
+                  const SizedBox(height: 7),
+                  Row(
+                    children: [
+                      _StatusChip(status: report.status),
+                      if (report.assignedTo != null) ...[
+                        const SizedBox(width: 6),
+                        const Icon(
+                          Icons.person_pin_rounded,
+                          size: 12,
+                          color: Color(0xFF7E7895),
+                        ),
+                      ],
+                      if (report.contentRemoved) ...[
+                        const SizedBox(width: 6),
+                        const Icon(
+                          Icons.block_rounded,
+                          size: 12,
+                          color: Color(0xFFFF7A93),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -1631,9 +1640,10 @@ class _DetailState extends State<_Detail> {
             : switch (result.status) {
                 ReportStatus.inReview => 'Claimed. It is yours to review.',
                 ReportStatus.open => 'Released back to the queue.',
-                ReportStatus.resolved => result.contentRemoved
-                    ? 'Message removed and report resolved.'
-                    : 'Report resolved.',
+                ReportStatus.resolved =>
+                  result.contentRemoved
+                      ? 'Message removed and report resolved.'
+                      : 'Report resolved.',
                 ReportStatus.dismissed => 'Report dismissed.',
               };
       });
@@ -1657,97 +1667,94 @@ class _DetailState extends State<_Detail> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(4, 4, 4, 18),
       children: [
-          Row(
-            children: [
-              if (widget.onBack != null)
-                IconButton(
-                  onPressed: widget.onBack,
-                  tooltip: 'Back to the queue',
-                  icon: const Icon(Icons.arrow_back_rounded, size: 18),
+        Row(
+          children: [
+            if (widget.onBack != null)
+              IconButton(
+                onPressed: widget.onBack,
+                tooltip: 'Back to the queue',
+                icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                color: Colors.white,
+              ),
+            Expanded(
+              child: Text(
+                report.reason == null
+                    ? 'Report'
+                    : reportReasonLabel(report.reason!),
+                style: const TextStyle(
                   color: Colors.white,
-                ),
-              Expanded(
-                child: Text(
-                  report.reason == null
-                      ? 'Report'
-                      : reportReasonLabel(report.reason!),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16.5,
-                    fontWeight: FontWeight.w800,
-                  ),
+                  fontSize: 16.5,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
-              _StatusChip(status: report.status),
-            ],
-          ),
-          const SizedBox(height: 4),
-          SelectableText(
-            report.id,
-            style: const TextStyle(color: Color(0xFF7E7895), fontSize: 10.5),
-          ),
-          const SizedBox(height: 14),
-          if (report.note.isNotEmpty) ...[
-            _Field(label: 'Reporter note', value: report.note),
-            const SizedBox(height: 12),
+            ),
+            _StatusChip(status: report.status),
           ],
-          _Field(
-            label: 'Filed',
-            value: report.createdAt?.toLocal().toString().split('.').first ?? '—',
-          ),
+        ),
+        const SizedBox(height: 4),
+        SelectableText(
+          report.id,
+          style: const TextStyle(color: Color(0xFF7E7895), fontSize: 10.5),
+        ),
+        const SizedBox(height: 14),
+        if (report.note.isNotEmpty) ...[
+          _Field(label: 'Reporter note', value: report.note),
           const SizedBox(height: 12),
-          _ReportedAccount(userId: report.reportedUserId, service: service),
-          if (report.targetType == ReportTargetType.globalMessage) ...[
-            const SizedBox(height: 12),
-            _TargetMessage(
-              messageId: report.targetId,
-              service: service,
-            ),
-          ],
-          if (report.isClosed) ...[
-            const SizedBox(height: 12),
-            _Field(
-              label: 'Outcome',
-              value:
-                  '${_Filters.statusLabel(report.status)}'
-                  '${report.resolution == null ? '' : ' · ${resolutionLabel(report.resolution!)}'}'
-                  '${report.contentRemoved ? ' · content removed' : ''}',
-            ),
-            if ((report.resolutionNote ?? '').isNotEmpty) ...[
-              const SizedBox(height: 12),
-              _Field(label: 'Moderator note', value: report.resolutionNote!),
-            ],
-          ],
-          const SizedBox(height: 18),
-          ReportAuditTimeline(
-            // Keyed on the report so selecting another one rebuilds the
-            // widget outright rather than showing the previous report's
-            // history under a new header.
-            key: ValueKey('audit-${report.id}'),
-            reportId: report.id,
-            service: service,
-            refreshToken: _auditRefresh,
-            onAccessExpired: widget.onAccessExpired,
+        ],
+        _Field(
+          label: 'Filed',
+          value: report.createdAt?.toLocal().toString().split('.').first ?? '—',
+        ),
+        const SizedBox(height: 12),
+        _ReportedAccount(userId: report.reportedUserId, service: service),
+        if (report.targetType == ReportTargetType.globalMessage) ...[
+          const SizedBox(height: 12),
+          _TargetMessage(messageId: report.targetId, service: service),
+        ],
+        if (report.isClosed) ...[
+          const SizedBox(height: 12),
+          _Field(
+            label: 'Outcome',
+            value:
+                '${_Filters.statusLabel(report.status)}'
+                '${report.resolution == null ? '' : ' · ${resolutionLabel(report.resolution!)}'}'
+                '${report.contentRemoved ? ' · content removed' : ''}',
           ),
-          const SizedBox(height: 18),
-          if (!report.isClosed) _actions(report),
-          if (_error != null) ...[
+          if ((report.resolutionNote ?? '').isNotEmpty) ...[
             const SizedBox(height: 12),
-            _Banner(
-              icon: Icons.error_outline_rounded,
-              color: const Color(0xFFFF7A93),
-              text: _error!,
-            ),
-          ],
-          if (_success != null) ...[
-            const SizedBox(height: 12),
-            _Banner(
-              icon: Icons.check_circle_outline_rounded,
-              color: const Color(0xFF35D07F),
-              text: _success!,
-            ),
+            _Field(label: 'Moderator note', value: report.resolutionNote!),
           ],
         ],
+        const SizedBox(height: 18),
+        ReportAuditTimeline(
+          // Keyed on the report so selecting another one rebuilds the
+          // widget outright rather than showing the previous report's
+          // history under a new header.
+          key: ValueKey('audit-${report.id}'),
+          reportId: report.id,
+          service: service,
+          refreshToken: _auditRefresh,
+          onAccessExpired: widget.onAccessExpired,
+        ),
+        const SizedBox(height: 18),
+        if (!report.isClosed) _actions(report),
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          _Banner(
+            icon: Icons.error_outline_rounded,
+            color: const Color(0xFFFF7A93),
+            text: _error!,
+          ),
+        ],
+        if (_success != null) ...[
+          const SizedBox(height: 12),
+          _Banner(
+            icon: Icons.check_circle_outline_rounded,
+            color: const Color(0xFF35D07F),
+            text: _success!,
+          ),
+        ],
+      ],
     );
   }
 
@@ -1763,9 +1770,8 @@ class _DetailState extends State<_Detail> {
             label: 'Claim and review',
             icon: Icons.how_to_reg_rounded,
             busy: _busy,
-            onPressed: () => _run(
-              (id) => service.claim(report.id, requestId: id),
-            ),
+            onPressed: () =>
+                _run((id) => service.claim(report.id, requestId: id)),
           )
         else
           _ActionButton(
@@ -1773,9 +1779,8 @@ class _DetailState extends State<_Detail> {
             icon: Icons.undo_rounded,
             subtle: true,
             busy: _busy,
-            onPressed: () => _run(
-              (id) => service.release(report.id, requestId: id),
-            ),
+            onPressed: () =>
+                _run((id) => service.release(report.id, requestId: id)),
           ),
         const SizedBox(height: 14),
         const Text(
@@ -2141,11 +2146,7 @@ class _ActionButton extends StatelessWidget {
 }
 
 class _Banner extends StatelessWidget {
-  const _Banner({
-    required this.icon,
-    required this.color,
-    required this.text,
-  });
+  const _Banner({required this.icon, required this.color, required this.text});
 
   final IconData icon;
   final Color color;

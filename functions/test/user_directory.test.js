@@ -85,6 +85,13 @@ const AUTH_FIXTURES = [
   { uid: `${P}forged`, email: `${P}forged@example.com`, displayName: "Forged" },
 ];
 
+const AUTH_ROLES = new Map([
+  [`${P}twin-b`, "moderator"],
+  [OWNER_UID, "superAdmin"],
+  [`${P}mod`, "moderator"],
+  [`${P}forged`, "superAdmin"],
+]);
+
 async function wipeFirestore() {
   const uids = AUTH_FIXTURES.map((f) => f.uid).concat([
     `${P}plain`,
@@ -146,6 +153,8 @@ before(async () => {
       /* absent is fine */
     }
     await auth.createUser(fixture);
+    const role = AUTH_ROLES.get(fixture.uid);
+    if (role) await auth.setCustomUserClaims(fixture.uid, { role });
   }
 });
 
@@ -186,6 +195,7 @@ describe("derivation", () => {
     email: `${P}sieeema@example.com`,
     displayName: "Sieeema",
     disabled: false,
+    customClaims: { role: "user" },
     metadata: { creationTime: "2026-01-05T10:00:00Z" },
     ...overrides,
   });
@@ -220,16 +230,55 @@ describe("derivation", () => {
   test("a forged superAdmin never wears the owner role in the directory", () => {
     const entry = deriveDirectoryEntry({
       uid: `${P}forged`,
-      authUser: authUser({ uid: `${P}forged` }),
+      authUser: authUser({
+        uid: `${P}forged`,
+        customClaims: { role: "superAdmin" },
+      }),
       user: { role: "superAdmin" },
     });
     assert.equal(entry.staffRole, "superModerator");
     const owner = deriveDirectoryEntry({
       uid: OWNER_UID,
-      authUser: authUser({ uid: OWNER_UID }),
+      authUser: authUser({
+        uid: OWNER_UID,
+        customClaims: { role: "superAdmin" },
+      }),
       user: { role: "superAdmin" },
     });
     assert.equal(owner.staffRole, "superAdmin");
+  });
+
+  test("staff role requires an Auth claim and matching Firestore mirror", () => {
+    const forgedMirror = deriveDirectoryEntry({
+      uid: "x",
+      authUser: authUser({ customClaims: { role: "user" } }),
+      user: { role: "moderator" },
+    });
+    assert.equal(forgedMirror.staffRole, "user");
+
+    const staleMirror = deriveDirectoryEntry({
+      uid: "x",
+      authUser: authUser({ customClaims: { role: "moderator" } }),
+      user: { role: "user" },
+    });
+    assert.equal(staleMirror.staffRole, "user");
+
+    const matching = deriveDirectoryEntry({
+      uid: "x",
+      authUser: authUser({ customClaims: { role: "moderator" } }),
+      user: { role: "moderator" },
+    });
+    assert.equal(matching.staffRole, "moderator");
+  });
+
+  test("profile email is never used when Auth has no email", () => {
+    const entry = deriveDirectoryEntry({
+      uid: "x",
+      authUser: authUser({ email: null }),
+      user: { email: "forged@profile.invalid", role: "user" },
+    });
+    assert.equal(entry.email, null);
+    assert.equal(entry.emailLower, "");
   });
 
   test("banned and restricted flags derive from their real sources", () => {
@@ -495,6 +544,9 @@ describe("backfill", () => {
     const users = AUTH_FIXTURES.map((fixture) => ({
       ...fixture,
       disabled: false,
+      customClaims: {
+        role: AUTH_ROLES.get(fixture.uid) ?? "user",
+      },
       metadata: { creationTime: "2026-02-01T00:00:00Z" },
     }));
     return async (_limit, pageToken) =>

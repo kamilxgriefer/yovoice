@@ -1,18 +1,36 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/follow_user.dart';
 
+typedef FollowMutationInvoker =
+    Future<Map<String, dynamic>> Function(Map<String, dynamic> data);
+
 class FollowService {
+  static const int _maxVisibleEdges = 100;
+
   /// Follow notifications are no longer this service's business: they
   /// are derived from the `followers` document by onFollowerCreated
   /// (ADR-041), so there is nothing here to inject.
-  FollowService({FirebaseFirestore? firestore, FirebaseAuth? auth})
-    : _firestore = firestore ?? FirebaseFirestore.instance,
-      _auth = auth ?? FirebaseAuth.instance;
+  FollowService({
+    FirebaseFirestore? firestore,
+    FirebaseAuth? auth,
+    FirebaseFunctions? functions,
+    FollowMutationInvoker? mutationInvoker,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _auth = auth ?? FirebaseAuth.instance,
+       _functionsOverride = functions,
+       _mutationInvoker = mutationInvoker;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
+  final FirebaseFunctions? _functionsOverride;
+  final FollowMutationInvoker? _mutationInvoker;
+
+  FirebaseFunctions get _functions =>
+      _functionsOverride ??
+      FirebaseFunctions.instanceFor(region: 'europe-west1');
 
   String get _uid {
     final user = _auth.currentUser;
@@ -32,31 +50,44 @@ class FollowService {
   }
 
   Stream<List<FollowUser>> watchFollowers(String userId) {
-    return _firestore
-        .collection('users')
-        .doc(userId)
-        .collection('followers')
-        .orderBy('followedAt', descending: true)
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map(FollowUser.fromFirestore)
-              .toList(growable: false),
-        );
+    return _watchEdges(userId, collectionName: 'followers');
   }
 
   Stream<List<FollowUser>> watchFollowing(String userId) {
+    return _watchEdges(userId, collectionName: 'following');
+  }
+
+  Stream<List<FollowUser>> _watchEdges(
+    String userId, {
+    required String collectionName,
+  }) {
     return _firestore
         .collection('users')
         .doc(userId)
-        .collection('following')
+        .collection(collectionName)
         .orderBy('followedAt', descending: true)
+        .limit(_maxVisibleEdges)
         .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map(FollowUser.fromFirestore)
-              .toList(growable: false),
-        );
+        .asyncMap((snapshot) async {
+          final resolved = await Future.wait(
+            snapshot.docs.map((edge) async {
+              final data = edge.data();
+              final uid = (data['uid'] as String?)?.trim().isNotEmpty == true
+                  ? data['uid'] as String
+                  : edge.id;
+              final profile = await _firestore
+                  .collection('publicProfiles')
+                  .doc(uid)
+                  .get();
+              if (!profile.exists) return null;
+              return FollowUser.fromEdgeAndProfile(
+                edge: edge,
+                profile: profile,
+              );
+            }),
+          );
+          return resolved.whereType<FollowUser>().toList(growable: false);
+        });
   }
 
   Future<void> follow(String targetUserId) async {
@@ -65,86 +96,35 @@ class FollowService {
       throw ArgumentError('You cannot follow yourself.');
     }
 
-    final currentRef = _firestore.collection('users').doc(currentUserId);
-    final targetRef = _firestore.collection('users').doc(targetUserId);
-    final followingRef = currentRef.collection('following').doc(targetUserId);
-    final followerRef = targetRef.collection('followers').doc(currentUserId);
-
-    await _firestore.runTransaction((transaction) async {
-      final currentSnapshot = await transaction.get(currentRef);
-      final targetSnapshot = await transaction.get(targetRef);
-      final existing = await transaction.get(followingRef);
-      if (!currentSnapshot.exists || !targetSnapshot.exists) {
-        throw StateError('User profile does not exist.');
-      }
-      if (existing.exists) return;
-
-      final currentData = currentSnapshot.data() ?? const <String, dynamic>{};
-      final targetData = targetSnapshot.data() ?? const <String, dynamic>{};
-      final timestamp = FieldValue.serverTimestamp();
-
-      transaction.set(
-        followingRef,
-        _snapshotData(targetUserId, targetData, timestamp),
-      );
-      transaction.set(
-        followerRef,
-        _snapshotData(currentUserId, currentData, timestamp),
-      );
-      transaction.update(currentRef, {
-        'followingCount': FieldValue.increment(1),
-      });
-      transaction.update(targetRef, {'followerCount': FieldValue.increment(1)});
-    });
-
-    // onFollowerCreated derives the notification from the followers
-    // document written above (ADR-041). Re-following rewrites the same
-    // edge and therefore the same deterministic notification id, so it
-    // cannot produce a second row; unfollowing creates nothing.
+    await _setFollow(targetUserId, following: true);
   }
 
   Future<void> unfollow(String targetUserId) async {
     final currentUserId = _uid;
     if (targetUserId == currentUserId) return;
 
-    final currentRef = _firestore.collection('users').doc(currentUserId);
-    final targetRef = _firestore.collection('users').doc(targetUserId);
-    final followingRef = currentRef.collection('following').doc(targetUserId);
-    final followerRef = targetRef.collection('followers').doc(currentUserId);
-
-    await _firestore.runTransaction((transaction) async {
-      final existing = await transaction.get(followingRef);
-      if (!existing.exists) return;
-
-      final currentSnapshot = await transaction.get(currentRef);
-      final targetSnapshot = await transaction.get(targetRef);
-      final currentCount =
-          (currentSnapshot.data()?['followingCount'] as num?)?.toInt() ?? 0;
-      final targetCount =
-          (targetSnapshot.data()?['followerCount'] as num?)?.toInt() ?? 0;
-
-      transaction.delete(followingRef);
-      transaction.delete(followerRef);
-      transaction.update(currentRef, {
-        'followingCount': currentCount > 0 ? currentCount - 1 : 0,
-      });
-      transaction.update(targetRef, {
-        'followerCount': targetCount > 0 ? targetCount - 1 : 0,
-      });
-    });
+    await _setFollow(targetUserId, following: false);
   }
 
-  Map<String, dynamic> _snapshotData(
-    String uid,
-    Map<String, dynamic> data,
-    FieldValue timestamp,
-  ) {
-    return {
-      'uid': uid,
-      'displayName': data['displayName'] ?? data['username'] ?? 'YO Voice user',
-      'username': data['username'] ?? '',
-      'photoUrl': data['photoUrl'],
-      'followedAt': timestamp,
+  Future<void> _setFollow(
+    String targetUserId, {
+    required bool following,
+  }) async {
+    final data = <String, dynamic>{
+      'targetUserId': targetUserId,
+      'following': following,
     };
+    final injected = _mutationInvoker;
+    if (injected != null) {
+      await injected(data);
+      return;
+    }
+    try {
+      await _functions.httpsCallable('setFollow').call(data);
+    } on FirebaseFunctionsException catch (error) {
+      throw StateError(
+        error.message ?? 'The follow action could not be completed.',
+      );
+    }
   }
 }

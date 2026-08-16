@@ -11,6 +11,7 @@ import 'package:yovoice/features/rooms/data/services/room_experience_service.dar
 import 'package:yovoice/features/rooms/data/services/room_image_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 /// Creating a Community or Podcast room, in three steps.
 ///
@@ -394,7 +395,14 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
           identity: identity,
           label: 'Category',
           value: _category,
-          values: const ['talk', 'music', 'gaming', 'chill', 'study', 'business'],
+          values: const [
+            'talk',
+            'music',
+            'gaming',
+            'chill',
+            'study',
+            'business',
+          ],
           onChanged: (value) => setState(() => _category = value),
         ),
         const SizedBox(height: 18),
@@ -693,69 +701,75 @@ class _BottomBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.fromLTRB(
-        18,
-        12,
-        18,
-        12 + MediaQuery.paddingOf(context).bottom,
-      ),
       color: const Color(0xFF171121),
-      child: Row(
-        children: [
-          if (onBack != null) ...[
-            SizedBox(
-              height: 52,
-              child: OutlinedButton(
-                onPressed: busy ? null : onBack,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: const BorderSide(color: Color(0xFF3A2C49)),
-                  shape: const StadiumBorder(),
-                  padding: const EdgeInsets.symmetric(horizontal: 22),
+      child: ResponsiveContentFrame(
+        width: ResponsiveContentWidth.form,
+        fillHeight: false,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            18,
+            12,
+            18,
+            12 + MediaQuery.paddingOf(context).bottom,
+          ),
+          child: Row(
+            children: [
+              if (onBack != null) ...[
+                SizedBox(
+                  height: 52,
+                  child: OutlinedButton(
+                    onPressed: busy ? null : onBack,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: Color(0xFF3A2C49)),
+                      shape: const StadiumBorder(),
+                      padding: const EdgeInsets.symmetric(horizontal: 22),
+                    ),
+                    child: const Text('Back'),
+                  ),
                 ),
-                child: const Text('Back'),
-              ),
-            ),
-            const SizedBox(width: 10),
-          ],
-          Expanded(
-            child: SizedBox(
-              height: 52,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(999),
-                  gradient: identity.ctaGradient,
-                ),
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(999),
-                    onTap: busy ? null : (onCreate ?? onNext),
-                    child: Center(
-                      child: busy
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2.4,
-                                color: Colors.white,
-                              ),
-                            )
-                          : Text(
-                              onCreate != null ? createLabel : 'Continue',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 15,
-                              ),
-                            ),
+                const SizedBox(width: 10),
+              ],
+              Expanded(
+                child: SizedBox(
+                  height: 52,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(999),
+                      gradient: identity.ctaGradient,
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: busy ? null : (onCreate ?? onNext),
+                        child: Center(
+                          child: busy
+                              ? const SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.4,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Text(
+                                  onCreate != null ? createLabel : 'Continue',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -869,9 +883,7 @@ class _CoverPicker extends StatelessWidget {
                       color: Colors.black.withValues(alpha: .32),
                       alignment: Alignment.center,
                       child: busy
-                          ? const CircularProgressIndicator(
-                              color: Colors.white,
-                            )
+                          ? const CircularProgressIndicator(color: Colors.white)
                           : const Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
@@ -1145,7 +1157,10 @@ class _SwitchTile extends StatelessWidget {
       activeTrackColor: identity.primary,
       title: Text(
         title,
-        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+        ),
       ),
       subtitle: Text(
         subtitle,

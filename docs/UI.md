@@ -15,6 +15,37 @@ anything genuinely not built, and visual consistency with the rest of the
 app. Reference quality bar: Apple, Discord, Notion, Linear, Spotify — not a
 typical chat-app UI.
 
+## Responsive layout contract
+
+Responsive decisions are based on the content slot available to a widget,
+not on a platform check. Full-screen backgrounds and gradients may fill the
+viewport; readable and interactive content must use
+`ResponsiveContentFrame` from
+`lib/shared/widgets/layout/responsive_content_frame.dart`.
+
+- Narrow (`< 600 px`): 16 px horizontal gutter and a single-column flow.
+- Medium (`600–1099 px`): 24 px gutter; use a second column only when each
+  item keeps a useful minimum width.
+- Wide (`>= 1100 px`): 32 px gutter inside a centered workspace capped at
+  1440 px, after the desktop sidebar has been removed from the available
+  width.
+- Forms and focused actions use `form` (720 px); lists and reading surfaces
+  use `list` (880 px); feeds and detail screens use `feed` (1040 px);
+  dashboards use `dashboard` (1200 px); staff/moderation workbenches use
+  `workbench` (1440 px).
+- Root lists such as Notifications, Chats, Friends, Clubs and Settings are
+  top-left aligned within the centered workspace. Profiles, authentication,
+  Premium and form flows are centered. Voice rooms remain immersive, while
+  their stage and controls keep a bounded internal width.
+- Desktop bottom sheets and menus must use
+  `ResponsiveContentFrame.adaptiveModalConstraints`; mobile sheets still fill
+  the available width.
+
+Every responsive change must be checked at 320, 390, 430, 768, 1100, 1440
+and 2560 px where relevant, plus a 2.0 text scale. The acceptance bar is no
+overflow, no clipped primary text, 44x44 minimum interactive targets,
+keyboard/focus access on desktop, and preserved safe-area/keyboard insets.
+
 ## Two parallel color systems (know which one a screen actually uses)
 
 1. **The shared theme system** — `lib/core/theme/` (`AppColors`,

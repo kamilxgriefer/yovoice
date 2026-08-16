@@ -11,14 +11,14 @@
 // Firestore.
 //
 //   firebase emulators:start --only functions,firestore \
-//     --project yovoice-fn-test
+//     --project demo-yovoice
 //   node test/moderation_trigger.smoke.js
 //
 // Exits non-zero on failure.
 
 process.env.FIRESTORE_EMULATOR_HOST =
   process.env.FIRESTORE_EMULATOR_HOST ?? "127.0.0.1:8080";
-process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT ?? "yovoice-fn-test";
+process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT ?? "demo-yovoice";
 
 const assert = require("node:assert/strict");
 const { getApps, initializeApp } = require("firebase-admin/app");

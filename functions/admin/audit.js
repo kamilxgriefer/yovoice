@@ -1,6 +1,6 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 
-const { requireAdminCenterAccess } = require("../utils/auth");
+const { requireProtectedOwner } = require("../utils/auth");
 
 const {
   db,
@@ -73,10 +73,15 @@ function matchesSearch(log, search) {
 const listAdminAuditLogs = onCall(
   {
     region: REGION,
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
     enforceAppCheck: false,
   },
   async (request) => {
-    requireAdminCenterAccess(request);
+    // This is the unscoped, full audit browser. It returns actor e-mail
+    // addresses and arbitrary action details, so the capability matrix
+    // intentionally reserves it for the protected owner. Moderators use
+    // the separately scoped listReportAuditTrail callable instead.
+    await requireProtectedOwner(request);
 
     const limit = positiveInteger(request.data?.limit, 50, 100);
 
@@ -154,10 +159,11 @@ const listAdminAuditLogs = onCall(
 const getAdminAuditLog = onCall(
   {
     region: REGION,
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
     enforceAppCheck: false,
   },
   async (request) => {
-    requireAdminCenterAccess(request);
+    await requireProtectedOwner(request);
 
     const logId = normalizeText(request.data?.logId, 128);
 
@@ -183,10 +189,11 @@ const getAdminAuditLog = onCall(
 const getAuditLogFilters = onCall(
   {
     region: REGION,
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
     enforceAppCheck: false,
   },
   async (request) => {
-    requireAdminCenterAccess(request);
+    await requireProtectedOwner(request);
 
     const snapshot = await db
       .collection("adminAuditLogs")

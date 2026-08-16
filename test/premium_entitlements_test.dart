@@ -6,9 +6,11 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
+import 'package:yovoice/features/premium/premium_gates.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
+import 'package:yovoice/features/premium/presentation/widgets/premium_feature_gate.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 
 const _uid = 'premium-user';
@@ -23,14 +25,17 @@ Future<void> _seedEntitlements(
   required String status,
   required DateTime periodEnd,
   String plan = 'monthly',
+  bool creatorEnabled = true,
+  bool canCreateClubs = true,
+  bool premiumIdentityEnabled = true,
 }) {
   return db.collection('entitlements').doc(_uid).set({
     'plan': plan,
     'status': status,
     'currentPeriodEnd': Timestamp.fromDate(periodEnd),
-    'creatorEnabled': true,
-    'canCreateClubs': true,
-    'premiumIdentityEnabled': true,
+    'creatorEnabled': creatorEnabled,
+    'canCreateClubs': canCreateClubs,
+    'premiumIdentityEnabled': premiumIdentityEnabled,
     'maxOwnedClubs': 3,
   });
 }
@@ -106,9 +111,59 @@ void main() {
       expect(entitlements.isPremium, isTrue);
       expect(entitlements.creatorEnabled, isTrue);
       expect(entitlements.canCreateClubs, isTrue);
+      expect(entitlements.hasPremiumIdentity, isTrue);
+      expect(entitlements.canUseCreator, isTrue);
+      expect(entitlements.canUseClubs, isTrue);
       expect(entitlements.maxOwnedClubs, 3);
       expect(entitlements.plan, PremiumPlan.monthly);
     });
+
+    test(
+      'active status without the Premium identity grants no paid tools',
+      () async {
+        final db = FakeFirebaseFirestore();
+        await _seedEntitlements(
+          db,
+          status: 'active',
+          periodEnd: DateTime.now().add(const Duration(days: 20)),
+          premiumIdentityEnabled: false,
+        );
+
+        final entitlements = await EntitlementService(
+          firestore: db,
+          auth: _auth(),
+        ).currentEntitlements();
+
+        expect(entitlements.isPremium, isTrue);
+        expect(entitlements.hasPremiumIdentity, isFalse);
+        expect(entitlements.canUseCreator, isFalse);
+        expect(entitlements.canUseClubs, isFalse);
+      },
+    );
+
+    test(
+      'missing capability flags fail closed for a legacy active document',
+      () async {
+        final db = FakeFirebaseFirestore();
+        await db.collection('entitlements').doc(_uid).set({
+          'plan': 'monthly',
+          'status': 'active',
+          'currentPeriodEnd': Timestamp.fromDate(
+            DateTime.now().add(const Duration(days: 20)),
+          ),
+        });
+
+        final entitlements = await EntitlementService(
+          firestore: db,
+          auth: _auth(),
+        ).currentEntitlements();
+
+        expect(entitlements.isPremium, isTrue);
+        expect(entitlements.hasPremiumIdentity, isFalse);
+        expect(entitlements.canUseCreator, isFalse);
+        expect(entitlements.canUseClubs, isFalse);
+      },
+    );
 
     test('EXPIRED subscription is free even if the server flags are stale — '
         'the client recomputes validity from currentPeriodEnd', () async {
@@ -276,6 +331,15 @@ void main() {
       final db = FakeFirebaseFirestore();
       await pumpEditProfile(tester, db: db);
 
+      expect(
+        find.byKey(const ValueKey('creator-premium-lock')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('creator-premium-required')),
+        findsOneWidget,
+      );
+
       await tester.tap(find.text('Creator'));
       await tester.pumpAndSettle();
 
@@ -297,6 +361,8 @@ void main() {
       );
       await pumpEditProfile(tester, db: db);
 
+      expect(find.byKey(const ValueKey('creator-premium-lock')), findsNothing);
+
       await tester.tap(find.text('Creator'));
       await tester.pumpAndSettle();
 
@@ -304,6 +370,93 @@ void main() {
         find.text('Creator is included with YO Voice Premium'),
         findsNothing,
       );
+    });
+
+    testWidgets(
+      'Save re-checks Premium if it expires after Creator selection',
+      (tester) async {
+        final db = FakeFirebaseFirestore();
+        await _seedEntitlements(
+          db,
+          status: 'active',
+          periodEnd: DateTime.now().add(const Duration(days: 20)),
+        );
+        await pumpEditProfile(tester, db: db);
+
+        await tester.tap(find.text('Creator'));
+        await tester.pump();
+        await _seedEntitlements(
+          db,
+          status: 'expired',
+          periodEnd: DateTime.now().subtract(const Duration(minutes: 1)),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+
+        await tester.tap(find.text('Save'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('Creator is included with YO Voice Premium'),
+          findsOneWidget,
+        );
+        final profile = await db.collection('users').doc(_uid).get();
+        expect(profile.data()?['accountType'], isNot('creator'));
+      },
+    );
+  });
+
+  group('Premium destination boundary', () {
+    Widget guarded({
+      required FakeFirebaseFirestore db,
+      required PremiumFeature feature,
+      DateTime Function() now = DateTime.now,
+    }) {
+      return MaterialApp(
+        home: PremiumFeatureGate(
+          feature: feature,
+          entitlementService: EntitlementService(firestore: db, auth: _auth()),
+          now: now,
+          child: const Scaffold(body: Text('Protected destination content')),
+        ),
+      );
+    }
+
+    testWidgets('free member cannot mount Creator Studio directly', (
+      tester,
+    ) async {
+      final db = FakeFirebaseFirestore();
+      await tester.pumpWidget(
+        guarded(db: db, feature: PremiumFeature.creatorStudio),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('Creator Studio requires Premium'), findsOneWidget);
+      expect(find.text('Protected destination content'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('premium-destination-lock')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('open Clubs locks exactly when Premium expires, without a '
+        'new Firestore snapshot', (tester) async {
+      final db = FakeFirebaseFirestore();
+      final periodEnd = DateTime.now().add(const Duration(days: 20));
+      var clock = periodEnd.subtract(const Duration(seconds: 1));
+      await _seedEntitlements(db, status: 'active', periodEnd: periodEnd);
+      await tester.pumpWidget(
+        guarded(db: db, feature: PremiumFeature.clubs, now: () => clock),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('Protected destination content'), findsOneWidget);
+      expect(find.text('Clubs requires Premium'), findsNothing);
+
+      clock = periodEnd.add(const Duration(milliseconds: 1));
+      await tester.pump(const Duration(seconds: 2));
+
+      expect(find.text('Protected destination content'), findsNothing);
+      expect(find.text('Clubs requires Premium'), findsOneWidget);
     });
   });
 }

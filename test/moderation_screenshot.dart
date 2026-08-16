@@ -32,8 +32,25 @@ import 'package:yovoice/features/moderation/data/services/moderation_service.dar
 import 'package:yovoice/features/moderation/presentation/screens/moderation_center_screen.dart';
 
 const String _mod = 'preview-mod';
-const String _fontRoot =
-    '/usr/local/share/flutter/bin/cache/artifacts/material_fonts';
+
+String _resolveFontRoot() {
+  final configuredRoot = Platform.environment['FLUTTER_ROOT'];
+  if (configuredRoot != null) {
+    final configured = '$configuredRoot/bin/cache/artifacts/material_fonts';
+    if (File('$configured/Roboto-Regular.ttf').existsSync()) return configured;
+  }
+
+  var directory = File(Platform.resolvedExecutable).parent;
+  while (directory.parent.path != directory.path) {
+    final candidate = '${directory.path}/bin/cache/artifacts/material_fonts';
+    if (File('$candidate/Roboto-Regular.ttf').existsSync()) return candidate;
+    directory = directory.parent;
+  }
+
+  throw StateError('Could not locate Flutter material fonts.');
+}
+
+final String _fontRoot = _resolveFontRoot();
 
 final _capture = GlobalKey();
 
@@ -192,15 +209,21 @@ Future<void> _settle(WidgetTester tester) async {
 }
 
 Future<void> _shoot(WidgetTester tester, String name) async {
-  final boundary =
-      _capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-  final image = await boundary.toImage(pixelRatio: 1.0);
-  final data = await image.toByteData(format: ui.ImageByteFormat.png);
-  final file = File('test/.screenshots/$name.png');
-  file.parent.createSync(recursive: true);
-  file.writeAsBytesSync(data!.buffer.asUint8List());
-  // ignore: avoid_print
-  print('wrote ${file.path}');
+  await tester.runAsync(() async {
+    final boundary =
+        _capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    final image = await boundary.toImage(pixelRatio: 1.0);
+    try {
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      final file = File('test/.screenshots/$name.png');
+      file.parent.createSync(recursive: true);
+      file.writeAsBytesSync(data!.buffer.asUint8List());
+      // ignore: avoid_print
+      print('wrote ${file.path}');
+    } finally {
+      image.dispose();
+    }
+  });
 }
 
 void main() {
@@ -262,7 +285,10 @@ void main() {
       await _settle(tester);
 
       expect(find.text('Moderation history'), findsOneWidget);
-      await _shoot(tester, 'moderation-${size.width.toInt()}x${size.height.toInt()}');
+      await _shoot(
+        tester,
+        'moderation-${size.width.toInt()}x${size.height.toInt()}',
+      );
     });
   }
 }

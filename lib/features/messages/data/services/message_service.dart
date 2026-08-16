@@ -35,6 +35,9 @@ class MessageService {
   CollectionReference<Map<String, dynamic>> get _users =>
       _firestore.collection('users');
 
+  CollectionReference<Map<String, dynamic>> get _socialPresence =>
+      _firestore.collection('socialPresence');
+
   String get _currentUserId {
     final user = _auth.currentUser;
 
@@ -82,7 +85,11 @@ class MessageService {
   }
 
   Stream<ChatPresence> watchUserPresence(String userId) {
-    return _users.doc(userId).snapshots().map((snapshot) {
+    // Presence is intentionally not part of the public profile. The
+    // server-owned socialPresence projection is readable only for self and
+    // canonical friends; a non-friend chat therefore fails closed to the
+    // StreamBuilder's offline state instead of exposing a private user doc.
+    return _socialPresence.doc(userId).snapshots().map((snapshot) {
       final data = snapshot.data() ?? const <String, dynamic>{};
       final lastSeenValue = data['lastSeen'];
 
@@ -165,12 +172,8 @@ class MessageService {
             currentUser.email,
           ),
           otherUserId: otherDisplayName.trim().isEmpty
-              ? _displayNameFromEmail(otherEmail)
+              ? 'YO Voice user'
               : otherDisplayName.trim(),
-        },
-        'participantEmails': {
-          currentUser.uid: currentUser.email ?? '',
-          otherUserId: otherEmail,
         },
         'participantPhotoUrls': {
           currentUser.uid: currentUser.photoURL ?? '',

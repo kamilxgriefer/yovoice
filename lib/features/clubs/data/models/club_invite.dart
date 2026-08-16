@@ -20,9 +20,9 @@ class ClubInvite {
   final DateTime? createdAt;
 
   factory ClubInvite.fromFirestore(
-    QueryDocumentSnapshot<Map<String, dynamic>> document,
+    DocumentSnapshot<Map<String, dynamic>> document,
   ) {
-    final data = document.data();
+    final data = document.data() ?? const <String, dynamic>{};
     return ClubInvite(
       clubId:
           data['clubId'] as String? ??

@@ -5,6 +5,8 @@ import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -27,11 +29,12 @@ Future<void> showRoomChatSheet(
     isScrollControlled: true,
     useSafeArea: true,
     backgroundColor: Colors.transparent,
-    builder: (_) => RoomChatSheet(
-      roomId: roomId,
-      isHost: isHost,
-      accent: accent,
+    constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+      context,
+      maxWidth: 720,
     ),
+    builder: (_) =>
+        RoomChatSheet(roomId: roomId, isHost: isHost, accent: accent),
   );
 }
 
@@ -54,8 +57,9 @@ class RoomChatSheet extends StatefulWidget {
 class _RoomChatSheetState extends State<RoomChatSheet> {
   final _service = RoomService();
   final _composer = TextEditingController();
-  late final Stream<List<RoomMessage>> _messages =
-      _service.watchRoomMessages(widget.roomId);
+  late final Stream<List<RoomMessage>> _messages = _service.watchRoomMessages(
+    widget.roomId,
+  );
   bool _sending = false;
 
   String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -71,7 +75,9 @@ class _RoomChatSheetState extends State<RoomChatSheet> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        SnackBar(content: Text(intentionalOrFriendly(error, fallback: fallback))),
+        SnackBar(
+          content: Text(intentionalOrFriendly(error, fallback: fallback)),
+        ),
       );
   }
 
@@ -105,6 +111,10 @@ class _RoomChatSheetState extends State<RoomChatSheet> {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF171021),
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 520,
+      ),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
@@ -223,8 +233,7 @@ class _RoomChatSheetState extends State<RoomChatSheet> {
                         ),
                       );
                     }
-                    final messages =
-                        snapshot.data ?? const <RoomMessage>[];
+                    final messages = snapshot.data ?? const <RoomMessage>[];
                     if (messages.isEmpty) {
                       return const Center(
                         child: Text(
@@ -280,8 +289,9 @@ class _RoomChatSheetState extends State<RoomChatSheet> {
                           decoration: InputDecoration(
                             counterText: '',
                             hintText: 'Say something…',
-                            hintStyle:
-                                const TextStyle(color: Color(0xFF766B80)),
+                            hintStyle: const TextStyle(
+                              color: Color(0xFF766B80),
+                            ),
                             filled: true,
                             fillColor: const Color(0xFF1C1428),
                             contentPadding: const EdgeInsets.symmetric(
@@ -357,19 +367,28 @@ class _MessageRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          GestureDetector(
-            onTap: onAvatarTap,
-            child: UserAvatar(
-              radius: 16,
-              photoUrl: message.senderPhotoUrl,
-              displayName: message.senderName,
+          Semantics(
+            button: true,
+            label: 'Open ${message.senderName} profile',
+            child: Tooltip(
+              message: 'Open ${message.senderName} profile',
+              child: InkResponse(
+                onTap: onAvatarTap,
+                radius: 22,
+                child: UserAvatar(
+                  radius: 16,
+                  photoUrl: message.senderPhotoUrl,
+                  displayName: message.senderName,
+                ),
+              ),
             ),
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: InkWell(
-              onLongPress: onLongPress,
-              borderRadius: BorderRadius.circular(16),
+            child: AccessibleContextAction(
+              onOpen: onLongPress,
+              semanticLabel: 'Open actions for ${message.senderName} message',
+              borderRadius: 16,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [

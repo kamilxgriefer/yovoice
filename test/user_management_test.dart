@@ -41,6 +41,26 @@ void main() {
   }
 
   group('User Management', () {
+    test(
+      'owner lookup resolves usernames only through protected callables',
+      () async {
+        final functions = _LookupFunctions();
+        final lookup = StaffUserLookup(functions: functions);
+
+        final result = await lookup.lookup('@ola');
+
+        expect(result?.uid, 'target-uid');
+        expect(result?.username, 'ola');
+        expect(functions.calls.map((call) => call.$1), [
+          'getUserRole',
+          'searchUserDirectory',
+          'getUserRole',
+        ]);
+        expect(functions.calls[1].$2, {'query': '@ola', 'limit': 20});
+        expect(functions.calls[2].$2, {'uid': 'target-uid'});
+      },
+    );
+
     testWidgets('lookup shows the account with role, VIP separately, and '
         'status', (tester) async {
       useSize(tester, const Size(1440, 900));
@@ -134,10 +154,7 @@ void main() {
       expect(payload['role'], 'moderator');
       expect(payload['reason'], 'passed the moderation interview');
       expect(payload['expectedRole'], 'user'); // the stale-result guard
-      expect(
-        find.textContaining('may need to sign in again'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('may need to sign in again'), findsOneWidget);
     });
 
     testWidgets('a server refusal surfaces as text, and the screen '
@@ -325,6 +342,60 @@ class _RecordingFunctions implements FirebaseFunctions {
   @override
   HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
       _RecordingCallable(this);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _LookupFunctions implements FirebaseFunctions {
+  final calls = <(String, Map<String, dynamic>)>[];
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _LookupCallable(this, name);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _LookupCallable implements HttpsCallable {
+  _LookupCallable(this.owner, this.name);
+
+  final _LookupFunctions owner;
+  final String name;
+
+  @override
+  Future<HttpsCallableResult<T>> call<T>([Object? parameters]) async {
+    final payload = Map<String, dynamic>.from(parameters as Map);
+    owner.calls.add((name, payload));
+    if (name == 'getUserRole' && payload['uid'] == '@ola') {
+      throw FirebaseFunctionsException(
+        code: 'not-found',
+        message: 'Not found.',
+        details: null,
+      );
+    }
+    if (name == 'searchUserDirectory') {
+      return _FakeResult<T>(
+        {
+              'users': [
+                {'uid': 'target-uid', 'displayName': 'Ola', 'username': 'ola'},
+              ],
+            }
+            as T,
+      );
+    }
+    return _FakeResult<T>(
+      {
+            'uid': 'target-uid',
+            'displayName': 'Ola',
+            'username': 'ola',
+            'role': 'user',
+            'banned': false,
+          }
+          as T,
+    );
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

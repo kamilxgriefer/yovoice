@@ -55,6 +55,25 @@ badge metadata.
 
 - `getMutualFriends` — mutual-friend lookup for a given pair of users.
 - `getFriendSuggestions` — friend-suggestion logic.
+- `searchPublicProfiles` — authenticated, bounded display-name/username prefix
+  discovery over server projections for verified accounts. It filters self and
+  both block directions, rechecks source-account activity and returns an exact
+  five-field result. A transactional Admin-only quota is consumed before
+  validation/querying (30/minute and 300/hour per uid while App Check
+  enforcement is off).
+- `onUserPrivacySourceChanged` — retryable `users/{uid}` projection trigger.
+  It converges exact `publicProfiles/{uid}` and narrower
+  `socialPresence/{uid}` documents from current state, heals extra fields and
+  removes both for inactive/deleted accounts. The production backfill reuses
+  the same pure derivation in bounded, cursor-resumable pages; see the strict
+  rollout sequence in [DEPLOYMENT.md](DEPLOYMENT.md#private-profile-projection-cutover-strict-order).
+- `onAuthUserDeleted` — Auth deletion trigger that retires public identity,
+  badges/directory projections and marks any lingering private account record
+  inactive, preventing an Auth orphan from being republished.
+- Social-graph callables own all friend/follow/block writes. Request acceptance
+  creates paired private `friendshipGuards` atomically; unfriend/block removes
+  them atomically. Transactional per-user quotas, hard graph caps and
+  `MAX + 1` bounded reads prevent unbounded fan-out and oversized-graph oracles.
 
 ## Clubs
 

@@ -16,6 +16,28 @@ someone decide what to pick up next.
 
 ## Done
 
+- Compact Profile journey + capability-specific Premium boundaries
+  (2026-08-16): replaced the four desktop-stretched journey panels with one
+  intrinsic-height list that keeps the same real Communities, Messages, Voice
+  time and Rooms created values at phone and desktop widths. Creator account,
+  Creator Studio and the More → Clubs hub now require the matching capability
+  from the trusted `entitlements/{uid}` document at the menu, navigation,
+  destination and save boundaries; a public VIP/Premium badge never grants
+  access. Existing club memberships/invites and Family Rooms remain free, and
+  ordinary Club creation still has its server gate. The real seven-document
+  Club creation batch is now accepted atomically: owner-member/default-channel
+  rules read the post-write Club via `getAfter()`, and the unused root-user
+  `clubCount` write that sat outside the profile allowlist is gone. The same
+  pass closed the
+  `users/{uid}` first-create loophole that could seed Creator, Premium or staff
+  fields before update rules applied, plus the Club-invite path that let an
+  invitee create an owner/co-owner/admin membership. Verified with 396/396
+  Flutter tests across 41 files and 225/225 Firestore emulator cases. **The new Firestore
+  rules still require a manual deploy.** Store verification adapters remain
+  unconfigured, so `adminSetPremiumEntitlements` is still the only working
+  grant path. See
+  [ADR-053](Decisions.md#adr-053-paid-capabilities-come-only-from-the-trusted-entitlement-and-every-entry-boundary-fails-closed).
+
 - One real startup transition instead of two timed loaders (2026-08-16): the
   landing `/app` hand-off now redirects immediately, the authenticated
   four-second welcome delay is removed, and direct/landing entry share one
@@ -446,11 +468,14 @@ Ordered by rough priority — re-prioritize freely, this isn't a queue.
 
 ### 0e. Premium billing adapters
 
-- **Status**: Architecture shipped (ADR-024). Rules ARE live: a JVM was
-  installed 2026-08-08, the emulator suite passed 87/0 (including the
-  six premium cases) and firestore.rules deployed — club creation and
-  accountType:creator are now enforced server-side.
+- **Status**: Entitlement architecture and the original Premium rules are
+  shipped (ADR-024). The 2026-08-16 capability-specific gates and first-create
+  hardening pass 225/225 Firestore emulator cases but are **not live until the
+  updated `firestore.rules` is manually deployed** (ADR-053). Real store
+  checkout is still not operational: `verifyPurchase` deliberately declines
+  because no App Store/Play verification adapter or IAP client is configured.
 - **Actions**:
+  1. Deploy the tested `firestore.rules` update.
   2. Create store products `yovoice_premium_monthly` (€9.99) and
      `yovoice_premium_yearly` (€89.99) in App Store Connect + Play
      Console; add an IAP plugin client-side; implement the verification

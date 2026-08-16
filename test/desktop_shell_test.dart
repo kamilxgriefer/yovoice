@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
@@ -11,6 +12,7 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sideb
 import 'package:yovoice/features/home/presentation/widgets/desktop/followed_creators_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
+import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -491,9 +493,7 @@ void main() {
 
   group('VoiceTrendingCard', () {
     testWidgets('Trending Moments renders REAL live rooms with a Live pill; '
-        'and no longer carries a second people-discovery list', (
-      tester,
-    ) async {
+        'and no longer carries a second people-discovery list', (tester) async {
       final db = FakeFirebaseFirestore();
       for (final entry in [
         ('Late Night Confessions', 'Real stories, live now'),
@@ -668,6 +668,7 @@ void main() {
     Future<void> openPopover(
       WidgetTester tester, {
       required bool isStaff,
+      SubscriptionEntitlements entitlements = SubscriptionEntitlements.free,
     }) async {
       useDesktopWindow(tester);
       await tester.pumpWidget(
@@ -678,6 +679,7 @@ void main() {
                 context,
                 anchor: const Offset(80, 200),
                 isStaff: isStaff,
+                entitlements: entitlements,
               ),
               child: const Text('open'),
             ),
@@ -705,6 +707,40 @@ void main() {
       ]) {
         expect(find.text(label), findsOneWidget, reason: '$label went missing');
       }
+      expect(
+        find.byKey(const ValueKey('desktop-premium-lock-clubs')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('desktop-premium-lock-creatorStudio')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('paid Premium removes destination locks', (tester) async {
+      await openPopover(
+        tester,
+        isStaff: false,
+        entitlements: SubscriptionEntitlements(
+          plan: PremiumPlan.yearly,
+          status: 'active',
+          currentPeriodEnd: DateTime.now().add(const Duration(days: 30)),
+          isPremium: true,
+          creatorEnabled: true,
+          canCreateClubs: true,
+          premiumIdentityEnabled: true,
+          maxOwnedClubs: 3,
+        ),
+      );
+
+      expect(
+        find.byKey(const ValueKey('desktop-premium-lock-clubs')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('desktop-premium-lock-creatorStudio')),
+        findsNothing,
+      );
     });
 
     testWidgets('staff see Moderation alongside — never instead of — the '
@@ -842,12 +878,16 @@ void main() {
       await follow(db, 'creator-1', 'Marta');
 
       FollowUser? opened;
+      var openCount = 0;
       var viewAll = 0;
 
       await tester.pumpWidget(
         card(
           db,
-          onOpenCreator: (creator) => opened = creator,
+          onOpenCreator: (creator) {
+            opened = creator;
+            openCount += 1;
+          },
           onViewAll: () => viewAll++,
         ),
       );
@@ -856,6 +896,15 @@ void main() {
       await tester.tap(find.text('Marta'));
       await tester.pump();
       expect(opened?.uid, 'creator-1');
+      expect(openCount, 1);
+
+      final creatorAction = find.bySemanticsLabel('Open profile for Marta');
+      expect(creatorAction, findsOneWidget);
+      expect(tester.getSize(creatorAction).height, greaterThanOrEqualTo(44));
+      Focus.of(tester.element(find.text('Marta'))).requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      expect(openCount, 2);
 
       await tester.tap(find.text('View all'));
       await tester.pump();

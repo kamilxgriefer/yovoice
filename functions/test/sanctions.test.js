@@ -18,10 +18,13 @@ const { test, beforeEach, afterEach, describe } = require("node:test");
 
 process.env.FIRESTORE_EMULATOR_HOST =
   process.env.FIRESTORE_EMULATOR_HOST ?? "127.0.0.1:8080";
+process.env.FIREBASE_AUTH_EMULATOR_HOST =
+  process.env.FIREBASE_AUTH_EMULATOR_HOST ?? "127.0.0.1:9099";
 process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT ?? "yovoice-fn-test";
 
 const { getApps, initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
+const { getAuth } = require("firebase-admin/auth");
 
 if (getApps().length === 0) initializeApp();
 
@@ -29,6 +32,7 @@ const { applySanction } = require("../staff/sanctions");
 const { setProtectedOwnerUidForTests } = require("../utils/roles");
 
 const db = getFirestore();
+const adminAuth = getAuth();
 const run = applySanction.run ?? applySanction;
 
 const P = "sanc-";
@@ -39,6 +43,7 @@ const MOD = `${P}mod`;
 const AUDITOR = `${P}auditor`;
 const TARGET = `${P}target`;
 const STAFF_TARGET = `${P}staff-target`;
+const CLAIM_STAFF_TARGET = `${P}claim-staff-target`;
 
 function request(uid, role, data) {
   return { auth: { uid, token: { role } }, data };
@@ -51,11 +56,29 @@ const args = (action, extra = {}) => ({
   ...extra,
 });
 
+async function deleteAuthUser(uid) {
+  try {
+    await adminAuth.deleteUser(uid);
+  } catch (error) {
+    if (error?.code !== "auth/user-not-found") throw error;
+  }
+}
+
 async function wipeOwn() {
-  const uids = [OWNER, FAKE_SUPER, SUPERMOD, MOD, AUDITOR, TARGET, STAFF_TARGET];
+  const uids = [
+    OWNER,
+    FAKE_SUPER,
+    SUPERMOD,
+    MOD,
+    AUDITOR,
+    TARGET,
+    STAFF_TARGET,
+    CLAIM_STAFF_TARGET,
+  ];
   await Promise.all([
     ...uids.map((uid) => db.collection("users").doc(uid).delete()),
     ...uids.map((uid) => db.collection("restrictions").doc(uid).delete()),
+    deleteAuthUser(CLAIM_STAFF_TARGET),
   ]);
   for (const action of [
     "warn_user",
@@ -280,6 +303,31 @@ describe("protected targets", () => {
     );
     assert.equal(result.outcome, "warned");
   });
+
+  test("a stale staff claim protects a target whose profile says user",
+    async () => {
+      await Promise.all([
+        db.collection("users").doc(CLAIM_STAFF_TARGET).set({ role: "user" }),
+        adminAuth.createUser({
+          uid: CLAIM_STAFF_TARGET,
+          email: `${CLAIM_STAFF_TARGET}@test.invalid`,
+        }),
+      ]);
+      await adminAuth.setCustomUserClaims(CLAIM_STAFF_TARGET, {
+        role: "support",
+      });
+
+      await assert.rejects(
+        () => run(request(MOD, "moderator", args("warn", {
+          uid: CLAIM_STAFF_TARGET,
+        }))),
+        /owner can sanction staff/,
+      );
+      const ownerResult = await run(request(OWNER, "superAdmin", args("warn", {
+        uid: CLAIM_STAFF_TARGET,
+      })));
+      assert.equal(ownerResult.outcome, "warned");
+    });
 
   test("NOBODY sanctions the protected owner, and every attempt is "
       + "audited", async () => {

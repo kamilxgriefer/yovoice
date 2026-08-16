@@ -21,6 +21,7 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_screen.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 const _background = Color(0xFF09050F);
 const _surface = Color(0xFF17101F);
@@ -69,45 +70,48 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
     return Scaffold(
       backgroundColor: _background,
       body: SafeArea(
-        child: StreamBuilder<UserProfile>(
-          stream: _profile,
-          builder: (context, profileSnapshot) {
-            final profile = profileSnapshot.data;
-            if (profileSnapshot.hasError) {
-              return _ErrorBody(message: '${profileSnapshot.error}');
-            }
-            if (profile == null) {
-              return const Center(
-                child: CircularProgressIndicator(color: _accent),
-              );
-            }
-            return StreamBuilder<List<VoiceRoom>>(
-              stream: _rooms,
-              builder: (context, roomsSnapshot) {
-                final rooms = roomsSnapshot.data ?? const <VoiceRoom>[];
-                return StreamBuilder<List<Club>>(
-                  stream: _clubs,
-                  builder: (context, clubsSnapshot) {
-                    final clubs = clubsSnapshot.data ?? const <Club>[];
-                    return StreamBuilder<List<VoiceMoment>>(
-                      stream: _moments,
-                      builder: (context, momentsSnapshot) {
-                        final moments =
-                            momentsSnapshot.data ?? const <VoiceMoment>[];
-                        return _CreatorStudioContent(
-                          profile: profile,
-                          rooms: rooms,
-                          clubs: clubs,
-                          moments: moments,
-                          isRootTab: widget.isRootTab,
-                        );
-                      },
-                    );
-                  },
+        child: ResponsiveContentFrame(
+          width: ResponsiveContentWidth.dashboard,
+          child: StreamBuilder<UserProfile>(
+            stream: _profile,
+            builder: (context, profileSnapshot) {
+              final profile = profileSnapshot.data;
+              if (profileSnapshot.hasError) {
+                return _ErrorBody(message: '${profileSnapshot.error}');
+              }
+              if (profile == null) {
+                return const Center(
+                  child: CircularProgressIndicator(color: _accent),
                 );
-              },
-            );
-          },
+              }
+              return StreamBuilder<List<VoiceRoom>>(
+                stream: _rooms,
+                builder: (context, roomsSnapshot) {
+                  final rooms = roomsSnapshot.data ?? const <VoiceRoom>[];
+                  return StreamBuilder<List<Club>>(
+                    stream: _clubs,
+                    builder: (context, clubsSnapshot) {
+                      final clubs = clubsSnapshot.data ?? const <Club>[];
+                      return StreamBuilder<List<VoiceMoment>>(
+                        stream: _moments,
+                        builder: (context, momentsSnapshot) {
+                          final moments =
+                              momentsSnapshot.data ?? const <VoiceMoment>[];
+                          return _CreatorStudioContent(
+                            profile: profile,
+                            rooms: rooms,
+                            clubs: clubs,
+                            moments: moments,
+                            isRootTab: widget.isRootTab,
+                          );
+                        },
+                      );
+                    },
+                  );
+                },
+              );
+            },
+          ),
         ),
       ),
     );
@@ -209,9 +213,9 @@ class _CreatorStudioContent extends StatelessWidget {
 
         // A slim, glanceable strip rather than a grid of tiles -- these
         // numbers matter, but they're context, not the main event.
-        _StatStrip(
+        CreatorStudioStatStrip(
           items: [
-            _StatStripItem(
+            CreatorStudioStatItem(
               value: '${profile.followerCount}',
               label: 'Followers',
               onTap: () => Navigator.of(context).push<void>(
@@ -223,7 +227,7 @@ class _CreatorStudioContent extends StatelessWidget {
                 ),
               ),
             ),
-            _StatStripItem(
+            CreatorStudioStatItem(
               value: '${profile.followingCount}',
               label: 'Following',
               onTap: () => Navigator.of(context).push<void>(
@@ -235,12 +239,15 @@ class _CreatorStudioContent extends StatelessWidget {
                 ),
               ),
             ),
-            _StatStripItem(value: '${clubs.length}', label: 'Communities'),
-            _StatStripItem(
+            CreatorStudioStatItem(
+              value: '${clubs.length}',
+              label: 'Communities',
+            ),
+            CreatorStudioStatItem(
               value: _formatMinutes(profile.hostMinutes),
               label: 'Hosting time',
             ),
-            _StatStripItem(
+            CreatorStudioStatItem(
               value: _formatMinutes(profile.voiceMinutes),
               label: 'Speaking time',
             ),
@@ -263,7 +270,7 @@ class _CreatorStudioContent extends StatelessWidget {
                 icon: Icons.meeting_room_outlined,
                 message: 'Host your first room to start building a stage.',
               )
-            : _RoomsList(rooms: rooms),
+            : CreatorStudioRoomsList(rooms: rooms),
         const SizedBox(height: 26),
 
         Row(
@@ -292,7 +299,7 @@ class _CreatorStudioContent extends StatelessWidget {
 
         const _SectionLabel("What's next"),
         const SizedBox(height: 10),
-        const _UpcomingToolsRow(),
+        const CreatorStudioUpcomingToolsRow(),
       ],
     );
   }
@@ -500,61 +507,72 @@ class _PersonalAccountBanner extends StatelessWidget {
 class _QuickActionsRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: _QuickAction(
-            icon: Icons.meeting_room_rounded,
-            label: 'Create Room',
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => const RoomTypeSelectorScreen(),
-              ),
-            ),
+    final actions = <Widget>[
+      _QuickAction(
+        icon: Icons.meeting_room_rounded,
+        label: 'Create Room',
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const RoomTypeSelectorScreen(),
           ),
         ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _QuickAction(
-            icon: Icons.hub_rounded,
-            label: 'Create Club',
-            onTap: () async {
-              if (!await PremiumGates.ensureCanCreateClub(context)) return;
-              if (!context.mounted) return;
-              await Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => const CreateClubScreen(),
-                ),
-              );
-            },
+      ),
+      _QuickAction(
+        icon: Icons.hub_rounded,
+        label: 'Create Club',
+        onTap: () async {
+          if (!await PremiumGates.ensureCanCreateClub(context)) return;
+          if (!context.mounted) return;
+          await Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const CreateClubScreen()),
+          );
+        },
+      ),
+      _QuickAction(
+        icon: Icons.mic_rounded,
+        label: 'Post Moment',
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const RecordVoiceMomentScreen(),
           ),
         ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _QuickAction(
-            icon: Icons.mic_rounded,
-            label: 'Post Moment',
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(
-                builder: (_) => const RecordVoiceMomentScreen(),
-              ),
-            ),
+      ),
+      _QuickAction(
+        icon: Icons.person_add_rounded,
+        label: 'Invite',
+        onTap: () => SharePlus.instance.share(
+          ShareParams(
+            text:
+                'Join me on YO Voice — the app for live voice rooms and communities: https://yovoice.app/download',
           ),
         ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _QuickAction(
-            icon: Icons.person_add_rounded,
-            label: 'Invite',
-            onTap: () => SharePlus.instance.share(
-              ShareParams(
-                text:
-                    'Join me on YO Voice — the app for live voice rooms and communities: https://yovoice.app/download',
-              ),
-            ),
-          ),
-        ),
-      ],
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(
+          context,
+        ).scale(1).clamp(1.0, 2.0);
+        final minimumItemWidth = textScale > 1.4 ? 220.0 : 150.0;
+        const gap = 10.0;
+        final columns = constraints.maxWidth >= 900
+            ? 4
+            : constraints.maxWidth >= minimumItemWidth * 2 + gap
+            ? 2
+            : 1;
+        final itemWidth =
+            (constraints.maxWidth - (columns - 1) * gap) / columns;
+
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final action in actions)
+              SizedBox(width: itemWidth, child: action),
+          ],
+        );
+      },
     );
   }
 }
@@ -590,7 +608,7 @@ class _QuickAction extends StatelessWidget {
               Text(
                 label,
                 textAlign: TextAlign.center,
-                maxLines: 1,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: Colors.white,
@@ -626,8 +644,12 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
-class _StatStripItem {
-  const _StatStripItem({required this.value, required this.label, this.onTap});
+class CreatorStudioStatItem {
+  const CreatorStudioStatItem({
+    required this.value,
+    required this.label,
+    this.onTap,
+  });
   final String value;
   final String label;
   final VoidCallback? onTap;
@@ -635,14 +657,19 @@ class _StatStripItem {
 
 /// A glanceable strip, not a dashboard grid -- these numbers are context
 /// for the creator, not the reason they opened this screen.
-class _StatStrip extends StatelessWidget {
-  const _StatStrip({required this.items});
-  final List<_StatStripItem> items;
+class CreatorStudioStatStrip extends StatelessWidget {
+  const CreatorStudioStatStrip({required this.items, super.key});
+
+  final List<CreatorStudioStatItem> items;
 
   @override
   Widget build(BuildContext context) {
+    final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
+
     return SizedBox(
-      height: 62,
+      // A horizontal viewport still needs a finite cross-axis extent, but
+      // that extent must grow with browser zoom / accessibility text.
+      height: 62 + ((textScale - 1) * 44),
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: items.length,
@@ -746,13 +773,15 @@ const _upcomingTools = [
 /// cards competing with real content for attention -- see ADR-012 for why
 /// this project shows unbuilt features as disabled previews, never fake
 /// data or dead buttons.
-class _UpcomingToolsRow extends StatelessWidget {
-  const _UpcomingToolsRow();
+class CreatorStudioUpcomingToolsRow extends StatelessWidget {
+  const CreatorStudioUpcomingToolsRow({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
+
     return SizedBox(
-      height: 108,
+      height: 108 + ((textScale - 1) * 92),
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: _upcomingTools.length,
@@ -762,7 +791,7 @@ class _UpcomingToolsRow extends StatelessWidget {
           return Opacity(
             opacity: .6,
             child: Container(
-              width: 150,
+              width: 150 + ((textScale - 1) * 70),
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                 color: _surface,
@@ -828,15 +857,19 @@ class _UpcomingToolsRow extends StatelessWidget {
   }
 }
 
-class _RoomsList extends StatelessWidget {
-  const _RoomsList({required this.rooms});
+class CreatorStudioRoomsList extends StatelessWidget {
+  const CreatorStudioRoomsList({required this.rooms, super.key});
+
   final List<VoiceRoom> rooms;
 
   @override
   Widget build(BuildContext context) {
     final shown = rooms.take(5).toList(growable: false);
+    final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
+    final usesLargeText = textScale > 1.4;
+
     return SizedBox(
-      height: 96,
+      height: 96 + ((textScale - 1) * 100),
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: shown.length,
@@ -852,7 +885,7 @@ class _RoomsList extends StatelessWidget {
               ),
             ),
             child: Container(
-              width: 168,
+              width: 168 + ((textScale - 1) * 72),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: const Color(0xFF150C1D),
@@ -908,7 +941,7 @@ class _RoomsList extends StatelessWidget {
                   const Spacer(),
                   Text(
                     room.name,
-                    maxLines: 1,
+                    maxLines: usesLargeText ? 2 : 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: Colors.white,

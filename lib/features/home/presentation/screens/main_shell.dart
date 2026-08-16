@@ -24,6 +24,9 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trendin
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notifications_screen.dart';
+import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
+import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
+import 'package:yovoice/features/premium/premium_gates.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
@@ -38,6 +41,7 @@ import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_screen.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_mini_bar.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -84,6 +88,7 @@ class _MainShellState extends State<MainShell>
   final MessageService _messageService = MessageService();
   final RoomService _roomService = RoomService();
   final AuthService _authService = AuthService();
+  final EntitlementService _entitlementService = EntitlementService();
   bool _handledInitialRoomLink = false;
 
   Timer? _verificationCheckTimer;
@@ -105,6 +110,9 @@ class _MainShellState extends State<MainShell>
   /// Desktop sidebar badge only — the same routed count the bell shows.
   int _unreadNotificationCount = 0;
   StreamSubscription<int>? _notificationCountSubscription;
+
+  SubscriptionEntitlements _entitlements = SubscriptionEntitlements.free;
+  StreamSubscription<SubscriptionEntitlements>? _entitlementSubscription;
 
   // Friends replaced Profile as the third primary tab: it's the
   // higher-frequency social destination. Profile lives in More and
@@ -149,12 +157,17 @@ class _MainShellState extends State<MainShell>
     return moreDestinationScreen(destination, isRootTab: true);
   }
 
-  List<Widget> _slotChildren({required bool isDesktop}) => [
+  List<Widget> _slotChildren({
+    required bool isDesktop,
+    Widget? desktopHomeTrailing,
+  }) => [
     for (var index = 0; index < _slotCount; index++)
       if (index == 0)
         // Each platform gets its own Home composition; everything else
         // in the shell is shared.
-        (isDesktop ? _desktopHome : _mobileHome)
+        (isDesktop
+            ? _desktopHome(trailingContent: desktopHomeTrailing)
+            : _mobileHome)
       else if (index < _screens.length)
         _screens[index]
       else
@@ -195,7 +208,7 @@ class _MainShellState extends State<MainShell>
   /// uses, so the sidebar and profile card never rebuild. The three that
   /// push (a room, a chat, a club) are the flows that already own a
   /// full-screen route everywhere else in the app.
-  Widget get _desktopHome => DesktopHome(
+  Widget _desktopHome({Widget? trailingContent}) => DesktopHome(
     currentUserId: _currentUserId,
     onOpenRoom: (room) => unawaited(_openRoom(room)),
     onSeeAllRooms: () => _onDestinationSelected(_discoverSlot),
@@ -222,6 +235,7 @@ class _MainShellState extends State<MainShell>
     ),
     onSeeAllChats: () => _onDestinationSelected(1),
     onOpenClubs: () => unawaited(_openMoreDestination(MoreDestination.clubs)),
+    trailingContent: trailingContent,
   );
 
   /// Opens an existing conversation in the existing ChatScreen — the same
@@ -297,6 +311,25 @@ class _MainShellState extends State<MainShell>
           },
         );
 
+    try {
+      _entitlementSubscription = _entitlementService
+          .watchCurrentEntitlements()
+          .listen(
+            (entitlements) {
+              if (mounted) setState(() => _entitlements = entitlements);
+            },
+            onError: (_) {
+              if (mounted) {
+                setState(() {
+                  _entitlements = SubscriptionEntitlements.free;
+                });
+              }
+            },
+          );
+    } catch (_) {
+      // No verified subscription state means Premium destinations stay locked.
+    }
+
     unawaited(_resolveStaffAccess());
 
     if (_showVerificationBanner) {
@@ -363,6 +396,7 @@ class _MainShellState extends State<MainShell>
     _tabTransition.dispose();
     _conversationSubscription?.cancel();
     _notificationCountSubscription?.cancel();
+    _entitlementSubscription?.cancel();
     _verificationCheckTimer?.cancel();
     _removeMessageOverlay();
     super.dispose();
@@ -579,9 +613,10 @@ class _MainShellState extends State<MainShell>
         anchor: anchor,
         isStaff: _isStaff,
         isOwner: _isOwner,
+        entitlements: _entitlements,
       );
     } else {
-      destination = await showMoreSheet(context);
+      destination = await showMoreSheet(context, entitlements: _entitlements);
     }
     if (!mounted || destination == null) {
       return;
@@ -597,6 +632,17 @@ class _MainShellState extends State<MainShell>
   // "More" destination: two stacked titles at best (Settings), a second
   // full Material AppBar at worst (Awards) -- see ADR-019.
   Future<void> _openMoreDestination(MoreDestination destination) async {
+    final premiumFeature = premiumFeatureForMoreDestination(destination);
+    if (premiumFeature != null &&
+        !await PremiumGates.ensureFeatureAccess(
+          context,
+          feature: premiumFeature,
+          entitlementService: _entitlementService,
+        )) {
+      return;
+    }
+    if (!mounted) return;
+
     // DESKTOP: every destination that owns a content slot swaps the
     // centre of the existing shell — same mechanism as Chats/Friends —
     // so the rail, the profile card and the layout never move. Only
@@ -718,7 +764,11 @@ class _MainShellState extends State<MainShell>
     );
   }
 
-  Widget _tabContent({required int index, required bool isDesktop}) {
+  Widget _tabContent({
+    required int index,
+    required bool isDesktop,
+    Widget? desktopHomeTrailing,
+  }) {
     return AnimatedBuilder(
       animation: _tabTransition,
       builder: (context, child) {
@@ -734,7 +784,45 @@ class _MainShellState extends State<MainShell>
       },
       child: IndexedStack(
         index: index,
-        children: _slotChildren(isDesktop: isDesktop),
+        children: _slotChildren(
+          isDesktop: isDesktop,
+          desktopHomeTrailing: desktopHomeTrailing,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDesktopHomeExtras() {
+    return _DesktopHomeExtras(
+      currentUserId: _currentUserId,
+      onOpenRoom: (room) => unawaited(
+        Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
+        ),
+      ),
+      onSeeAll: () => unawaited(_openMoreDestination(MoreDestination.discover)),
+      onCheckPlans: () => unawaited(
+        Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(builder: (_) => const PremiumScreen()),
+        ),
+      ),
+      onOpenCreator: (creator) => unawaited(
+        showProfilePreview(
+          context,
+          userId: creator.uid,
+          displayName: creator.displayName,
+          photoUrl: creator.photoUrl,
+        ),
+      ),
+      onViewAllCreators: () => unawaited(
+        Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => FollowListScreen(
+              userId: _currentUserId,
+              type: FollowListType.following,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -774,49 +862,39 @@ class _MainShellState extends State<MainShell>
                         unawaited(_openProfileSettings()),
                   ),
                   Expanded(
-                    child: _tabContent(index: _selectedIndex, isDesktop: true),
-                  ),
-                  // The right column belongs to Home, exactly as in the
-                  // desktop reference.
-                  if (_selectedIndex == 0)
-                    _DesktopRightColumn(
-                      currentUserId: _currentUserId,
-                      onOpenRoom: (room) => unawaited(
-                        Navigator.of(context).push<void>(
-                          MaterialPageRoute<void>(
-                            builder: (_) => RoomEntryScreen(room: room),
-                          ),
-                        ),
-                      ),
-                      onSeeAll: () => unawaited(
-                        _openMoreDestination(MoreDestination.discover),
-                      ),
-                      onCheckPlans: () => unawaited(
-                        Navigator.of(context).push<void>(
-                          MaterialPageRoute<void>(
-                            builder: (_) => const PremiumScreen(),
-                          ),
-                        ),
-                      ),
-                      onOpenCreator: (creator) => unawaited(
-                        showProfilePreview(
-                          context,
-                          userId: creator.uid,
-                          displayName: creator.displayName,
-                          photoUrl: creator.photoUrl,
-                        ),
-                      ),
-                      onViewAllCreators: () => unawaited(
-                        Navigator.of(context).push<void>(
-                          MaterialPageRoute<void>(
-                            builder: (_) => FollowListScreen(
-                              userId: _currentUserId,
-                              type: FollowListType.following,
-                            ),
-                          ),
-                        ),
+                    child: ResponsiveContentFrame(
+                      width: ResponsiveContentWidth.workbench,
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final isHome = _selectedIndex == 0;
+                          final useRightRail =
+                              isHome && constraints.maxWidth >= 1100;
+                          final extras = isHome
+                              ? _buildDesktopHomeExtras()
+                              : null;
+
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: _tabContent(
+                                  index: _selectedIndex,
+                                  isDesktop: true,
+                                  desktopHomeTrailing: useRightRail
+                                      ? null
+                                      : extras,
+                                ),
+                              ),
+                              // The supplementary Home modules become part
+                              // of the main scroll when a fixed 344 px rail
+                              // would squeeze the feed below a useful width.
+                              if (useRightRail)
+                                _DesktopRightColumn(child: extras!),
+                            ],
+                          );
+                        },
                       ),
                     ),
+                  ),
                 ],
               ),
             ),
@@ -861,8 +939,8 @@ class _MainShellState extends State<MainShell>
 /// The order is deliberate: what is loud right now (Trending), the offer
 /// (Premium, unchanged), then who this person specifically follows. The
 /// last two are different questions and are kept as separate modules.
-class _DesktopRightColumn extends StatelessWidget {
-  const _DesktopRightColumn({
+class _DesktopHomeExtras extends StatelessWidget {
+  const _DesktopHomeExtras({
     required this.currentUserId,
     required this.onOpenRoom,
     required this.onSeeAll,
@@ -880,26 +958,40 @@ class _DesktopRightColumn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // People first, Premium last: the supplementary modules support
+        // the primary feed rather than selling over it.
+        FollowedCreatorsCard(
+          currentUserId: currentUserId,
+          onOpenCreator: onOpenCreator,
+          onViewAll: onViewAllCreators,
+          onDiscover: onSeeAll,
+        ),
+        const SizedBox(height: 16),
+        VoiceTrendingCard(onOpenRoom: onOpenRoom, onSeeAll: onSeeAll),
+        const SizedBox(height: 16),
+        const SponsoredCard(),
+        const SizedBox(height: 16),
+        PremiumDesktopCard(onCheckPlans: onCheckPlans),
+      ],
+    );
+  }
+}
+
+class _DesktopRightColumn extends StatelessWidget {
+  const _DesktopRightColumn({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
     return SizedBox(
       width: 344,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(6, 20, 20, 20),
-        children: [
-          // People first, Premium last: the right column supports the
-          // centre rather than selling over it.
-          FollowedCreatorsCard(
-            currentUserId: currentUserId,
-            onOpenCreator: onOpenCreator,
-            onViewAll: onViewAllCreators,
-            onDiscover: onSeeAll,
-          ),
-          const SizedBox(height: 16),
-          VoiceTrendingCard(onOpenRoom: onOpenRoom, onSeeAll: onSeeAll),
-          const SizedBox(height: 16),
-          const SponsoredCard(),
-          const SizedBox(height: 16),
-          PremiumDesktopCard(onCheckPlans: onCheckPlans),
-        ],
+        children: [child],
       ),
     );
   }
@@ -987,7 +1079,12 @@ class MoreDestinationHost extends StatelessWidget {
                     onOpenProfileSettings: () =>
                         popThen(onOpenProfileSettings ?? () {}),
                   ),
-                  Expanded(child: body),
+                  Expanded(
+                    child: ResponsiveContentFrame(
+                      width: ResponsiveContentWidth.workbench,
+                      child: body,
+                    ),
+                  ),
                 ],
               ),
             ),

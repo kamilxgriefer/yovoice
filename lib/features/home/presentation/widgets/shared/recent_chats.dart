@@ -22,11 +22,14 @@ class RecentChats extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
+    final cardHeight = 148 + ((textScale - 1) * 68);
+
     if (snapshot.connectionState == ConnectionState.waiting &&
         !snapshot.hasData) {
-      return const SizedBox(
-        height: 132,
-        child: Center(child: CircularProgressIndicator(strokeWidth: 2.4)),
+      return SizedBox(
+        height: cardHeight,
+        child: const Center(child: CircularProgressIndicator(strokeWidth: 2.4)),
       );
     }
 
@@ -49,23 +52,63 @@ class RecentChats extends StatelessWidget {
       );
     }
 
-    return SizedBox(
-      height: 132,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (var index = 0; index < conversations.length; index++) ...[
-            if (index > 0) const SizedBox(width: 10),
-            Expanded(
-              child: _RecentChatCard(
-                conversation: conversations[index],
-                currentUserId: currentUserId,
-                onTap: () => onOpenConversation(conversations[index]),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const gap = 10.0;
+
+        Widget card(Conversation conversation, double width) => SizedBox(
+          width: width,
+          height: cardHeight,
+          child: _RecentChatCard(
+            conversation: conversation,
+            currentUserId: currentUserId,
+            onTap: () => onOpenConversation(conversation),
+          ),
+        );
+
+        // Phones keep every card readable instead of squeezing three tiny
+        // columns into the viewport. Around 390 px this shows two complete
+        // cards; the third remains one horizontal swipe away.
+        if (constraints.maxWidth < 600) {
+          final twoColumnWidth = (constraints.maxWidth - gap) / 2;
+          final cardWidth = twoColumnWidth.clamp(156.0, 220.0);
+          return SizedBox(
+            height: cardHeight,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              clipBehavior: Clip.none,
+              child: Row(
+                children: [
+                  for (
+                    var index = 0;
+                    index < conversations.length;
+                    index++
+                  ) ...[
+                    if (index > 0) const SizedBox(width: gap),
+                    card(conversations[index], cardWidth),
+                  ],
+                ],
               ),
             ),
-          ],
-        ],
-      ),
+          );
+        }
+
+        // Tablets and desktops show at most three equal cards without
+        // stretching a one- or two-item list across the entire page.
+        final cardWidth = (constraints.maxWidth - (gap * 2)) / 3;
+        return SizedBox(
+          height: cardHeight,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var index = 0; index < conversations.length; index++) ...[
+                if (index > 0) const SizedBox(width: gap),
+                card(conversations[index], cardWidth),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -85,77 +128,76 @@ class _RecentChatCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final otherUserId = conversation.otherUserId(currentUserId);
     final unread = conversation.unreadCountFor(currentUserId);
-    return SizedBox(
-      height: 132,
-      child: Material(
-        color: const Color(0xFF181122),
+    return Material(
+      color: const Color(0xFF181122),
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(20),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(20),
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: const Color(0xFF332641)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    UserAvatar(
-                      displayName: conversation.displayNameFor(otherUserId),
-                      photoUrl: conversation.photoUrlFor(otherUserId),
-                      radius: 20,
-                    ),
-                    const Spacer(),
-                    if (unread > 0)
-                      Container(
-                        constraints: const BoxConstraints(minWidth: 20),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF9D20FF),
-                          borderRadius: BorderRadius.circular(99),
-                        ),
-                        child: Text(
-                          unread > 99 ? '99+' : '$unread',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                          ),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0xFF332641)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  UserAvatar(
+                    displayName: conversation.displayNameFor(otherUserId),
+                    photoUrl: conversation.photoUrlFor(otherUserId),
+                    radius: 20,
+                  ),
+                  const Spacer(),
+                  if (unread > 0)
+                    Container(
+                      constraints: const BoxConstraints(minWidth: 20),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF9D20FF),
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                      child: Text(
+                        unread > 99 ? '99+' : '$unread',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
-                  ],
+                    ),
+                ],
+              ),
+              const Spacer(),
+              Text(
+                conversation.displayNameFor(otherUserId),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13.5,
+                  height: 1.15,
+                  fontWeight: FontWeight.w800,
                 ),
-                const Spacer(),
-                Text(
-                  conversation.displayNameFor(otherUserId),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w800,
-                  ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                conversation.previewFor(currentUserId),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFFA69CB2),
+                  fontSize: 11,
+                  height: 1.2,
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  conversation.previewFor(currentUserId),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFFA69CB2),
-                    fontSize: 11,
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

@@ -23,6 +23,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
+import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_audit_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
@@ -44,6 +45,17 @@ const _ownerCaps = StaffCapabilities(
   liftSuspensions: true,
   viewAllQueues: true,
   permanentBan: true,
+);
+
+SubscriptionEntitlements _activePremium() => SubscriptionEntitlements(
+  plan: PremiumPlan.monthly,
+  status: 'active',
+  currentPeriodEnd: DateTime.now().add(const Duration(days: 30)),
+  isPremium: true,
+  creatorEnabled: true,
+  canCreateClubs: true,
+  premiumIdentityEnabled: true,
+  maxOwnedClubs: 3,
 );
 
 /// What the SERVER actually derives for a forged non-owner superAdmin:
@@ -203,6 +215,22 @@ Widget sheetHost(Widget sheet) => MaterialApp(
   ),
 );
 
+Widget modalSheetHost({
+  SubscriptionEntitlements entitlements = SubscriptionEntitlements.free,
+}) => MaterialApp(
+  home: Builder(
+    builder: (context) => Scaffold(
+      body: TextButton(
+        key: const ValueKey('open-more-sheet'),
+        onPressed: () async {
+          await showMoreSheet(context, entitlements: entitlements);
+        },
+        child: const Text('Open More'),
+      ),
+    ),
+  ),
+);
+
 Future<void> settle(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 60));
@@ -271,14 +299,8 @@ void main() {
     testWidgets("an ordinary account's sheet is unchanged: six tiles, "
         'Settings, no staff section, no gap', (tester) async {
       useSize(tester, const Size(390, 844));
-      await tester.pumpWidget(
-        sheetHost(
-          MoreSheet(
-            capabilityService: _FakeCapabilities(StaffCapabilities.none),
-            currentUid: 'plain-uid',
-          ),
-        ),
-      );
+      await tester.pumpWidget(modalSheetHost());
+      await tester.tap(find.byKey(const ValueKey('open-more-sheet')));
       await settle(tester);
 
       for (final label in [
@@ -295,6 +317,14 @@ void main() {
       expect(find.text('Staff'), findsNothing);
       expect(find.text('Staff Center'), findsNothing);
       expect(find.text('Moderation Center'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('mobile-premium-lock-clubs')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('mobile-premium-lock-creatorStudio')),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -315,6 +345,31 @@ void main() {
       await settle(tester);
       expect(find.text('Staff'), findsNothing);
       expect(find.text('Settings'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('mobile-premium-lock-clubs')),
+        findsOneWidget,
+        reason: 'a complimentary VIP badge is not a paid entitlement',
+      );
+    });
+
+    testWidgets('paid Premium removes the Clubs and Creator locks', (
+      tester,
+    ) async {
+      useSize(tester, const Size(390, 844));
+      await tester.pumpWidget(modalSheetHost(entitlements: _activePremium()));
+      await tester.tap(find.byKey(const ValueKey('open-more-sheet')));
+      await settle(tester);
+
+      expect(find.text('Clubs'), findsOneWidget);
+      expect(find.text('Creator'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('mobile-premium-lock-clubs')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('mobile-premium-lock-creatorStudio')),
+        findsNothing,
+      );
     });
 
     testWidgets('owner, super moderator and moderator each get their own '
@@ -373,16 +428,71 @@ void main() {
       useSize(tester, const Size(320, 640));
       await tester.pumpWidget(
         sheetHost(
-          SingleChildScrollView(
-            child: MoreSheet(
-              capabilityService: _FakeCapabilities(_forgedSuperAdminCaps),
-              currentUid: 'forged-uid',
-            ),
+          MoreSheet(
+            capabilityService: _FakeCapabilities(_forgedSuperAdminCaps),
+            currentUid: 'forged-uid',
           ),
         ),
       );
       await settle(tester);
       expect(find.text('Staff Center'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('mobile-premium-lock-clubs')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('mobile-premium-lock-creatorStudio')),
+        findsOneWidget,
+      );
+
+      final handleBefore = tester.getCenter(
+        find.byKey(const ValueKey('more-sheet-drag-handle')),
+      );
+      final scrollable = tester.state<ScrollableState>(
+        find
+            .descendant(
+              of: find.byKey(const ValueKey('more-sheet-scroll-view')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      expect(scrollable.position.maxScrollExtent, greaterThan(0));
+      await tester.drag(
+        find.byKey(const ValueKey('more-sheet-scroll-view')),
+        const Offset(0, -120),
+      );
+      await tester.pumpAndSettle();
+      expect(scrollable.position.pixels, greaterThan(0));
+      expect(
+        tester.getCenter(find.byKey(const ValueKey('more-sheet-drag-handle'))),
+        handleBefore,
+        reason: 'the modal drag handle stays fixed while content scrolls',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the production modal remains scrollable with phone safe '
+        'areas and an open keyboard', (tester) async {
+      useSize(tester, const Size(390, 844));
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(
+            size: Size(390, 844),
+            padding: EdgeInsets.only(top: 59, bottom: 34),
+            viewInsets: EdgeInsets.only(bottom: 336),
+          ),
+          child: modalSheetHost(),
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('open-more-sheet')));
+      await settle(tester);
+
+      expect(find.byKey(const ValueKey('more-sheet-scroll-view')), findsOne);
+      expect(find.byType(ModalBarrier), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('mobile-premium-lock-clubs')),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     });
   });

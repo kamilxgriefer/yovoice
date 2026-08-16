@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 /// The contextual Premium moments — what a free member sees when they
 /// reach for a Premium capability. One component, two voices, so the
 /// Creator and Club upsells can't drift apart. Never a dead button,
 /// never a generic "Coming soon".
-enum PremiumUpsellContext { creator, clubCreation }
+enum PremiumUpsellContext { creator, creatorStudio, clubs, clubCreation }
 
 Future<void> showPremiumUpsellSheet(
   BuildContext context, {
@@ -16,6 +17,10 @@ Future<void> showPremiumUpsellSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
+    constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+      context,
+      maxWidth: 560,
+    ),
     builder: (_) => _PremiumUpsellSheet(upsellContext: upsellContext),
   );
 }
@@ -33,6 +38,18 @@ class _PremiumUpsellSheet extends StatelessWidget {
         'Creator is included with YO Voice Premium',
         'Build a public Creator identity, grow followers and unlock '
             'Creator tools with a Premium subscription.',
+      ),
+      PremiumUpsellContext.creatorStudio => (
+        Icons.auto_graph_rounded,
+        'Creator Studio is a Premium feature',
+        'Activate your Premium identity to open your creator dashboard, '
+            'publishing tools and community insights.',
+      ),
+      PremiumUpsellContext.clubs => (
+        Icons.groups_2_rounded,
+        'Clubs are included with YO Voice Premium',
+        'Activate your Premium identity to open the Clubs hub and build '
+            'your own communities.',
       ),
       PremiumUpsellContext.clubCreation => (
         Icons.workspace_premium_rounded,

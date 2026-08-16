@@ -1,25 +1,25 @@
 # Cloud Functions tests
 
-Coverage for triggers whose behaviour is not expressible in Firestore
-rules. Today that is one function:
-`onGlobalMessageModerated`, which writes the `adminAuditLogs` entry for a
-moderator removing a public Global Chat message.
+Automated coverage for callable functions, Firestore triggers and security
+critical backend helpers. The suite covers moderation, staff authorization,
+social graph mutations, Club ownership and quotas, notifications, Premium
+expiry, media deletion validation, private-profile projections/search quotas
+and LiveKit room/session enforcement.
 
-Everything about *who may do what* to Global Chat lives in
-`../../firestore-tests/rules.test.js`, evaluated against the real
-`firestore.rules`. Don't duplicate authorization assertions here.
+Firestore and Storage authorization are tested separately against the real
+rules in `../../firestore-tests/`; Functions tests must still validate every
+server-side authorization check because Admin SDK writes bypass those rules.
 
 ## Running
 
-The tests call the trigger's handler directly and talk to the
-Firestore emulator, so no project credentials and no extra dependency
-are involved — `functions/node_modules` is tracked in this repository, so
-a devDependency for one test file would land in every future diff.
+The tests call handlers directly and talk to fresh Auth/Firestore emulators.
+No production credentials are used. Dependencies are installed from
+`package-lock.json`; `node_modules` is deliberately not committed.
 
 Start the emulator in one terminal:
 
 ```bash
-firebase emulators:start --only firestore --project yovoice-fn-test
+firebase emulators:start --only auth,firestore --project demo-yovoice
 ```
 
 Then, from `functions/`:
@@ -28,27 +28,23 @@ Then, from `functions/`:
 npm test
 ```
 
-`FIRESTORE_EMULATOR_HOST` defaults to `127.0.0.1:8080` and
-`GCLOUD_PROJECT` to `yovoice-fn-test`; override either if your emulator
-runs elsewhere.
+`FIRESTORE_EMULATOR_HOST` defaults to `127.0.0.1:8080`. CI and the documented
+commands set `GCLOUD_PROJECT` to the credential-safe `demo-yovoice` project.
 
 ## Trigger-binding smoke test (separate, deliberate)
 
-`global_chat_trigger.smoke.js` is **not** part of `npm test`: it needs
-the functions emulator as well as Firestore, which takes ~90s to boot and
-loads every function in the catalogue. Run it when the trigger's wiring
-changes, or before a release:
+The binding smoke scripts are **not** part of `npm test`: they need the
+Functions emulator as well as Auth/Firestore and load the full exported
+catalogue. Run them before a release (CI runs the same command):
 
 ```bash
-firebase emulators:start --only functions,firestore --project yovoice-fn-test
-node test/global_chat_trigger.smoke.js
+firebase emulators:exec --only functions,auth,firestore --project demo-yovoice \
+  'npm --prefix functions run test:smoke'
 ```
 
-It writes a real message, soft-deletes it the way a moderator would, and
-waits for the audit entry — proving the part the unit tests cannot: that
-Firestore actually delivers the event to this handler, and that exactly
-one deterministic `globalMessage_<eventId>` document comes out. Exits
-non-zero on failure.
+The smoke set proves Firestore event delivery, moderation callable transport,
+and the social-graph callable bindings, including replay-safe friendship
+counters. It exits non-zero on any missing export or runtime failure.
 
 ## What is covered
 
@@ -65,3 +61,17 @@ non-zero on failure.
 - the export is reachable from `functions/index.js` and carries the
   expected trigger metadata (region, document path, event type), so a
   deploy actually ships it.
+- `publicProfiles` and `socialPresence` are exact, idempotent projections with
+  no private-field leakage; inactive/Auth-deleted accounts are removed, blocked
+  profiles are hidden from verified-only search, concurrent searches cannot
+  exceed the transaction-backed budget, and the Auth-aware dry-run/apply
+  backfill stays page/batch bounded and resumable;
+- canonical friendship acceptance creates paired private guards, legacy mirror
+  pairs cannot mint them, remove/block retires them atomically, graph caps and
+  private transactional quotas fail closed, and mutual/suggestion reads remain
+  bounded;
+- the legacy-identity scrub is dry-run by default, page-bounded, resumable and
+  aggregate-only, while apply mode removes request email, neutralizes DM email
+  snapshots and rewrites follow edges to the exact uid/time schema;
+- staff directory email is Auth-authoritative and staff display requires the
+  Auth role claim to agree with the server-owned role mirror.

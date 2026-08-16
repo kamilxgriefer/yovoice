@@ -68,6 +68,7 @@ class DesktopHome extends StatefulWidget {
     this.clubChatService,
     this.firebaseAuth,
     this.capabilityService,
+    this.trailingContent,
     super.key,
   });
 
@@ -105,6 +106,11 @@ class DesktopHome extends StatefulWidget {
   /// Staff capabilities, loaded once per session. Absent or failing, the
   /// board renders the ordinary UI.
   final StaffCapabilityService? capabilityService;
+
+  /// Supplementary Home modules move below the main feed when the desktop
+  /// shell is too narrow to keep a useful 344 px right rail. Nothing is
+  /// hidden; only the composition changes with available width.
+  final Widget? trailingContent;
 
   @override
   State<DesktopHome> createState() => _DesktopHomeState();
@@ -279,6 +285,10 @@ class _DesktopHomeState extends State<DesktopHome> {
                     onFindFriends: widget.onViewAllFriends,
                   ),
                 ),
+                if (widget.trailingContent != null) ...[
+                  gap,
+                  widget.trailingContent!,
+                ],
               ],
             );
           },

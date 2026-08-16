@@ -60,7 +60,16 @@ const { createLiveKitToken } = require("./livekit/token");
 |--------------------------------------------------------------------------
 */
 
-const { getMutualFriends, getFriendSuggestions } = require("./friends/social_graph");
+const {
+  getMutualFriends,
+  getFriendSuggestions,
+  sendFriendRequest,
+  respondToFriendRequest,
+  cancelFriendRequest,
+  removeFriend,
+  setFollow,
+  setUserBlock,
+} = require("./friends/social_graph");
 
 /*
 |--------------------------------------------------------------------------
@@ -68,7 +77,18 @@ const { getMutualFriends, getFriendSuggestions } = require("./friends/social_gra
 |--------------------------------------------------------------------------
 */
 
+const { createCommunityClub } = require("./clubs/creation");
+const { removeClubMemberSelf } = require("./clubs/members");
 const { transferClubOwnershipSelf } = require("./clubs/ownership");
+const {
+  deleteRoomSelf,
+  endRoomVoiceSelf,
+  leaveRoomSelf,
+  moderateRoomParticipantSelf,
+  removeRoomParticipantSelf,
+  setOwnRoomParticipantMute,
+  setRoomStatusSelf,
+} = require("./rooms/participants");
 
 /*
 |--------------------------------------------------------------------------
@@ -89,6 +109,11 @@ const {
   onDirectMessageCreated,
   onRoomLiveChanged,
 } = require("./notifications/activity");
+const {
+  sendClubInvite,
+  onClubInviteCreated,
+  onClubMemberCreated,
+} = require("./notifications/invites");
 
 /*
 |--------------------------------------------------------------------------
@@ -165,6 +190,12 @@ exports.createLiveKitToken = createLiveKitToken;
 
 exports.getMutualFriends = getMutualFriends;
 exports.getFriendSuggestions = getFriendSuggestions;
+exports.sendFriendRequest = sendFriendRequest;
+exports.respondToFriendRequest = respondToFriendRequest;
+exports.cancelFriendRequest = cancelFriendRequest;
+exports.removeFriend = removeFriend;
+exports.setFollow = setFollow;
+exports.setUserBlock = setUserBlock;
 
 /*
 |--------------------------------------------------------------------------
@@ -173,6 +204,15 @@ exports.getFriendSuggestions = getFriendSuggestions;
 */
 
 exports.transferClubOwnershipSelf = transferClubOwnershipSelf;
+exports.createCommunityClub = createCommunityClub;
+exports.removeClubMemberSelf = removeClubMemberSelf;
+exports.removeRoomParticipantSelf = removeRoomParticipantSelf;
+exports.setOwnRoomParticipantMute = setOwnRoomParticipantMute;
+exports.moderateRoomParticipantSelf = moderateRoomParticipantSelf;
+exports.setRoomStatusSelf = setRoomStatusSelf;
+exports.endRoomVoiceSelf = endRoomVoiceSelf;
+exports.leaveRoomSelf = leaveRoomSelf;
+exports.deleteRoomSelf = deleteRoomSelf;
 
 /*
 |--------------------------------------------------------------------------
@@ -186,6 +226,9 @@ exports.onFriendRequestResolved = onFriendRequestResolved;
 exports.onFollowerCreated = onFollowerCreated;
 exports.onDirectMessageCreated = onDirectMessageCreated;
 exports.onRoomLiveChanged = onRoomLiveChanged;
+exports.sendClubInvite = sendClubInvite;
+exports.onClubInviteCreated = onClubInviteCreated;
+exports.onClubMemberCreated = onClubMemberCreated;
 
 /*
 |--------------------------------------------------------------------------
@@ -194,8 +237,16 @@ exports.onRoomLiveChanged = onRoomLiveChanged;
 */
 
 const { onProfileIdentityChanged } = require("./profile/fanout");
+const {
+  onAuthUserDeleted,
+  onUserPrivacySourceChanged,
+  searchPublicProfiles,
+} = require("./profile/public_profiles");
 
 exports.onProfileIdentityChanged = onProfileIdentityChanged;
+exports.onAuthUserDeleted = onAuthUserDeleted;
+exports.onUserPrivacySourceChanged = onUserPrivacySourceChanged;
+exports.searchPublicProfiles = searchPublicProfiles;
 
 /*
 |--------------------------------------------------------------------------
@@ -232,8 +283,13 @@ const { getMyStaffCapabilities } = require("./staff/capabilities");
 exports.getMyStaffCapabilities = getMyStaffCapabilities;
 
 const { applySanction } = require("./staff/sanctions");
+const {
+  onModerationVoiceEnforcementCreated,
+} = require("./staff/voice_enforcement");
 
 exports.applySanction = applySanction;
+exports.onModerationVoiceEnforcementCreated =
+  onModerationVoiceEnforcementCreated;
 
 /*
 |--------------------------------------------------------------------------

@@ -15,8 +15,10 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_journey_card.dart';
 import 'package:yovoice/firebase_options.dart';
 
 Future<void> main() async {
@@ -34,7 +36,10 @@ Future<void> main() async {
   runApp(const _PreviewApp());
 }
 
-UserProfile get _fakeProfile => UserProfile(
+UserProfile _fakeProfile({
+  AccountType accountType = AccountType.creator,
+  bool premiumIdentity = true,
+}) => UserProfile(
   uid: 'preview',
   email: 'ada@yovoice.app',
   displayName: 'Ada Lovelace',
@@ -47,8 +52,8 @@ UserProfile get _fakeProfile => UserProfile(
   photoUrl: null,
   bannerUrl: null,
   website: 'https://yovoice.app',
-  accountType: AccountType.creator,
-  premiumIdentity: true,
+  accountType: accountType,
+  premiumIdentity: premiumIdentity,
   friendCount: 12,
   followerCount: 340,
   followingCount: 51,
@@ -85,16 +90,19 @@ class _PreviewHome extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 4,
       child: Scaffold(
         backgroundColor: const Color(0xFF09050F),
         appBar: AppBar(
           backgroundColor: const Color(0xFF09050F),
           title: const Text('Profile preview'),
           bottom: const TabBar(
+            isScrollable: true,
             tabs: [
               Tab(text: 'Header'),
+              Tab(text: 'Journey'),
               Tab(text: 'Edit profile'),
+              Tab(text: 'Premium locks'),
             ],
           ),
         ),
@@ -102,14 +110,60 @@ class _PreviewHome extends StatelessWidget {
           children: [
             ListView(
               children: [
-                ProfileHeader(profile: _fakeProfile, onEdit: () {}),
+                ProfileHeader(profile: _fakeProfile(), onEdit: () {}),
                 const SizedBox(height: 400),
               ],
             ),
-            EditProfileScreen(profile: _fakeProfile),
+            ListView(
+              padding: const EdgeInsets.all(18),
+              children: [
+                ProfileJourneyCard(
+                  communitiesCount: _fakeProfile().communityCount,
+                  messageCount: _fakeProfile().messageCount,
+                  voiceMinutes: _fakeProfile().voiceMinutes,
+                  roomCount: _fakeProfile().roomCount,
+                ),
+              ],
+            ),
+            EditProfileScreen(
+              profile: _fakeProfile(
+                accountType: AccountType.personal,
+                premiumIdentity: false,
+              ),
+            ),
+            const _PremiumLocksPreview(),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _PremiumLocksPreview extends StatelessWidget {
+  const _PremiumLocksPreview();
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 900) {
+          return const Align(
+            alignment: Alignment.bottomCenter,
+            child: SingleChildScrollView(child: MoreSheet()),
+          );
+        }
+
+        return Center(
+          child: FilledButton.icon(
+            key: const ValueKey('open-desktop-premium-locks'),
+            onPressed: () async {
+              await showDesktopMoreMenu(context, anchor: const Offset(72, 160));
+            },
+            icon: const Icon(Icons.more_horiz_rounded),
+            label: const Text('Open desktop More'),
+          ),
+        );
+      },
     );
   }
 }

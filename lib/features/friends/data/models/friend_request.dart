@@ -29,7 +29,9 @@ class FriendRequest {
     return FriendRequest(
       senderId: data['senderId'] as String? ?? document.id,
       senderName: _resolveSenderName(data),
-      senderEmail: (data['senderEmail'] as String?)?.trim() ?? '',
+      // Historical requests can contain a private email snapshot. Keep the
+      // compatibility property empty so no screen can accidentally render it.
+      senderEmail: '',
       senderPhotoUrl: _normalizeNullableString(data['senderPhotoUrl']),
       createdAt: _readDateTime(data['createdAt']),
     );
@@ -39,7 +41,6 @@ class FriendRequest {
     return {
       'senderId': senderId,
       'senderName': senderName,
-      'senderEmail': senderEmail.toLowerCase(),
       'senderPhotoUrl': senderPhotoUrl,
       'createdAt': createdAt == null
           ? FieldValue.serverTimestamp()
@@ -52,12 +53,6 @@ class FriendRequest {
 
     if (name != null && name.isNotEmpty) {
       return name;
-    }
-
-    final email = (data['senderEmail'] as String?)?.trim();
-
-    if (email != null && email.isNotEmpty) {
-      return email.split('@').first;
     }
 
     return 'YO Voice user';

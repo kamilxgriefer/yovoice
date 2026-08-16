@@ -34,7 +34,6 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sideb
 import 'package:yovoice/features/home/presentation/widgets/desktop/followed_creators_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
-import 'package:yovoice/features/messages/data/services/global_chat_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/moderation/data/models/moderation_audit_event.dart';
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
@@ -43,6 +42,7 @@ import 'package:yovoice/features/notifications/data/services/notification_servic
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 const String _uid = 'preview-me';
 
@@ -397,79 +397,6 @@ Future<FakeFirebaseFirestore> _seed() async {
     const Duration(minutes: 40),
   );
 
-  Future<void> globalMessage(
-    String id,
-    String senderId,
-    String senderName,
-    String content,
-    Duration age, {
-    bool creator = false,
-    bool staff = false,
-    bool deleted = false,
-  }) => db
-      .collection('globalChat')
-      .doc(GlobalChatService.channelId)
-      .collection('messages')
-      .doc(id)
-      .set({
-        'senderId': senderId,
-        'senderName': senderName,
-        'senderPhotoUrl': null,
-        'senderIsCreator': creator,
-        'senderIsStaff': staff,
-        'content': deleted ? '' : content,
-        'sentAt': Timestamp.fromDate(ago(age)),
-        'isDeleted': deleted,
-        'deletedBy': deleted ? 'mod-1' : null,
-        'deletedAt': null,
-      });
-
-  await globalMessage(
-    'gm1',
-    'marta',
-    'Marta Nowak',
-    'Doors open in ten minutes — bring your work.',
-    const Duration(minutes: 2),
-    creator: true,
-  );
-  await globalMessage(
-    'gm2',
-    'ola',
-    'Ola Kwiatkowska',
-    'Just posted a Moment about the redesign, would love notes.',
-    const Duration(minutes: 9),
-  );
-  await globalMessage(
-    'gm3',
-    'sieeema',
-    'Sieeema',
-    'Keep it kind in here, everyone.',
-    const Duration(minutes: 21),
-    staff: true,
-  );
-  await globalMessage(
-    'gm4',
-    'spammer',
-    'Spammer',
-    '',
-    const Duration(minutes: 34),
-    deleted: true,
-  );
-  await globalMessage(
-    'gm5',
-    'jonas',
-    'Jonas',
-    'Anyone up for a freestyle room tonight?',
-    const Duration(hours: 2),
-  );
-  await globalMessage(
-    'gm6',
-    _uid,
-    'CeoGriefer',
-    'Shipping the new desktop Home today.',
-    const Duration(hours: 3),
-  );
-
   return db;
 }
 
@@ -501,6 +428,63 @@ class _PreviewApp extends StatelessWidget {
     final notifications = NotificationService(firestore: db, auth: auth);
     final rooms = RoomService(firestore: db, auth: auth);
 
+    Widget homeExtras() => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        VoiceTrendingCard(
+          roomService: rooms,
+          profileService: ProfileService(firestore: db, auth: auth),
+          onOpenRoom: (_) {},
+          onSeeAll: () {},
+        ),
+        const SizedBox(height: 16),
+        PremiumDesktopCard(onCheckPlans: () {}),
+        const SizedBox(height: 16),
+        FollowedCreatorsCard(
+          currentUserId: _uid,
+          onOpenCreator: (_) {},
+          onViewAll: () {},
+          onDiscover: () {},
+          followService: FollowService(firestore: db, auth: auth),
+          feedService: HomeFeedService(firestore: db, auth: auth),
+          roomService: rooms,
+        ),
+      ],
+    );
+
+    Widget home({Widget? trailingContent}) => DesktopHome(
+      currentUserId: _uid,
+      onOpenRoom: (_) {},
+      onSeeAllRooms: () {},
+      onViewAllFriends: () {},
+      onStartRoom: () {},
+      onOpenMoment: (_) {},
+      onCreateMoment: () {},
+      onSeeAllMoments: () {},
+      onOpenConversation: (_) {},
+      onOpenClub: (_) {},
+      onSeeAllChats: () {},
+      onOpenClubs: () {},
+      roomService: rooms,
+      friendService: FriendService(firestore: db, auth: auth),
+      profileService: ProfileService(firestore: db, auth: auth),
+      feedService: HomeFeedService(firestore: db, auth: auth),
+      messageService: MessageService(
+        firestore: db,
+        auth: auth,
+        notificationService: notifications,
+      ),
+      clubService: ClubService(
+        firestore: db,
+        auth: auth,
+        storage: MockFirebaseStorage(),
+        notificationService: notifications,
+      ),
+      clubChatService: ClubChatService(firestore: db, auth: auth),
+      firebaseAuth: auth,
+      trailingContent: trailingContent,
+    );
+
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(brightness: Brightness.dark, useMaterial3: true),
@@ -520,80 +504,47 @@ class _PreviewApp extends StatelessWidget {
               profileService: ProfileService(firestore: db, auth: auth),
             ),
             Expanded(
-              child: moderationPreview
-                  ? ModerationCenterScreen(
-                      isRootTab: true,
-                      moderationService: _PreviewModerationService(
-                        firestore: db,
-                        auth: auth,
+              child: ResponsiveContentFrame(
+                width: ResponsiveContentWidth.workbench,
+                child: moderationPreview
+                    ? ModerationCenterScreen(
+                        isRootTab: true,
+                        moderationService: _PreviewModerationService(
+                          firestore: db,
+                          auth: auth,
+                        ),
+                      )
+                    : LayoutBuilder(
+                        builder: (context, constraints) {
+                          final useRightRail = constraints.maxWidth >= 1100;
+                          final extras = homeExtras();
+
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: home(
+                                  trailingContent: useRightRail ? null : extras,
+                                ),
+                              ),
+                              if (useRightRail)
+                                SizedBox(
+                                  width: 344,
+                                  child: ListView(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      6,
+                                      20,
+                                      20,
+                                      20,
+                                    ),
+                                    children: [extras],
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
                       ),
-                    )
-                  : DesktopHome(
-                      currentUserId: _uid,
-                      onOpenRoom: (_) {},
-                      onSeeAllRooms: () {},
-                      onViewAllFriends: () {},
-                      onStartRoom: () {},
-                      onOpenMoment: (_) {},
-                      onCreateMoment: () {},
-                      onSeeAllMoments: () {},
-                      onOpenConversation: (_) {},
-                      onOpenClub: (_) {},
-                      onSeeAllChats: () {},
-                      onOpenClubs: () {},
-                      roomService: rooms,
-                      friendService: FriendService(firestore: db, auth: auth),
-                      profileService: ProfileService(firestore: db, auth: auth),
-                      feedService: HomeFeedService(firestore: db, auth: auth),
-                      messageService: MessageService(
-                        firestore: db,
-                        auth: auth,
-                        notificationService: notifications,
-                      ),
-                      clubService: ClubService(
-                        firestore: db,
-                        auth: auth,
-                        storage: MockFirebaseStorage(),
-                        notificationService: notifications,
-                      ),
-                      clubChatService: ClubChatService(
-                        firestore: db,
-                        auth: auth,
-                      ),
-                      firebaseAuth: auth,
-                    ),
-            ),
-            // Production renders Home's right column only for slot 0, so
-            // the moderation preview must not either — otherwise the
-            // centre is 344px narrower than the real thing and the panel
-            // takes its narrow branch when it would not.
-            if (!moderationPreview)
-              SizedBox(
-                width: 344,
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(6, 20, 20, 20),
-                  children: [
-                    VoiceTrendingCard(
-                      roomService: rooms,
-                      profileService: ProfileService(firestore: db, auth: auth),
-                      onOpenRoom: (_) {},
-                      onSeeAll: () {},
-                    ),
-                    const SizedBox(height: 16),
-                    PremiumDesktopCard(onCheckPlans: () {}),
-                    const SizedBox(height: 16),
-                    FollowedCreatorsCard(
-                      currentUserId: _uid,
-                      onOpenCreator: (_) {},
-                      onViewAll: () {},
-                      onDiscover: () {},
-                      followService: FollowService(firestore: db, auth: auth),
-                      feedService: HomeFeedService(firestore: db, auth: auth),
-                      roomService: rooms,
-                    ),
-                  ],
-                ),
               ),
+            ),
           ],
         ),
       ),

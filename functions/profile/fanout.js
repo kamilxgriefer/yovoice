@@ -24,7 +24,7 @@ const BATCH_LIMIT = 450;
  *    (club member lists; memberships enumerated via the
  *    users/{uid}/clubs mirror, so no collectionGroup query — this
  *    project has been bitten by collectionGroup+rules before, ADR-007)
- *  - voice_moments.authorPhotoUrl / authorName (the Home feed)
+ *  - voiceMoments.authorPhotoUrl / authorName (the Home feed)
  *
  * Room participant docs are deliberately NOT touched: they're deleted
  * when the user leaves the room, so they're short-lived enough that a
@@ -37,6 +37,11 @@ const onProfileIdentityChanged = onDocumentUpdated(
   {
     document: "users/{uid}",
     region: REGION,
+    // Identity fan-out is convergent and idempotent. A Club member can be
+    // removed after the canonical existence check but before batch.update()
+    // commits; retry lets the next attempt observe the deletion and skip it
+    // instead of losing every other identity update in the event.
+    retry: true,
   },
   async (event) => {
     const before = event.data?.before.data() ?? {};
@@ -93,29 +98,44 @@ const onProfileIdentityChanged = onDocumentUpdated(
       .doc(uid)
       .collection("clubs")
       .get();
+    let verifiedClubMemberships = 0;
     for (const membership of memberships.docs) {
-      const clubId = membership.data().clubId ?? membership.id;
+      // The mirror is a discovery index, not authority. Always derive the
+      // target from its document id and verify the canonical member record
+      // before writing. update() (rather than set(..., merge)) also makes a
+      // delete racing this trigger fail/retry instead of recreating access.
+      const clubId = membership.id;
+      const memberReference = db
+        .collection("clubs")
+        .doc(clubId)
+        .collection("members")
+        .doc(uid);
+      const member = await memberReference.get();
+      if (!member.exists || member.data()?.userId !== uid) continue;
+
       const update = {};
       if (photoChanged) update.photoUrl = photoUrl;
       if (nameChanged && displayName) update.displayName = displayName;
-      batch.set(
-        db.collection("clubs").doc(clubId).collection("members").doc(uid),
-        update,
-        { merge: true },
-      );
+      // displayName is optional today. A transition to null/empty with no
+      // photo change produces no canonical Club mutation and must not enqueue
+      // an empty update (which would poison a retrying event forever).
+      if (Object.keys(update).length === 0) continue;
+      batch.update(memberReference, update);
+      verifiedClubMemberships += 1;
       pending += 1;
       await commitIfFull();
     }
 
     // Voice Moments authored by this user (Home feed cards).
     const moments = await db
-      .collection("voice_moments")
+      .collection("voiceMoments")
       .where("authorId", "==", uid)
       .get();
     for (const doc of moments.docs) {
       const update = {};
       if (photoChanged) update.authorPhotoUrl = photoUrl;
       if (nameChanged && displayName) update.authorName = displayName;
+      if (Object.keys(update).length === 0) continue;
       batch.update(doc.ref, update);
       pending += 1;
       await commitIfFull();
@@ -145,7 +165,8 @@ const onProfileIdentityChanged = onDocumentUpdated(
       nameChanged,
       photoPath,
       conversations: conversations.size,
-      clubMemberships: memberships.size,
+      clubMemberships: verifiedClubMemberships,
+      clubMirrorsScanned: memberships.size,
       moments: moments.size,
       writes: total,
     });

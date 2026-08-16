@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/clubs/data/models/club_member.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class ClubMemberManagementScreen extends StatefulWidget {
   const ClubMemberManagementScreen({
@@ -163,98 +164,103 @@ class _ClubMemberManagementScreenState
         foregroundColor: Colors.white,
         title: const Text('Member role'),
       ),
-      body: StreamBuilder<ClubMember?>(
-        stream: _service.watchMyMembership(widget.clubId),
-        builder: (context, snapshot) {
-          final actor = snapshot.data;
-          final canManage =
-              actor != null &&
-              actor.role.canManageRoles &&
-              actor.userId != widget.member.userId &&
-              actor.role.power > widget.member.role.power;
-          final canRemove =
-              actor != null &&
-              actor.role.canRemoveMembers &&
-              actor.userId != widget.member.userId &&
-              actor.role.power > widget.member.role.power &&
-              widget.member.role != ClubRole.owner;
-          final canTransferOwnership =
-              actor != null &&
-              actor.role == ClubRole.owner &&
-              actor.userId != widget.member.userId &&
-              widget.member.role != ClubRole.owner;
+      body: ResponsiveContentFrame(
+        width: ResponsiveContentWidth.form,
+        child: StreamBuilder<ClubMember?>(
+          stream: _service.watchMyMembership(widget.clubId),
+          builder: (context, snapshot) {
+            final actor = snapshot.data;
+            final canManage =
+                actor != null &&
+                actor.role.canManageRoles &&
+                actor.userId != widget.member.userId &&
+                actor.role.power > widget.member.role.power;
+            final canRemove =
+                actor != null &&
+                actor.role.canRemoveMembers &&
+                actor.userId != widget.member.userId &&
+                actor.role.power > widget.member.role.power &&
+                widget.member.role != ClubRole.owner;
+            final canTransferOwnership =
+                actor != null &&
+                actor.role == ClubRole.owner &&
+                actor.userId != widget.member.userId &&
+                widget.member.role != ClubRole.owner;
 
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 36),
-            children: [
-              _MemberHeader(member: widget.member),
-              const SizedBox(height: 22),
-              const Text(
-                'CLUB ROLE',
-                style: TextStyle(
-                  color: Color(0xFF9F95A6),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1.2,
-                ),
-              ),
-              const SizedBox(height: 10),
-              for (final role in ClubRole.values.where(
-                (role) => role != ClubRole.owner,
-              ))
-                _RoleTile(
-                  role: role,
-                  selected: role == widget.member.role,
-                  enabled:
-                      canManage &&
-                      (actor.role == ClubRole.owner ||
-                          role.power < actor.role.power),
-                  onTap: () => _changeRole(role),
-                ),
-              if (!canManage) ...[
-                const SizedBox(height: 14),
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 36),
+              children: [
+                _MemberHeader(member: widget.member),
+                const SizedBox(height: 22),
                 const Text(
-                  'Only a higher-ranking Owner or Co-owner can change this member’s role.',
+                  'CLUB ROLE',
                   style: TextStyle(
-                    color: Color(0xFF968C9D),
-                    fontSize: 12,
-                    height: 1.4,
+                    color: Color(0xFF9F95A6),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.2,
                   ),
                 ),
-              ],
-              if (canTransferOwnership) ...[
-                const SizedBox(height: 26),
-                OutlinedButton.icon(
-                  onPressed: _saving ? null : _transferOwnership,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFFD19CFF),
-                    side: const BorderSide(color: Color(0xFF5A3A73)),
-                    minimumSize: const Size.fromHeight(52),
+                const SizedBox(height: 10),
+                for (final role in ClubRole.values.where(
+                  (role) => role != ClubRole.owner,
+                ))
+                  _RoleTile(
+                    role: role,
+                    selected: role == widget.member.role,
+                    enabled:
+                        canManage &&
+                        (actor.role == ClubRole.owner ||
+                            role.power < actor.role.power),
+                    onTap: () => _changeRole(role),
                   ),
-                  icon: const Icon(Icons.workspace_premium_rounded),
-                  label: const Text('TRANSFER OWNERSHIP'),
-                ),
-              ],
-              if (canRemove) ...[
-                const SizedBox(height: 26),
-                OutlinedButton.icon(
-                  onPressed: _saving ? null : _removeMember,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFFFF6B8E),
-                    side: const BorderSide(color: Color(0xFF6B2940)),
-                    minimumSize: const Size.fromHeight(52),
+                if (!canManage) ...[
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Only a higher-ranking Owner or Co-owner can change this member’s role.',
+                    style: TextStyle(
+                      color: Color(0xFF968C9D),
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
                   ),
-                  icon: const Icon(Icons.person_remove_rounded),
-                  label: const Text('REMOVE FROM CLUB'),
-                ),
+                ],
+                if (canTransferOwnership) ...[
+                  const SizedBox(height: 26),
+                  OutlinedButton.icon(
+                    onPressed: _saving ? null : _transferOwnership,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFD19CFF),
+                      side: const BorderSide(color: Color(0xFF5A3A73)),
+                      minimumSize: const Size.fromHeight(52),
+                    ),
+                    icon: const Icon(Icons.workspace_premium_rounded),
+                    label: const Text('TRANSFER OWNERSHIP'),
+                  ),
+                ],
+                if (canRemove) ...[
+                  const SizedBox(height: 26),
+                  OutlinedButton.icon(
+                    onPressed: _saving ? null : _removeMember,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFFF6B8E),
+                      side: const BorderSide(color: Color(0xFF6B2940)),
+                      minimumSize: const Size.fromHeight(52),
+                    ),
+                    icon: const Icon(Icons.person_remove_rounded),
+                    label: const Text('REMOVE FROM CLUB'),
+                  ),
+                ],
+                if (_saving) ...[
+                  const SizedBox(height: 20),
+                  const Center(
+                    child: CircularProgressIndicator(color: _purple),
+                  ),
+                ],
               ],
-              if (_saving) ...[
-                const SizedBox(height: 20),
-                const Center(child: CircularProgressIndicator(color: _purple)),
-              ],
-            ],
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }

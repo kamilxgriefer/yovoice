@@ -9,6 +9,7 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// "Top creators you follow" — the desktop right column, under Premium.
@@ -289,101 +290,103 @@ class _CreatorRowState extends State<_CreatorRow> {
         DateTime.now().difference(moment!.createdAt!) <
             FollowedCreatorsCard.recentWindow;
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 130),
-          margin: const EdgeInsets.only(bottom: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+    return AccessibleTapRegion(
+      onTap: widget.onTap,
+      semanticLabel: 'Open profile for ${widget.creator.displayName}',
+      tooltip: 'Open ${widget.creator.displayName}\'s profile',
+      borderRadius: 14,
+      onHover: (hovering) {
+        if (_hover != hovering) setState(() => _hover = hovering);
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 130),
+        margin: const EdgeInsets.only(bottom: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          color: _hover
+              ? Colors.white.withValues(alpha: .04)
+              : Colors.transparent,
+          border: Border.all(
             color: _hover
-                ? Colors.white.withValues(alpha: .04)
+                ? AppColors.primary.withValues(alpha: .30)
                 : Colors.transparent,
-            border: Border.all(
-              color: _hover
-                  ? AppColors.primary.withValues(alpha: .30)
-                  : Colors.transparent,
-            ),
           ),
-          child: Row(
-            children: [
-              UserAvatar(
-                radius: 17,
-                photoUrl: widget.creator.photoUrl,
-                displayName: widget.creator.displayName,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            widget.creator.displayName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                            ),
+        ),
+        child: Row(
+          children: [
+            UserAvatar(
+              radius: 17,
+              photoUrl: widget.creator.photoUrl,
+              displayName: widget.creator.displayName,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          widget.creator.displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                        const SizedBox(width: 4),
-                        UserIdentityBadges(
-                          uid: widget.creator.uid,
-                          variant: IdentityBadgeVariant.icon,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 1),
-                    // Exactly one signal, and only one the data proves:
-                    // hosting a live room now, then a Moment from the last
-                    // day, then just the handle.
-                    if (room != null)
-                      _LiveSignal(roomName: room.name)
-                    else if (recent)
-                      Text(
-                        'New Moment · ${_age(moment.createdAt!)}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFFE879F9),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      )
-                    else if (_handle.isNotEmpty)
-                      Text(
-                        _handle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFF9A90AC),
-                          fontSize: 11,
-                        ),
                       ),
-                  ],
-                ),
+                      const SizedBox(width: 4),
+                      UserIdentityBadges(
+                        uid: widget.creator.uid,
+                        variant: IdentityBadgeVariant.icon,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 1),
+                  // Exactly one signal, and only one the data proves:
+                  // hosting a live room now, then a Moment from the last
+                  // day, then just the handle.
+                  if (room != null)
+                    _LiveSignal(roomName: room.name)
+                  else if (recent)
+                    Text(
+                      'New Moment · ${_age(moment.createdAt!)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFFE879F9),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    )
+                  else if (_handle.isNotEmpty)
+                    Text(
+                      _handle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF9A90AC),
+                        fontSize: 11,
+                      ),
+                    ),
+                ],
               ),
-              const SizedBox(width: 6),
-              AnimatedOpacity(
-                duration: const Duration(milliseconds: 130),
-                opacity: _hover ? 1 : .45,
-                child: const Icon(
-                  Icons.chevron_right_rounded,
-                  size: 18,
-                  color: Color(0xFFD3A5FF),
-                ),
+            ),
+            const SizedBox(width: 6),
+            AnimatedOpacity(
+              duration: const Duration(milliseconds: 130),
+              opacity: _hover ? 1 : .45,
+              child: const Icon(
+                Icons.chevron_right_rounded,
+                size: 18,
+                color: Color(0xFFD3A5FF),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

@@ -49,68 +49,71 @@ class BroadcastBottomControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(14, 8, 14, 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xF21A0B0F),
-        borderRadius: BorderRadius.circular(26),
-        border: Border.all(color: BroadcastRoomColors.border),
-      ),
-      child: Row(
-        children: [
-          if (canSpeak)
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Container(
+        width: double.infinity,
+        constraints: const BoxConstraints(maxWidth: 620),
+        margin: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xF21A0B0F),
+          borderRadius: BorderRadius.circular(26),
+          border: Border.all(color: BroadcastRoomColors.border),
+        ),
+        child: Row(
+          children: [
+            if (canSpeak)
+              Expanded(
+                child: BroadcastHostBottomAction(
+                  icon: micMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                  label: micMuted ? 'Unmute' : 'Mute',
+                  highlighted: !micMuted,
+                  onTap: ending || micBusy || !connected ? null : onMic,
+                ),
+              )
+            else
+              Expanded(
+                child: BroadcastHostBottomAction(
+                  icon: handRaised
+                      ? Icons.pan_tool_alt_rounded
+                      : Icons.back_hand_outlined,
+                  label: handRaised ? 'Lower hand' : 'Raise hand',
+                  highlighted: handRaised,
+                  onTap: ending || !canRaiseHand ? null : onRaiseHand,
+                ),
+              ),
             Expanded(
               child: BroadcastHostBottomAction(
-                icon: micMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
-                label: micMuted ? 'Unmute' : 'Mute',
-                highlighted: !micMuted,
-                onTap: ending || micBusy || !connected ? null : onMic,
+                icon: Icons.forum_rounded,
+                label: 'Chat',
+                onTap: ending ? null : onChat,
               ),
-            )
-          else
+            ),
             Expanded(
               child: BroadcastHostBottomAction(
-                icon: handRaised
-                    ? Icons.pan_tool_alt_rounded
-                    : Icons.back_hand_outlined,
-                label: handRaised ? 'Lower hand' : 'Raise hand',
-                highlighted: handRaised,
-                onTap: ending || !canRaiseHand ? null : onRaiseHand,
+                icon: Icons.groups_rounded,
+                label: 'People',
+                onTap: ending ? null : onParticipants,
               ),
             ),
-          Expanded(
-            child: BroadcastHostBottomAction(
-              icon: Icons.forum_rounded,
-              label: 'Chat',
-              onTap: ending ? null : onChat,
+            Expanded(
+              child: BroadcastHostBottomAction(
+                icon: Icons.ios_share_rounded,
+                label: 'Share',
+                onTap: ending ? null : onShare,
+              ),
             ),
-          ),
-          Expanded(
-            child: BroadcastHostBottomAction(
-              icon: Icons.groups_rounded,
-              label: 'People',
-              onTap: ending ? null : onParticipants,
+            Expanded(
+              child: BroadcastHostBottomAction(
+                icon: isHost ? Icons.stop_circle_rounded : Icons.logout_rounded,
+                label: isHost ? 'End' : 'Leave',
+                destructive: true,
+                onTap: ending ? null : (isHost ? onEnd : onLeave),
+              ),
             ),
-          ),
-          Expanded(
-            child: BroadcastHostBottomAction(
-              icon: Icons.ios_share_rounded,
-              label: 'Share',
-              onTap: ending ? null : onShare,
-            ),
-          ),
-          Expanded(
-            child: BroadcastHostBottomAction(
-              icon: isHost
-                  ? Icons.stop_circle_rounded
-                  : Icons.logout_rounded,
-              label: isHost ? 'End' : 'Leave',
-              destructive: true,
-              onTap: ending ? null : (isHost ? onEnd : onLeave),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -154,8 +157,9 @@ class BroadcastHostBottomAction extends StatelessWidget {
             const SizedBox(height: 5),
             Text(
               label,
-              maxLines: 1,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
               style: TextStyle(
                 color: color,
                 fontSize: 10,

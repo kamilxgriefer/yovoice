@@ -8,11 +8,13 @@ class FriendUser {
     required this.photoUrl,
     required this.isOnline,
     required this.lastSeen,
+    this.username = '',
     this.premiumIdentity = false,
   });
 
   final String id;
   final String displayName;
+  final String username;
   final String email;
   final String? photoUrl;
   final bool isOnline;
@@ -30,6 +32,12 @@ class FriendUser {
       return normalizedName[0].toUpperCase();
     }
 
+    final normalizedUsername = username.trim();
+
+    if (normalizedUsername.isNotEmpty) {
+      return normalizedUsername[0].toUpperCase();
+    }
+
     final normalizedEmail = email.trim();
 
     if (normalizedEmail.isNotEmpty) {
@@ -41,6 +49,10 @@ class FriendUser {
 
   String get searchableDisplayName {
     return displayName.trim().toLowerCase();
+  }
+
+  String get searchableUsername {
+    return username.trim().toLowerCase();
   }
 
   String get searchableEmail {
@@ -61,10 +73,15 @@ class FriendUser {
     return FriendUser(
       id: document.id,
       displayName: _resolveDisplayName(data),
-      email: (data['email'] as String?)?.trim() ?? '',
+      username: _normalizeString(data['username']),
+      // Public profile reads never carry email. Keep the compatibility field
+      // empty and presence false even if a malformed projection somehow
+      // contains either. FriendService joins the separately authorised
+      // socialPresence document after loading identity.
+      email: '',
       photoUrl: _normalizeNullableString(data['photoUrl']),
-      isOnline: data['isOnline'] as bool? ?? false,
-      lastSeen: _readDateTime(data['lastSeen']),
+      isOnline: false,
+      lastSeen: null,
       premiumIdentity: data['premiumIdentity'] as bool? ?? false,
     );
   }
@@ -76,10 +93,11 @@ class FriendUser {
     return FriendUser(
       id: id,
       displayName: _resolveDisplayName(data),
-      email: (data['email'] as String?)?.trim() ?? '',
+      username: _normalizeString(data['username']),
+      email: '',
       photoUrl: _normalizeNullableString(data['photoUrl']),
-      isOnline: data['isOnline'] as bool? ?? false,
-      lastSeen: _readDateTime(data['lastSeen']),
+      isOnline: false,
+      lastSeen: null,
       premiumIdentity: data['premiumIdentity'] as bool? ?? false,
     );
   }
@@ -88,6 +106,7 @@ class FriendUser {
     return {
       'userId': id,
       'displayName': displayName.trim(),
+      'username': username.trim(),
       'email': email.trim().toLowerCase(),
       'photoUrl': photoUrl,
       'isOnline': isOnline,
@@ -98,20 +117,24 @@ class FriendUser {
   FriendUser copyWith({
     String? id,
     String? displayName,
+    String? username,
     String? email,
     String? photoUrl,
     bool clearPhotoUrl = false,
     bool? isOnline,
     DateTime? lastSeen,
     bool clearLastSeen = false,
+    bool? premiumIdentity,
   }) {
     return FriendUser(
       id: id ?? this.id,
       displayName: displayName ?? this.displayName,
+      username: username ?? this.username,
       email: email ?? this.email,
       photoUrl: clearPhotoUrl ? null : photoUrl ?? this.photoUrl,
       isOnline: isOnline ?? this.isOnline,
       lastSeen: clearLastSeen ? null : lastSeen ?? this.lastSeen,
+      premiumIdentity: premiumIdentity ?? this.premiumIdentity,
     );
   }
 
@@ -122,12 +145,6 @@ class FriendUser {
       if (value is String && value.trim().isNotEmpty) {
         return value.trim();
       }
-    }
-
-    final email = (data['email'] as String?)?.trim();
-
-    if (email != null && email.isNotEmpty) {
-      return email.split('@').first;
     }
 
     return 'YO Voice user';
@@ -147,16 +164,8 @@ class FriendUser {
     return normalizedValue;
   }
 
-  static DateTime? _readDateTime(Object? value) {
-    if (value is Timestamp) {
-      return value.toDate();
-    }
-
-    if (value is DateTime) {
-      return value;
-    }
-
-    return null;
+  static String _normalizeString(Object? value) {
+    return _normalizeNullableString(value) ?? '';
   }
 
   @override

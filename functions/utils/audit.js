@@ -100,6 +100,7 @@ async function writeRoomAuditLog({
   roomId,
   roomName = null,
   details = {},
+  entryId = null,
 }) {
   return writeAuditLog({
     caller,
@@ -108,6 +109,7 @@ async function writeRoomAuditLog({
     targetId: roomId,
     targetLabel: roomName,
     details,
+    entryId,
   });
 }
 
@@ -117,6 +119,7 @@ async function writeClubAuditLog({
   clubId,
   clubName = null,
   details = {},
+  entryId = null,
 }) {
   return writeAuditLog({
     caller,
@@ -125,6 +128,7 @@ async function writeClubAuditLog({
     targetId: clubId,
     targetLabel: clubName,
     details,
+    entryId,
   });
 }
 

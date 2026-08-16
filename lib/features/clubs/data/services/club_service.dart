@@ -9,7 +9,6 @@ import 'package:yovoice/features/clubs/data/models/club_channel.dart';
 import 'package:yovoice/features/clubs/data/models/club_invite.dart';
 import 'package:yovoice/features/clubs/data/models/club_member.dart';
 import 'package:yovoice/features/clubs/data/models/family_check_in.dart';
-import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 
 class ClubService {
@@ -22,48 +21,26 @@ class ClubService {
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _storage = storage ?? FirebaseStorage.instance,
-       _functionsOverride = functions,
-       _notifications = notificationService ?? NotificationService();
+       _functionsOverride = functions;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final FirebaseStorage _storage;
-  final NotificationService _notifications;
 
-  /// Resolved on first use, not in the constructor. Exactly one method
-  /// here calls a Cloud Function (`transferClubOwnershipSelf`), but
+  /// Resolved on first use, not in the constructor. Community creation and
+  /// ownership transfer call Cloud Functions, but
   /// `FirebaseFunctions.instance` throws whenever no Firebase app is
   /// initialised — which made the whole service unconstructible in widget
   /// tests that only ever read clubs (the desktop Conversations hub).
   /// There is no fake for cloud_functions, and lazy resolution keeps
-  /// production behaviour byte-for-byte identical.
+  /// production calls must target the functions' europe-west1 region.
   final FirebaseFunctions? _functionsOverride;
   FirebaseFunctions get _functions =>
-      _functionsOverride ?? FirebaseFunctions.instance;
+      _functionsOverride ??
+      FirebaseFunctions.instanceFor(region: 'europe-west1');
 
   CollectionReference<Map<String, dynamic>> get _clubs =>
       _firestore.collection('clubs');
-
-  /// How many clubs the signed-in user currently owns. Used by the
-  /// premium club-creation gate (entitlements.maxOwnedClubs) — a count
-  /// aggregate, so no documents are downloaded.
-  ///
-  /// Counts the user's OWN membership index rather than querying
-  /// `clubs` directly. Listing `clubs` is refused outright now: a
-  /// per-document read condition does not protect a collection listing,
-  /// so an outsider could enumerate the collection and read a family
-  /// room's name out of it. `users/{uid}/clubs` carries the same role
-  /// and is already owner-only.
-  Future<int> countOwnedClubs() async {
-    final snapshot = await _firestore
-        .collection('users')
-        .doc(_user.uid)
-        .collection('clubs')
-        .where('role', isEqualTo: ClubRole.owner.name)
-        .count()
-        .get();
-    return snapshot.count ?? 0;
-  }
 
   User get _user {
     final user = _auth.currentUser;
@@ -72,6 +49,12 @@ class ClubService {
     }
     return user;
   }
+
+  /// Allocates the idempotency key used by community Club creation. The
+  /// create screen keeps this value across submit retries, so a lost callable
+  /// response can only recover the same server transaction, never create a
+  /// second Club.
+  String newClubDocumentId() => _clubs.doc().id;
 
   /// Creates the caller's Family Room: the same club document, members,
   /// roles, invites, channels and lounge, with `type: family` — which is
@@ -130,12 +113,11 @@ class ClubService {
       throw ArgumentError('Club description cannot exceed 220 characters.');
     }
 
-    final clubRef = documentId == null
-        ? _clubs.doc()
-        : _clubs.doc(documentId);
+    final clubRef = documentId == null ? _clubs.doc() : _clubs.doc(documentId);
     String? avatarUrl;
     String? bannerUrl;
     final uploadedReferences = <Reference>[];
+    var cleanupUploadsOnFailure = true;
 
     try {
       if (avatarFile != null) {
@@ -157,6 +139,57 @@ class ClubService {
         uploadedReferences.add(result.reference);
       }
 
+      // Community Club creation is privileged server work: the callable
+      // verifies the trusted entitlement, serializes concurrent sessions per
+      // owner, counts canonical Club roots (including legacy documents) and
+      // atomically writes the same Club/member/channels/lounge shape below.
+      // Family Rooms remain on the direct, free deterministic-id path.
+      if (type == ClubType.community) {
+        final callable = _functions.httpsCallable('createCommunityClub');
+        // Once the request leaves the device, a transport timeout is
+        // ambiguous: the server transaction may already have committed. Do
+        // not delete images that a committed Club now references. First
+        // recover idempotently through the same locally generated Club id;
+        // clean up only for explicit server rejections that happen before a
+        // commit (quota/entitlement/input/auth).
+        cleanupUploadsOnFailure = false;
+        try {
+          await callable.call<Map<Object?, Object?>>({
+            'clubId': clubRef.id,
+            'name': normalizedName,
+            'description': normalizedDescription,
+            'privacy': privacy.name,
+            'defaultLanguage': normalizedLanguage,
+            'avatarUrl': avatarUrl,
+            'bannerUrl': bannerUrl,
+          });
+        } on FirebaseFunctionsException catch (error) {
+          try {
+            final recovered = await clubRef.get();
+            if (recovered.exists && recovered.data()?['ownerId'] == user.uid) {
+              return Club.fromFirestore(recovered);
+            }
+          } catch (_) {
+            // The read is inconclusive too; preserve the uploads because the
+            // callable can still have committed.
+          }
+          cleanupUploadsOnFailure = const {
+            'already-exists',
+            'failed-precondition',
+            'invalid-argument',
+            'permission-denied',
+            'resource-exhausted',
+            'unauthenticated',
+          }.contains(error.code);
+          rethrow;
+        }
+        final snapshot = await clubRef.get();
+        if (!snapshot.exists) {
+          throw StateError('The Club was not created. Please try again.');
+        }
+        return Club.fromFirestore(snapshot);
+      }
+
       final generalRef = clubRef.collection('channels').doc();
       final announcementsRef = clubRef.collection('channels').doc();
       final loungeRef = clubRef.collection('channels').doc();
@@ -169,7 +202,6 @@ class ClubService {
           .doc(user.uid)
           .collection('clubs')
           .doc(clubRef.id);
-      final userRef = _firestore.collection('users').doc(user.uid);
       final ownerName = _resolveUserName(user);
 
       final batch = _firestore.batch();
@@ -182,6 +214,7 @@ class ClubService {
         'bannerUrl': bannerUrl,
         'privacy': privacy.name,
         'type': type.name,
+        'status': 'active',
         'defaultLanguage': normalizedLanguage,
         'memberCount': 1,
         'onlineCount': 1,
@@ -261,19 +294,17 @@ class ClubService {
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
-      batch.set(userRef, {
-        'clubCount': FieldValue.increment(1),
-      }, SetOptions(merge: true));
-
       await batch.commit();
       final snapshot = await clubRef.get();
       return Club.fromFirestore(snapshot);
     } catch (_) {
-      for (final reference in uploadedReferences) {
-        try {
-          await reference.delete();
-        } catch (_) {
-          // Best-effort cleanup only.
+      if (cleanupUploadsOnFailure) {
+        for (final reference in uploadedReferences) {
+          try {
+            await reference.delete();
+          } catch (_) {
+            // Best-effort cleanup only.
+          }
         }
       }
       rethrow;
@@ -292,9 +323,11 @@ class ClubService {
     }
 
     final extension = _fileExtension(file.name);
-    final reference = _storage.ref().child(
-      'clubs/${_user.uid}/$clubId/${kind}_${DateTime.now().millisecondsSinceEpoch}.$extension',
-    );
+    // The object name is deterministic for a Club/idempotency key. Retrying a
+    // timed-out creation overwrites the same two objects instead of leaking a
+    // new timestamped upload on every tap. Content type remains explicit, so
+    // an extension is not needed for serving the object.
+    final reference = _storage.ref().child('clubs/${_user.uid}/$clubId/$kind');
     final metadata = SettableMetadata(
       contentType: file.mimeType ?? _contentTypeForExtension(extension),
       cacheControl: 'public,max-age=31536000',
@@ -490,40 +523,10 @@ class ClubService {
       throw StateError('Use Leave Club to remove your own membership.');
     }
 
-    final clubRef = _clubs.doc(clubId);
-    final memberRef = clubRef.collection('members').doc(memberId);
-    final userClubRef = _firestore
-        .collection('users')
-        .doc(memberId)
-        .collection('clubs')
-        .doc(clubId);
-
-    await _firestore.runTransaction((transaction) async {
-      final clubSnapshot = await transaction.get(clubRef);
-      final targetSnapshot = await transaction.get(memberRef);
-      if (!clubSnapshot.exists || !targetSnapshot.exists) return;
-
-      final target = ClubMember.fromFirestore(targetSnapshot);
-      if (target.role == ClubRole.owner) {
-        throw StateError('The club owner cannot be removed.');
-      }
-      if (!actor.role.canRemoveRole(target.role)) {
-        throw StateError(
-          'You cannot remove a member with an equal or higher role.',
-        );
-      }
-
-      final data = clubSnapshot.data()!;
-      final memberCount = (data['memberCount'] as num?)?.toInt() ?? 0;
-      final onlineCount = (data['onlineCount'] as num?)?.toInt() ?? 0;
-      transaction.delete(memberRef);
-      transaction.delete(userClubRef);
-      transaction.update(clubRef, {
-        'memberCount': memberCount > 0 ? memberCount - 1 : 0,
-        if (target.isOnline)
-          'onlineCount': onlineCount > 0 ? onlineCount - 1 : 0,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+    final callable = _functions.httpsCallable('removeClubMemberSelf');
+    await callable.call<Map<Object?, Object?>>({
+      'clubId': clubId,
+      'memberId': memberId,
     });
   }
 
@@ -567,58 +570,13 @@ class ClubService {
       throw StateError('You are already in this club.');
     }
 
-    final clubRef = _clubs.doc(clubId);
-    final memberRef = clubRef.collection('members').doc(friendId);
-    final inviteRef = clubRef.collection('invites').doc(friendId);
-    final inviterSnapshot = await _firestore
-        .collection('users')
-        .doc(_user.uid)
-        .get();
-    final inviterName = (inviterSnapshot.data()?['displayName'] as String?)
-        ?.trim();
-
-    String? clubName;
-    await _firestore.runTransaction((transaction) async {
-      final clubSnapshot = await transaction.get(clubRef);
-      final memberSnapshot = await transaction.get(memberRef);
-      final inviteSnapshot = await transaction.get(inviteRef);
-
-      if (!clubSnapshot.exists) {
-        throw StateError('The club no longer exists.');
-      }
-      if (memberSnapshot.exists) {
-        throw StateError('This person is already a club member.');
-      }
-      if (inviteSnapshot.exists) {
-        throw StateError('An invitation has already been sent.');
-      }
-
-      final club = Club.fromFirestore(clubSnapshot);
-      clubName = club.name;
-      transaction.set(inviteRef, {
-        'clubId': clubId,
-        'clubName': club.name,
-        'clubAvatarUrl': club.avatarUrl,
-        'inviteeId': friendId,
-        'inviterId': _user.uid,
-        'inviterName': inviterName?.isNotEmpty == true
-            ? inviterName
-            : _resolveUserName(_user),
-        'status': 'pending',
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-    });
-
     try {
-      await _notifications.notify(
-        recipientId: friendId,
-        type: NotificationType.clubInvite,
-        targetId: clubId,
-        targetLabel: clubName,
-        dedupeKey: 'clubInvite:$clubId:${_user.uid}',
-      );
-    } catch (_) {
-      // Best-effort — the invite doc itself already succeeded above.
+      await _functions.httpsCallable('sendClubInvite').call({
+        'clubId': clubId,
+        'inviteeId': friendId,
+      });
+    } on FirebaseFunctionsException catch (error) {
+      throw StateError(error.message ?? 'The invitation could not be sent.');
     }
   }
 
@@ -696,17 +654,6 @@ class ClubService {
       });
       transaction.delete(inviteRef);
     });
-
-    try {
-      await _notifications.notify(
-        recipientId: invite.inviterId,
-        type: NotificationType.clubInviteAccepted,
-        targetId: invite.clubId,
-        targetLabel: invite.clubName,
-      );
-    } catch (_) {
-      // Best-effort — membership itself already succeeded above.
-    }
   }
 
   Future<void> declineClubInvite(ClubInvite invite) async {

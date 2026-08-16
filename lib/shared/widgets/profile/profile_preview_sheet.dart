@@ -19,6 +19,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/presentation/widgets/user_actions_menu.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// The one way to open "who is this person?" from anywhere in the app —
@@ -40,6 +41,7 @@ Future<void> showProfilePreview(
     useSafeArea: true,
     backgroundColor: Colors.transparent,
     barrierColor: Colors.black.withValues(alpha: .72),
+    constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
     builder: (_) => ProfilePreviewSheet(
       userId: userId,
       seedDisplayName: displayName,
@@ -97,9 +99,12 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
     super.initState();
     // The ••• menu's staff section renders only what the server granted;
     // failure means the personal-only menu, never a guess.
-    StaffCapabilityService().load().then((capabilities) {
-      if (mounted) setState(() => _capabilities = capabilities);
-    }).catchError((_) {});
+    StaffCapabilityService()
+        .load()
+        .then((capabilities) {
+          if (mounted) setState(() => _capabilities = capabilities);
+        })
+        .catchError((_) {});
     if (!_isSelf && _currentUid.isNotEmpty) {
       FirebaseFirestore.instance
           .collection('users')
@@ -108,8 +113,9 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
           .doc(widget.userId)
           .get()
           .then((snapshot) {
-        if (mounted) setState(() => _personallyMuted = snapshot.exists);
-      }).catchError((_) {});
+            if (mounted) setState(() => _personallyMuted = snapshot.exists);
+          })
+          .catchError((_) {});
     }
     if (!_isSelf) {
       unawaited(_loadRelationship());
@@ -250,9 +256,7 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         border: Border(top: BorderSide(color: _border)),
       ),
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.viewInsetsOf(context).bottom,
-      ),
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: StreamBuilder<UserProfile>(
         stream: _profiles.watchProfile(widget.userId),
         builder: (context, snapshot) {
@@ -293,8 +297,8 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
                               'this user',
                           capabilities: _capabilities,
                           currentUid: _currentUid,
-                          isBlocked: _relationship ==
-                              FriendRelationshipStatus.blocked,
+                          isBlocked:
+                              _relationship == FriendRelationshipStatus.blocked,
                           isPersonallyMuted: _personallyMuted,
                           onChanged: () {
                             if (mounted) {
@@ -543,9 +547,7 @@ class _Body extends StatelessWidget {
                   icon: Icons.chat_bubble_rounded,
                   label: 'Message',
                   busy: busyMessage,
-                  onPressed: profile == null
-                      ? null
-                      : () => onMessage(profile!),
+                  onPressed: profile == null ? null : () => onMessage(profile!),
                 ),
               ),
               const SizedBox(width: 10),
@@ -720,9 +722,7 @@ class _PrimaryButton extends StatelessWidget {
       style: FilledButton.styleFrom(
         backgroundColor: _ProfilePreviewSheetState._primary,
         padding: const EdgeInsets.symmetric(vertical: 13),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(15),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
       ),
       icon: busy
           ? const SizedBox(
@@ -767,9 +767,7 @@ class _SecondaryButton extends StatelessWidget {
         side: const BorderSide(color: _ProfilePreviewSheetState._border),
         backgroundColor: _ProfilePreviewSheetState._surface2,
         padding: const EdgeInsets.symmetric(vertical: 13),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(15),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
       ),
       icon: busy
           ? const SizedBox(

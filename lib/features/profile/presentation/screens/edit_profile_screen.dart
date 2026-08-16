@@ -38,7 +38,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late final ProfileService _service = widget.service ?? ProfileService();
   late final EntitlementService _entitlementService =
       widget.entitlements ?? EntitlementService();
+  late final Stream<SubscriptionEntitlements> _entitlements =
+      _watchEntitlements();
   final _formKey = GlobalKey<FormState>();
+
+  Stream<SubscriptionEntitlements> _watchEntitlements() {
+    try {
+      return _entitlementService.watchCurrentEntitlements();
+    } catch (_) {
+      // Auth can disappear while this route is mounted (and preview
+      // harnesses intentionally have no session). Access always fails closed;
+      // a missing session must not crash the whole form.
+      return Stream<SubscriptionEntitlements>.value(
+        SubscriptionEntitlements.free,
+      );
+    }
+  }
 
   late final TextEditingController _displayName;
   late final TextEditingController _username;
@@ -124,6 +139,31 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _saving = true);
     try {
+      // Re-check immediately before the write. The member may have selected
+      // Creator while Premium was active and then lost the entitlement before
+      // pressing Save; doing this before image uploads avoids side effects for
+      // a profile mutation Firestore will correctly reject anyway.
+      final activatingCreator =
+          _accountType == AccountType.creator &&
+          widget.profile.accountType != AccountType.creator;
+      if (activatingCreator) {
+        SubscriptionEntitlements entitlements;
+        try {
+          entitlements = await _entitlementService.currentEntitlements();
+        } catch (_) {
+          entitlements = SubscriptionEntitlements.free;
+        }
+        if (!entitlements.canUseCreator) {
+          if (mounted) {
+            await showPremiumUpsellSheet(
+              context,
+              upsellContext: PremiumUpsellContext.creator,
+            );
+          }
+          return;
+        }
+      }
+
       // Images first: if an upload fails the text edits are not committed
       // either, so the user is never left with a half-applied save.
       final avatar = _pendingAvatar;
@@ -350,16 +390,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ),
                 _field(_bio, 'Bio', maxLines: 4, maxLength: 220),
                 StreamBuilder<SubscriptionEntitlements>(
-                  stream: _entitlementService.watchCurrentEntitlements(),
+                  stream: _entitlements,
                   builder: (context, entitlementSnapshot) {
                     final entitlements =
                         entitlementSnapshot.data ??
                         SubscriptionEntitlements.free;
                     return _AccountTypePicker(
                       value: _accountType,
+                      creatorLocked: !entitlements.canUseCreator,
                       creatorPaused:
                           _accountType == AccountType.creator &&
-                          !entitlements.creatorEnabled,
+                          !entitlements.canUseCreator,
                       onChanged: (value) {
                         // Creator is a Premium capability. A free member
                         // selecting it gets the explanation + Explore
@@ -367,7 +408,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         // silently no-ops. (firestore.rules enforces the
                         // same gate server-side; this is the UX layer.)
                         if (value == AccountType.creator &&
-                            !entitlements.creatorEnabled) {
+                            !entitlements.canUseCreator) {
                           showPremiumUpsellSheet(
                             context,
                             upsellContext: PremiumUpsellContext.creator,
@@ -619,11 +660,13 @@ class _AccountTypePicker extends StatelessWidget {
   const _AccountTypePicker({
     required this.value,
     required this.onChanged,
+    required this.creatorLocked,
     this.creatorPaused = false,
   });
 
   final AccountType value;
   final ValueChanged<AccountType> onChanged;
+  final bool creatorLocked;
 
   /// True when the profile is Creator but Premium has lapsed: the
   /// Creator identity and data stay intact, premium Creator tools are
@@ -661,16 +704,23 @@ class _AccountTypePicker extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           SegmentedButton<AccountType>(
-            segments: const [
-              ButtonSegment(
+            segments: [
+              const ButtonSegment(
                 value: AccountType.personal,
                 icon: Icon(Icons.person_rounded),
                 label: Text('Personal'),
               ),
               ButtonSegment(
                 value: AccountType.creator,
-                icon: Icon(Icons.auto_awesome_rounded),
-                label: Text('Creator'),
+                icon: Icon(
+                  creatorLocked
+                      ? Icons.lock_rounded
+                      : Icons.auto_awesome_rounded,
+                  key: creatorLocked
+                      ? const ValueKey('creator-premium-lock')
+                      : null,
+                ),
+                label: const Text('Creator'),
               ),
             ],
             selected: <AccountType>{
@@ -679,6 +729,30 @@ class _AccountTypePicker extends StatelessWidget {
             onSelectionChanged: (selection) => onChanged(selection.first),
             showSelectedIcon: false,
           ),
+          if (creatorLocked && !creatorPaused) ...[
+            const SizedBox(height: 10),
+            const Row(
+              children: [
+                Icon(
+                  Icons.workspace_premium_rounded,
+                  color: Color(0xFFFFC24D),
+                  size: 16,
+                ),
+                SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    'Premium is required to activate Creator.',
+                    key: ValueKey('creator-premium-required'),
+                    style: TextStyle(
+                      color: Color(0xFFFFD985),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
           if (value == AccountType.official) ...[
             const SizedBox(height: 10),
             const Text(

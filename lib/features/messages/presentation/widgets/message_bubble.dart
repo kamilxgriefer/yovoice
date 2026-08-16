@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
 
 class MessageBubble extends StatelessWidget {
   const MessageBubble({
@@ -26,8 +27,12 @@ class MessageBubble extends StatelessWidget {
 
     return Align(
       alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
-      child: GestureDetector(
-        onLongPress: onLongPress,
+      child: AccessibleContextAction(
+        onOpen: onLongPress,
+        semanticLabel: isMine
+            ? 'Open actions for your message'
+            : 'Open actions for this message',
+        borderRadius: 22,
         child: Padding(
           padding: EdgeInsets.only(
             left: isMine ? 54 : 0,

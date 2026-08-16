@@ -3,6 +3,7 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -11,6 +12,7 @@ import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_moments_strip.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -83,6 +85,18 @@ void main() {
       'email': '$friendId@yovoice.app',
       'isOnline': true,
     });
+    await db.collection('publicProfiles').doc(friendId).set({
+      'uid': friendId,
+      'displayName': name,
+      'username': name.toLowerCase(),
+      'photoUrl': null,
+      'premiumIdentity': false,
+    });
+    await db.collection('socialPresence').doc(friendId).set({
+      'uid': friendId,
+      'isOnline': true,
+      'lastSeen': Timestamp.now(),
+    });
     await db
         .collection('users')
         .doc(uid)
@@ -96,6 +110,13 @@ void main() {
       'uid': creatorId,
       'displayName': name,
       'username': name.toLowerCase(),
+    });
+    await db.collection('publicProfiles').doc(creatorId).set({
+      'uid': creatorId,
+      'displayName': name,
+      'username': name.toLowerCase(),
+      'photoUrl': null,
+      'premiumIdentity': false,
     });
     await db
         .collection('users')
@@ -169,6 +190,53 @@ void main() {
 
   Widget host(Widget child) => MaterialApp(home: Scaffold(body: child));
 
+  Future<Map<String, dynamic>> invokeFollowMutation(
+    Map<String, dynamic> data,
+  ) async {
+    final targetUserId = data['targetUserId'] as String;
+    final following = data['following'] as bool;
+    final targetProfile = await db
+        .collection('publicProfiles')
+        .doc(targetUserId)
+        .get();
+    final target = targetProfile.data() ?? const <String, dynamic>{};
+    final actor = await db.collection('users').doc(uid).get();
+    final actorData = actor.data() ?? const <String, dynamic>{};
+    final actorFollowing = db
+        .collection('users')
+        .doc(uid)
+        .collection('following')
+        .doc(targetUserId);
+    final targetFollower = db
+        .collection('users')
+        .doc(targetUserId)
+        .collection('followers')
+        .doc(uid);
+    final batch = db.batch();
+    if (following) {
+      final now = Timestamp.now();
+      batch.set(actorFollowing, {
+        'uid': targetUserId,
+        'displayName': target['displayName'] ?? 'YO Voice user',
+        'username': target['username'] ?? '',
+        'photoUrl': target['photoUrl'],
+        'followedAt': now,
+      });
+      batch.set(targetFollower, {
+        'uid': uid,
+        'displayName': actorData['displayName'] ?? 'YO Voice user',
+        'username': actorData['username'] ?? '',
+        'photoUrl': actorData['photoUrl'],
+        'followedAt': now,
+      });
+    } else {
+      batch.delete(actorFollowing);
+      batch.delete(targetFollower);
+    }
+    await batch.commit();
+    return {'targetUserId': targetUserId, 'following': following};
+  }
+
   DesktopHome buildHome({
     void Function(VoiceRoom)? onOpenRoom,
     VoidCallback? onSeeAll,
@@ -202,7 +270,11 @@ void main() {
       onOpenClubs: onOpenClubs ?? () {},
       roomService: RoomService(firestore: db, auth: firebaseAuth),
       friendService: FriendService(firestore: db, auth: firebaseAuth),
-      followService: FollowService(firestore: db, auth: firebaseAuth),
+      followService: FollowService(
+        firestore: db,
+        auth: firebaseAuth,
+        mutationInvoker: invokeFollowMutation,
+      ),
       profileService: ProfileService(firestore: db, auth: firebaseAuth),
       feedService: HomeFeedService(firestore: db, auth: firebaseAuth),
       messageService: MessageService(
@@ -256,6 +328,8 @@ void main() {
       'Your circle',
       'For you',
       'Recommended now',
+      'Global Chat',
+      'Global conversations',
     ]) {
       expect(find.text(gone), findsNothing, reason: '\$gone returned');
     }
@@ -485,6 +559,53 @@ void main() {
   });
 
   group('Moments from your circle', () {
+    testWidgets('keeps typical full names readable at 1100 and 1440', (
+      tester,
+    ) async {
+      await seedFriend('friend-long', 'Aleksandra Kwiatkowska');
+      await seedFollowing('friend-long', 'Aleksandra Kwiatkowska');
+      await seedMoment(
+        id: 'moment-long',
+        authorId: 'friend-long',
+        authorName: 'Aleksandra Kwiatkowska',
+        caption: 'A full-name layout regression',
+      );
+      await seedFriend('follow-long', 'Katarzyna Wierzbicka');
+
+      useDesktop(tester, const Size(1100, 800));
+      await tester.pumpWidget(host(buildHome()));
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+
+      void expectFullName(String name) {
+        final finder = find.descendant(
+          of: find.byType(DesktopMomentsStrip),
+          matching: find.text(name),
+        );
+        expect(finder, findsOneWidget);
+        final label = tester.widget<Text>(finder);
+        expect(label.maxLines, 2);
+        final paragraph = tester.renderObject<RenderParagraph>(finder);
+        expect(
+          paragraph.didExceedMaxLines,
+          isFalse,
+          reason: '$name should fit without truncation',
+        );
+      }
+
+      expectFullName('Aleksandra Kwiatkowska');
+      expectFullName('Katarzyna Wierzbicka');
+      expect(tester.takeException(), isNull);
+
+      tester.view.physicalSize = const Size(1440, 900);
+      await tester.pump();
+
+      expectFullName('Aleksandra Kwiatkowska');
+      expectFullName('Katarzyna Wierzbicka');
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('shows one tile per person from real friend/following '
         'Moments, plus the user\'s own Moment slot', (tester) async {
       useDesktop(tester, const Size(1440, 820));

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class ClubSettingsScreen extends StatefulWidget {
   const ClubSettingsScreen({required this.club, super.key});
@@ -74,121 +75,124 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
         foregroundColor: Colors.white,
         title: const Text('Club settings'),
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(18, 16, 18, 120),
-        children: [
-          _field(_name, 'Club name'),
-          const SizedBox(height: 14),
-          _field(_description, 'Description', maxLines: 4),
-          const SizedBox(height: 14),
-          _field(_language, 'Default language'),
-          const SizedBox(height: 20),
-          const Text(
-            'Privacy',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
+      body: ResponsiveContentFrame(
+        width: ResponsiveContentWidth.form,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 120),
+          children: [
+            _field(_name, 'Club name'),
+            const SizedBox(height: 14),
+            _field(_description, 'Description', maxLines: 4),
+            const SizedBox(height: 14),
+            _field(_language, 'Default language'),
+            const SizedBox(height: 20),
+            const Text(
+              'Privacy',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
             ),
-          ),
-          const SizedBox(height: 10),
-          ...ClubPrivacy.values.map((privacy) {
-            final isSelected = _privacy == privacy;
+            const SizedBox(height: 10),
+            ...ClubPrivacy.values.map((privacy) {
+              final isSelected = _privacy == privacy;
 
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Material(
-                color: const Color(0xFF171120),
-                borderRadius: BorderRadius.circular(16),
-                child: InkWell(
-                  onTap: () => setState(() => _privacy = privacy),
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Material(
+                  color: const Color(0xFF171120),
                   borderRadius: BorderRadius.circular(16),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 15,
-                    ),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: isSelected
-                            ? const Color(0xFF9D20FF)
-                            : const Color(0xFF30263F),
-                        width: isSelected ? 1.5 : 1,
+                  child: InkWell(
+                    onTap: () => setState(() => _privacy = privacy),
+                    borderRadius: BorderRadius.circular(16),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 15,
                       ),
-                    ),
-                    child: Row(
-                      children: [
-                        AnimatedContainer(
-                          duration: const Duration(milliseconds: 180),
-                          width: 22,
-                          height: 22,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: isSelected
-                                ? const Color(0xFF9D20FF)
-                                : Colors.transparent,
-                            border: Border.all(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: isSelected
+                              ? const Color(0xFF9D20FF)
+                              : const Color(0xFF30263F),
+                          width: isSelected ? 1.5 : 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 180),
+                            width: 22,
+                            height: 22,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
                               color: isSelected
                                   ? const Color(0xFF9D20FF)
-                                  : const Color(0xFF756D82),
-                              width: 2,
+                                  : Colors.transparent,
+                              border: Border.all(
+                                color: isSelected
+                                    ? const Color(0xFF9D20FF)
+                                    : const Color(0xFF756D82),
+                                width: 2,
+                              ),
+                            ),
+                            child: isSelected
+                                ? const Icon(
+                                    Icons.check_rounded,
+                                    color: Colors.white,
+                                    size: 15,
+                                  )
+                                : null,
+                          ),
+                          const SizedBox(width: 13),
+                          Expanded(
+                            child: Text(
+                              _privacyLabel(privacy),
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: isSelected
+                                    ? FontWeight.w800
+                                    : FontWeight.w600,
+                              ),
                             ),
                           ),
-                          child: isSelected
-                              ? const Icon(
-                                  Icons.check_rounded,
-                                  color: Colors.white,
-                                  size: 15,
-                                )
-                              : null,
-                        ),
-                        const SizedBox(width: 13),
-                        Expanded(
-                          child: Text(
-                            _privacyLabel(privacy),
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: isSelected
-                                  ? FontWeight.w800
-                                  : FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
+              );
+            }),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: _saving ? null : _save,
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF9D20FF),
+                minimumSize: const Size.fromHeight(54),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(17),
+                ),
               ),
-            );
-          }),
-          const SizedBox(height: 24),
-          FilledButton.icon(
-            onPressed: _saving ? null : _save,
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF9D20FF),
-              minimumSize: const Size.fromHeight(54),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(17),
+              icon: _saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.save_rounded),
+              label: Text(
+                _saving ? 'SAVING...' : 'SAVE SETTINGS',
+                style: const TextStyle(fontWeight: FontWeight.w900),
               ),
             ),
-            icon: _saving
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Icon(Icons.save_rounded),
-            label: Text(
-              _saving ? 'SAVING...' : 'SAVE SETTINGS',
-              style: const TextStyle(fontWeight: FontWeight.w900),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -1,4 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -44,20 +43,16 @@ class ManagedUser {
 class StaffUserLookup {
   StaffUserLookup({
     FirebaseFunctions? functions,
-    FirebaseFirestore? firestore,
     PublicIdentityRepository? identities,
   }) : _functionsOverride = functions,
-       _firestoreOverride = firestore,
        _identitiesOverride = identities;
 
   final FirebaseFunctions? _functionsOverride;
-  final FirebaseFirestore? _firestoreOverride;
   final PublicIdentityRepository? _identitiesOverride;
 
   FirebaseFunctions get _functions =>
-      _functionsOverride ?? FirebaseFunctions.instanceFor(region: 'europe-west1');
-  FirebaseFirestore get _firestore =>
-      _firestoreOverride ?? FirebaseFirestore.instance;
+      _functionsOverride ??
+      FirebaseFunctions.instanceFor(region: 'europe-west1');
 
   /// The same batched repository every badge in the app resolves
   /// through; the screen also invalidates it after a role change so
@@ -71,30 +66,51 @@ class StaffUserLookup {
 
     String? uid;
     String? email;
-    if (input.contains('@')) {
+    if (input.contains('@') && !input.startsWith('@')) {
       email = input.toLowerCase();
     } else {
-      // Try the input as a uid first; fall back to an exact username.
-      final direct = await _firestore.collection('users').doc(input).get();
-      if (direct.exists) {
-        uid = input;
-      } else {
-        final byUsername = await _firestore
-            .collection('users')
-            .where('username', isEqualTo: input.toLowerCase())
-            .limit(1)
-            .get();
-        if (byUsername.docs.isEmpty) return null;
-        uid = byUsername.docs.single.id;
+      // First treat the case-sensitive value as an immutable uid. A miss
+      // is the only condition that may fall through to the owner-only
+      // directory; permission/network failures remain failures.
+      try {
+        return await _lookupAuthoritative(uid: input);
+      } on FirebaseFunctionsException catch (error) {
+        if (error.code != 'not-found') rethrow;
       }
+
+      final directoryResult = await _functions
+          .httpsCallable('searchUserDirectory')
+          .call<Map<String, dynamic>>({'query': input, 'limit': 20});
+      final directory = Map<String, dynamic>.from(directoryResult.data);
+      final rows = (directory['users'] as List? ?? const [])
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList(growable: false);
+      final normalized = input.startsWith('@')
+          ? input.substring(1).trim().toLowerCase()
+          : input.toLowerCase();
+      // Display names are intentionally not administrative identifiers:
+      // they are non-unique and choosing the first duplicate could apply a
+      // privileged action to the wrong account. Directory fallback resolves
+      // only an exact canonical username, then every sensitive field is
+      // fetched again by uid from the authoritative callable.
+      final exact = rows.where(
+        (row) =>
+            (row['username'] as String? ?? '').trim().toLowerCase() ==
+            normalized,
+      );
+      if (exact.isEmpty) return null;
+      uid = exact.first['uid'] as String?;
+      if (uid == null || uid.trim().isEmpty) return null;
     }
 
+    return _lookupAuthoritative(uid: uid, email: email);
+  }
+
+  Future<ManagedUser> _lookupAuthoritative({String? uid, String? email}) async {
     final result = await _functions
         .httpsCallable('getUserRole')
-        .call<Map<String, dynamic>>({
-      'uid': ?uid,
-      'email': ?email,
-    });
+        .call<Map<String, dynamic>>({'uid': ?uid, 'email': ?email});
     final data = Map<String, dynamic>.from(result.data);
     final resolvedUid = data['uid'] as String;
 
@@ -108,7 +124,7 @@ class StaffUserLookup {
       isVip = false;
     }
 
-    return ManagedUser(
+    final managed = ManagedUser(
       uid: resolvedUid,
       displayName: (data['displayName'] as String?)?.trim().isNotEmpty == true
           ? (data['displayName'] as String).trim()
@@ -119,6 +135,7 @@ class StaffUserLookup {
       isVip: isVip,
       photoUrl: data['photoUrl'] as String?,
     );
+    return managed;
   }
 }
 
@@ -194,11 +211,12 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   @override
   void initState() {
     super.initState();
-    (widget.capabilityService ?? StaffCapabilityService()).load().then((
-      capabilities,
-    ) {
-      if (mounted) setState(() => _capabilities = capabilities);
-    }).catchError((_) {});
+    (widget.capabilityService ?? StaffCapabilityService())
+        .load()
+        .then((capabilities) {
+          if (mounted) setState(() => _capabilities = capabilities);
+        })
+        .catchError((_) {});
   }
 
   @override
@@ -263,13 +281,13 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
       await _functions
           .httpsCallable('assignUserRole')
           .call<Map<String, dynamic>>({
-        'uid': user.uid,
-        'role': newRole,
-        'reason': reason,
-        // The stale-result guard: the role this screen BELIEVES the
-        // account holds. If it moved, the server refuses and we re-look.
-        'expectedRole': user.role,
-      });
+            'uid': user.uid,
+            'role': newRole,
+            'reason': reason,
+            // The stale-result guard: the role this screen BELIEVES the
+            // account holds. If it moved, the server refuses and we re-look.
+            'expectedRole': user.role,
+          });
       if (!mounted) return;
       // The account's public badge just changed: forget the cached
       // identity so every badge rendered for this uid — here and on any

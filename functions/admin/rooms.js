@@ -1,11 +1,11 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { FieldValue } = require("firebase-admin/firestore");
+const { getStorage } = require("firebase-admin/storage");
 
-const { USER_ROLES, PERMANENT_DELETE_ROLES } = require("../utils/roles");
+const { USER_ROLES, ROOM_MANAGEMENT_ROLES } = require("../utils/roles");
 
 const {
-  requireRole,
-  requireRoomManager,
+  requireVerifiedStaff,
   requireProtectedOwner,
 } = require("../utils/auth");
 
@@ -20,8 +20,148 @@ const {
 } = require("../utils/firestore");
 
 const { writeRoomAuditLog } = require("../utils/audit");
+const {
+  LIVEKIT_SECRETS,
+  getProductionLiveKitControl,
+} = require("../livekit/control");
+const {
+  deleteActiveVoiceSession,
+  deleteActiveVoiceSessionsForRoom,
+} = require("../livekit/sessions");
+const { cleanupRoomMedia } = require("../media/cleanup");
 
 const REGION = "europe-west1";
+const SPEAKING_ROLES = new Set(["host", "speaker"]);
+
+const QUARANTINE_ROLES = new Set([
+  USER_ROLES.SUPER_MODERATOR,
+  USER_ROLES.SUPER_ADMIN,
+]);
+
+async function requireRoomStaff(request) {
+  return requireVerifiedStaff(
+    request,
+    ROOM_MANAGEMENT_ROLES,
+    "You do not have permission to manage rooms.",
+  );
+}
+
+async function requireRoomQuarantineAccess(request) {
+  return requireVerifiedStaff(
+    request,
+    QUARANTINE_ROLES,
+    "You do not have permission to quarantine rooms.",
+  );
+}
+
+let liveKitControlOverride = null;
+let storageBucketOverride = null;
+
+/// Test injection only. Production always resolves the secret-backed client.
+function setRoomLiveKitControlForTests(control) {
+  liveKitControlOverride = control ?? null;
+}
+
+/// Test injection only. Production always resolves the Firebase bucket.
+function setRoomStorageBucketForTests(bucket) {
+  storageBucketOverride = bucket ?? null;
+}
+
+function resolveStorageBucket() {
+  return storageBucketOverride ?? getStorage().bucket();
+}
+
+function resolveLiveKitControl() {
+  if (liveKitControlOverride) return liveKitControlOverride;
+  try {
+    return getProductionLiveKitControl();
+  } catch (error) {
+    console.error("LiveKit control-plane is not configured", {
+      errorName: error?.name ?? "Error",
+    });
+    throw new HttpsError(
+      "failed-precondition",
+      "Live voice moderation is not configured.",
+    );
+  }
+}
+
+function parseSuspended(data) {
+  if (typeof data?.suspended === "boolean") return data.suspended;
+
+  const status = normalizeText(data?.status, 40).toLowerCase();
+  if (status === "suspended" || status === "quarantined") return true;
+  if (status === "active") return false;
+
+  throw new HttpsError(
+    "invalid-argument",
+    "Status must be active, suspended or quarantined.",
+  );
+}
+
+function communicationRestrictionIsActive(restriction, now = Date.now()) {
+  if (restriction?.type !== "communicationMute") return false;
+  if (restriction.expiresAt == null) return true;
+  const expiresAt = typeof restriction.expiresAt.toMillis === "function"
+    ? restriction.expiresAt.toMillis()
+    : new Date(restriction.expiresAt).getTime();
+  return Number.isFinite(expiresAt) && expiresAt > now;
+}
+
+async function applyLiveKitControl({
+  caller,
+  roomId,
+  roomName,
+  operation,
+  affectedUserId = null,
+  action,
+}) {
+  try {
+    return await action();
+  } catch (error) {
+    // The Firestore authority was intentionally applied first, so new token
+    // requests are already blocked. Record the partial outcome and make the
+    // caller retry; never report success while an issued session may remain.
+    console.error("LiveKit moderation control failed", {
+      operation,
+      roomId,
+      affectedUserId,
+      errorName: error?.name ?? "Error",
+      errorCode: error?.cause?.code ?? error?.code ?? null,
+      errorStatus: error?.cause?.status ?? error?.status ?? null,
+    });
+    try {
+      await writeRoomAuditLog({
+        caller,
+        action: "livekit_control_failure",
+        roomId,
+        roomName,
+        details: {
+          operation,
+          affectedUserId,
+          stateApplied: true,
+          liveKitApplied: false,
+        },
+      });
+    } catch (auditError) {
+      console.error("Failed to record LiveKit control failure", {
+        operation,
+        roomId,
+        errorName: auditError?.name ?? "Error",
+      });
+    }
+    throw new HttpsError(
+      "unavailable",
+      "The room state was secured, but the live voice session could not "
+        + "be updated. Retry this action.",
+      {
+        operation,
+        stateApplied: true,
+        liveKitApplied: false,
+      },
+    );
+  }
+}
 
 function mapRoom(document) {
   const data = document.data() ?? {};
@@ -94,7 +234,7 @@ const listAdminRooms = onCall(
     enforceAppCheck: false,
   },
   async (request) => {
-    requireRoomManager(request);
+    await requireRoomStaff(request);
 
     const limit = positiveInteger(request.data?.limit, 50, 100);
 
@@ -148,7 +288,7 @@ const getAdminRoom = onCall(
     enforceAppCheck: false,
   },
   async (request) => {
-    requireRoomManager(request);
+    await requireRoomStaff(request);
 
     const roomId = normalizeText(request.data?.roomId, 128);
 
@@ -179,7 +319,7 @@ const getAdminRoom = onCall(
         photoUrl: data.photoUrl ?? null,
         role: data.role ?? "listener",
         isSpeaker: data.isSpeaker === true,
-        isMuted: data.isMuted === true,
+        isMuted: data.isMuted === true || data.serverMuted === true,
         joinedAt: timestampToIso(data.joinedAt),
       };
     });
@@ -194,14 +334,16 @@ const getAdminRoom = onCall(
 const setRoomModerationStatus = onCall(
   {
     region: REGION,
+    secrets: LIVEKIT_SECRETS,
+    timeoutSeconds: 120,
     enforceAppCheck: false,
   },
   async (request) => {
-    const caller = requireRoomManager(request);
+    const caller = await requireRoomQuarantineAccess(request);
 
     const roomId = normalizeText(request.data?.roomId, 128);
 
-    const suspended = request.data?.suspended === true;
+    const suspended = parseSuspended(request.data);
 
     const reason = normalizeText(request.data?.reason, 500);
 
@@ -218,13 +360,7 @@ const setRoomModerationStatus = onCall(
 
     const roomReference = db.collection("rooms").doc(roomId);
 
-    const roomSnapshot = await getDocumentOrThrow(
-      roomReference,
-      HttpsError,
-      "The selected room was not found.",
-    );
-
-    const room = roomSnapshot.data() ?? {};
+    const liveKitControl = suspended ? resolveLiveKitControl() : null;
 
     const updateData = {
       status: suspended ? "suspended" : "active",
@@ -242,9 +378,44 @@ const setRoomModerationStatus = onCall(
       updateData.participantCount = 0;
     }
 
-    await roomReference.set(updateData, { merge: true });
+    // Validate and mutate in one transaction. A permanent deletion can race
+    // a restore request between a standalone read and update; without the
+    // transactional precondition that restore could overwrite the secure
+    // `deleted` tombstone with `active`.
+    const room = await db.runTransaction(async (transaction) => {
+      const roomSnapshot = await transaction.get(roomReference);
+      if (!roomSnapshot.exists) {
+        throw new HttpsError(
+          "not-found",
+          "The selected room was not found.",
+        );
+      }
+      const currentRoom = roomSnapshot.data() ?? {};
+      if (currentRoom.status === "deleted") {
+        throw new HttpsError(
+          "failed-precondition",
+          "A room pending permanent deletion cannot be restored or suspended.",
+        );
+      }
+      if (!suspended && currentRoom.status !== "suspended") {
+        throw new HttpsError(
+          "failed-precondition",
+          "Only a suspended room can be restored.",
+        );
+      }
+      transaction.update(roomReference, updateData);
+      return currentRoom;
+    });
 
     if (suspended) {
+      await applyLiveKitControl({
+        caller,
+        roomId,
+        roomName: room.name ?? null,
+        operation: "suspendRoom",
+        action: () => liveKitControl.endRoom(roomId),
+      });
+      await deleteActiveVoiceSessionsForRoom(roomId);
       await deleteCollectionInBatches(roomReference.collection("participants"));
     }
 
@@ -258,6 +429,7 @@ const setRoomModerationStatus = onCall(
         previousStatus: room.status ?? null,
         newStatus: suspended ? "suspended" : "active",
         reason: suspended ? reason : null,
+        liveKitControlApplied: suspended,
       },
     });
 
@@ -272,10 +444,12 @@ const setRoomModerationStatus = onCall(
 const forceEndRoom = onCall(
   {
     region: REGION,
+    secrets: LIVEKIT_SECRETS,
+    timeoutSeconds: 120,
     enforceAppCheck: false,
   },
   async (request) => {
-    const caller = requireRoomManager(request);
+    const caller = await requireRoomStaff(request);
 
     const roomId = normalizeText(request.data?.roomId, 128);
 
@@ -295,18 +469,47 @@ const forceEndRoom = onCall(
 
     const room = roomSnapshot.data() ?? {};
 
-    await roomReference.set(
-      {
-        isLive: false,
-        participantCount: 0,
-        forcedEndedBy: caller.uid,
-        forcedEndReason: reason || "Administrative action",
-        forcedEndedAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+    // A moderator may end a public room only and must always supply the
+    // reason promised by the capability matrix. Super moderation may end
+    // any room; the owner inherits that tier through the same verified
+    // server record.
+    if (caller.role === USER_ROLES.MODERATOR) {
+      if (room.visibility !== "public") {
+        throw new HttpsError(
+          "permission-denied",
+          "Moderators may end public rooms only.",
+        );
+      }
+      if (!reason) {
+        throw new HttpsError(
+          "invalid-argument",
+          "A reason is required to end a public room.",
+        );
+      }
+    }
 
+    // Resolve secrets/configuration before mutating Firestore. The remote
+    // call still runs only after the authoritative state has been closed.
+    const liveKitControl = resolveLiveKitControl();
+
+    await roomReference.update({
+      isLive: false,
+      participantCount: 0,
+      forcedEndedBy: caller.uid,
+      forcedEndReason: reason || "Administrative action",
+      forcedEndedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    await applyLiveKitControl({
+      caller,
+      roomId,
+      roomName: room.name ?? null,
+      operation: "forceEndRoom",
+      action: () => liveKitControl.endRoom(roomId),
+    });
+
+    await deleteActiveVoiceSessionsForRoom(roomId);
     await deleteCollectionInBatches(roomReference.collection("participants"));
 
     await writeRoomAuditLog({
@@ -317,6 +520,7 @@ const forceEndRoom = onCall(
       details: {
         ownerId: room.hostId ?? null,
         reason: reason || "Administrative action",
+        liveKitControlApplied: true,
       },
     });
 
@@ -331,10 +535,12 @@ const forceEndRoom = onCall(
 const removeRoomParticipant = onCall(
   {
     region: REGION,
+    secrets: LIVEKIT_SECRETS,
+    timeoutSeconds: 30,
     enforceAppCheck: false,
   },
   async (request) => {
-    const caller = requireRoomManager(request);
+    const caller = await requireRoomStaff(request);
 
     const roomId = normalizeText(request.data?.roomId, 128);
 
@@ -358,31 +564,61 @@ const removeRoomParticipant = onCall(
     );
 
     const room = roomSnapshot.data() ?? {};
+    const liveKitControl = resolveLiveKitControl();
 
     const participantReference = roomReference
       .collection("participants")
       .doc(userId);
 
-    const participantSnapshot = await participantReference.get();
+    const removal = await db.runTransaction(async (transaction) => {
+      const [currentRoomSnapshot, participantSnapshot] = await Promise.all([
+        transaction.get(roomReference),
+        transaction.get(participantReference),
+      ]);
+      if (!currentRoomSnapshot.exists) {
+        throw new HttpsError(
+          "not-found",
+          "The selected room was not found.",
+        );
+      }
+      // Remove the per-user token discovery mirror in the same durable
+      // transaction as the roster row. A remote failure can then be retried
+      // without leaving future moderation dependent on a stale session index.
+      deleteActiveVoiceSession(transaction, userId, roomId);
+      if (!participantSnapshot.exists) {
+        return { removed: false, participant: {} };
+      }
 
-    if (!participantSnapshot.exists) {
-      throw new HttpsError(
-        "not-found",
-        "The selected participant is not in this room.",
+      const currentRoom = currentRoomSnapshot.data() ?? {};
+      const currentCount = Number(currentRoom.participantCount ?? 0);
+      transaction.delete(participantReference);
+      transaction.set(
+        roomReference,
+        {
+          participantCount: Number.isFinite(currentCount)
+            ? Math.max(0, currentCount - 1)
+            : 0,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
       );
-    }
+      return {
+        removed: true,
+        participant: participantSnapshot.data() ?? {},
+      };
+    });
 
-    const participant = participantSnapshot.data() ?? {};
-
-    await participantReference.delete();
-
-    await roomReference.set(
-      {
-        participantCount: FieldValue.increment(-1),
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+    // Also runs on an idempotent retry where Firestore no longer has the
+    // participant: the previous attempt may have secured Firestore and then
+    // failed before revoking the already-issued LiveKit token.
+    await applyLiveKitControl({
+      caller,
+      roomId,
+      roomName: room.name ?? null,
+      operation: "removeParticipant",
+      affectedUserId: userId,
+      action: () => liveKitControl.revokeParticipant(roomId, userId),
+    });
 
     await writeRoomAuditLog({
       caller,
@@ -391,8 +627,11 @@ const removeRoomParticipant = onCall(
       roomName: room.name ?? null,
       details: {
         removedUserId: userId,
-        removedUserName: participant.displayName ?? participant.name ?? null,
+        removedUserName:
+          removal.participant.displayName ?? removal.participant.name ?? null,
         reason: reason || "Administrative action",
+        alreadyRemoved: !removal.removed,
+        liveKitControlApplied: true,
       },
     });
 
@@ -400,6 +639,7 @@ const removeRoomParticipant = onCall(
       success: true,
       roomId,
       userId,
+      alreadyRemoved: !removal.removed,
     };
   },
 );
@@ -407,10 +647,12 @@ const removeRoomParticipant = onCall(
 const setParticipantMute = onCall(
   {
     region: REGION,
+    secrets: LIVEKIT_SECRETS,
+    timeoutSeconds: 30,
     enforceAppCheck: false,
   },
   async (request) => {
-    const caller = requireRoomManager(request);
+    const caller = await requireRoomStaff(request);
 
     const roomId = normalizeText(request.data?.roomId, 128);
 
@@ -427,7 +669,7 @@ const setParticipantMute = onCall(
 
     const roomReference = db.collection("rooms").doc(roomId);
 
-    const roomSnapshot = await getDocumentOrThrow(
+    await getDocumentOrThrow(
       roomReference,
       HttpsError,
       "The selected room was not found.",
@@ -436,23 +678,75 @@ const setParticipantMute = onCall(
     const participantReference = roomReference
       .collection("participants")
       .doc(userId);
+    const restrictionReference = db.collection("restrictions").doc(userId);
 
-    await getDocumentOrThrow(
-      participantReference,
-      HttpsError,
-      "The selected participant is not in this room.",
-    );
+    const liveKitControl = resolveLiveKitControl();
 
-    await participantReference.set(
-      {
-        isMuted: muted,
+    const state = await db.runTransaction(async (transaction) => {
+      const [
+        currentRoomSnapshot,
+        participantSnapshot,
+        restrictionSnapshot,
+      ] = await Promise.all([
+        transaction.get(roomReference),
+        transaction.get(participantReference),
+        transaction.get(restrictionReference),
+      ]);
+      if (!currentRoomSnapshot.exists) {
+        throw new HttpsError(
+          "not-found",
+          "The selected room was not found.",
+        );
+      }
+      if (!participantSnapshot.exists) {
+        throw new HttpsError(
+          "not-found",
+          "The selected participant is not in this room.",
+        );
+      }
+
+      transaction.update(participantReference, {
+        // `isMuted` belongs to the participant's own microphone toggle.
+        // Staff moderation has a separate server-only bit so the client can
+        // neither clear it nor have its personal preference overwritten.
+        serverMuted: muted,
         moderatedBy: caller.uid,
         moderatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
+      });
+      return {
+        room: currentRoomSnapshot.data() ?? {},
+        participant: participantSnapshot.data() ?? {},
+        restriction: restrictionSnapshot.exists
+          ? (restrictionSnapshot.data() ?? {})
+          : {},
+      };
+    });
+
+    const room = state.room;
+    const participant = state.participant;
+    const communicationMuted = communicationRestrictionIsActive(
+      state.restriction,
     );
 
-    const room = roomSnapshot.data() ?? {};
+    const canPublish =
+      !muted &&
+      room.status === "active" &&
+      room.isLive === true &&
+      room.deletionInProgress !== true &&
+      participant.isMuted !== true &&
+      participant.hostMuted !== true &&
+      !communicationMuted &&
+      (room.hostId === userId || SPEAKING_ROLES.has(participant.role));
+
+    await applyLiveKitControl({
+      caller,
+      roomId,
+      roomName: room.name ?? null,
+      operation: muted ? "muteParticipant" : "unmuteParticipant",
+      affectedUserId: userId,
+      action: () =>
+        liveKitControl.setPublishingAllowed(roomId, userId, canPublish),
+    });
 
     await writeRoomAuditLog({
       caller,
@@ -462,6 +756,7 @@ const setParticipantMute = onCall(
       details: {
         userId,
         muted,
+        liveKitControlApplied: true,
       },
     });
 
@@ -482,7 +777,7 @@ const adminDeleteRoom = onCall(
     memory: "512MiB",
     // Permanent deletion is an OWNERSHIP capability: the uid must match
     // the protected-owner secret, not merely carry superAdmin.
-    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID", ...LIVEKIT_SECRETS],
   },
   async (request) => {
     const caller = await requireProtectedOwner(request);
@@ -520,7 +815,39 @@ const adminDeleteRoom = onCall(
     );
 
     const room = roomSnapshot.data() ?? {};
+    const liveKitControl = resolveLiveKitControl();
 
+    // Persist a tombstone state first. If LiveKit is unavailable the room
+    // remains non-live and token issuance is blocked; a retry can finish the
+    // remote revocation and recursive deletion.
+    await roomReference.update({
+      status: "deleted",
+      isLive: false,
+      participantCount: 0,
+      moderatedBy: caller.uid,
+      moderatedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    await applyLiveKitControl({
+      caller,
+      roomId,
+      roomName: room.name ?? null,
+      operation: "deleteRoom",
+      action: () => liveKitControl.endRoom(roomId),
+    });
+
+    await deleteActiveVoiceSessionsForRoom(roomId);
+    const mediaCleanup = await cleanupRoomMedia({
+      roomId,
+      bucket: resolveStorageBucket(),
+    });
+    if (mediaCleanup.deleted !== true) {
+      throw new HttpsError(
+        "unavailable",
+        "Room media cleanup did not complete. Retry the deletion.",
+      );
+    }
     await writeRoomAuditLog({
       caller,
       action: "delete_room",
@@ -533,7 +860,9 @@ const adminDeleteRoom = onCall(
         roomType: room.roomType ?? null,
         experience: room.experience ?? null,
         clubId: room.clubId ?? null,
+        liveKitControlApplied: true,
       },
+      entryId: `delete_room_${roomId}`,
     });
 
     await deleteDocumentRecursively(roomReference);
@@ -554,4 +883,6 @@ module.exports = {
   removeRoomParticipant,
   setParticipantMute,
   adminDeleteRoom,
+  setRoomLiveKitControlForTests,
+  setRoomStorageBucketForTests,
 };

@@ -11,11 +11,28 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class FriendProfileScreen extends StatefulWidget {
-  const FriendProfileScreen({required this.friend, super.key});
+  const FriendProfileScreen({
+    required this.friend,
+    this.friendService,
+    this.messageService,
+    this.profileService,
+    this.followService,
+    this.socialGraphService,
+    super.key,
+  });
 
   final FriendUser friend;
+
+  /// Injectable seams keep responsive widget tests on the exact production
+  /// screen without requiring a configured Firebase app.
+  final FriendService? friendService;
+  final MessageService? messageService;
+  final ProfileService? profileService;
+  final FollowService? followService;
+  final SocialGraphService? socialGraphService;
 
   @override
   State<FriendProfileScreen> createState() => _FriendProfileScreenState();
@@ -27,11 +44,16 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   static const _border = Color(0xFF352840);
   static const _muted = Color(0xFFA99DB3);
 
-  final _friendService = FriendService();
-  final _messageService = MessageService();
-  final _profileService = ProfileService();
-  final _followService = FollowService();
-  final _socialGraphService = SocialGraphService();
+  late final FriendService _friendService =
+      widget.friendService ?? FriendService();
+  late final MessageService _messageService =
+      widget.messageService ?? MessageService();
+  late final ProfileService _profileService =
+      widget.profileService ?? ProfileService();
+  late final FollowService _followService =
+      widget.followService ?? FollowService();
+  late final SocialGraphService _socialGraphService =
+      widget.socialGraphService ?? SocialGraphService();
 
   late final Future<MutualFriendsSummary> _mutualFriendsFuture;
 
@@ -213,6 +235,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             return Scaffold(
               backgroundColor: _background,
               body: Container(
+                key: const ValueKey('friend-profile-background'),
                 decoration: const BoxDecoration(
                   gradient: RadialGradient(
                     center: Alignment(-.8, -1),
@@ -221,112 +244,122 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                   ),
                 ),
                 child: SafeArea(
-                  child: CustomScrollView(
-                    slivers: [
-                      SliverToBoxAdapter(child: _header()),
-                      SliverPadding(
-                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 40),
-                        sliver: SliverList.list(
-                          children: [
-                            _avatar(profile),
-                            const SizedBox(height: 16),
-                            Text(
-                              profile?.displayName ?? widget.friend.displayName,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 28,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                            if ((profile?.username ?? '').isNotEmpty)
+                  child: ResponsiveContentFrame(
+                    width: ResponsiveContentWidth.list,
+                    alignment: ResponsiveContentAlignment.topCenter,
+                    child: CustomScrollView(
+                      key: const ValueKey('friend-profile-content-frame'),
+                      slivers: [
+                        SliverToBoxAdapter(child: _header()),
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(20, 18, 20, 40),
+                          sliver: SliverList.list(
+                            children: [
+                              _avatar(profile),
+                              const SizedBox(height: 16),
                               Text(
-                                '@${profile!.username.replaceAll(' ', '').toLowerCase()}',
+                                profile?.displayName ??
+                                    widget.friend.displayName,
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(
-                                  color: _muted,
-                                  fontSize: 15,
+                                  color: Colors.white,
+                                  fontSize: 28,
+                                  fontWeight: FontWeight.w900,
                                 ),
                               ),
-                            const SizedBox(height: 8),
-                            Center(
-                              child: UserIdentityBadges(
-                                uid: widget.friend.id,
-                                variant: IdentityBadgeVariant.full,
+                              if ((profile?.username ?? '').isNotEmpty)
+                                Text(
+                                  '@${profile!.username.replaceAll(' ', '').toLowerCase()}',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: _muted,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                              const SizedBox(height: 8),
+                              Center(
+                                child: UserIdentityBadges(
+                                  uid: widget.friend.id,
+                                  variant: IdentityBadgeVariant.full,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 12),
-                            Center(child: _status()),
-                            if ((profile?.bio ?? '').trim().isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              Center(child: _status()),
+                              if ((profile?.bio ?? '').trim().isNotEmpty) ...[
+                                const SizedBox(height: 18),
+                                Center(
+                                  child: ConstrainedBox(
+                                    key: const ValueKey(
+                                      'friend-profile-bio-frame',
+                                    ),
+                                    constraints: const BoxConstraints(
+                                      maxWidth: 680,
+                                    ),
+                                    child: Text(
+                                      profile!.bio,
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        color: Color(0xFFD4CADC),
+                                        height: 1.45,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 22),
+                              _socialStats(profile),
+                              const SizedBox(height: 14),
+                              _mutualFriends(),
                               const SizedBox(height: 18),
-                              Text(
-                                profile!.bio,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: Color(0xFFD4CADC),
-                                  height: 1.45,
+                              _profileActions(isFollowing),
+                              const SizedBox(height: 14),
+                              _voiceIdentity(profile),
+                              const SizedBox(height: 26),
+                              TextButton.icon(
+                                onPressed: _removingFriend
+                                    ? null
+                                    : _confirmRemoveFriend,
+                                icon: _removingFriend
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.person_remove_outlined),
+                                label: Text(
+                                  _removingFriend
+                                      ? 'Removing...'
+                                      : 'Remove friend',
+                                ),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: const Color(0xFFFF6F8E),
+                                ),
+                              ),
+                              TextButton.icon(
+                                onPressed: _blocking ? null : _confirmBlock,
+                                icon: _blocking
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.block_rounded),
+                                label: Text(
+                                  _blocking ? 'Blocking...' : 'Block user',
+                                ),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: const Color(0xFF8F8799),
                                 ),
                               ),
                             ],
-                            const SizedBox(height: 22),
-                            _socialStats(profile),
-                            const SizedBox(height: 14),
-                            _mutualFriends(),
-                            const SizedBox(height: 18),
-                            Row(
-                              children: [
-                                Expanded(child: _followButton(isFollowing)),
-                                const SizedBox(width: 10),
-                                Expanded(child: _messageButton()),
-                              ],
-                            ),
-                            const SizedBox(height: 14),
-                            _voiceIdentity(profile),
-                            const SizedBox(height: 26),
-                            TextButton.icon(
-                              onPressed: _removingFriend
-                                  ? null
-                                  : _confirmRemoveFriend,
-                              icon: _removingFriend
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.person_remove_outlined),
-                              label: Text(
-                                _removingFriend
-                                    ? 'Removing...'
-                                    : 'Remove friend',
-                              ),
-                              style: TextButton.styleFrom(
-                                foregroundColor: const Color(0xFFFF6F8E),
-                              ),
-                            ),
-                            TextButton.icon(
-                              onPressed: _blocking ? null : _confirmBlock,
-                              icon: _blocking
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.block_rounded),
-                              label: Text(
-                                _blocking ? 'Blocking...' : 'Block user',
-                              ),
-                              style: TextButton.styleFrom(
-                                foregroundColor: const Color(0xFF8F8799),
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -343,6 +376,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       children: [
         IconButton(
           onPressed: () => Navigator.pop(context),
+          tooltip: 'Back',
           icon: const Icon(
             Icons.arrow_back_ios_new_rounded,
             color: Colors.white,
@@ -365,33 +399,68 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   Widget _avatar(UserProfile? profile) {
     final photo = profile?.photoUrl ?? widget.friend.photoUrl;
     final name = profile?.displayName ?? widget.friend.displayName;
-    return Center(
-      child: Container(
-        padding: const EdgeInsets.all(4),
-        decoration: const BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: LinearGradient(
-            colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
+    return Semantics(
+      image: true,
+      label: 'Profile photo of $name',
+      child: ExcludeSemantics(
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.all(4),
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: LinearGradient(
+                colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
+              ),
+            ),
+            child: CircleAvatar(
+              radius: 58,
+              backgroundColor: const Color(0xFF281133),
+              backgroundImage: photo?.isNotEmpty == true
+                  ? NetworkImage(photo!)
+                  : null,
+              child: photo?.isNotEmpty == true
+                  ? null
+                  : Text(
+                      name.isEmpty ? '?' : name[0].toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 42,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+            ),
           ),
         ),
-        child: CircleAvatar(
-          radius: 58,
-          backgroundColor: const Color(0xFF281133),
-          backgroundImage: photo?.isNotEmpty == true
-              ? NetworkImage(photo!)
-              : null,
-          child: photo?.isNotEmpty == true
-              ? null
-              : Text(
-                  name.isEmpty ? '?' : name[0].toUpperCase(),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 42,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-        ),
       ),
+    );
+  }
+
+  Widget _profileActions(bool isFollowing) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
+        final shouldStack = constraints.maxWidth < 360 || scaledBodySize >= 21;
+        if (shouldStack) {
+          return Column(
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: _followButton(isFollowing),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(width: double.infinity, child: _messageButton()),
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            Expanded(child: _followButton(isFollowing)),
+            const SizedBox(width: 10),
+            Expanded(child: _messageButton()),
+          ],
+        );
+      },
     );
   }
 
@@ -413,15 +482,11 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     ),
   );
 
-  Widget _socialStats(UserProfile? profile) => Container(
-    padding: const EdgeInsets.symmetric(vertical: 17),
-    decoration: BoxDecoration(
-      color: _surface,
-      borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: _border),
-    ),
-    child: Row(
-      children: [
+  Widget _socialStats(UserProfile? profile) => LayoutBuilder(
+    builder: (context, constraints) {
+      final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
+      final shouldStack = constraints.maxWidth < 360 || scaledBodySize >= 21;
+      final stats = [
         _stat(profile?.friendCount ?? 0, 'Friends', null),
         _stat(
           profile?.followerCount ?? 0,
@@ -433,25 +498,62 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           'Following',
           () => _openList(FollowListType.following),
         ),
-      ],
-    ),
+      ];
+
+      return Container(
+        key: const ValueKey('friend-profile-stats'),
+        padding: EdgeInsets.symmetric(vertical: shouldStack ? 8 : 17),
+        decoration: BoxDecoration(
+          color: _surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _border),
+        ),
+        child: shouldStack
+            ? Column(
+                children: [
+                  stats[0],
+                  const Divider(height: 1, color: _border),
+                  stats[1],
+                  const Divider(height: 1, color: _border),
+                  stats[2],
+                ],
+              )
+            : Row(children: [for (final stat in stats) Expanded(child: stat)]),
+      );
+    },
   );
 
-  Widget _stat(int value, String label, VoidCallback? onTap) => Expanded(
-    child: InkWell(
-      onTap: onTap,
-      child: Column(
-        children: [
-          Text(
-            '$value',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 21,
-              fontWeight: FontWeight.w900,
+  Widget _stat(int value, String label, VoidCallback? onTap) => Semantics(
+    key: ValueKey('friend-profile-stat-${label.toLowerCase()}'),
+    label: '$label: $value',
+    button: onTap != null,
+    onTap: onTap,
+    child: ExcludeSemantics(
+      child: InkWell(
+        onTap: onTap,
+        excludeFromSemantics: true,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 52),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '$value',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 21,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                Text(
+                  label,
+                  style: const TextStyle(color: _muted, fontSize: 12),
+                ),
+              ],
             ),
           ),
-          Text(label, style: const TextStyle(color: _muted, fontSize: 12)),
-        ],
+        ),
       ),
     ),
   );
@@ -507,9 +609,10 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     );
   }
 
-  Widget _followButton(bool isFollowing) => SizedBox(
-    height: 52,
+  Widget _followButton(bool isFollowing) => ConstrainedBox(
+    constraints: const BoxConstraints(minHeight: 52),
     child: FilledButton.icon(
+      key: const ValueKey('friend-profile-follow-button'),
       onPressed: _changingFollow ? null : () => _toggleFollow(isFollowing),
       style: FilledButton.styleFrom(
         backgroundColor: isFollowing
@@ -539,9 +642,10 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     ),
   );
 
-  Widget _messageButton() => SizedBox(
-    height: 52,
+  Widget _messageButton() => ConstrainedBox(
+    constraints: const BoxConstraints(minHeight: 52),
     child: OutlinedButton.icon(
+      key: const ValueKey('friend-profile-message-button'),
       onPressed: _openingChat ? null : _openChat,
       style: OutlinedButton.styleFrom(
         foregroundColor: Colors.white,

@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
+import 'package:yovoice/features/clubs/presentation/screens/club_invite_response_screen.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
@@ -43,6 +44,7 @@ class NotificationRouter {
         case NotificationType.follow:
           await _openProfile(navigator, actorId);
         case NotificationType.clubInvite:
+          await _openClubInvite(navigator, targetId);
         case NotificationType.clubInviteAccepted:
           await _openClub(navigator, targetId);
         case NotificationType.roomInvite:
@@ -78,7 +80,7 @@ class NotificationRouter {
   ) async {
     if (userId == null || userId.isEmpty) return;
     final doc = await FirebaseFirestore.instance
-        .collection('users')
+        .collection('publicProfiles')
         .doc(userId)
         .get();
     if (!doc.exists) return;
@@ -100,6 +102,21 @@ class NotificationRouter {
     if (!doc.exists) return;
     navigator.push(
       MaterialPageRoute(builder: (_) => ClubOverviewScreen(clubId: clubId)),
+    );
+  }
+
+  static Future<void> _openClubInvite(
+    NavigatorState navigator,
+    String? clubId,
+  ) async {
+    if (clubId == null || clubId.isEmpty) return;
+    // Intentionally bypasses the Premium Clubs hub. Receiving and responding
+    // to an invitation is free; the destination re-fetches the invitee's
+    // canonical pending invite and exposes only Accept/Decline.
+    navigator.push(
+      MaterialPageRoute(
+        builder: (_) => ClubInviteResponseScreen(clubId: clubId),
+      ),
     );
   }
 
@@ -143,7 +160,7 @@ class NotificationRouter {
     if (otherUserId.isEmpty) return;
 
     final otherUserDoc = await FirebaseFirestore.instance
-        .collection('users')
+        .collection('publicProfiles')
         .doc(otherUserId)
         .get();
     if (!otherUserDoc.exists) return;
@@ -158,7 +175,9 @@ class NotificationRouter {
           otherDisplayName: displayName?.isNotEmpty == true
               ? displayName!
               : 'YO Voice user',
-          otherEmail: otherUserData['email'] as String? ?? '',
+          // Email is private account data and is never part of the public
+          // profile projection or a new conversation payload.
+          otherEmail: '',
           otherPhotoUrl: otherUserData['photoUrl'] as String? ?? '',
         ),
       ),

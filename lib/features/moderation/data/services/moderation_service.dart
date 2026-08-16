@@ -207,15 +207,17 @@ class ModerationService {
         .map((doc) => doc.exists ? ModerationReport.fromFirestore(doc) : null);
   }
 
-  /// The reported account's PUBLIC profile fields only — the same
-  /// document any signed-in member can already read. Nothing private
-  /// (email, phone, provider data, internal flags) is returned, and the
-  /// detail panel is given only these two values.
+  /// The reported account's server-owned PUBLIC projection. The private
+  /// users/{uid} source is never fetched for display; the detail panel is
+  /// given only these two explicitly public values.
   Future<({String? displayName, String? photoUrl})?> publicProfile(
     String userId,
   ) async {
     if (userId.isEmpty) return null;
-    final snapshot = await _firestore.collection('users').doc(userId).get();
+    final snapshot = await _firestore
+        .collection('publicProfiles')
+        .doc(userId)
+        .get();
     final data = snapshot.data();
     if (data == null) return null;
     return (
@@ -277,8 +279,10 @@ class ModerationService {
     return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
-  Future<ModerationResult> claim(String reportId, {required String requestId}) =>
-      _call(reportId: reportId, action: 'claim', requestId: requestId);
+  Future<ModerationResult> claim(
+    String reportId, {
+    required String requestId,
+  }) => _call(reportId: reportId, action: 'claim', requestId: requestId);
 
   Future<ModerationResult> release(
     String reportId, {
@@ -345,11 +349,10 @@ class ModerationService {
 
       final data = response.data;
       return ModerationResult(
-        status:
-            ReportStatus.values.firstWhere(
-              (value) => value.name == data['status'],
-              orElse: () => ReportStatus.open,
-            ),
+        status: ReportStatus.values.firstWhere(
+          (value) => value.name == data['status'],
+          orElse: () => ReportStatus.open,
+        ),
         contentRemoved: data['contentRemoved'] == true,
         replayed: data['replayed'] == true,
       );
@@ -367,8 +370,8 @@ class ModerationService {
     return switch (error.code) {
       'aborted' => ModerationFailure.conflict,
       'failed-precondition' => ModerationFailure.alreadyHandled,
-      'permission-denied' || 'unauthenticated' =>
-        ModerationFailure.accessExpired,
+      'permission-denied' ||
+      'unauthenticated' => ModerationFailure.accessExpired,
       'not-found' => ModerationFailure.missing,
       _ => ModerationFailure.unknown,
     };

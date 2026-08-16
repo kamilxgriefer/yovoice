@@ -7,13 +7,14 @@ about things that are broken, risky, or need verification.
 
 ## Security
 
-**No known critical open vulnerabilities.** For the full security model
-(not just this status snapshot), see [SECURITY.md](SECURITY.md). A full
-audit ([Archive/SECURITY_AUDIT.md](Archive/SECURITY_AUDIT.md)) found 3
-critical, 3 high, and 6 medium-priority issues plus one client/server
-contract bug. Verified during the documentation audit, directly against
-current `firestore.rules`, `storage.rules`, and `functions/`: **all 13
-items are fixed except one:**
+**Newly discovered authorization fixes are still pending production rules
+deployment.** They are described below; until that deploy, treat first-user-
+document creation and Club invitation acceptance as open production risks. For
+the full security model (not just this status snapshot), see
+[SECURITY.md](SECURITY.md). An earlier full audit
+([Archive/SECURITY_AUDIT.md](Archive/SECURITY_AUDIT.md)) found 3 critical, 3
+high, and 6 medium-priority issues plus one client/server contract bug. Within
+that audit's original 13 items, all are fixed except one:
 
 - **`enforceAppCheck: false` on every Cloud Function** (audit item #12) —
   still open, but deliberately: flipping it needs a token-delivery
@@ -24,6 +25,30 @@ items are fixed except one:**
   forgotten either. Tracked as a Roadmap item too:
   [Roadmap.md](Roadmap.md#2-firebase-app-check-enforcement).
 
+- **FIXED IN SOURCE, PENDING RULES DEPLOY — first `users/{uid}` create
+  bypassed every protected-field update check.** The update rule prevented
+  self-assigned Creator/Premium/staff state, but a document that did not exist
+  yet could be created with arbitrary fields. The create rule now accepts only
+  the non-privileged bootstrap/profile/presence field set, requires any `uid`
+  to match the path and permits only `personal` as an initial `accountType`;
+  legitimate partial presence-first documents still work. Forged Creator,
+  `premiumIdentity` and role creates are rejected in the emulator suite. The
+  new rule must be manually deployed before production receives this fix
+  ([ADR-053](Decisions.md#adr-053-paid-capabilities-come-only-from-the-trusted-entitlement-and-every-entry-boundary-fails-closed)).
+
+- **FIXED IN SOURCE, PENDING RULES DEPLOY — a Club invitee could self-promote
+  while accepting an invitation.** The membership-create branch previously
+  verified the pending invite but did not pin the new membership role or shape,
+  allowing a modified client to join as owner/co-owner/admin and then inherit
+  Club management rights. Rules now allow exactly the seven production fields,
+  require the invite's sender in `invitedBy`, and force invite acceptance to
+  `role: member`; owner membership creation remains a separate `getAfter()`
+  path. The Club-root counter update must also atomically create that membership
+  and delete the invite, may change only both counters plus `updatedAt`, and
+  pins their deltas and server time. Emulator attack cases cover every
+  privileged role, extra permission fields, repeated counter bumps and Club
+  metadata mutation.
+
 If you're about to change `firestore.rules`, `storage.rules`, or anything
 in `functions/`, read [SECURITY.md](SECURITY.md#firestore-security-rules--design-principles)'s
 design principles and checklist first — each one maps to a specific
@@ -32,6 +57,16 @@ missing field validation, `collectionGroup()` rule gaps, client-trusted
 permission flags).
 
 ## Data integrity
+
+- **FIXED IN SOURCE, PENDING RULES DEPLOY — the real Club creation batch was
+  rejected even for an entitled owner.** `ClubService` atomically creates the
+  Club, owner member, user's Club projection, three default channels and the
+  lounge room. Owner-member/channel rules used pre-write `get()`, so they could
+  not see the new Club root inside that same commit; the batch also included a
+  dead root-user `clubCount` update outside the self-write allowlist. Those
+  rules now use `getAfter()`, the unused counter write is removed, and the
+  current 225-case emulator suite exercises the full seven-document batch.
+  Production needs the updated `firestore.rules` deploy for this fix.
 
 - **Possible orphaned `rooms/{roomId}/members` documents.** When that
   subcollection was renamed to `roomMembers` (see
@@ -224,6 +259,21 @@ permission flags).
   rate.
 
 ## UI
+
+- **Fixed (2026-08-16): Profile journey metrics expanded into four enormous
+  desktop panels.** Their grid height followed the available width, so four
+  short values occupied most of a wide screen. `Your YO Voice journey` is now
+  one intrinsic-height, four-row list with an icon, label and trailing real
+  value. The same production widget is regression-tested at 320, 390, 768,
+  1024 and 1440 px without overflow or width-derived height growth.
+
+- **Fixed (2026-08-16): Creator and paid More destinations could look
+  available to free accounts.** Creator in Edit profile, Creator Studio and
+  More → Clubs now show a lock and contextual Premium explanation unless the
+  trusted entitlement grants the matching capability. Navigation preflight,
+  a reactive destination guard and the Edit-profile Save recheck all fail
+  closed. A visible VIP/Premium badge never authorizes access; existing club
+  memberships/invites and Family Rooms remain free.
 
 - **Fixed (2026-08-10): the web app's browser tab showed the YO Voice
   mark inside a solid black square** while the landing page's tab showed
@@ -560,14 +610,22 @@ permission flags).
   convention instead. Not a bug, but tracked as a migration in progress —
   see [UI.md](UI.md) and
   [Roadmap.md](Roadmap.md#app-wide-theme-migration).
-- **Zero automated test coverage for Cloud Functions**, and near-zero for
-  Flutter services/widgets beyond a couple of files. Not a regression —
-  coverage was never broad to begin with — but worth knowing before
-  assuming a change is safe because "the tests pass." See
-  [TESTING.md](TESTING.md) for exactly what is and isn't covered.
+- **Cloud Functions still have zero automated test coverage.** The 225-case
+  emulator suite tests Firestore Security Rules; it does not execute the
+  JavaScript Functions implementation. Flutter has 41 regression files, but
+  broad cross-service integration and real store billing still have no
+  executable path. A green suite is strong evidence for the cases it names,
+  not blanket proof for every feature. See [TESTING.md](TESTING.md) for the
+  current scope.
 
 ## Infrastructure
 
+- **OPEN — App Store/Google Play Premium checkout is not operational.** The
+  entitlement model, admin grant and access gates exist, but no IAP client or
+  store receipt-verification adapter is configured; `verifyPurchase`
+  deliberately declines rather than trusting the device. Only the guarded
+  `adminSetPremiumEntitlements` callable can grant working Premium today. See
+  [Roadmap.md](Roadmap.md#0e-premium-billing-adapters).
 - **`app.yovoice.app` DNS record not added yet** — blocks the website from
   pointing at its final app URL. Needs Cloudflare access only the domain
   owner has. See [Roadmap.md](Roadmap.md).

@@ -61,6 +61,16 @@ class SubscriptionEntitlements {
   final bool premiumIdentityEnabled;
   final int maxOwnedClubs;
 
+  /// The paid identity is the common prerequisite for every Premium
+  /// destination. Feature-specific flags remain separate so future plans can
+  /// vary, but no capability is exposed before the same trusted entitlement
+  /// that grants the public Premium badge is active.
+  bool get hasPremiumIdentity => isPremium && premiumIdentityEnabled;
+
+  bool get canUseCreator => hasPremiumIdentity && creatorEnabled;
+
+  bool get canUseClubs => hasPremiumIdentity && canCreateClubs;
+
   /// True while the subscription is in a billing-retry window — premium
   /// stays on, but Settings can surface "check your payment method".
   bool get inGracePeriod => status == 'grace';
@@ -87,10 +97,10 @@ class SubscriptionEntitlements {
       status: status,
       currentPeriodEnd: periodEnd,
       isPremium: active,
-      creatorEnabled: active && (data['creatorEnabled'] as bool? ?? true),
-      canCreateClubs: active && (data['canCreateClubs'] as bool? ?? true),
+      creatorEnabled: active && (data['creatorEnabled'] as bool? ?? false),
+      canCreateClubs: active && (data['canCreateClubs'] as bool? ?? false),
       premiumIdentityEnabled:
-          active && (data['premiumIdentityEnabled'] as bool? ?? true),
+          active && (data['premiumIdentityEnabled'] as bool? ?? false),
       maxOwnedClubs: active ? (data['maxOwnedClubs'] as int? ?? 3) : 0,
     );
   }

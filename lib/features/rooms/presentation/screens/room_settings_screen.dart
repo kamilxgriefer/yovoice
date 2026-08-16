@@ -4,6 +4,7 @@ import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_image_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 const _background = Color(0xFF080711);
 const _surface = Color(0xFF151020);
@@ -13,9 +14,16 @@ const _primary = Color(0xFFA226FF);
 const _danger = Color(0xFFFF416C);
 
 class RoomSettingsScreen extends StatefulWidget {
-  const RoomSettingsScreen({required this.room, super.key});
+  const RoomSettingsScreen({
+    required this.room,
+    this.roomService,
+    this.roomImageService,
+    super.key,
+  });
 
   final VoiceRoom room;
+  final RoomService? roomService;
+  final RoomImageService? roomImageService;
 
   @override
   State<RoomSettingsScreen> createState() => _RoomSettingsScreenState();
@@ -23,8 +31,9 @@ class RoomSettingsScreen extends StatefulWidget {
 
 class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _service = RoomService();
-  final _images = RoomImageService();
+  late final RoomService _service = widget.roomService ?? RoomService();
+  late final RoomImageService _images =
+      widget.roomImageService ?? RoomImageService();
 
   String? _imageUrl;
   bool _uploadingCover = false;
@@ -264,228 +273,231 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
           ),
         ],
       ),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(18, 8, 18, 80),
-          children: [
-            _Section(
-              title: 'Room cover',
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(18),
-                  child: AspectRatio(
-                    aspectRatio: 21 / 9,
-                    child: _imageUrl?.trim().isNotEmpty == true
-                        ? Image.network(
-                            _imageUrl!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) =>
-                                const _CoverFallback(),
-                          )
-                        : const _CoverFallback(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: _uploadingCover ? null : _changeCover,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Color(0xFF3A2C49)),
-                    minimumSize: const Size.fromHeight(46),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+      body: ResponsiveContentFrame(
+        width: ResponsiveContentWidth.form,
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(18, 8, 18, 80),
+            children: [
+              _Section(
+                title: 'Room cover',
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(18),
+                    child: AspectRatio(
+                      aspectRatio: 21 / 9,
+                      child: _imageUrl?.trim().isNotEmpty == true
+                          ? Image.network(
+                              _imageUrl!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                                  const _CoverFallback(),
+                            )
+                          : const _CoverFallback(),
                     ),
                   ),
-                  icon: _uploadingCover
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.image_rounded, size: 18),
-                  label: Text(
-                    _uploadingCover
-                        ? 'Uploading…'
-                        : _imageUrl?.trim().isNotEmpty == true
-                        ? 'Change cover'
-                        : 'Add cover',
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: _uploadingCover ? null : _changeCover,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: Color(0xFF3A2C49)),
+                      minimumSize: const Size.fromHeight(46),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    icon: _uploadingCover
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.image_rounded, size: 18),
+                    label: Text(
+                      _uploadingCover
+                          ? 'Uploading…'
+                          : _imageUrl?.trim().isNotEmpty == true
+                          ? 'Change cover'
+                          : 'Add cover',
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'The cover becomes the room card on Home and Discover '
-                  'and the stage backdrop inside the room.',
-                  style: TextStyle(color: Color(0xFF9E92A8), fontSize: 11.5),
-                ),
-              ],
-            ),
-            _Section(
-              title: 'General',
-              children: [
-                _TextField(
-                  controller: _name,
-                  label: 'Room name',
-                  maxLength: 50,
-                  validator: (value) => (value?.trim().length ?? 0) < 3
-                      ? 'Enter at least 3 characters'
-                      : null,
-                ),
-                _TextField(
-                  controller: _description,
-                  label: 'Description',
-                  maxLength: 160,
-                  maxLines: 4,
-                ),
-                _Dropdown(
-                  label: 'Category',
-                  value: _category,
-                  values: const [
-                    'talk',
-                    'music',
-                    'gaming',
-                    'chill',
-                    'study',
-                    'business',
-                  ],
-                  onChanged: (value) => setState(() => _category = value),
-                ),
-                _Dropdown(
-                  label: 'Language',
-                  value: _language,
-                  values: const [
-                    'English',
-                    'Polish',
-                    'Dutch',
-                    'German',
-                    'French',
-                    'Spanish',
-                    'Italian',
-                  ],
-                  onChanged: (value) => setState(() => _language = value),
-                ),
-              ],
-            ),
-            _Section(
-              title: 'Privacy',
-              children: [
-                _Dropdown(
-                  label: 'Visibility',
-                  value: _visibility,
-                  values: const ['public', 'private'],
-                  onChanged: (value) => setState(() => _visibility = value),
-                ),
-                SwitchListTile.adaptive(
-                  value: _approvalRequired,
-                  onChanged: (value) =>
-                      setState(() => _approvalRequired = value),
-                  title: const Text(
-                    'Require approval to join',
-                    style: TextStyle(color: Colors.white),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'The cover becomes the room card on Home and Discover '
+                    'and the stage backdrop inside the room.',
+                    style: TextStyle(color: Color(0xFF9E92A8), fontSize: 11.5),
                   ),
-                  subtitle: const Text(
-                    'New members need owner approval.',
-                    style: TextStyle(color: _muted),
+                ],
+              ),
+              _Section(
+                title: 'General',
+                children: [
+                  _TextField(
+                    controller: _name,
+                    label: 'Room name',
+                    maxLength: 50,
+                    validator: (value) => (value?.trim().length ?? 0) < 3
+                        ? 'Enter at least 3 characters'
+                        : null,
                   ),
-                  activeTrackColor: _primary,
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ],
-            ),
-            _Section(
-              title: 'Voice',
-              children: [
-                _Dropdown(
-                  label: 'Voice capacity',
-                  value: _maxParticipants?.toString() ?? 'Unlimited',
-                  values: const ['10', '25', '50', '100', 'Unlimited'],
-                  onChanged: (value) => setState(() {
-                    _maxParticipants = value == 'Unlimited'
-                        ? null
-                        : int.parse(value);
-                  }),
-                ),
-                SwitchListTile.adaptive(
-                  value: _autoMuteNewUsers,
-                  onChanged: (value) =>
-                      setState(() => _autoMuteNewUsers = value),
-                  title: const Text(
-                    'Auto-mute new listeners',
-                    style: TextStyle(color: Colors.white),
+                  _TextField(
+                    controller: _description,
+                    label: 'Description',
+                    maxLength: 160,
+                    maxLines: 4,
                   ),
-                  activeTrackColor: _primary,
-                  contentPadding: EdgeInsets.zero,
-                ),
-                SwitchListTile.adaptive(
-                  value: _membersCanStartVoice,
-                  onChanged: (value) =>
-                      setState(() => _membersCanStartVoice = value),
-                  title: const Text(
-                    'Members can start voice',
-                    style: TextStyle(color: Colors.white),
+                  _Dropdown(
+                    label: 'Category',
+                    value: _category,
+                    values: const [
+                      'talk',
+                      'music',
+                      'gaming',
+                      'chill',
+                      'study',
+                      'business',
+                    ],
+                    onChanged: (value) => setState(() => _category = value),
                   ),
-                  subtitle: const Text(
-                    'Otherwise only the owner can start a session.',
-                    style: TextStyle(color: _muted),
+                  _Dropdown(
+                    label: 'Language',
+                    value: _language,
+                    values: const [
+                      'English',
+                      'Polish',
+                      'Dutch',
+                      'German',
+                      'French',
+                      'Spanish',
+                      'Italian',
+                    ],
+                    onChanged: (value) => setState(() => _language = value),
                   ),
-                  activeTrackColor: _primary,
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ],
-            ),
-            _Section(
-              title: 'Chat',
-              children: [
-                _Dropdown(
-                  label: 'Slow mode',
-                  value: '$_slowModeSeconds',
-                  values: const ['0', '5', '10', '30', '60'],
-                  labels: const {
-                    '0': 'Off',
-                    '5': '5 seconds',
-                    '10': '10 seconds',
-                    '30': '30 seconds',
-                    '60': '1 minute',
-                  },
-                  onChanged: (value) =>
-                      setState(() => _slowModeSeconds = int.parse(value)),
-                ),
-              ],
-            ),
-            _Section(
-              title: 'Room status',
-              children: [
-                if (!widget.room.isActive)
+                ],
+              ),
+              _Section(
+                title: 'Privacy',
+                children: [
+                  _Dropdown(
+                    label: 'Visibility',
+                    value: _visibility,
+                    values: const ['public', 'private'],
+                    onChanged: (value) => setState(() => _visibility = value),
+                  ),
+                  SwitchListTile.adaptive(
+                    value: _approvalRequired,
+                    onChanged: (value) =>
+                        setState(() => _approvalRequired = value),
+                    title: const Text(
+                      'Require approval to join',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    subtitle: const Text(
+                      'New members need owner approval.',
+                      style: TextStyle(color: _muted),
+                    ),
+                    activeTrackColor: _primary,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ],
+              ),
+              _Section(
+                title: 'Voice',
+                children: [
+                  _Dropdown(
+                    label: 'Voice capacity',
+                    value: _maxParticipants?.toString() ?? 'Unlimited',
+                    values: const ['10', '25', '50', '100', 'Unlimited'],
+                    onChanged: (value) => setState(() {
+                      _maxParticipants = value == 'Unlimited'
+                          ? null
+                          : int.parse(value);
+                    }),
+                  ),
+                  SwitchListTile.adaptive(
+                    value: _autoMuteNewUsers,
+                    onChanged: (value) =>
+                        setState(() => _autoMuteNewUsers = value),
+                    title: const Text(
+                      'Auto-mute new listeners',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    activeTrackColor: _primary,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  SwitchListTile.adaptive(
+                    value: _membersCanStartVoice,
+                    onChanged: (value) =>
+                        setState(() => _membersCanStartVoice = value),
+                    title: const Text(
+                      'Members can start voice',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    subtitle: const Text(
+                      'Otherwise only the owner can start a session.',
+                      style: TextStyle(color: _muted),
+                    ),
+                    activeTrackColor: _primary,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ],
+              ),
+              _Section(
+                title: 'Chat',
+                children: [
+                  _Dropdown(
+                    label: 'Slow mode',
+                    value: '$_slowModeSeconds',
+                    values: const ['0', '5', '10', '30', '60'],
+                    labels: const {
+                      '0': 'Off',
+                      '5': '5 seconds',
+                      '10': '10 seconds',
+                      '30': '30 seconds',
+                      '60': '1 minute',
+                    },
+                    onChanged: (value) =>
+                        setState(() => _slowModeSeconds = int.parse(value)),
+                  ),
+                ],
+              ),
+              _Section(
+                title: 'Room status',
+                children: [
+                  if (!widget.room.isActive)
+                    _ActionTile(
+                      icon: Icons.lock_open_rounded,
+                      title: 'Open room',
+                      subtitle: 'Make this room available again.',
+                      onTap: () => _setStatus(RoomStatus.active),
+                    ),
+                  if (!widget.room.isClosed)
+                    _ActionTile(
+                      icon: Icons.lock_rounded,
+                      title: 'Close room',
+                      subtitle: 'Pause access without deleting anything.',
+                      onTap: () => _setStatus(RoomStatus.closed),
+                    ),
+                  if (!widget.room.isArchived)
+                    _ActionTile(
+                      icon: Icons.archive_rounded,
+                      title: 'Archive room',
+                      subtitle: 'Hide it from Discover and keep all data.',
+                      onTap: () => _setStatus(RoomStatus.archived),
+                    ),
                   _ActionTile(
-                    icon: Icons.lock_open_rounded,
-                    title: 'Open room',
-                    subtitle: 'Make this room available again.',
-                    onTap: () => _setStatus(RoomStatus.active),
+                    icon: Icons.delete_forever_rounded,
+                    title: 'Delete room',
+                    subtitle: 'Permanently delete the room and its data.',
+                    danger: true,
+                    onTap: _delete,
                   ),
-                if (!widget.room.isClosed)
-                  _ActionTile(
-                    icon: Icons.lock_rounded,
-                    title: 'Close room',
-                    subtitle: 'Pause access without deleting anything.',
-                    onTap: () => _setStatus(RoomStatus.closed),
-                  ),
-                if (!widget.room.isArchived)
-                  _ActionTile(
-                    icon: Icons.archive_rounded,
-                    title: 'Archive room',
-                    subtitle: 'Hide it from Discover and keep all data.',
-                    onTap: () => _setStatus(RoomStatus.archived),
-                  ),
-                _ActionTile(
-                  icon: Icons.delete_forever_rounded,
-                  title: 'Delete room',
-                  subtitle: 'Permanently delete the room and its data.',
-                  danger: true,
-                  onTap: _delete,
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -514,14 +526,17 @@ class _Section extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: _surface,
+          Material(
+            color: _surface,
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: _border),
+              side: const BorderSide(color: _border),
             ),
-            child: Column(children: children),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(children: children),
+            ),
           ),
         ],
       ),
@@ -591,6 +606,7 @@ class _Dropdown extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 14),
       child: DropdownButtonFormField<String>(
         initialValue: value,
+        isExpanded: true,
         dropdownColor: _surface,
         style: const TextStyle(color: Colors.white),
         decoration: InputDecoration(
@@ -636,19 +652,22 @@ class _ActionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(icon, color: danger ? _danger : _primary),
-      title: Text(
-        title,
-        style: TextStyle(
-          color: danger ? _danger : Colors.white,
-          fontWeight: FontWeight.w800,
+    return Material(
+      color: Colors.transparent,
+      child: ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(icon, color: danger ? _danger : _primary),
+        title: Text(
+          title,
+          style: TextStyle(
+            color: danger ? _danger : Colors.white,
+            fontWeight: FontWeight.w800,
+          ),
         ),
+        subtitle: Text(subtitle, style: const TextStyle(color: _muted)),
+        trailing: const Icon(Icons.chevron_right_rounded, color: _muted),
+        onTap: onTap,
       ),
-      subtitle: Text(subtitle, style: const TextStyle(color: _muted)),
-      trailing: const Icon(Icons.chevron_right_rounded, color: _muted),
-      onTap: onTap,
     );
   }
 }

@@ -388,86 +388,114 @@ class _UserRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final narrow = MediaQuery.sizeOf(context).width < 700;
     return StaffPanel(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-      child: Row(
-        children: [
-          DecoratedUserAvatar(
-            radius: 21,
-            photoUrl: user.photoUrl,
-            displayName: user.displayName,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stacksActions = constraints.maxWidth < 560;
+          final showsUid = constraints.maxWidth >= 700;
+          final identity = Expanded(child: _identity(showsUid: showsUid));
+
+          if (stacksActions) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 3,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      user.displayName.isEmpty
-                          ? 'YO Voice user'
-                          : user.displayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    OfficialRoleBadge(
-                      role: OfficialRole.fromWire(user.staffRole),
-                      variant: IdentityBadgeVariant.compact,
-                    ),
-                    if (user.isVip)
-                      const VipBadge(variant: IdentityBadgeVariant.compact),
-                    AccountStatusChip(status: user.status),
-                  ],
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [_avatar(), const SizedBox(width: 12), identity],
                 ),
-                const SizedBox(height: 3),
-                Wrap(
-                  spacing: 10,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    if (user.username.isNotEmpty)
-                      Text(
-                        '@${user.username}',
-                        style: const TextStyle(
-                          color: StaffCenterStyle.muted,
-                          fontSize: 11.5,
-                        ),
-                      ),
-                    if (!narrow) CopyableUid(uid: user.uid),
-                    if (user.createdAt != null)
-                      Text(
-                        'joined ${staffStamp(user.createdAt)}',
-                        style: const TextStyle(
-                          color: StaffCenterStyle.faint,
-                          fontSize: 10.5,
-                        ),
-                      ),
-                  ],
-                ),
+                const SizedBox(height: 9),
+                Align(alignment: Alignment.centerRight, child: _viewButton()),
               ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          FilledButton.tonal(
-            onPressed: onView,
-            style: FilledButton.styleFrom(
-              backgroundColor: StaffCenterStyle.surfaceRaised,
-              foregroundColor: Colors.white,
-              minimumSize: const Size(58, 38),
-            ),
-            child: const Text('View', style: TextStyle(fontSize: 12.5)),
-          ),
-        ],
+            );
+          }
+
+          return Row(
+            children: [
+              _avatar(),
+              const SizedBox(width: 12),
+              identity,
+              const SizedBox(width: 8),
+              _viewButton(),
+            ],
+          );
+        },
       ),
+    );
+  }
+
+  Widget _avatar() => DecoratedUserAvatar(
+    radius: 21,
+    photoUrl: user.photoUrl,
+    displayName: user.displayName,
+  );
+
+  Widget _identity({required bool showsUid}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 6,
+          runSpacing: 3,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(
+              user.displayName.isEmpty ? 'YO Voice user' : user.displayName,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            OfficialRoleBadge(
+              role: OfficialRole.fromWire(user.staffRole),
+              variant: IdentityBadgeVariant.compact,
+            ),
+            if (user.isVip)
+              const VipBadge(variant: IdentityBadgeVariant.compact),
+            AccountStatusChip(status: user.status),
+          ],
+        ),
+        const SizedBox(height: 3),
+        Wrap(
+          spacing: 10,
+          runSpacing: 3,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            if (user.username.isNotEmpty)
+              Text(
+                '@${user.username}',
+                style: const TextStyle(
+                  color: StaffCenterStyle.muted,
+                  fontSize: 11.5,
+                ),
+              ),
+            if (showsUid) CopyableUid(uid: user.uid),
+            if (user.createdAt != null)
+              Text(
+                'joined ${staffStamp(user.createdAt)}',
+                style: const TextStyle(
+                  color: StaffCenterStyle.faint,
+                  fontSize: 10.5,
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _viewButton() {
+    return FilledButton.tonal(
+      onPressed: onView,
+      style: FilledButton.styleFrom(
+        backgroundColor: StaffCenterStyle.surfaceRaised,
+        foregroundColor: Colors.white,
+        minimumSize: const Size(64, 44),
+      ),
+      child: const Text('View', style: TextStyle(fontSize: 12.5)),
     );
   }
 }

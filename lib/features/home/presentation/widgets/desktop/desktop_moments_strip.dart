@@ -92,7 +92,6 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
   Stream<List<FollowUser>>? _following;
   FollowService? _follow;
 
-  static const double _tileWidth = 74;
   static const double _tileGap = 14;
 
   @override
@@ -190,12 +189,14 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                 ),
                 LayoutBuilder(
                   builder: (context, constraints) {
+                    final tileWidth = _MomentTile.widthFor(context);
+                    final tileHeight = _MomentTile.heightFor(context);
                     // "Your Moment" always holds the first slot; the rest
                     // of the width decides how many people fit, capped at
                     // the 8 the composition is designed around.
                     final fits =
                         ((constraints.maxWidth + _tileGap) /
-                                (_tileWidth + _tileGap))
+                                (tileWidth + _tileGap))
                             .floor();
                     final capacity = (fits - 1).clamp(0, 7);
                     final shown = others.take(capacity).toList(growable: false);
@@ -220,7 +221,7 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                     // blank.
                     if (others.isEmpty && toFollow.isEmpty) {
                       return SizedBox(
-                        height: _MomentTile.height,
+                        height: tileHeight,
                         child: Row(
                           children: [
                             tiles.first,
@@ -241,7 +242,7 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                     // Flexible list here let the follow segment drift to
                     // the far edge with a gap in the middle.
                     return SizedBox(
-                      height: _MomentTile.height,
+                      height: tileHeight,
                       child: SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
                         child: Row(
@@ -450,11 +451,23 @@ class _MomentTile extends StatelessWidget {
   /// guesses presence for someone it cannot read it for.
   final bool online;
 
-  static const double width = 74;
+  /// Names get the full width of the tile and can wrap to two lines. The
+  /// tile also grows with accessibility text scaling instead of forcing a
+  /// larger label back into the old compact geometry.
+  static double _textScale(BuildContext context) =>
+      (MediaQuery.textScalerOf(context).scale(11.5) / 11.5).clamp(1, 2);
 
-  /// Ring + label + state, with enough slack that a platform's font
-  /// metrics cannot tip the column into a one-pixel overflow.
-  static const double height = 112;
+  static double widthFor(BuildContext context) =>
+      136 + ((_textScale(context) - 1) * 40);
+
+  static double heightFor(BuildContext context) =>
+      128 + ((_textScale(context) - 1) * 40);
+
+  static double nameHeightFor(BuildContext context) =>
+      MediaQuery.textScalerOf(context).scale(11.5) * 1.08 * 2 + 4;
+
+  static double actionHeightFor(BuildContext context) =>
+      (MediaQuery.textScalerOf(context).scale(10.5) * 1.25 + 4).clamp(20, 34);
 
   bool get _isNew {
     final createdAt = moment.createdAt;
@@ -467,8 +480,8 @@ class _MomentTile extends StatelessWidget {
     final fresh = _isNew;
 
     return SizedBox(
-      width: width,
-      height: height,
+      width: widthFor(context),
+      height: heightFor(context),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
@@ -487,45 +500,68 @@ class _MomentTile extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 7),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Flexible(
-                  child: Text(
-                    moment.authorName,
+            _MomentNameLabel(name: moment.authorName),
+            const SizedBox(height: 2),
+            SizedBox(
+              height: actionHeightFor(context),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  UserIdentityBadges(
+                    uid: moment.authorId,
+                    variant: IdentityBadgeVariant.icon,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    // Both are facts the document carries: freshly posted,
+                    // or exactly how long the recording runs.
+                    fresh ? 'New' : moment.durationLabel,
                     maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
+                    style: TextStyle(
+                      color: fresh
+                          ? const Color(0xFFE879F9)
+                          : const Color(0xFF9A90AC),
+                      fontSize: 10.5,
+                      fontWeight: fresh ? FontWeight.w800 : FontWeight.w600,
                     ),
                   ),
-                ),
-                const SizedBox(width: 3),
-                UserIdentityBadges(
-                  uid: moment.authorId,
-                  variant: IdentityBadgeVariant.icon,
-                ),
-              ],
-            ),
-            const SizedBox(height: 1),
-            Text(
-              // Both are facts the document carries: freshly posted, or
-              // exactly how long the recording runs.
-              fresh ? 'New' : moment.durationLabel,
-              maxLines: 1,
-              style: TextStyle(
-                color: fresh
-                    ? const Color(0xFFE879F9)
-                    : const Color(0xFF9A90AC),
-                fontSize: 10.5,
-                fontWeight: fresh ? FontWeight.w800 : FontWeight.w600,
+                ],
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A stable two-line name slot shared by Moment and follow suggestions.
+/// Keeping the identity mark out of this row means ordinary full names no
+/// longer lose a quarter of their width to a badge.
+class _MomentNameLabel extends StatelessWidget {
+  const _MomentNameLabel({required this.name});
+
+  final String name;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      height: _MomentTile.nameHeightFor(context),
+      child: Center(
+        child: Text(
+          name,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          softWrap: true,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 11.5,
+            height: 1.08,
+            fontWeight: FontWeight.w700,
+          ),
         ),
       ),
     );
@@ -609,8 +645,8 @@ class _FollowablePersonTileState extends State<_FollowablePersonTile> {
   Widget build(BuildContext context) {
     final person = widget.person;
     return SizedBox(
-      width: _MomentTile.width,
-      height: _MomentTile.height,
+      width: _MomentTile.widthFor(context),
+      height: _MomentTile.heightFor(context),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -633,49 +669,39 @@ class _FollowablePersonTileState extends State<_FollowablePersonTile> {
             ),
           ),
           const SizedBox(height: 5),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Flexible(
-                child: Text(
-                  person.displayName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 3),
-              UserIdentityBadges(
-                uid: person.id,
-                variant: IdentityBadgeVariant.icon,
-              ),
-            ],
-          ),
+          _MomentNameLabel(name: person.displayName),
           const SizedBox(height: 2),
           SizedBox(
-            height: 20,
-            child: OutlinedButton(
-              onPressed: _busy ? null : _followThem,
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                foregroundColor: const Color(0xFFD3A5FF),
-                side: BorderSide(
-                  color: AppColors.primary.withValues(alpha: .5),
+            height: _MomentTile.actionHeightFor(context),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                UserIdentityBadges(
+                  uid: person.id,
+                  variant: IdentityBadgeVariant.icon,
                 ),
-                shape: const StadiumBorder(),
-              ),
-              child: const Text(
-                'Follow',
-                style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800),
-              ),
+                const SizedBox(width: 4),
+                OutlinedButton(
+                  onPressed: _busy ? null : _followThem,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    foregroundColor: const Color(0xFFD3A5FF),
+                    side: BorderSide(
+                      color: AppColors.primary.withValues(alpha: .5),
+                    ),
+                    shape: const StadiumBorder(),
+                  ),
+                  child: const Text(
+                    'Follow',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -710,8 +736,8 @@ class _YourMomentTile extends StatelessWidget {
             DesktopMomentsStrip.newWindow;
 
     return SizedBox(
-      width: _MomentTile.width,
-      height: _MomentTile.height,
+      width: _MomentTile.widthFor(context),
+      height: _MomentTile.heightFor(context),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -765,27 +791,22 @@ class _YourMomentTile extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 7),
-          const Text(
-            'Your Moment',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 1),
-          Text(
-            mine == null ? 'Record' : (fresh ? 'New' : mine.durationLabel),
-            maxLines: 1,
-            style: TextStyle(
-              color: mine == null || !fresh
-                  ? const Color(0xFF9A90AC)
-                  : const Color(0xFFE879F9),
-              fontSize: 10.5,
-              fontWeight: fresh ? FontWeight.w800 : FontWeight.w600,
+          const _MomentNameLabel(name: 'Your Moment'),
+          const SizedBox(height: 2),
+          SizedBox(
+            height: _MomentTile.actionHeightFor(context),
+            child: Center(
+              child: Text(
+                mine == null ? 'Record' : (fresh ? 'New' : mine.durationLabel),
+                maxLines: 1,
+                style: TextStyle(
+                  color: mine == null || !fresh
+                      ? const Color(0xFF9A90AC)
+                      : const Color(0xFFE879F9),
+                  fontSize: 10.5,
+                  fontWeight: fresh ? FontWeight.w800 : FontWeight.w600,
+                ),
+              ),
             ),
           ),
         ],

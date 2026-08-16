@@ -8,44 +8,58 @@ deployables described in
 
 | What | How | Trigger |
 |---|---|---|
-| Flutter web build → Firebase Hosting | GitHub Actions | Automatic, on push to `main` |
+| Flutter web verification/build | GitHub Actions | Automatic, on push to `main` |
+| Verified Flutter web artifact → Firebase Hosting | GitHub Actions | Manual `workflow_dispatch` after backend readiness |
 | Firestore rules + indexes | `firebase deploy --only firestore:rules,firestore:indexes` | Manual |
 | Cloud Functions | `firebase deploy --only functions` | Manual |
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
-## Flutter web → Firebase Hosting (automatic)
+## Flutter web verification and Hosting release
 
-`.github/workflows/firebase-hosting-merge.yml` runs on every push to
-`main`:
+`.github/workflows/firebase-hosting-merge.yml` runs the complete verification
+pipeline on every push to `main`:
 
 ```
 checkout → install Flutter (stable channel) → flutter pub get
   → flutter analyze → flutter test
-  → Firestore + Storage rules suites against the real emulators
+  → Firestore rules → Storage rules → combined Family media rules
+  → Firebase Functions tests against Auth + Firestore emulators
   → flutter build web --release
-  → deploy to Firebase Hosting (channel: live)
 ```
 
 **Every step before the build is a real gate, not just a step**: a
-failing `flutter analyze`, a failing widget/unit test, or a failing
-rules test stops the workflow before anything deploys — a broken `main`
-means the web build doesn't ship, full stop. (Until 2026-08-08 only
+failing `flutter analyze`, a failing widget/unit test, a failing
+rules test or a failing Functions test stops the workflow. A push never
+publishes Hosting by itself. (Until 2026-08-08 only
 `flutter analyze` gated the deploy; the test and rules-suite gates were
 added in the product-audit pass. Note the rules suites *verify* the
 rules in the repo — rules **deploys** remain manual, see below.) See
 [TESTING.md](TESTING.md) and
 [DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md#verification-checklist-before-calling-something-done).
 
-Deploys to the `live` channel using
+After the required indexes, Functions and rules have been deployed and
+verified, start the same workflow manually with `deploy_hosting: true`.
+That run rebuilds the exact selected revision, packages the verified
+`build/web` artifact, then a separate `production` job deploys that artifact
+to the `live` channel using
 `firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_YOVOICE_EC54A }}'`
 — a repo-level GitHub secret, not anything checked into the repo.
 
-This workflow deploys **Hosting only**. It does not touch Firestore rules,
-indexes, Storage rules, or Cloud Functions — those are separate, manual
-steps, on purpose (see below).
+The workflow pins Flutter, Firebase CLI and every third-party Action to an
+exact version/commit. It deploys **Hosting only** and only on the explicit
+manual release path. It does not touch Firestore rules, indexes, Storage
+rules, or Cloud Functions — those remain separate deliberate steps (see
+below).
 
-## Why rules/functions are not in CI
+Repository administrators must also configure GitHub's `production`
+environment with a required reviewer and protect `main` with required status
+checks. The YAML names the environment, but reviewer and branch policies live
+in GitHub settings and cannot be guaranteed by a repository file. Until those
+settings are enabled, the manual dispatch is the release confirmation; never
+grant the Hosting service-account secret to a different environment.
+
+## Why rules/functions are tested but not auto-deployed
 
 Auto-deploying `firestore.rules` on every push to `main` would mean a
 single bad rules change goes live the moment it's pushed, with no
@@ -78,28 +92,103 @@ firebase deploy --only firestore:rules,firestore:indexes --project yovoice-ec54a
 firebase deploy --only functions --project yovoice-ec54a
 ```
 
-**Gotcha worth knowing before you reach for it**:
-`functions/package.json`'s `deploy` script —
-`npm run deploy` run from inside `functions/` — only deploys
-`createLiveKitToken`, not every function:
+`functions/package.json`'s deploy script is the same full deployment, so
+either command below is valid:
 
 ```json
 "scripts": {
-  "deploy": "firebase deploy --only functions:createLiveKitToken",
+  "deploy": "firebase deploy --only functions",
   "serve": "firebase emulators:start --only functions"
 }
 ```
 
-This is a convenience shortcut for the function that changes most often
-during voice-feature work, not a full-deploy command. For a real full
-deploy, run the `--only functions` command above from the **repo root**,
-not `npm run deploy` from inside `functions/`.
+Run the top-level command when an explicit `--project` is desirable; run
+`npm run deploy` from `functions/` only when the active Firebase project has
+already been verified with `firebase use`.
 
 ## Storage rules (manual)
 
 ```bash
 firebase deploy --only storage --project yovoice-ec54a
 ```
+
+## Private-profile projection cutover (strict order)
+
+The `users/{uid}` privacy boundary is not a rules-only deploy. Old clients read
+foreign root user documents, while new clients require server-owned
+`publicProfiles` and `socialPresence`. Use this order so no released client is
+pointed at an empty projection and no source change can race the backfill:
+
+1. Deploy the projection triggers, bounded search callable and all social-graph
+   functions whose safe profile summaries/no-email request shape changed:
+
+   ```bash
+   firebase deploy --only \
+functions:onUserPrivacySourceChanged,functions:onAuthUserDeleted,\
+functions:searchPublicProfiles,\
+functions:getMutualFriends,functions:getFriendSuggestions,\
+functions:sendFriendRequest,functions:respondToFriendRequest,\
+functions:cancelFriendRequest,functions:removeFriend,\
+functions:setFollow,functions:setUserBlock \
+--project yovoice-ec54a
+   ```
+
+2. Backfill in bounded pages. Dry-run is the default and performs zero writes.
+   Record `nextCursor` from the JSON response; apply the same page, then repeat
+   with `--start-after CURSOR` until `reachedEnd` is true. Each page is capped
+   at 200 users/400 operations in memory and per write batch; each invocation
+   defaults to at most 500 users and has an absolute explicit cap of 5,000.
+
+   ```bash
+   npm --prefix functions run backfill:public-profiles -- \
+     --project yovoice-ec54a --max-users 500
+
+   npm --prefix functions run backfill:public-profiles -- \
+     --project yovoice-ec54a --apply --max-users 500
+
+   npm --prefix functions run backfill:public-profiles -- \
+     --project yovoice-ec54a --start-after LAST_UID --max-users 500
+   ```
+
+   `--uid-prefix PREFIX` is available for a deliberately scoped recovery. Each
+   page joins Firebase Auth before deriving a projection; a missing Auth user is
+   counted as `authOrphans` and its projections are removed in apply mode.
+   Source deletions after step 1 are also cleaned by `onAuthUserDeleted`.
+
+3. Scrub stale identity snapshots in four independently resumable phases. Run
+   dry-run first, then `--apply`; repeat until `reachedEnd` is true. Output is
+   aggregate-only, apply cursors stay in Admin-only `privateMigrationState`,
+   and each invocation is bounded (500 documents by default, hard cap 5,000):
+
+   ```bash
+   for PHASE in conversations friendRequests following followers; do
+     npm --prefix functions run scrub:legacy-identity -- \
+       --project yovoice-ec54a --phase "$PHASE"
+     npm --prefix functions run scrub:legacy-identity -- \
+       --project yovoice-ec54a --phase "$PHASE" --apply
+   done
+   ```
+
+   Do not blindly backfill `friendshipGuards` from legacy friend mirrors. Only
+   canonical server-side acceptance may create guards. Existing mirror-only
+   relationships stay fail-closed for presence until explicitly reconciled
+   from trusted evidence or re-established through the normal request flow.
+
+4. Release Flutter/web clients that read `publicProfiles`, join the narrower
+   friend-only `socialPresence`, and call `searchPublicProfiles`. Verify profile,
+   friends, direct-message creation, search and staff-owner lookup against the
+   populated production projections. Allow the required native adoption window
+   before step 5; old native builds fail closed after the cutover.
+
+5. Deploy Firestore rules last:
+
+   ```bash
+   firebase deploy --only firestore:rules --project yovoice-ec54a
+   ```
+
+After step 5, only an account owner can get its own `users/{uid}` root and no
+client can list it; staff tools use protected callables. Do not reverse steps 1
+and 5. No command in this section was run as part of implementing ADR-054.
 
 ## `yovoice-website` (automatic, separate repo)
 

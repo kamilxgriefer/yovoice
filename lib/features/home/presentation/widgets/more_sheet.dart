@@ -9,6 +9,9 @@ import 'package:yovoice/features/friends/presentation/screens/friends_screen.dar
 import 'package:yovoice/features/moderation/presentation/screens/moderation_center_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notification_preferences_screen.dart';
+import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
+import 'package:yovoice/features/premium/premium_gates.dart';
+import 'package:yovoice/features/premium/presentation/widgets/premium_feature_gate.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/settings_screen.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
@@ -40,6 +43,21 @@ enum MoreDestination {
   staffCenter,
 }
 
+PremiumFeature? premiumFeatureForMoreDestination(MoreDestination destination) =>
+    switch (destination) {
+      MoreDestination.creatorStudio => PremiumFeature.creatorStudio,
+      MoreDestination.clubs => PremiumFeature.clubs,
+      _ => null,
+    };
+
+bool moreDestinationIsLocked(
+  MoreDestination destination,
+  SubscriptionEntitlements entitlements,
+) {
+  final feature = premiumFeatureForMoreDestination(destination);
+  return feature != null && !feature.isEnabledBy(entitlements);
+}
+
 /// Destinations the DESKTOP rail shows directly, so the desktop "More"
 /// menu drops them and stays free of duplicates. Mobile keeps showing
 /// them in its sheet — its dock has no room for them, and that layout is
@@ -53,14 +71,17 @@ const Set<MoreDestination> desktopRailDestinations = {
   MoreDestination.friends,
 };
 
-Future<MoreDestination?> showMoreSheet(BuildContext context) {
+Future<MoreDestination?> showMoreSheet(
+  BuildContext context, {
+  SubscriptionEntitlements entitlements = SubscriptionEntitlements.free,
+}) {
   return showModalBottomSheet<MoreDestination>(
     context: context,
     useSafeArea: true,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     barrierColor: Colors.black.withValues(alpha: 0.72),
-    builder: (_) => const MoreSheet(),
+    builder: (_) => MoreSheet(entitlements: entitlements),
   );
 }
 
@@ -75,7 +96,7 @@ Widget moreDestinationScreen(
   MoreDestination destination, {
   bool isRootTab = false,
 }) {
-  return switch (destination) {
+  final screen = switch (destination) {
     MoreDestination.friends => FriendsScreen(isRootTab: isRootTab),
     MoreDestination.discover => DiscoverScreen(isRootTab: isRootTab),
     MoreDestination.clubs => ClubsScreen(isRootTab: isRootTab),
@@ -93,6 +114,13 @@ Widget moreDestinationScreen(
     MoreDestination.staffCenter => StaffCenterScreen(isRootTab: isRootTab),
     MoreDestination.moderation => ModerationCenterScreen(isRootTab: isRootTab),
   };
+  final feature = premiumFeatureForMoreDestination(destination);
+  if (feature == null) return screen;
+  return PremiumFeatureGate(
+    feature: feature,
+    isRootTab: isRootTab,
+    child: screen,
+  );
 }
 
 /// The DESKTOP "More": a compact popover anchored to the rail item —
@@ -107,6 +135,7 @@ Future<MoreDestination?> showDesktopMoreMenu(
   // the moderateReport callable each re-check authority.
   bool isStaff = false,
   bool isOwner = false,
+  SubscriptionEntitlements entitlements = SubscriptionEntitlements.free,
 }) {
   final items = <(MoreDestination, IconData, String, String)>[
     (
@@ -221,6 +250,15 @@ Future<MoreDestination?> showDesktopMoreMenu(
                   ],
                 ),
               ),
+              if (moreDestinationIsLocked(destination, entitlements)) ...[
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.lock_rounded,
+                  key: ValueKey('desktop-premium-lock-${destination.name}'),
+                  color: const Color(0xFFFFC24D),
+                  size: 16,
+                ),
+              ],
             ],
           ),
         ),
@@ -289,7 +327,12 @@ staffEntriesFor(StaffCapabilities capabilities) {
 }
 
 class MoreSheet extends StatefulWidget {
-  const MoreSheet({this.capabilityService, this.currentUid, super.key});
+  const MoreSheet({
+    this.capabilityService,
+    this.currentUid,
+    this.entitlements = SubscriptionEntitlements.free,
+    super.key,
+  });
 
   /// Injected in tests; production asks the shared service, whose cache
   /// is keyed by uid and cleared on account switch.
@@ -297,6 +340,11 @@ class MoreSheet extends StatefulWidget {
 
   /// Injected in tests; production reads the signed-in session.
   final String? currentUid;
+
+  /// Snapshot owned by MainShell's shared entitlement subscription. The
+  /// destination re-checks the server before opening; this value only decides
+  /// whether the tile displays its Premium lock.
+  final SubscriptionEntitlements entitlements;
 
   static const _surface = Color(0xFF151020);
   static const _card = Color(0xFF20172C);
@@ -337,7 +385,6 @@ class _MoreSheetState extends State<MoreSheet> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(18, 10, 18, 22),
       decoration: const BoxDecoration(
         color: MoreSheet._surface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
@@ -346,105 +393,143 @@ class _MoreSheetState extends State<MoreSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 44,
-            height: 5,
-            decoration: BoxDecoration(
-              color: const Color(0xFF594C65),
-              borderRadius: BorderRadius.circular(99),
-            ),
-          ),
-          const SizedBox(height: 18),
-          const Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'More',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 27,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    SizedBox(height: 3),
-                    Text(
-                      'Everything else, kept one tap away.',
-                      style: TextStyle(color: MoreSheet._muted, fontSize: 13),
-                    ),
-                  ],
-                ),
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Container(
+              key: const ValueKey('more-sheet-drag-handle'),
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                color: const Color(0xFF594C65),
+                borderRadius: BorderRadius.circular(99),
               ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          LayoutBuilder(
-            builder: (context, constraints) => GridView.count(
-              crossAxisCount: 3,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              mainAxisSpacing: 11,
-              crossAxisSpacing: 11,
-              // A 320pt phone leaves ~87pt per tile; the tile's content
-              // needs more height than .93 allows there. Wider layouts
-              // keep the ratio they always had.
-              childAspectRatio: constraints.maxWidth < 340 ? .76 : .93,
-              children: const [
-                // Friends graduated to the primary bottom navigation;
-                // Profile moved here in its place (still one tap away via
-                // any of your own avatars too).
-                _MoreTile(
-                  destination: MoreDestination.profile,
-                  icon: Icons.person_rounded,
-                  label: 'Profile',
-                  subtitle: 'You',
-                ),
-                _MoreTile(
-                  destination: MoreDestination.discover,
-                  icon: Icons.explore_rounded,
-                  label: 'Discover',
-                  subtitle: 'Find rooms',
-                ),
-                _MoreTile(
-                  destination: MoreDestination.clubs,
-                  icon: Icons.groups_2_rounded,
-                  label: 'Clubs',
-                  subtitle: 'Communities',
-                ),
-                _MoreTile(
-                  destination: MoreDestination.notifications,
-                  icon: Icons.notifications_rounded,
-                  label: 'Alerts',
-                  subtitle: 'Updates',
-                ),
-                _MoreTile(
-                  destination: MoreDestination.achievements,
-                  icon: Icons.emoji_events_rounded,
-                  label: 'Awards',
-                  subtitle: 'Progress',
-                ),
-                _MoreTile(
-                  destination: MoreDestination.creatorStudio,
-                  icon: Icons.auto_graph_rounded,
-                  label: 'Creator',
-                  subtitle: 'Studio',
-                ),
-              ],
             ),
           ),
-          // The staff section: BELOW the six tiles, ABOVE Settings, and
-          // present only when the server-derived capabilities back a
-          // real door. Ordinary and VIP accounts render the exact layout
-          // this sheet always had.
-          ..._staffSection(),
-          const SizedBox(height: 11),
-          const _WideMoreTile(
-            destination: MoreDestination.settings,
-            icon: Icons.settings_rounded,
-            label: 'Settings',
-            subtitle: 'Privacy, account and application preferences',
+          Flexible(
+            child: SingleChildScrollView(
+              key: const ValueKey('more-sheet-scroll-view'),
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 22),
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'More',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 27,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            SizedBox(height: 3),
+                            Text(
+                              'Everything else, kept one tap away.',
+                              style: TextStyle(
+                                color: MoreSheet._muted,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final textScale = MediaQuery.textScalerOf(
+                        context,
+                      ).scale(1);
+                      final usesTwoColumns =
+                          constraints.maxWidth < 400 || textScale > 1.3;
+                      final baseExtent = usesTwoColumns
+                          ? (constraints.maxWidth < 350 ? 156.0 : 140.0)
+                          : 160.0;
+                      final tileExtent =
+                          (baseExtent + ((textScale - 1).clamp(0, 1.5) * 104))
+                              .clamp(baseExtent, 272)
+                              .toDouble();
+
+                      return GridView.count(
+                        crossAxisCount: usesTwoColumns ? 2 : 3,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        mainAxisSpacing: 11,
+                        crossAxisSpacing: 11,
+                        mainAxisExtent: tileExtent,
+                        children: [
+                          // Friends graduated to the primary bottom navigation;
+                          // Profile moved here in its place (still one tap away via
+                          // any of your own avatars too).
+                          const _MoreTile(
+                            destination: MoreDestination.profile,
+                            icon: Icons.person_rounded,
+                            label: 'Profile',
+                            subtitle: 'You',
+                          ),
+                          const _MoreTile(
+                            destination: MoreDestination.discover,
+                            icon: Icons.explore_rounded,
+                            label: 'Discover',
+                            subtitle: 'Find rooms',
+                          ),
+                          _MoreTile(
+                            destination: MoreDestination.clubs,
+                            icon: Icons.groups_2_rounded,
+                            label: 'Clubs',
+                            subtitle: 'Communities',
+                            isLocked: moreDestinationIsLocked(
+                              MoreDestination.clubs,
+                              widget.entitlements,
+                            ),
+                          ),
+                          const _MoreTile(
+                            destination: MoreDestination.notifications,
+                            icon: Icons.notifications_rounded,
+                            label: 'Alerts',
+                            subtitle: 'Updates',
+                          ),
+                          const _MoreTile(
+                            destination: MoreDestination.achievements,
+                            icon: Icons.emoji_events_rounded,
+                            label: 'Awards',
+                            subtitle: 'Progress',
+                          ),
+                          _MoreTile(
+                            destination: MoreDestination.creatorStudio,
+                            icon: Icons.auto_graph_rounded,
+                            label: 'Creator',
+                            subtitle: 'Studio',
+                            isLocked: moreDestinationIsLocked(
+                              MoreDestination.creatorStudio,
+                              widget.entitlements,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                  // The staff section: BELOW the six tiles, ABOVE Settings, and
+                  // present only when the server-derived capabilities back a
+                  // real door. Ordinary and VIP accounts render the exact layout
+                  // this sheet always had.
+                  ..._staffSection(),
+                  const SizedBox(height: 11),
+                  const _WideMoreTile(
+                    destination: MoreDestination.settings,
+                    icon: Icons.settings_rounded,
+                    label: 'Settings',
+                    subtitle: 'Privacy, account and application preferences',
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
@@ -497,12 +582,14 @@ class _MoreTile extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.subtitle,
+    this.isLocked = false,
   });
 
   final MoreDestination destination;
   final IconData icon;
   final String label;
   final String subtitle;
+  final bool isLocked;
 
   @override
   Widget build(BuildContext context) {
@@ -533,13 +620,19 @@ class _MoreTile extends StatelessWidget {
                     child: Icon(icon, color: const Color(0xFFD28AFF), size: 22),
                   ),
                   const Spacer(),
+                  if (isLocked)
+                    Icon(
+                      Icons.lock_rounded,
+                      key: ValueKey('mobile-premium-lock-${destination.name}'),
+                      color: const Color(0xFFFFC24D),
+                      size: 17,
+                    ),
                 ],
               ),
-              const Spacer(),
+              const SizedBox(height: 14),
               Text(
                 label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 14,
@@ -549,8 +642,7 @@ class _MoreTile extends StatelessWidget {
               const SizedBox(height: 2),
               Text(
                 subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
                 style: const TextStyle(color: MoreSheet._muted, fontSize: 11),
               ),
             ],
@@ -624,8 +716,6 @@ class _WideMoreTile extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: MoreSheet._muted,
                         fontSize: 11,

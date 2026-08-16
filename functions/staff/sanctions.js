@@ -17,14 +17,33 @@
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { FieldValue, Timestamp } = require("firebase-admin/firestore");
+const { getAuth } = require("firebase-admin/auth");
 
 const { requireVerifiedStaff } = require("../utils/auth");
 const { deriveCapabilities } = require("../utils/capabilities");
 const { USER_ROLES, isProtectedOwnerUid } = require("../utils/roles");
 const { db, normalizeText, positiveInteger } = require("../utils/firestore");
 const { writeAuditLog } = require("../utils/audit");
+const {
+  EVENT_TYPES,
+  enqueueVoiceEnforcement,
+} = require("./voice_enforcement");
 
 const SANCTION_ACTIONS = new Set(["warn", "communicationMute", "liftMute"]);
+const auth = getAuth();
+
+async function getTargetClaimRole(targetUid) {
+  try {
+    const target = await auth.getUser(targetUid);
+    return String(target.customClaims?.role ?? USER_ROLES.USER).trim();
+  } catch (error) {
+    // A deleted Auth account can leave a profile/audit trail behind. It is
+    // still safe to sanction that record based on the server mirror; every
+    // other Auth failure is operational and must fail closed.
+    if (error?.code === "auth/user-not-found") return USER_ROLES.USER;
+    throw error;
+  }
+}
 
 async function auditDeniedAttempt({ caller, action, targetUid, detail }) {
   await writeAuditLog({
@@ -94,8 +113,15 @@ const applySanction = onCall(
     // Staff targets are the owner's alone, whatever the action.
     const targetSnapshot = await db.collection("users").doc(targetUid).get();
     const target = targetSnapshot.exists ? (targetSnapshot.data() ?? {}) : {};
-    const targetRole = String(target.role ?? USER_ROLES.USER).trim();
-    if (targetRole !== USER_ROLES.USER && !caps.sanctionStaff) {
+    const targetMirrorRole = String(target.role ?? USER_ROLES.USER).trim();
+    const targetClaimRole = await getTargetClaimRole(targetUid);
+    // Either side saying staff protects the target. Manual role drift and
+    // stale Auth claims therefore fail closed instead of creating a brief
+    // moderator-on-staff sanction window.
+    const targetIsStaff =
+      targetMirrorRole !== USER_ROLES.USER ||
+      targetClaimRole !== USER_ROLES.USER;
+    if (targetIsStaff && !caps.sanctionStaff) {
       await auditDeniedAttempt({
         caller,
         action,
@@ -178,15 +204,27 @@ const applySanction = onCall(
           ? Timestamp.fromMillis(Date.now() + durationHours * 3600 * 1000)
           : null;
 
-      await restrictionRef.set({
+      const batch = db.batch();
+      const enforcementEvent = enqueueVoiceEnforcement(batch, {
+        targetUid,
+        type: EVENT_TYPES.COMMUNICATION_MUTE,
+        requestedBy: caller.uid,
+        source: "applySanction",
+      });
+      batch.set(restrictionRef, {
         type: "communicationMute",
         reason,
         scope: "platform",
         expiresAt,
         appliedBy: caller.uid,
         appliedByRole: caller.role,
+        voiceEnforcementEventId: enforcementEvent.id,
         createdAt: FieldValue.serverTimestamp(),
       });
+      // Restriction + outbox are inseparable: after this commit every new
+      // token is publish/data-denied, and the retrying trigger owns every
+      // already-issued LiveKit session.
+      await batch.commit();
       await writeAuditLog({
         caller,
         action: "communication_mute",
@@ -198,11 +236,16 @@ const applySanction = onCall(
           durationHours,
           expiresAt: expiresAt ? expiresAt.toDate().toISOString() : null,
           previousState,
+          voiceEnforcementEventId: enforcementEvent.id,
         },
       });
       return {
         outcome: "muted",
         expiresAt: expiresAt ? expiresAt.toDate().toISOString() : null,
+        voiceEnforcement: {
+          status: "queued",
+          eventId: enforcementEvent.id,
+        },
       };
     }
 

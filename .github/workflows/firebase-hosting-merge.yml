@@ -4,21 +4,33 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      deploy_hosting:
+        description: Deploy the verified web artifact to production Hosting
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
-  build_and_deploy:
-    runs-on: ubuntu-latest
+  verify_and_build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    concurrency:
+      group: yovoice-verify-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: true
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
+          flutter-version: 3.44.6
           channel: stable
           cache: true
 
@@ -39,28 +51,96 @@ jobs:
       # only proves the rules in the repo still pass their tests before
       # anything ships.
       - name: Set up Java (Firestore emulator)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: '21'
 
-      - name: Run Firestore + Storage rules tests
+      - name: Set up Node.js (Firebase Functions)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            firestore-tests/package-lock.json
+            functions/package-lock.json
+
+      - name: Install Firebase test dependencies
         run: |
           npm --prefix firestore-tests ci
-          npx firebase-tools emulators:exec --only firestore --project demo-yovoice \
+          npm --prefix functions ci
+
+      - name: Audit production Node dependencies
+        run: |
+          npm --prefix firestore-tests audit --omit=dev --audit-level=high
+          npm --prefix functions audit --omit=dev --audit-level=high
+
+      - name: Run Firestore rules tests
+        run: |
+          ./firestore-tests/node_modules/.bin/firebase emulators:exec --only firestore --project demo-yovoice \
             'npm --prefix firestore-tests test'
-          npx firebase-tools emulators:exec --only storage --project demo-yovoice \
+
+      - name: Run Storage rules tests
+        run: |
+          ./firestore-tests/node_modules/.bin/firebase emulators:exec --only storage --project demo-yovoice \
             'npm --prefix firestore-tests run test:storage'
+
+      # Family media authorization spans both products. Running this suite with
+      # one project id is essential because Storage rules read Firestore state.
+      - name: Run cross-service Family media rules tests
+        run: |
+          ./firestore-tests/node_modules/.bin/firebase emulators:exec --only firestore,storage --project demo-yovoice \
+            'npm --prefix firestore-tests run test:family-media'
+
+      - name: Run Firebase Functions tests
+        run: |
+          ./firestore-tests/node_modules/.bin/firebase emulators:exec --only auth,firestore --project demo-yovoice \
+            'npm --prefix functions test'
+
+      - name: Smoke-test deployed Function bindings
+        run: |
+          ./firestore-tests/node_modules/.bin/firebase emulators:exec --only functions,auth,firestore --project demo-yovoice \
+            'npm --prefix functions run test:smoke'
 
       - name: Build Flutter Web
         run: >-
           flutter build web --release
           --dart-define=YOVOICE_WEB_PUSH_VAPID_KEY=BGa6os6npm6shnDdNP4rbqFS8wC5brGTY0RVzt59mZvpOhX3EeaCUpOaZRw2TmQeXK5gpZ1whEKvJEhmSD0mikU
 
-      - name: Deploy to Firebase Hosting
-        uses: FirebaseExtended/action-hosting-deploy@v0
+      - name: Package verified Hosting artifact
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy_hosting
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: yovoice-web-${{ github.sha }}
+          path: build/web
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy_hosting:
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_hosting
+    needs: verify_and_build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: yovoice-production-hosting
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout verified revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download verified Hosting artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: yovoice-web-${{ github.sha }}
+          path: build/web
+
+      - name: Deploy verified artifact to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@500ac625ca2dd40cbd15f7659af953801858032a # v0.11.0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_YOVOICE_EC54A }}'
           projectId: yovoice-ec54a
           channelId: live
+          firebaseToolsVersion: 15.27.0

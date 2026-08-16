@@ -1,11 +1,9 @@
 import 'dart:async';
 
-
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 
 import '../models/friend_request.dart';
@@ -19,31 +17,71 @@ enum FriendRelationshipStatus {
   blocked,
 }
 
+typedef FriendMutationInvoker =
+    Future<Map<String, dynamic>> Function(
+      String functionName,
+      Map<String, dynamic> data,
+    );
+
+typedef PublicProfileSearchInvoker =
+    Future<List<Map<String, dynamic>>> Function(String query, int limit);
+
 class FriendService {
   FriendService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
     NotificationService? notificationService,
+    FirebaseFunctions? functions,
+    FriendMutationInvoker? mutationInvoker,
+    PublicProfileSearchInvoker? searchInvoker,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
-       // Forward the injected instances so constructing FriendService with
-       // fakes doesn't drag in FirebaseFirestore.instance via the default
-       // NotificationService (which needs an initialised Firebase app).
-       _notifications =
-           notificationService ??
-           NotificationService(firestore: firestore, auth: auth);
+       _functionsOverride = functions,
+       _mutationInvoker = mutationInvoker,
+       _searchInvoker = searchInvoker;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
-  final NotificationService _notifications;
+  final FirebaseFunctions? _functionsOverride;
+  final FriendMutationInvoker? _mutationInvoker;
+  final PublicProfileSearchInvoker? _searchInvoker;
+
+  FirebaseFunctions get _functions =>
+      _functionsOverride ??
+      FirebaseFunctions.instanceFor(region: 'europe-west1');
 
   CollectionReference<Map<String, dynamic>> get _users =>
       _firestore.collection('users');
+
+  CollectionReference<Map<String, dynamic>> get _publicProfiles =>
+      _firestore.collection('publicProfiles');
+
+  CollectionReference<Map<String, dynamic>> get _socialPresence =>
+      _firestore.collection('socialPresence');
 
   User get _currentUser {
     final user = _auth.currentUser;
     if (user == null) throw StateError('User is not signed in.');
     return user;
+  }
+
+  Future<Map<String, dynamic>> _mutate(
+    String functionName,
+    Map<String, dynamic> data,
+  ) async {
+    final injected = _mutationInvoker;
+    if (injected != null) return injected(functionName, data);
+    try {
+      final result = await _functions.httpsCallable(functionName).call(data);
+      final value = result.data;
+      return value is Map
+          ? Map<String, dynamic>.from(value)
+          : const <String, dynamic>{};
+    } on FirebaseFunctionsException catch (error) {
+      throw StateError(
+        error.message ?? 'The social action could not be completed.',
+      );
+    }
   }
 
   /// Makes sure the signed-in user has a `users/{uid}` document so friend
@@ -91,22 +129,35 @@ class FriendService {
   Stream<List<FriendUser>> watchFriends() {
     final currentUserId = _currentUser.uid;
     final controller = StreamController<List<FriendUser>>.broadcast();
-    final subscriptions =
+    final profileSubscriptions =
         <String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>{};
-    final friends = <String, FriendUser>{};
+    final presenceSubscriptions =
+        <String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>{};
+    final profiles = <String, FriendUser>{};
+    final presences = <String, ({bool isOnline, DateTime? lastSeen})>{};
     StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? rootSubscription;
     var closed = false;
     List<FriendUser>? latest;
 
     void emit() {
       if (closed || controller.isClosed) return;
-      final result = friends.values.toList(growable: false)
-        ..sort((a, b) {
-          if (a.isOnline != b.isOnline) return a.isOnline ? -1 : 1;
-          return a.displayName.toLowerCase().compareTo(
-            b.displayName.toLowerCase(),
-          );
-        });
+      final result =
+          profiles.entries
+              .map((entry) {
+                final presence = presences[entry.key];
+                return entry.value.copyWith(
+                  isOnline: presence?.isOnline ?? false,
+                  lastSeen: presence?.lastSeen,
+                  clearLastSeen: presence?.lastSeen == null,
+                );
+              })
+              .toList(growable: false)
+            ..sort((a, b) {
+              if (a.isOnline != b.isOnline) return a.isOnline ? -1 : 1;
+              return a.displayName.toLowerCase().compareTo(
+                b.displayName.toLowerCase(),
+              );
+            });
       latest = result;
       controller.add(result);
     }
@@ -125,25 +176,51 @@ class FriendService {
               final ids = snapshot.docs.map((doc) => doc.id).toSet();
 
               for (final removed
-                  in subscriptions.keys
+                  in profileSubscriptions.keys
                       .where((id) => !ids.contains(id))
                       .toList(growable: false)) {
-                subscriptions.remove(removed)?.cancel();
-                friends.remove(removed);
+                profileSubscriptions.remove(removed)?.cancel();
+                presenceSubscriptions.remove(removed)?.cancel();
+                profiles.remove(removed);
+                presences.remove(removed);
               }
 
               for (final id in ids) {
-                if (subscriptions.containsKey(id)) continue;
-                subscriptions[id] = _users.doc(id).snapshots().listen((
-                  document,
-                ) {
-                  if (!document.exists || document.data() == null) {
-                    friends.remove(id);
-                  } else {
-                    friends[id] = FriendUser.fromFirestore(document);
-                  }
-                  emit();
-                }, onError: controller.addError);
+                if (profileSubscriptions.containsKey(id)) continue;
+                profileSubscriptions[id] = _publicProfiles
+                    .doc(id)
+                    .snapshots()
+                    .listen((document) {
+                      if (!document.exists || document.data() == null) {
+                        profiles.remove(id);
+                      } else {
+                        profiles[id] = FriendUser.fromFirestore(document);
+                      }
+                      emit();
+                    }, onError: controller.addError);
+                presenceSubscriptions[id] = _socialPresence
+                    .doc(id)
+                    .snapshots()
+                    .listen(
+                      (document) {
+                        final data = document.data();
+                        final lastSeen = data?['lastSeen'];
+                        presences[id] = (
+                          isOnline: data?['isOnline'] as bool? ?? false,
+                          lastSeen: lastSeen is Timestamp
+                              ? lastSeen.toDate()
+                              : null,
+                        );
+                        emit();
+                      },
+                      // Presence is deliberately narrower than identity. A
+                      // stale/non-canonical edge fails closed to offline
+                      // without hiding the otherwise public profile.
+                      onError: (_) {
+                        presences.remove(id);
+                        emit();
+                      },
+                    );
               }
               emit();
             }, onError: controller.addError);
@@ -157,10 +234,14 @@ class FriendService {
       closed = true;
       await rootSubscription?.cancel();
       rootSubscription = null;
-      for (final subscription in subscriptions.values) {
+      for (final subscription in profileSubscriptions.values) {
         await subscription.cancel();
       }
-      subscriptions.clear();
+      for (final subscription in presenceSubscriptions.values) {
+        await subscription.cancel();
+      }
+      profileSubscriptions.clear();
+      presenceSubscriptions.clear();
     };
 
     // Stream.multi gives every listener its own subscription, which lets us
@@ -203,30 +284,38 @@ class FriendService {
       watchFriendRequests().map((items) => items.length).distinct();
 
   Future<List<FriendUser>> searchUsers(String query) async {
-    final search = query.trim().toLowerCase();
+    final search = query.trim();
     if (search.length < 2) return const [];
 
-    final snapshot = await _users.limit(100).get();
-    final blockedIds =
-        (await _users.doc(_currentUser.uid).collection('blocked').get()).docs
-            .map((doc) => doc.id)
-            .toSet();
-    final results =
-        snapshot.docs
-            .map(FriendUser.fromFirestore)
-            .where((user) {
-              if (user.id == _currentUser.uid) return false;
-              if (blockedIds.contains(user.id)) return false;
-              return user.searchableDisplayName.contains(search) ||
-                  user.searchableEmail.contains(search);
-            })
-            .toList(growable: false)
-          ..sort(
-            (a, b) => a.displayName.toLowerCase().compareTo(
-              b.displayName.toLowerCase(),
-            ),
-          );
-    return results;
+    final injected = _searchInvoker;
+    final rawProfiles = injected != null
+        ? await injected(search, 20)
+        : await _searchPublicProfiles(search, limit: 20);
+    return rawProfiles
+        .map(
+          (data) =>
+              FriendUser.fromMap(id: data['uid'] as String? ?? '', data: data),
+        )
+        .where((profile) => profile.id.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<List<Map<String, dynamic>>> _searchPublicProfiles(
+    String query, {
+    required int limit,
+  }) async {
+    try {
+      final result = await _functions
+          .httpsCallable('searchPublicProfiles')
+          .call({'query': query, 'limit': limit});
+      final data = Map<String, dynamic>.from(result.data as Map);
+      return (data['profiles'] as List<dynamic>? ?? const <dynamic>[])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+    } on FirebaseFunctionsException catch (error) {
+      throw StateError(error.message ?? 'User search is unavailable.');
+    }
   }
 
   Future<FriendRelationshipStatus> getRelationshipStatus(
@@ -247,188 +336,32 @@ class FriendService {
   }
 
   Future<void> sendFriendRequest(FriendUser receiver) async {
-    final sender = _currentUser;
-    if (receiver.id == sender.uid) throw StateError('You cannot add yourself.');
-    if (await isBlocked(receiver.id)) {
-      throw StateError('You have blocked this user.');
+    if (receiver.id == _currentUser.uid) {
+      throw StateError('You cannot add yourself.');
     }
-    await ensureUserDocument();
-
-    final senderDoc = await _users.doc(sender.uid).get();
-    final senderData = senderDoc.data() ?? const <String, dynamic>{};
-    final senderEmail =
-        (senderData['email'] as String?)?.trim() ?? sender.email?.trim() ?? '';
-    final senderName = _displayName(senderData, senderEmail);
-    final senderPhoto = _nullable(senderData['photoUrl']) ?? sender.photoURL;
-
-    final myFriend = _users
-        .doc(sender.uid)
-        .collection('friends')
-        .doc(receiver.id);
-    final theirFriend = _users
-        .doc(receiver.id)
-        .collection('friends')
-        .doc(sender.uid);
-    final outgoing = _users
-        .doc(receiver.id)
-        .collection('friendRequests')
-        .doc(sender.uid);
-    final incoming = _users
-        .doc(sender.uid)
-        .collection('friendRequests')
-        .doc(receiver.id);
-
-    await _firestore.runTransaction<bool>((tx) async {
-      final snapshots = await Future.wait([
-        tx.get(myFriend),
-        tx.get(outgoing),
-        tx.get(incoming),
-        tx.get(_users.doc(receiver.id)),
-      ]);
-      if (snapshots[0].exists) throw StateError('You are already friends.');
-      if (snapshots[1].exists) {
-        throw StateError('Friend request already sent.');
-      }
-      final receiverDoc = snapshots[3];
-      if (!receiverDoc.exists || receiverDoc.data() == null) {
-        throw StateError('This user no longer exists.');
-      }
-
-      if (snapshots[2].exists) {
-        final now = FieldValue.serverTimestamp();
-        tx.set(myFriend, {'userId': receiver.id, 'createdAt': now});
-        tx.set(theirFriend, {'userId': sender.uid, 'createdAt': now});
-        tx.delete(incoming);
-        tx.delete(
-          _users
-              .doc(receiver.id)
-              .collection('sentFriendRequests')
-              .doc(sender.uid),
-        );
-        tx.update(_users.doc(sender.uid), {
-          'friendCount': FieldValue.increment(1),
-        });
-        tx.update(_users.doc(receiver.id), {
-          'friendCount': FieldValue.increment(1),
-        });
-        return true;
-      }
-
-      tx.set(outgoing, {
-        'senderId': sender.uid,
-        'senderName': senderName,
-        'senderEmail': senderEmail.toLowerCase(),
-        'senderPhotoUrl': senderPhoto,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-      tx.set(
-        _users
-            .doc(sender.uid)
-            .collection('sentFriendRequests')
-            .doc(receiver.id),
-        {'receiverId': receiver.id, 'createdAt': FieldValue.serverTimestamp()},
-      );
-      return false;
-    });
-
-    // No notification is written here on purpose. It is derived from the
-    // documents this transaction just committed, by
-    // onFriendRequestCreated (a new request) or onFriendRequestResolved
-    // (the mutual-accept path, where the incoming request was deleted
-    // and a friendship now exists) — see ADR-041. A second client write
-    // could be lost between the two, and used to be, silently.
+    await _mutate('sendFriendRequest', {'targetUserId': receiver.id});
   }
 
   Future<void> cancelFriendRequest(String receiverId) async {
-    final me = _currentUser.uid;
-    final batch = _firestore.batch();
-    batch.delete(_users.doc(receiverId).collection('friendRequests').doc(me));
-    batch.delete(
-      _users.doc(me).collection('sentFriendRequests').doc(receiverId),
-    );
-    await batch.commit();
+    await _mutate('cancelFriendRequest', {'targetUserId': receiverId});
   }
 
   Future<void> acceptFriendRequest(FriendRequest request) async {
-    final me = _currentUser;
-    await ensureUserDocument();
-
-    final myDoc = _users.doc(me.uid);
-    final senderDoc = _users.doc(request.senderId);
-    final requestRef = myDoc.collection('friendRequests').doc(request.senderId);
-    final myFriend = myDoc.collection('friends').doc(request.senderId);
-    final senderFriend = senderDoc.collection('friends').doc(me.uid);
-
-    await _firestore.runTransaction((tx) async {
-      final snapshots = await Future.wait([
-        tx.get(requestRef),
-        tx.get(myDoc),
-        tx.get(senderDoc),
-        tx.get(myFriend),
-      ]);
-      if (!snapshots[0].exists) {
-        throw StateError('This friend request no longer exists.');
-      }
-      if (!snapshots[3].exists) {
-        final now = FieldValue.serverTimestamp();
-        tx.set(myFriend, {'userId': request.senderId, 'createdAt': now});
-        tx.set(senderFriend, {'userId': me.uid, 'createdAt': now});
-        tx.update(myDoc, {'friendCount': FieldValue.increment(1)});
-        tx.update(senderDoc, {'friendCount': FieldValue.increment(1)});
-      }
-      tx.delete(requestRef);
-      tx.delete(senderDoc.collection('sentFriendRequests').doc(me.uid));
+    await _mutate('respondToFriendRequest', {
+      'senderId': request.senderId,
+      'accept': true,
     });
-
-    // The original sender is told by onFriendRequestResolved, which fires
-    // on the request document this transaction deleted and confirms the
-    // friendship exists before writing anything — so a decline can never
-    // masquerade as an acceptance (ADR-041).
-
-    // The acceptor's own "sent you a friend request" notification is now
-    // resolved — retire it so it doesn't linger as an actionable item.
-    try {
-      await _notifications.markMatchingRead(
-        type: NotificationType.friendRequest,
-        actorId: request.senderId,
-      );
-    } catch (error) {
-      // Cosmetic cleanup; never fail the acceptance over it. It cannot
-      // hide the loss of an authoritative action: the friendship is
-      // already committed and the requester's notification is written by
-      // onFriendRequestResolved, not here. The only consequence is a
-      // stale unread row for the acceptor.
-      debugPrint(
-        'FriendService: could not retire the resolved friend-request '
-        'notification (${error.runtimeType}). The acceptance itself '
-        'succeeded.',
-      );
-    }
   }
 
   Future<void> declineFriendRequest(String senderId) async {
-    final me = _currentUser.uid;
-    final batch = _firestore.batch();
-    batch.delete(_users.doc(me).collection('friendRequests').doc(senderId));
-    batch.delete(_users.doc(senderId).collection('sentFriendRequests').doc(me));
-    await batch.commit();
+    await _mutate('respondToFriendRequest', {
+      'senderId': senderId,
+      'accept': false,
+    });
   }
 
   Future<void> removeFriend(String friendId) async {
-    final me = _currentUser.uid;
-    final myDoc = _users.doc(me);
-    final friendDoc = _users.doc(friendId);
-    final myFriend = myDoc.collection('friends').doc(friendId);
-    final theirFriend = friendDoc.collection('friends').doc(me);
-
-    await _firestore.runTransaction((tx) async {
-      final existing = await tx.get(myFriend);
-      if (!existing.exists) return;
-      tx.delete(myFriend);
-      tx.delete(theirFriend);
-      tx.update(myDoc, {'friendCount': FieldValue.increment(-1)});
-      tx.update(friendDoc, {'friendCount': FieldValue.increment(-1)});
-    });
+    await _mutate('removeFriend', {'targetUserId': friendId});
   }
 
   Stream<List<FriendUser>> watchBlockedUsers() {
@@ -439,7 +372,7 @@ class FriendService {
         .asyncMap((snapshot) async {
           if (snapshot.docs.isEmpty) return const <FriendUser>[];
           final documents = await Future.wait(
-            snapshot.docs.map((doc) => _users.doc(doc.id).get()),
+            snapshot.docs.map((doc) => _publicProfiles.doc(doc.id).get()),
           );
           return documents
               .where((doc) => doc.exists && doc.data() != null)
@@ -468,82 +401,19 @@ class FriendService {
   /// `blocked` doc to reject any new friend request/follow/conversation
   /// between the two users in either direction going forward.
   Future<void> blockUser(String targetUserId) async {
-    final me = _currentUser.uid;
-    if (targetUserId == me) throw StateError('You cannot block yourself.');
-
-    final myDoc = _users.doc(me);
-    final targetDoc = _users.doc(targetUserId);
-    final myFriend = myDoc.collection('friends').doc(targetUserId);
-    final theirFriend = targetDoc.collection('friends').doc(me);
-    final myFollowing = myDoc.collection('following').doc(targetUserId);
-    final theirFollower = targetDoc.collection('followers').doc(me);
-    final theirFollowing = targetDoc.collection('following').doc(me);
-    final myFollower = myDoc.collection('followers').doc(targetUserId);
-
-    await _firestore.runTransaction((tx) async {
-      final snapshots = await Future.wait([
-        tx.get(myFriend),
-        tx.get(myFollowing),
-        tx.get(theirFollowing),
-      ]);
-      final wasFriend = snapshots[0].exists;
-      final iWasFollowingThem = snapshots[1].exists;
-      final theyWereFollowingMe = snapshots[2].exists;
-
-      if (wasFriend) {
-        tx.delete(myFriend);
-        tx.delete(theirFriend);
-        tx.update(myDoc, {'friendCount': FieldValue.increment(-1)});
-        tx.update(targetDoc, {'friendCount': FieldValue.increment(-1)});
-      }
-
-      // Pending requests in either direction — deleting a doc that doesn't
-      // exist is a harmless no-op, so no existence check needed first.
-      tx.delete(targetDoc.collection('friendRequests').doc(me));
-      tx.delete(myDoc.collection('friendRequests').doc(targetUserId));
-      tx.delete(myDoc.collection('sentFriendRequests').doc(targetUserId));
-      tx.delete(targetDoc.collection('sentFriendRequests').doc(me));
-
-      if (iWasFollowingThem) {
-        tx.delete(myFollowing);
-        tx.delete(theirFollower);
-        tx.update(myDoc, {'followingCount': FieldValue.increment(-1)});
-        tx.update(targetDoc, {'followerCount': FieldValue.increment(-1)});
-      }
-      if (theyWereFollowingMe) {
-        tx.delete(theirFollowing);
-        tx.delete(myFollower);
-        tx.update(targetDoc, {'followingCount': FieldValue.increment(-1)});
-        tx.update(myDoc, {'followerCount': FieldValue.increment(-1)});
-      }
-
-      tx.set(myDoc.collection('blocked').doc(targetUserId), {
-        'userId': targetUserId,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+    if (targetUserId == _currentUser.uid) {
+      throw StateError('You cannot block yourself.');
+    }
+    await _mutate('setUserBlock', {
+      'targetUserId': targetUserId,
+      'blocked': true,
     });
   }
 
   Future<void> unblockUser(String targetUserId) async {
-    await _users
-        .doc(_currentUser.uid)
-        .collection('blocked')
-        .doc(targetUserId)
-        .delete();
-  }
-
-  String _displayName(Map<String, dynamic> data, String fallbackEmail) {
-    for (final key in ['displayName', 'username', 'name']) {
-      final value = data[key];
-      if (value is String && value.trim().isNotEmpty) return value.trim();
-    }
-    return fallbackEmail.isNotEmpty
-        ? fallbackEmail.split('@').first
-        : 'YO Voice user';
-  }
-
-  String? _nullable(Object? value) {
-    if (value is! String || value.trim().isEmpty) return null;
-    return value.trim();
+    await _mutate('setUserBlock', {
+      'targetUserId': targetUserId,
+      'blocked': false,
+    });
   }
 }

@@ -54,6 +54,7 @@ given a false-precision date.
 | [017](#adr-017-android-build-fixes-core-library-desugaring-and-drawable-resource-references)            | Android build fixes: core library desugaring and drawable resource references               | Accepted | 2026-08-07                           |
 | [018](#adr-018-per-screen-firestore-streams-are-created-once-in-initstate-never-inline-in-build)         | Per-screen Firestore streams are created once in `initState`, never inline in `build()`      | Accepted | 2026-08-07                           |
 | [019](#adr-019-more-menu-destinations-own-their-full-chrome-no-wrapper-scaffold)                        | "More" menu destinations own their full chrome; no wrapper Scaffold                         | Accepted | 2026-08-07                           |
+| [053](#adr-053-paid-capabilities-come-only-from-the-trusted-entitlement-and-every-entry-boundary-fails-closed) | Paid capabilities come only from the trusted entitlement; every entry boundary fails closed | Accepted | 2026-08-16                           |
 
 ---
 
@@ -1218,6 +1219,11 @@ tall, and profile editing was reachable from three Settings entry points.
 
 ## ADR-024: Premium entitlements are server-written, time-validated, and gate Creator + Clubs
 
+**Status**: Accepted, amended by
+[ADR-053](#adr-053-paid-capabilities-come-only-from-the-trusted-entitlement-and-every-entry-boundary-fails-closed)
+
+**Date**: 2026-08-08
+
 **Context.** The product needed a real subscription tier (Creator,
 Club creation, premium identity) — and the audit found Creator was
 already claimable by ANY client: `accountType` sat in the users-doc
@@ -1235,18 +1241,25 @@ write allowlist with no gate. No billing/IAP code existed anywhere.
 - **Validity is time-based everywhere**: rules (`hasActivePremium()`),
   the client model, and the paywall all compare `currentPeriodEnd`
   against now — expiry enforces itself with no job in the authorization
-  path. A daily sweep only tidies the cosmetic mirror.
+  path. Creator and Clubs additionally require their own explicit feature
+  flag plus `premiumIdentityEnabled`; active subscription status alone is not
+  a capability. A daily sweep only tidies the cosmetic mirror.
 - `users/{uid}.premiumIdentity` is the public, server-written mirror
   that lets OTHER users' clients render the premium ring; it is
-  deliberately absent from the client-writable allowlist.
-- Server enforcement: club `create` requires `hasActivePremium()`;
-  `accountType` may change to `creator` only with active premium,
-  `official` is never client-settable, `personal` is always allowed.
-  UI gates (PremiumGates, upsell sheets) are UX, not security.
+  deliberately absent from the client-writable allowlist and is never an
+  authorization input. The public VIP badge is cosmetic too: neither visible
+  badge can unlock a paid tool.
+- Server enforcement: ordinary Club `create` requires the Clubs capability;
+  `accountType` may change to `creator` only with the Creator capability,
+  `official` is never client-settable, and `personal` is always allowed.
+  UI gates (PremiumGates, reactive destination guards and upsell sheets) are
+  UX boundaries backed by Security Rules, not the security authority.
 - **Expiration policy**: nothing is deleted. Clubs created while
-  premium remain intact with owner and members; only creating MORE
-  clubs is blocked. A lapsed Creator keeps profile/followers/content;
-  Creator Studio shows a "tools paused" banner until Premium returns.
+  premium remain intact with owner and members; existing memberships,
+  invites and direct participation remain free, while More → Clubs and
+  creating more ordinary Clubs lock until Premium returns. Family Rooms stay
+  free. A lapsed Creator keeps profile/followers/content, while Creator Studio
+  locks until Premium returns.
   The rules allow `accountType` to REMAIN `creator` after expiry (the
   gate is on changing INTO creator), which is what makes the
   keep-your-data policy work.
@@ -1257,10 +1270,9 @@ write allowlist with no gate. No billing/IAP code existed anywhere.
   guarded) is the interim grant path and the testing mechanism.
 
 **Consequences.**
-- firestore.rules changes are implemented and covered by six new cases
-  in firestore-tests/rules.test.js but NOT deployed — the emulator
-  convention (ADR-007) requires a JVM this machine lacks. Until the
-  user runs the suite and deploys rules, the server gates are not live.
+- The original ADR-024 rules were emulator-tested and deployed on 2026-08-08.
+  The capability-specific and first-create hardening in ADR-053 is covered by
+  the expanded 225-case emulator suite but requires a new manual rules deploy.
 - Store console setup (products `yovoice_premium_monthly`/`_yearly`),
   verification credentials, and an IAP client plugin remain manual.
 - EntitlementService caches one replayed stream per uid (the
@@ -3141,3 +3153,171 @@ No animation is allowed to become a minimum timer.
   real initialization completes without claiming a percentage.
 - Web bootstrap removal is tied to the first Flutter `runApp`; Auth loading,
   error, logged-out and signed-in destinations keep their real state semantics.
+
+## ADR-053: Paid capabilities come only from the trusted entitlement and every entry boundary fails closed
+
+**Status**: Accepted
+**Date**: 2026-08-16
+
+### Context
+
+ADR-024 established `entitlements/{uid}` as the subscription authority, but
+several surfaces still treated Premium as one broad boolean or relied on an
+entry-point button. Creator remained selectable in Edit profile, Creator
+Studio and Clubs were unconditionally listed in More, and a destination could
+be mounted directly after bypassing the menu. Security Rules checked active
+status but did not consistently check the feature-specific flags intended for
+future plans. More seriously, `users/{uid}` updates were narrow while the first
+document create accepted arbitrary fields; a new account could therefore seed
+itself as Creator, Premium or staff before the update protections existed. A
+legitimate Premium Club still could not be created either: `ClubService`
+commits the Club, owner member, user projection, three default channels and
+lounge room atomically, while owner/channel rules used pre-write `get()` and
+could not see the Club yet. The batch also attempted an unused root-user
+`clubCount` update outside the profile allowlist.
+The same review found that a pending Club invite authorized creation of a
+membership without pinning its role or fields, so a modified client could join
+as owner, co-owner or admin and immediately inherit management rights.
+
+### Decision
+
+- `entitlements/{uid}` remains the only paid-access source. Creator account and
+  Creator Studio require active time validity, `premiumIdentityEnabled` and
+  `creatorEnabled`; Clubs requires active time validity,
+  `premiumIdentityEnabled` and `canCreateClubs`. The public
+  `users/{uid}.premiumIdentity` mirror and the visible VIP badge are rendering
+  data only and never authorize an action.
+- Creator, Creator Studio and More → Clubs are checked before navigation. A
+  reactive destination guard independently protects stale desktop slots,
+  direct mounts and an entitlement that expires while open. Edit profile
+  checks again on Save before changing into Creator, so a screen opened while
+  entitled cannot commit after expiry. Missing or failed entitlement reads
+  resolve to free access.
+- Security Rules mirror the client policy through capability-specific helpers.
+  Ordinary Club creation requires the Clubs capability and changing into
+  Creator requires the Creator capability. The initial `users/{uid}` create is
+  now a strict allowlist of non-privileged bootstrap/profile/presence fields;
+  an optional `uid` must match the path and an optional `accountType` must be
+  `personal`. Partial presence-first documents remain valid, so closing the
+  privilege path does not reintroduce the legitimate first-write race.
+- Owner-member and default-channel creates use `getAfter()` to validate the
+  Club root as it will exist after the same atomic commit. `ClubService` no
+  longer writes the unused root-user `clubCount`; joined Clubs remain derived
+  from the existing user projection. The emulator case executes the complete
+  seven-document production batch rather than proving only the root Club write.
+- Invitation acceptance has a distinct narrow boundary: exactly the production
+  membership fields are allowed, the persisted inviter must match the pending
+  invite, and the role is always `member`. The owner bootstrap remains a
+  separate `isClubOwnerAfter()` path, so invitation data can never manufacture
+  an organizer role. Its Club-root counter update is valid only in the same
+  atomic write that creates that plain membership and deletes the invite; the
+  diff permits only `memberCount`, `onlineCount` and server `updatedAt`, with
+  both counters increasing exactly once.
+- The paid Clubs hub does not redefine club membership. Existing member and
+  invite paths remain available without Premium, and Family Room creation
+  keeps its separate free deterministic-id rule. Expiry never deletes a Club,
+  membership, Creator content or profile state.
+
+### Reasoning
+
+A visible identity label is public and intentionally readable by other users;
+making it authorization data would turn a display projection into a privilege
+source. Capability flags also need to be checked individually or a future tier
+with one disabled feature would silently receive the entire bundle. Checking
+both before navigation and at the destination/save boundary prevents stale UI
+state from becoming an access bypass, while Security Rules remain the final
+authority against a modified client. An allowlist on first create is necessary
+because update-only restrictions do not protect a document that does not yet
+exist.
+
+### Consequences
+
+- Free and complimentary-VIP accounts see locks and a contextual Premium
+  explanation; they do not receive Creator/Studio/Clubs capability from the
+  badge. A verified server grant writes entitlement and public identity
+  together, so access and visible Premium identity still arrive coherently.
+- The full Flutter suite passes 396/396 tests across 41 files. The Firestore
+  emulator suite passes 225/225, including forged first-create documents,
+  Club-invite role escalation and permission-field smuggling, and
+  active subscriptions whose individual feature flags are disabled, plus the
+  complete Club + owner member + user projection + three channels + lounge
+  room creation batch.
+- The updated `firestore.rules` must be deployed manually before the new
+  server-side restrictions protect production.
+- Real App Store/Google Play verification adapters and the IAP client are still
+  unconfigured. `verifyPurchase` therefore continues to decline; today only
+  the guarded `adminSetPremiumEntitlements` path can create a working grant.
+
+## ADR-054: Private account records are split from exact server-owned public profiles
+
+**Status**: Accepted
+**Date**: 2026-08-16
+
+### Context
+
+The root `users/{uid}` document mixed public profile data with email,
+notification preferences, presence, moderation state, staff mirrors and
+operational counters. Any signed-in client could fetch another root document,
+and staff clients could list the collection. Ordinary people search also
+queried that private collection by username or email. Field-level filtering in
+Flutter cannot make an over-broad Firestore read private: the full document has
+already crossed the authorization boundary.
+
+### Decision
+
+- `users/{uid}` is private account state. A client may get only its own root
+  document and may never list the collection. Staff lookup and directory flows
+  use protected, server-side, field-picking callables; moderator and even
+  super-admin client sessions receive no raw-record bypass.
+- `publicProfiles/{uid}` is an exact replacement projection written only by a
+  retryable `users/{uid}` trigger. It contains the explicitly public identity,
+  biography/language fields and public social counts, never email, preferences,
+  presence, role, ban/disable state, device tokens or achievement internals.
+  Inactive/deleted accounts have no projection. Writes replace rather than
+  merge so an accidental extra field is healed on the next sync.
+- Presence is a separate `socialPresence/{uid}` projection. Its known-document
+  read requires the caller to be the account or both canonical friendship
+  mirrors to exist. Neither projection is listable or client-writable.
+- Ordinary people search uses `searchPublicProfiles`, not Firestore queries.
+  It accepts bounded name/username prefixes only, filters blocks in both
+  directions, rechecks candidate account state, and returns an exact five-field
+  result. Email search remains an owner-only staff capability in the protected
+  directory. Because App Check enforcement is still off, every search attempt
+  consumes transactional per-uid fixed-window budgets before querying: 30 per
+  minute and 300 per hour. Quota documents are Admin-only.
+- New friend requests and conversations store no email snapshot. Parsers keep
+  tolerating legacy missing/old fields during rollout, but UI search and cards
+  no longer offer or render email identity.
+- The projection backfill is dry-run by default, project-pinned, paginated and
+  resumable by cursor or uid prefix. It processes at most 200 users / 400
+  projection operations in memory and per write batch, and at most 500 users
+  per invocation unless the operator explicitly raises the capped run limit.
+
+### Reasoning
+
+Firestore authorizes documents, not selected response fields, so separating
+public and private state is the only robust client-direct-read boundary. Exact
+server-owned projections prevent privilege or private-field smuggling. A
+callable is necessary for prefix search because `allow list: false` is what
+prevents enumeration, and its transaction-backed budget limits abuse and cost
+before App Check can be enforced. Canonical UIDs remain opaque and
+case-sensitive throughout; no identity is trimmed, lowercased or truncated.
+
+### Consequences
+
+- Old app builds that read foreign `users/{uid}` or query `users` will fail
+  closed after the rules cutover. Functions and projections must therefore be
+  deployed/backfilled first, then updated clients, and only then the private
+  rules.
+- A missing projection hides the account until the trigger/backfill repairs it;
+  it never falls back to the private source in a normal client.
+- Existing conversation/request email snapshots are tolerated by parsers but
+  no new snapshot is created. A separately reviewed historical scrub can remove
+  old values without coupling that destructive migration to this cutover.
+- Backfill pages existing source accounts only. It intentionally does not scan
+  the full projection collections for orphans; source deletions are cleaned by
+  the trigger, and any legacy orphan sweep must be a separate bounded job.
+- The Firestore emulator suite passes 265/265, the profile/function security
+  suites cover exact projection, replay/idempotency, block filtering, quota
+  concurrency/window reset and bounded backfill, and scoped Flutter privacy,
+  staff and responsive tests pass. No deployment is performed by this change.

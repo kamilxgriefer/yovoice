@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 
@@ -36,14 +36,18 @@ class RoomExperienceService {
   RoomExperienceService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
+    FirebaseFunctions? functions,
     NotificationService? notificationService,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
-       _notifications = notificationService ?? NotificationService();
+       _functionsOverride = functions;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
-  final NotificationService _notifications;
+  final FirebaseFunctions? _functionsOverride;
+  FirebaseFunctions get _functions =>
+      _functionsOverride ??
+      FirebaseFunctions.instanceFor(region: 'europe-west1');
 
   DocumentReference<Map<String, dynamic>> _room(String roomId) =>
       _firestore.collection('rooms').doc(roomId);
@@ -154,36 +158,13 @@ class RoomExperienceService {
       throw StateError('Only the host can invite people to the stage.');
     }
 
-    final participant = roomRef.collection('participants').doc(request.userId);
-    final batch = _firestore.batch();
-    batch.set(participant, {
-      'userId': request.userId,
-      'displayName': request.displayName,
-      'photoUrl': request.photoUrl,
-      'role': 'speaker',
+    final callable = _functions.httpsCallable('moderateRoomParticipantSelf');
+    await callable.call<Map<Object?, Object?>>({
+      'roomId': roomId,
+      'participantId': request.userId,
       'isSpeaker': true,
-      'isMuted': true,
-      'isHandRaised': false,
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-    batch.delete(roomRef.collection('handRequests').doc(request.userId));
-    await batch.commit();
-
-    try {
-      final isBroadcast = RoomExperience.fromValue(
-        data['experience'],
-      ).isBroadcast;
-      await _notifications.notify(
-        recipientId: request.userId,
-        type: isBroadcast
-            ? NotificationType.broadcastInvite
-            : NotificationType.roomInvite,
-        targetId: roomId,
-        targetLabel: data['name'] as String?,
-      );
-    } catch (_) {
-      // Best-effort — the stage invite itself already succeeded above.
-    }
+    });
+    await roomRef.collection('handRequests').doc(request.userId).delete();
   }
 
   Future<void> moveToAudience({
@@ -197,12 +178,12 @@ class RoomExperienceService {
       throw StateError('Only the host can manage the stage.');
     }
 
-    await roomRef.collection('participants').doc(userId).set({
-      'role': 'listener',
+    final callable = _functions.httpsCallable('moderateRoomParticipantSelf');
+    await callable.call<Map<Object?, Object?>>({
+      'roomId': roomId,
+      'participantId': userId,
       'isSpeaker': false,
-      'isMuted': true,
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    });
   }
 }
 

@@ -18,6 +18,7 @@ import 'package:yovoice/features/premium/presentation/screens/premium_screen.dar
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 const _background = Color(0xFF080711);
 const _surface = Color(0xFF14101E);
@@ -217,6 +218,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: _surface,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 560,
+      ),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -280,55 +285,59 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       backgroundColor: _background,
       body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(6, 10, 18, 6),
-              child: Row(
-                children: [
-                  if (!widget.isRootTab) ...[
-                    YoIconButton(
-                      icon: Icons.arrow_back_ios_new_rounded,
-                      iconSize: 18,
-                      size: 40,
-                      backgroundColor: _surface,
-                      borderColor: _border,
-                      onPressed: () => Navigator.of(context).pop(),
+        child: ResponsiveContentFrame(
+          width: ResponsiveContentWidth.list,
+          alignment: ResponsiveContentAlignment.topLeft,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(6, 10, 18, 6),
+                child: Row(
+                  children: [
+                    if (!widget.isRootTab) ...[
+                      YoIconButton(
+                        icon: Icons.arrow_back_ios_new_rounded,
+                        iconSize: 18,
+                        size: 40,
+                        backgroundColor: _surface,
+                        borderColor: _border,
+                        onPressed: () => Navigator.of(context).pop(),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    const Text(
+                      'Settings',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.5,
+                      ),
                     ),
-                    const SizedBox(width: 6),
                   ],
-                  const Text(
-                    'Settings',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 26,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                ],
+                ),
               ),
-            ),
-            Expanded(
-              child: StreamBuilder<UserProfile>(
-                stream: _profileService.watchCurrentProfile(),
-                builder: (context, snapshot) {
-                  if (snapshot.hasError) {
-                    return _ErrorBody(
-                      message: friendlyErrorMessage(snapshot.error!),
-                    );
-                  }
-                  final profile = snapshot.data;
-                  if (profile == null) {
-                    return const Center(
-                      child: CircularProgressIndicator(color: _primary),
-                    );
-                  }
-                  return _buildContent(context, profile);
-                },
+              Expanded(
+                child: StreamBuilder<UserProfile>(
+                  stream: _profileService.watchCurrentProfile(),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return _ErrorBody(
+                        message: friendlyErrorMessage(snapshot.error!),
+                      );
+                    }
+                    final profile = snapshot.data;
+                    if (profile == null) {
+                      return const Center(
+                        child: CircularProgressIndicator(color: _primary),
+                      );
+                    }
+                    return _buildContent(context, profile);
+                  },
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -737,6 +746,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: _surface,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 560,
+      ),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),

@@ -1,19 +1,12 @@
-// Combined Firestore + Storage rules suite for Family Moment audio.
+// Combined Firestore + Storage regressions for private Family Moment media.
 //
-// This is the ONLY suite that proves the cross-service gate: the
-// `family_moments/{clubId}/{uid}/…` Storage path is authorised by a
-// `firestore.exists()` lookup against the family room's member document.
-// Storage rules alone cannot be trusted to enforce that — the lookup has
-// to actually resolve — so both emulators must be running in the SAME
-// hub for this to mean anything.
+// Run (repo root):
+//   firebase emulators:exec --only firestore,storage --project demo-yovoice \
+//     'npm --prefix firestore-tests run test:family-media'
 //
-// Run (repo root), with both emulators up:
-//   firebase emulators:start --only firestore,storage --project yovoice-ec54a
-//   npm --prefix firestore-tests run test:family-media
-//
-// A green run here is the precondition for deploying storage.rules. If
-// this cannot be made to pass reliably, the family_moments rule must NOT
-// be deployed and Family Moments must stay disabled in the client.
+// Family upload is not present in the shipping clients. Phase B therefore
+// keeps member-only reads and fails closed on every client write until a
+// server-issued upload-session document can bind the future object to a row.
 const fs = require("fs");
 const path = require("path");
 const {
@@ -22,7 +15,7 @@ const {
   assertFails,
 } = require("@firebase/rules-unit-testing");
 const { doc, setDoc, deleteDoc } = require("firebase/firestore");
-const { ref, uploadBytes, getBytes } = require("firebase/storage");
+const { ref, uploadBytes, getBytes, deleteObject } = require("firebase/storage");
 
 const FIRESTORE_RULES = path.resolve(__dirname, "../firestore.rules");
 const STORAGE_RULES = path.resolve(__dirname, "../storage.rules");
@@ -42,20 +35,24 @@ async function check(name, fn) {
   }
 }
 
-const audio = { contentType: "audio/m4a" };
-const image = { contentType: "image/jpeg" };
+const audio = { contentType: "audio/mp4" };
 const smallAudio = new Uint8Array(128 * 1024);
-const oversizeAudio = new Uint8Array(12 * 1024 * 1024 + 1);
 
 const OWNER = "parent-uid";
 const MEMBER = "sibling-uid";
+const BANNED_MEMBER = "banned-member-uid";
 const OUTSIDER = "outsider-uid";
+const MISMATCH = "mismatch-uid";
 const FAMILY = `family_${OWNER}`;
 const OTHER_FAMILY = `family_${OUTSIDER}`;
+const SUSPENDED_FAMILY = "family_suspended";
+const DELETING_FAMILY = "family_deleting";
+const NON_FAMILY = "community-with-member";
+const OBJECT = `family_moments/${FAMILY}/${MEMBER}/moment.m4a`;
 
 async function main() {
   const testEnv = await initializeTestEnvironment({
-    projectId: "rules-test-yovoice",
+    projectId: "demo-yovoice",
     firestore: {
       rules: fs.readFileSync(FIRESTORE_RULES, "utf8"),
       host: "127.0.0.1",
@@ -71,150 +68,161 @@ async function main() {
   await testEnv.clearFirestore();
   await testEnv.clearStorage();
 
-  // Seed the family room and its roster with rules disabled — this suite
-  // is about the Storage gate, not about how membership got written.
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
     await setDoc(doc(db, `clubs/${FAMILY}`), {
       name: "The Family",
       ownerId: OWNER,
       type: "family",
-      privacy: "inviteOnly",
+      status: "active",
+      deletionInProgress: false,
     });
     await setDoc(doc(db, `clubs/${FAMILY}/members/${OWNER}`), {
       userId: OWNER,
       role: "owner",
+      banned: false,
     });
     await setDoc(doc(db, `clubs/${FAMILY}/members/${MEMBER}`), {
       userId: MEMBER,
       role: "member",
+      banned: false,
     });
-    // A second family room the outsider owns, for the wrong-path case.
+    await setDoc(doc(db, `clubs/${FAMILY}/members/${BANNED_MEMBER}`), {
+      userId: BANNED_MEMBER,
+      role: "member",
+      banned: true,
+    });
+    await setDoc(doc(db, `clubs/${FAMILY}/members/${MISMATCH}`), {
+      userId: OUTSIDER,
+      role: "member",
+      banned: false,
+    });
+
     await setDoc(doc(db, `clubs/${OTHER_FAMILY}`), {
-      name: "Other Family",
       ownerId: OUTSIDER,
       type: "family",
+      status: "active",
     });
     await setDoc(doc(db, `clubs/${OTHER_FAMILY}/members/${OUTSIDER}`), {
       userId: OUTSIDER,
       role: "owner",
+      banned: false,
     });
+
+    for (const [clubId, data] of [
+      [SUSPENDED_FAMILY, { type: "family", status: "suspended" }],
+      [DELETING_FAMILY, {
+        type: "family",
+        status: "active",
+        deletionInProgress: true,
+      }],
+      [NON_FAMILY, { type: "community", status: "active" }],
+    ]) {
+      await setDoc(doc(db, `clubs/${clubId}`), {
+        ownerId: OWNER,
+        deletionInProgress: false,
+        ...data,
+      });
+      await setDoc(doc(db, `clubs/${clubId}/members/${MEMBER}`), {
+        userId: MEMBER,
+        role: "member",
+        banned: false,
+      });
+    }
+
+    // Admin-only seed stands in for the future upload-session backend. Client
+    // writes are intentionally closed in this phase.
+    await uploadBytes(ref(ctx.storage(), OBJECT), smallAudio, audio);
+    await uploadBytes(
+      ref(ctx.storage(), `family_moments/${SUSPENDED_FAMILY}/${MEMBER}/moment.m4a`),
+      smallAudio,
+      audio,
+    );
+    await uploadBytes(
+      ref(ctx.storage(), `family_moments/${DELETING_FAMILY}/${MEMBER}/moment.m4a`),
+      smallAudio,
+      audio,
+    );
+    await uploadBytes(
+      ref(ctx.storage(), `family_moments/${NON_FAMILY}/${MEMBER}/moment.m4a`),
+      smallAudio,
+      audio,
+    );
   });
 
-  const owner = testEnv
-    .authenticatedContext(OWNER, { email_verified: true })
-    .storage();
-  const member = testEnv
-    .authenticatedContext(MEMBER, { email_verified: true })
-    .storage();
-  const outsider = testEnv
-    .authenticatedContext(OUTSIDER, { email_verified: true })
-    .storage();
-  const unverified = testEnv
-    .authenticatedContext("newbie-uid", { email_verified: false })
-    .storage();
+  const storageFor = (uid, verified = true) =>
+    testEnv.authenticatedContext(uid, { email_verified: verified }).storage();
+  const owner = storageFor(OWNER);
+  const member = storageFor(MEMBER);
+  const bannedMember = storageFor(BANNED_MEMBER);
+  const outsider = storageFor(OUTSIDER);
+  const mismatch = storageFor(MISMATCH);
+  const unverified = storageFor(MEMBER, false);
+  const anon = testEnv.unauthenticatedContext().storage();
 
   const at = (storage, clubId, uid, file = "moment.m4a") =>
     ref(storage, `family_moments/${clubId}/${uid}/${file}`);
 
-  // 1. The gate resolves at all: an active member may upload.
-  await check("an active family member can upload family moment audio", () =>
-    assertSucceeds(uploadBytes(at(member, FAMILY, MEMBER), smallAudio, audio)),
+  await check("active family owner and member can read family media", async () => {
+    await assertSucceeds(getBytes(ref(owner, OBJECT)));
+    await assertSucceeds(getBytes(ref(member, OBJECT)));
+  });
+
+  await check("anonymous and non-member accounts cannot read family media", async () => {
+    await assertFails(getBytes(ref(anon, OBJECT)));
+    await assertFails(getBytes(ref(outsider, OBJECT)));
+  });
+
+  await check("banned membership closes family media immediately", () =>
+    assertFails(getBytes(ref(bannedMember, OBJECT))),
   );
 
-  await check("the owner can upload family moment audio", () =>
-    assertSucceeds(uploadBytes(at(owner, FAMILY, OWNER), smallAudio, audio)),
+  await check("membership document id cannot impersonate another userId", () =>
+    assertFails(getBytes(ref(mismatch, OBJECT))),
   );
 
-  // 2. Non-member.
-  await check("a signed-in NON-member cannot upload into the family", () =>
-    assertFails(
-      uploadBytes(at(outsider, FAMILY, OUTSIDER), smallAudio, audio),
-    ),
+  await check("suspended or deleting family is not readable", async () => {
+    await assertFails(getBytes(at(member, SUSPENDED_FAMILY, MEMBER)));
+    await assertFails(getBytes(at(member, DELETING_FAMILY, MEMBER)));
+  });
+
+  await check("a community membership cannot unlock the family media namespace", () =>
+    assertFails(getBytes(at(member, NON_FAMILY, MEMBER))),
   );
 
-  // 3. Read access is member-only — and this is the case that proves the
-  // firestore lookup is really being consulted, not silently passing.
-  await check("family media is readable by members", () =>
-    assertSucceeds(getBytes(at(member, FAMILY, MEMBER))),
+  await check("all member/owner client creates fail closed", async () => {
+    await assertFails(uploadBytes(
+      at(member, FAMILY, MEMBER, "new.m4a"), smallAudio, audio,
+    ));
+    await assertFails(uploadBytes(
+      at(owner, FAMILY, OWNER, "new.m4a"), smallAudio, audio,
+    ));
+    await assertFails(uploadBytes(
+      at(unverified, FAMILY, MEMBER, "new.m4a"), smallAudio, audio,
+    ));
+  });
+
+  await check("existing family objects cannot be overwritten by a client", () =>
+    assertFails(uploadBytes(ref(member, OBJECT), smallAudio, audio)),
   );
 
-  await check("family media is NOT readable by a non-member", () =>
-    assertFails(getBytes(at(outsider, FAMILY, MEMBER))),
+  await check("existing family objects cannot be client-deleted", async () => {
+    await assertFails(deleteObject(ref(member, OBJECT)));
+    await assertFails(deleteObject(ref(owner, OBJECT)));
+  });
+
+  await check("membership in another family grants no cross-family write", () =>
+    assertFails(uploadBytes(
+      at(outsider, FAMILY, OUTSIDER, "cross.m4a"), smallAudio, audio,
+    )),
   );
 
-  // 4. Wrong family room path.
-  await check(
-    "a member of one family cannot upload into a DIFFERENT family room",
-    () =>
-      assertFails(
-        uploadBytes(at(member, OTHER_FAMILY, MEMBER), smallAudio, audio),
-      ),
-  );
-
-  // 5. Ownership of the media segment.
-  await check(
-    "a member cannot write media under another member's uid segment",
-    () =>
-      assertFails(uploadBytes(at(member, FAMILY, OWNER), smallAudio, audio)),
-  );
-
-  // 6. Content type and size.
-  await check("a non-audio content type is rejected", () =>
-    assertFails(uploadBytes(at(member, FAMILY, MEMBER, "x.jpg"), smallAudio, image)),
-  );
-
-  await check("audio over the 12 MB cap is rejected", () =>
-    assertFails(
-      uploadBytes(at(member, FAMILY, MEMBER, "big.m4a"), oversizeAudio, audio),
-    ),
-  );
-
-  await check("an unverified account cannot upload family media", () =>
-    assertFails(
-      uploadBytes(at(unverified, FAMILY, "newbie-uid"), smallAudio, audio),
-    ),
-  );
-
-  // 7. Removal closes the door — the whole point of gating on the live
-  // membership document rather than on a claim baked into the path.
-  await check(
-    "a REMOVED member can no longer upload or read family media",
-    async () => {
-      await testEnv.withSecurityRulesDisabled(async (ctx) => {
-        await deleteDoc(
-          doc(ctx.firestore(), `clubs/${FAMILY}/members/${MEMBER}`),
-        );
-      });
-      await assertFails(
-        uploadBytes(at(member, FAMILY, MEMBER, "after.m4a"), smallAudio, audio),
-      );
-      await assertFails(getBytes(at(member, FAMILY, MEMBER)));
-    },
-  );
-
-  // 8. Family media cannot be laundered into a public Moment path.
-  await check(
-    "family media cannot be written into the public voice_moments path "
-      + "under another account, and public moment paths stay per-uid",
-    async () => {
-      await assertFails(
-        uploadBytes(
-          ref(owner, `voice_moments/${MEMBER}/laundered.m4a`),
-          smallAudio,
-          audio,
-        ),
-      );
-      // A family room id is not a user id: it cannot stand in as one.
-      await assertFails(
-        uploadBytes(
-          ref(owner, `voice_moments/${FAMILY}/laundered.m4a`),
-          smallAudio,
-          audio,
-        ),
-      );
-    },
-  );
+  await check("removing membership immediately closes existing media reads", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await deleteDoc(doc(ctx.firestore(), `clubs/${FAMILY}/members/${MEMBER}`));
+    });
+    await assertFails(getBytes(ref(member, OBJECT)));
+  });
 
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();

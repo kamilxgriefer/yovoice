@@ -197,16 +197,22 @@ Future<void> _settle(WidgetTester tester) async {
   }
 }
 
-Future<void> _shoot(String name) async {
-  final boundary =
-      _capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-  final image = await boundary.toImage(pixelRatio: 1.0);
-  final data = await image.toByteData(format: ui.ImageByteFormat.png);
-  final file = File('test/.screenshots/$name.png');
-  file.parent.createSync(recursive: true);
-  file.writeAsBytesSync(data!.buffer.asUint8List());
-  // ignore: avoid_print
-  print('wrote ${file.path}');
+Future<void> _shoot(WidgetTester tester, String name) async {
+  await tester.runAsync(() async {
+    final boundary =
+        _capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    final image = await boundary.toImage(pixelRatio: 1.0);
+    try {
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      final file = File('test/.screenshots/$name.png');
+      file.parent.createSync(recursive: true);
+      file.writeAsBytesSync(data!.buffer.asUint8List());
+      // ignore: avoid_print
+      print('wrote ${file.path}');
+    } finally {
+      image.dispose();
+    }
+  });
 }
 
 void main() {
@@ -316,7 +322,10 @@ void main() {
       await _settle(tester);
       await tester.tap(find.byTooltip('See who is in the room'));
       await _settle(tester);
-      await _shoot('roster-${size.width.toInt()}x${size.height.toInt()}');
+      await _shoot(
+        tester,
+        'roster-${size.width.toInt()}x${size.height.toInt()}',
+      );
     });
   }
 
@@ -396,11 +405,11 @@ void main() {
         ),
       );
       await _settle(tester);
-      await _shoot(label);
+      await _shoot(tester, label);
     });
   }
   // The Home surface itself — the room board, the People & Moments rail,
-  // Your active rooms and the Global Chat preview — at the desktop widths
+  // Your active rooms and recent private chats — at the desktop widths
   // that matter and at phone size.
   for (final size in const [
     Size(1440, 900),
@@ -457,7 +466,7 @@ void main() {
         ),
       );
       await _settle(tester);
-      await _shoot(label);
+      await _shoot(tester, label);
     });
   }
 
@@ -508,7 +517,7 @@ void main() {
       ),
     );
     await _settle(tester);
-    await _shoot('home-mobile-390x844');
+    await _shoot(tester, 'home-mobile-390x844');
   });
   // The two creation wizards, at phone width and desktop, so the
   // identity colours and the step layout are looked at rather than
@@ -559,7 +568,7 @@ void main() {
         ),
       );
       await _settle(tester);
-      await _shoot(label);
+      await _shoot(tester, label);
     });
   }
 }

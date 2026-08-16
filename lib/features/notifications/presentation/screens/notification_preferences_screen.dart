@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class _PreferenceGroup {
   const _PreferenceGroup({required this.title, required this.types});
@@ -133,115 +134,118 @@ class _NotificationPreferencesScreenState
     return Scaffold(
       backgroundColor: _background,
       body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 10, 18, 10),
-              child: Row(
-                children: [
-                  if (!widget.isRootTab) ...[
-                    IconButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      tooltip: 'Back',
-                      icon: const Icon(
-                        Icons.arrow_back_ios_new_rounded,
-                        color: Colors.white,
-                        size: 21,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                  ],
-                  const Expanded(
-                    child: Text(
-                      'Notification preferences',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.4,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: StreamBuilder<Map<String, bool>>(
-                stream: _preferencesStream,
-                builder: (context, snapshot) {
-                  final preferences = snapshot.data ?? const <String, bool>{};
-                  return ListView(
-                    padding: const EdgeInsets.fromLTRB(18, 4, 18, 32),
-                    children: [
-                      const Text(
-                        'Choose which activity sends you a push '
-                        'notification. In-app activity is always recorded '
-                        'in your notification center regardless of these '
-                        'settings.',
-                        style: TextStyle(
-                          color: _secondaryText,
-                          fontSize: 12.5,
-                          height: 1.5,
+        child: ResponsiveContentFrame(
+          width: ResponsiveContentWidth.form,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 10, 18, 10),
+                child: Row(
+                  children: [
+                    if (!widget.isRootTab) ...[
+                      IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        tooltip: 'Back',
+                        icon: const Icon(
+                          Icons.arrow_back_ios_new_rounded,
+                          color: Colors.white,
+                          size: 21,
                         ),
                       ),
-                      const SizedBox(height: 20),
-                      for (final group in _kPreferenceGroups) ...[
-                        Text(
-                          group.title,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Container(
-                          decoration: BoxDecoration(
-                            color: _surface,
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(color: _border),
-                          ),
-                          child: Column(
-                            children: [
-                              for (
-                                var index = 0;
-                                index < group.types.length;
-                                index++
-                              ) ...[
-                                if (index > 0)
-                                  const Divider(
-                                    height: 1,
-                                    color: _border,
-                                    indent: 16,
-                                    endIndent: 16,
-                                  ),
-                                _PreferenceRow(
-                                  label: _labelFor(group.types[index]),
-                                  // Preferences are opt-out: an absent key
-                                  // means enabled, matching
-                                  // onNotificationCreated's default in
-                                  // functions/notifications/push.js.
-                                  value:
-                                      preferences[group.types[index].name] !=
-                                      false,
-                                  isPending: _pending.contains(
-                                    group.types[index],
-                                  ),
-                                  onChanged: (enabled) =>
-                                      _toggle(group.types[index], enabled),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                      ],
+                      const SizedBox(width: 4),
                     ],
-                  );
-                },
+                    const Expanded(
+                      child: Text(
+                        'Notification preferences',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+              Expanded(
+                child: StreamBuilder<Map<String, bool>>(
+                  stream: _preferencesStream,
+                  builder: (context, snapshot) {
+                    final preferences = snapshot.data ?? const <String, bool>{};
+                    return ListView(
+                      padding: const EdgeInsets.fromLTRB(18, 4, 18, 32),
+                      children: [
+                        const Text(
+                          'Choose which activity sends you a push '
+                          'notification. In-app activity is always recorded '
+                          'in your notification center regardless of these '
+                          'settings.',
+                          style: TextStyle(
+                            color: _secondaryText,
+                            fontSize: 12.5,
+                            height: 1.5,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        for (final group in _kPreferenceGroups) ...[
+                          Text(
+                            group.title,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: _surface,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(color: _border),
+                            ),
+                            child: Column(
+                              children: [
+                                for (
+                                  var index = 0;
+                                  index < group.types.length;
+                                  index++
+                                ) ...[
+                                  if (index > 0)
+                                    const Divider(
+                                      height: 1,
+                                      color: _border,
+                                      indent: 16,
+                                      endIndent: 16,
+                                    ),
+                                  _PreferenceRow(
+                                    label: _labelFor(group.types[index]),
+                                    // Preferences are opt-out: an absent key
+                                    // means enabled, matching
+                                    // onNotificationCreated's default in
+                                    // functions/notifications/push.js.
+                                    value:
+                                        preferences[group.types[index].name] !=
+                                        false,
+                                    isPending: _pending.contains(
+                                      group.types[index],
+                                    ),
+                                    onChanged: (enabled) =>
+                                        _toggle(group.types[index], enabled),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                        ],
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

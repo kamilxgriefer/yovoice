@@ -17,9 +17,11 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_journey_card.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -168,48 +170,52 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 final clubs = clubsSnapshot.data ?? const <Club>[];
                 return Scaffold(
                   backgroundColor: const Color(0xFF09050F),
-                  body: _ProfileContent(
-                    profile: profile,
-                    communities: communities,
-                    clubs: clubs,
-                    communitiesLoading:
-                        communitiesSnapshot.connectionState ==
-                            ConnectionState.waiting ||
-                        clubsSnapshot.connectionState ==
-                            ConnectionState.waiting,
-                    onEdit: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => EditProfileScreen(profile: profile),
-                        ),
-                      );
-                    },
-                    onAchievements: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => AchievementsScreen(profile: profile),
-                        ),
-                      );
-                    },
-                    onOpenCommunity: (room) {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => RoomEntryScreen(room: room),
-                        ),
-                      );
-                    },
-                    onOpenClub: (club) {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => ClubOverviewScreen(clubId: club.id),
-                        ),
-                      );
-                    },
-                    showSuperAdminActivation: _isOwnerAccount,
-                    isActivatingSuperAdmin: _isActivatingSuperAdmin,
-                    currentRole: _currentRole,
-                    onActivateSuperAdmin: _activateSuperAdmin,
-                    onLogout: _authService.signOut,
+                  body: ResponsiveContentFrame(
+                    width: ResponsiveContentWidth.feed,
+                    child: _ProfileContent(
+                      profile: profile,
+                      communities: communities,
+                      clubs: clubs,
+                      communitiesLoading:
+                          communitiesSnapshot.connectionState ==
+                              ConnectionState.waiting ||
+                          clubsSnapshot.connectionState ==
+                              ConnectionState.waiting,
+                      onEdit: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => EditProfileScreen(profile: profile),
+                          ),
+                        );
+                      },
+                      onAchievements: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) =>
+                                AchievementsScreen(profile: profile),
+                          ),
+                        );
+                      },
+                      onOpenCommunity: (room) {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => RoomEntryScreen(room: room),
+                          ),
+                        );
+                      },
+                      onOpenClub: (club) {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => ClubOverviewScreen(clubId: club.id),
+                          ),
+                        );
+                      },
+                      showSuperAdminActivation: _isOwnerAccount,
+                      isActivatingSuperAdmin: _isActivatingSuperAdmin,
+                      currentRole: _currentRole,
+                      onActivateSuperAdmin: _activateSuperAdmin,
+                      onLogout: _authService.signOut,
+                    ),
                   ),
                 );
               },
@@ -293,9 +299,11 @@ class _ProfileContent extends StatelessWidget {
               const SizedBox(height: 14),
               _VoiceIdentity(profile: profile),
               const SizedBox(height: 14),
-              _JourneyCard(
-                profile: profile,
+              ProfileJourneyCard(
                 communitiesCount: communities.length + clubs.length,
+                messageCount: profile.messageCount,
+                voiceMinutes: profile.voiceMinutes,
+                roomCount: profile.roomCount,
               ),
               const SizedBox(height: 14),
               _CommunitiesCard(
@@ -479,110 +487,6 @@ class _VoiceIdentity extends StatelessWidget {
       ),
     );
   }
-}
-
-class _JourneyCard extends StatelessWidget {
-  const _JourneyCard({required this.profile, required this.communitiesCount});
-  final UserProfile profile;
-  final int communitiesCount;
-
-  @override
-  Widget build(BuildContext context) {
-    final items = [
-      _JourneyItem(Icons.hub_rounded, '$communitiesCount', 'Communities'),
-      _JourneyItem(Icons.forum_rounded, '${profile.messageCount}', 'Messages'),
-      _JourneyItem(
-        Icons.graphic_eq_rounded,
-        _voiceTime(profile.voiceMinutes),
-        'Voice time',
-      ),
-      _JourneyItem(
-        Icons.meeting_room_rounded,
-        '${profile.roomCount}',
-        'Rooms created',
-      ),
-    ];
-    return _Panel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const _Header(
-            icon: Icons.auto_awesome_rounded,
-            title: 'Your YO Voice journey',
-          ),
-          const SizedBox(height: 10),
-          GridView.builder(
-            padding: EdgeInsets.zero,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: items.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 10,
-              childAspectRatio: 2.7,
-            ),
-            itemBuilder: (context, index) {
-              final item = items[index];
-              return Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF150C1D),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFF382741)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(item.icon, color: const Color(0xFFB833FF), size: 21),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            item.value,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w900,
-                              fontSize: 17,
-                            ),
-                          ),
-                          Text(
-                            item.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color(0xFFA99DB3),
-                              fontSize: 11,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  static String _voiceTime(int minutes) {
-    if (minutes < 60) return '${minutes}m';
-    final hours = minutes ~/ 60;
-    final rest = minutes % 60;
-    return rest == 0 ? '${hours}h' : '${hours}h ${rest}m';
-  }
-}
-
-class _JourneyItem {
-  const _JourneyItem(this.icon, this.value, this.label);
-  final IconData icon;
-  final String value;
-  final String label;
 }
 
 class _CommunitiesCard extends StatelessWidget {

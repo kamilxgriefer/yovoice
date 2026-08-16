@@ -199,12 +199,19 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   // separate speaker/listener sheets (the sheet sorts host → speakers →
   // listeners and labels roles per row).
   void _openParticipants(List<RoomParticipant> participants) {
-    final ordered = [...participants]..sort((a, b) {
-      int rank(RoomParticipant p) => p.isHost ? 0 : p.isSpeaker ? 1 : 2;
-      final byRank = rank(a).compareTo(rank(b));
-      if (byRank != 0) return byRank;
-      return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
-    });
+    final ordered = [...participants]
+      ..sort((a, b) {
+        int rank(RoomParticipant p) => p.isHost
+            ? 0
+            : p.isSpeaker
+            ? 1
+            : 2;
+        final byRank = rank(a).compareTo(rank(b));
+        if (byRank != 0) return byRank;
+        return a.displayName.toLowerCase().compareTo(
+          b.displayName.toLowerCase(),
+        );
+      });
 
     showModalBottomSheet<void>(
       context: context,
@@ -245,9 +252,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     };
 
     final stageSpeakers = [
-      for (final p in roomParticipants.where(
-        (p) => p.isSpeaker || p.isHost,
-      ))
+      for (final p in roomParticipants.where((p) => p.isSpeaker || p.isHost))
         StageSpeaker(
           userId: p.userId,
           displayName: p.displayName,
@@ -335,9 +340,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
         if (_roomOver) {
           return Scaffold(
             backgroundColor: _background,
-            body: SafeArea(
-              child: RoomEndedState(roomName: widget.room.name),
-            ),
+            body: SafeArea(child: RoomEndedState(roomName: widget.room.name)),
           );
         }
 
@@ -346,23 +349,33 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
           body: SafeArea(
             child: Column(
               children: [
-                _TopBar(
-                  roomName: club?.name ?? widget.room.name,
-                  subtitle: _isClubRoom ? 'Club Room' : null,
-                  avatarUrl: club?.avatarUrl,
-                  avatarName: club?.name,
-                  status: _voice.status,
-                  speaking: speaking,
-                  listeners: listeners,
-                  onBack: () => Navigator.of(context).pop(),
-                  onSpeakingTap: () => _openParticipants(roomParticipants),
-                  onListenersTap: () => _openParticipants(roomParticipants),
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1200),
+                    child: _TopBar(
+                      roomName: club?.name ?? widget.room.name,
+                      subtitle: _isClubRoom ? 'Club Room' : null,
+                      avatarUrl: club?.avatarUrl,
+                      avatarName: club?.name,
+                      status: _voice.status,
+                      speaking: speaking,
+                      listeners: listeners,
+                      onBack: () => Navigator.of(context).pop(),
+                      onSpeakingTap: () => _openParticipants(roomParticipants),
+                      onListenersTap: () => _openParticipants(roomParticipants),
+                    ),
+                  ),
                 ),
                 Expanded(
                   child: Stack(
                     children: [
                       Positioned.fill(
-                        child: _buildStage(roomParticipants, club),
+                        child: Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 1200),
+                            child: _buildStage(roomParticipants, club),
+                          ),
+                        ),
                       ),
                       // Board screens 2/6: the newest chat floats over
                       // the stage so talk stays visible mid-room.
@@ -370,10 +383,15 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
                         left: 16,
                         right: 16,
                         bottom: 8,
-                        child: RecentRoomMessages(
-                          roomId: widget.room.id,
-                          service: _rooms,
-                          onOpenChat: _openChat,
+                        child: Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 880),
+                            child: RecentRoomMessages(
+                              roomId: widget.room.id,
+                              service: _rooms,
+                              onOpenChat: _openChat,
+                            ),
+                          ),
                         ),
                       ),
                     ],
@@ -437,7 +455,11 @@ class _TopBar extends StatelessWidget {
             color: Colors.white,
           ),
           if (avatarName != null) ...[
-            UserAvatar(radius: 17, photoUrl: avatarUrl, displayName: avatarName),
+            UserAvatar(
+              radius: 17,
+              photoUrl: avatarUrl,
+              displayName: avatarName,
+            ),
             const SizedBox(width: 10),
           ],
           Expanded(
@@ -557,10 +579,7 @@ class _ClubBanner extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(
-              Icons.chevron_right_rounded,
-              color: Color(0xFF9FB6BE),
-            ),
+            const Icon(Icons.chevron_right_rounded, color: Color(0xFF9FB6BE)),
           ],
         ),
       ),
@@ -644,12 +663,7 @@ class _BottomControls extends StatelessWidget {
     // Every MicState is a visually distinct button — the mic must never
     // look "permanently pressed" or dead while it actually works.
     final (icon, label, style, tappable) = switch (micState) {
-      MicState.on => (
-        Icons.mic_rounded,
-        'Mute',
-        _MicStyle.live,
-        true,
-      ),
+      MicState.on => (Icons.mic_rounded, 'Mute', _MicStyle.live, true),
       MicState.muted => (
         Icons.mic_off_rounded,
         'Unmute',
@@ -677,49 +691,66 @@ class _BottomControls extends StatelessWidget {
     };
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(22, 12, 22, 20),
+      padding: EdgeInsets.fromLTRB(
+        MediaQuery.sizeOf(context).width < 360 ? 10 : 22,
+        12,
+        MediaQuery.sizeOf(context).width < 360 ? 10 : 22,
+        20,
+      ),
       decoration: BoxDecoration(
         color: const Color(0xFF09050F).withValues(alpha: .96),
         border: const Border(top: BorderSide(color: Color(0xFF2B1937))),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          _RoundControl(
-            icon: icon,
-            label: label,
-            enabled: tappable && !busy,
-            micStyle: style,
-            showSpinner: micState == MicState.connecting,
-            onTap: micState == MicState.on || micState == MicState.muted
-                ? onMute
-                : () async => onMicBlocked(),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: Row(
+            children: [
+              Expanded(
+                child: _RoundControl(
+                  icon: icon,
+                  label: label,
+                  enabled: tappable && !busy,
+                  micStyle: style,
+                  showSpinner: micState == MicState.connecting,
+                  onTap: micState == MicState.on || micState == MicState.muted
+                      ? onMute
+                      : () async => onMicBlocked(),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: _RoundControl(
+                  icon: Icons.forum_rounded,
+                  label: 'Chat',
+                  enabled: true,
+                  micStyle: _MicStyle.info,
+                  onTap: () async => onChat(),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: _RoundControl(
+                  icon: Icons.groups_rounded,
+                  label: 'People',
+                  enabled: true,
+                  micStyle: _MicStyle.waiting,
+                  onTap: () async => onPeople(),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: _RoundControl(
+                  icon: Icons.call_end_rounded,
+                  label: 'Leave',
+                  enabled: true,
+                  micStyle: _MicStyle.danger,
+                  onTap: onLeave,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 18),
-          _RoundControl(
-            icon: Icons.forum_rounded,
-            label: 'Chat',
-            enabled: true,
-            micStyle: _MicStyle.info,
-            onTap: () async => onChat(),
-          ),
-          const SizedBox(width: 18),
-          _RoundControl(
-            icon: Icons.groups_rounded,
-            label: 'People',
-            enabled: true,
-            micStyle: _MicStyle.waiting,
-            onTap: () async => onPeople(),
-          ),
-          const SizedBox(width: 18),
-          _RoundControl(
-            icon: Icons.call_end_rounded,
-            label: 'Leave',
-            enabled: true,
-            micStyle: _MicStyle.danger,
-            onTap: onLeave,
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -795,6 +826,9 @@ class _RoundControl extends StatelessWidget {
             const SizedBox(height: 7),
             Text(
               label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 11,

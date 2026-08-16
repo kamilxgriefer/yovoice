@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 
 class YoAvatar extends StatelessWidget {
   const YoAvatar({
@@ -74,9 +75,15 @@ class YoAvatar extends StatelessWidget {
       return avatar;
     }
 
-    return GestureDetector(
+    final profileName = name?.trim();
+    final label = profileName?.isNotEmpty == true
+        ? 'Open profile for $profileName'
+        : 'Open profile';
+    return AccessibleTapRegion(
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
+      semanticLabel: label,
+      tooltip: label,
+      circular: true,
       child: avatar,
     );
   }

@@ -38,7 +38,7 @@ const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { getAuth } = require("firebase-admin/auth");
 
-const { USER_ROLES } = require("../utils/roles");
+const { STAFF_ROLES, USER_ROLES } = require("../utils/roles");
 const { derivePublicRole } = require("../badges/public_badges");
 const { effectiveVip } = require("../utils/entitlements");
 const { requireProtectedOwner } = require("../utils/auth");
@@ -109,9 +109,29 @@ function deriveDirectoryEntry({
     profile.displayName ?? authUser.displayName ?? "",
   ).trim();
   const username = String(profile.username ?? "").trim();
-  const email = authUser.email ?? profile.email ?? null;
+  // Auth is the sole email authority. A historical/self-written profile
+  // email must never enter the owner directory or become an email-search hit.
+  const email = authUser.email ?? null;
 
-  const { staffRole } = derivePublicRole(uid, profile);
+  // Staff authority lives in signed Auth claims, with the Firestore mirror
+  // acting as a consistency tripwire. A mismatch fails to ordinary `user`
+  // rather than publishing either stale/spoofed side as a staff identity.
+  const claimedRoleRaw = String(
+    authUser.customClaims?.role ?? USER_ROLES.USER,
+  ).trim();
+  const mirroredRoleRaw = String(
+    profile.role ?? USER_ROLES.USER,
+  ).trim();
+  const claimedRole = STAFF_ROLES.has(claimedRoleRaw)
+    ? claimedRoleRaw
+    : USER_ROLES.USER;
+  const mirroredRole = STAFF_ROLES.has(mirroredRoleRaw)
+    ? mirroredRoleRaw
+    : USER_ROLES.USER;
+  const rolesConsistent = claimedRole === mirroredRole;
+  const { staffRole } = derivePublicRole(uid, {
+    role: rolesConsistent ? claimedRole : USER_ROLES.USER,
+  });
   const { vip } = effectiveVip({ user: profile, grant, now });
 
   const createdAtMillis = authUser.metadata?.creationTime

@@ -11,6 +11,7 @@ import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 enum _FriendsFilter { all, online, requests }
 
@@ -190,18 +191,22 @@ class _FriendsScreenState extends State<FriendsScreen> {
         ),
         child: SafeArea(
           bottom: false,
-          child: Column(
-            children: [
-              _buildHeader(),
-              _buildSearch(),
-              _buildFilters(),
-              const SizedBox(height: 8),
-              Expanded(
-                child: _filter == _FriendsFilter.requests
-                    ? _buildRequests()
-                    : _buildFriends(),
-              ),
-            ],
+          child: ResponsiveContentFrame(
+            width: ResponsiveContentWidth.list,
+            alignment: ResponsiveContentAlignment.topLeft,
+            child: Column(
+              children: [
+                _buildHeader(),
+                _buildSearch(),
+                _buildFilters(),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: _filter == _FriendsFilter.requests
+                      ? _buildRequests()
+                      : _buildFriends(),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -211,66 +216,98 @@ class _FriendsScreenState extends State<FriendsScreen> {
   Widget _buildHeader() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
-      child: Row(
-        children: [
-          if (!widget.isRootTab) ...[
-            YoIconButton(
-              icon: Icons.arrow_back_ios_new_rounded,
-              iconSize: 18,
-              size: 40,
-              backgroundColor: _surface,
-              borderColor: _border,
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-            const SizedBox(width: 10),
-          ],
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact =
+              constraints.maxWidth < 440 ||
+              MediaQuery.textScalerOf(context).scale(1) > 1.4;
+          final leading = <Widget>[
+            if (!widget.isRootTab) ...[
+              YoIconButton(
+                icon: Icons.arrow_back_ios_new_rounded,
+                iconSize: 18,
+                size: 40,
+                backgroundColor: _surface,
+                borderColor: _border,
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+              const SizedBox(width: 10),
+            ],
+          ];
+          const title = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Friends',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 30,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -.8,
+                ),
+              ),
+              SizedBox(height: 4),
+              Text(
+                'Your people, one tap away.',
+                style: TextStyle(color: _muted, fontSize: 13),
+              ),
+            ],
+          );
+          final actions = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              StreamBuilder<int>(
+                stream: _friendService.watchPendingFriendRequestCount(),
+                builder: (context, snapshot) {
+                  final count = snapshot.data ?? 0;
+                  return _HeaderButton(
+                    tooltip: 'Friend requests',
+                    icon: Icons.notifications_none_rounded,
+                    badgeCount: count,
+                    onTap: () =>
+                        setState(() => _filter = _FriendsFilter.requests),
+                  );
+                },
+              ),
+              const SizedBox(width: 9),
+              _HeaderButton(
+                tooltip: 'Blocked users',
+                icon: Icons.block_rounded,
+                onTap: _openBlockedUsers,
+              ),
+              const SizedBox(width: 9),
+              _HeaderButton(
+                tooltip: 'Add friend',
+                icon: Icons.person_add_alt_1_rounded,
+                highlighted: true,
+                onTap: _openAddFriend,
+              ),
+            ],
+          );
+
+          if (compact) {
+            return Column(
               children: [
-                Text(
-                  'Friends',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 30,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -.8,
-                  ),
+                Row(
+                  children: [
+                    ...leading,
+                    const Expanded(child: title),
+                  ],
                 ),
-                SizedBox(height: 4),
-                Text(
-                  'Your people, one tap away.',
-                  style: TextStyle(color: _muted, fontSize: 13),
-                ),
+                const SizedBox(height: 12),
+                Align(alignment: Alignment.centerRight, child: actions),
               ],
-            ),
-          ),
-          StreamBuilder<int>(
-            stream: _friendService.watchPendingFriendRequestCount(),
-            builder: (context, snapshot) {
-              final count = snapshot.data ?? 0;
-              return _HeaderButton(
-                tooltip: 'Friend requests',
-                icon: Icons.notifications_none_rounded,
-                badgeCount: count,
-                onTap: () => setState(() => _filter = _FriendsFilter.requests),
-              );
-            },
-          ),
-          const SizedBox(width: 9),
-          _HeaderButton(
-            tooltip: 'Blocked users',
-            icon: Icons.block_rounded,
-            onTap: _openBlockedUsers,
-          ),
-          const SizedBox(width: 9),
-          _HeaderButton(
-            tooltip: 'Add friend',
-            icon: Icons.person_add_alt_1_rounded,
-            highlighted: true,
-            onTap: _openAddFriend,
-          ),
-        ],
+            );
+          }
+
+          return Row(
+            children: [
+              ...leading,
+              const Expanded(child: title),
+              actions,
+            ],
+          );
+        },
       ),
     );
   }
@@ -320,26 +357,32 @@ class _FriendsScreenState extends State<FriendsScreen> {
         stream: _friendService.watchPendingFriendRequestCount(),
         builder: (context, snapshot) {
           final requestCount = snapshot.data ?? 0;
-          return Row(
-            children: [
-              _FilterChip(
-                label: 'All',
-                selected: _filter == _FriendsFilter.all,
-                onTap: () => setState(() => _filter = _FriendsFilter.all),
-              ),
-              const SizedBox(width: 8),
-              _FilterChip(
-                label: 'Online',
-                selected: _filter == _FriendsFilter.online,
-                onTap: () => setState(() => _filter = _FriendsFilter.online),
-              ),
-              const SizedBox(width: 8),
-              _FilterChip(
-                label: requestCount > 0 ? 'Requests $requestCount' : 'Requests',
-                selected: _filter == _FriendsFilter.requests,
-                onTap: () => setState(() => _filter = _FriendsFilter.requests),
-              ),
-            ],
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _FilterChip(
+                  label: 'All',
+                  selected: _filter == _FriendsFilter.all,
+                  onTap: () => setState(() => _filter = _FriendsFilter.all),
+                ),
+                const SizedBox(width: 8),
+                _FilterChip(
+                  label: 'Online',
+                  selected: _filter == _FriendsFilter.online,
+                  onTap: () => setState(() => _filter = _FriendsFilter.online),
+                ),
+                const SizedBox(width: 8),
+                _FilterChip(
+                  label: requestCount > 0
+                      ? 'Requests $requestCount'
+                      : 'Requests',
+                  selected: _filter == _FriendsFilter.requests,
+                  onTap: () =>
+                      setState(() => _filter = _FriendsFilter.requests),
+                ),
+              ],
+            ),
           );
         },
       ),
@@ -373,7 +416,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
               }
               if (_query.isEmpty) return true;
               return friend.displayName.toLowerCase().contains(_query) ||
-                  friend.email.toLowerCase().contains(_query);
+                  friend.searchableUsername.contains(_query);
             })
             .toList(growable: false);
 
@@ -391,7 +434,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                 ? 'Nobody is online'
                 : 'No friends yet',
             subtitle: isSearching
-                ? 'Try another name or email.'
+                ? 'Try another name or username.'
                 : _filter == _FriendsFilter.online
                 ? 'Online friends will appear here.'
                 : 'Find someone and start building your circle.',
@@ -454,8 +497,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
         final requests = (snapshot.data ?? const <FriendRequest>[])
             .where((request) {
               if (_query.isEmpty) return true;
-              return request.senderName.toLowerCase().contains(_query) ||
-                  request.senderEmail.toLowerCase().contains(_query);
+              return request.senderName.toLowerCase().contains(_query);
             })
             .toList(growable: false);
 
@@ -469,7 +511,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                 : 'No matching requests',
             subtitle: _query.isEmpty
                 ? 'New friend requests will appear here.'
-                : 'Try another name or email.',
+                : 'Try another name.',
           );
         }
 
@@ -479,7 +521,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
           separatorBuilder: (_, __) => const SizedBox(height: 9),
           itemBuilder: (context, index) {
             final request = requests[index];
-            return _RequestCard(
+            return FriendRequestCard(
               request: request,
               processing: _processingRequestIds.contains(request.senderId),
               onAccept: () => _acceptRequest(request),
@@ -641,8 +683,8 @@ class _FriendCard extends StatelessWidget {
                     Text(
                       friend.isOnline
                           ? 'Online now'
-                          : friend.email.isNotEmpty
-                          ? friend.email
+                          : friend.username.isNotEmpty
+                          ? '@${friend.username}'
                           : 'Offline',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -678,12 +720,13 @@ class _FriendCard extends StatelessWidget {
   }
 }
 
-class _RequestCard extends StatelessWidget {
-  const _RequestCard({
+class FriendRequestCard extends StatelessWidget {
+  const FriendRequestCard({
     required this.request,
     required this.processing,
     required this.onAccept,
     required this.onDecline,
+    super.key,
   });
 
   final FriendRequest request;
@@ -697,7 +740,7 @@ class _RequestCard extends StatelessWidget {
     final hasPhoto = photo != null && photo.trim().isNotEmpty;
     final name = request.senderName.trim().isNotEmpty
         ? request.senderName.trim()
-        : request.senderEmail.split('@').first;
+        : 'YO Voice user';
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -739,9 +782,7 @@ class _RequestCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  request.senderEmail.isEmpty
-                      ? 'Wants to be your friend'
-                      : request.senderEmail,
+                  'Wants to be your friend',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -750,49 +791,66 @@ class _RequestCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 11),
-                Row(
-                  children: [
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: processing ? null : onAccept,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _FriendsScreenState._primary,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final textScale = MediaQuery.textScalerOf(context).scale(1);
+                    final stackActions =
+                        textScale > 1.4 || constraints.maxWidth < 250;
+                    final accept = FilledButton.icon(
+                      key: const ValueKey('friend-request-accept'),
+                      onPressed: processing ? null : onAccept,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                        backgroundColor: _FriendsScreenState._primary,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        icon: processing
-                            ? const SizedBox(
-                                width: 15,
-                                height: 15,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(Icons.check_rounded, size: 18),
-                        label: const Text('Accept'),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: processing ? null : onDecline,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFFC5BACD),
-                          side: const BorderSide(
-                            color: _FriendsScreenState._border,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+                      icon: processing
+                          ? const SizedBox(
+                              width: 15,
+                              height: 15,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.check_rounded, size: 18),
+                      label: const Text('Accept'),
+                    );
+                    final decline = OutlinedButton.icon(
+                      key: const ValueKey('friend-request-decline'),
+                      onPressed: processing ? null : onDecline,
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                        foregroundColor: const Color(0xFFC5BACD),
+                        side: const BorderSide(
+                          color: _FriendsScreenState._border,
                         ),
-                        icon: const Icon(Icons.close_rounded, size: 18),
-                        label: const Text('Decline'),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
-                    ),
-                  ],
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                      label: const Text('Decline'),
+                    );
+
+                    if (stackActions) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [accept, const SizedBox(height: 8), decline],
+                      );
+                    }
+
+                    return Row(
+                      children: [
+                        Expanded(child: accept),
+                        const SizedBox(width: 8),
+                        Expanded(child: decline),
+                      ],
+                    );
+                  },
                 ),
               ],
             ),

@@ -47,17 +47,13 @@ class Conversation {
       return name;
     }
 
-    final email = participantEmails[userId]?.trim();
-
-    if (email != null && email.isNotEmpty) {
-      return email.split('@').first;
-    }
-
     return 'YO Voice user';
   }
 
+  /// Legacy documents may still carry participantEmails until the bounded
+  /// scrub runs. They are deliberately never surfaced as social identity.
   String emailFor(String userId) {
-    return participantEmails[userId] ?? '';
+    return '';
   }
 
   String photoUrlFor(String userId) {

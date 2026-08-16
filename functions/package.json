@@ -6,9 +6,12 @@
     "node": "22"
   },
   "scripts": {
-    "deploy": "firebase deploy --only functions:createLiveKitToken",
+    "deploy": "firebase deploy --only functions",
     "serve": "firebase emulators:start --only functions",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "test:smoke": "node test/global_chat_trigger.smoke.js && node test/moderation_trigger.smoke.js && node test/social_graph_binding.smoke.js",
+    "backfill:public-profiles": "node scripts/backfill_public_profiles.js",
+    "scrub:legacy-identity": "node scripts/scrub_legacy_identity_snapshots.js"
   },
   "dependencies": {
     "firebase-admin": "^13.4.0",

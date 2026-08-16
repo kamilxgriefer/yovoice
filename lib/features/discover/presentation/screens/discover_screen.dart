@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/features/discover/presentation/widgets/hero_live_room.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -318,78 +319,83 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         ),
         child: SafeArea(
           bottom: false,
-          child: StreamBuilder<List<VoiceRoom>>(
-            stream: _roomService.watchLivePublicRooms(),
-            builder: (context, snapshot) {
-              if (snapshot.hasError) {
-                return _DiscoverErrorState(
-                  message: _readableError(snapshot.error!),
-                );
-              }
+          child: ResponsiveContentFrame(
+            width: ResponsiveContentWidth.dashboard,
+            child: StreamBuilder<List<VoiceRoom>>(
+              stream: _roomService.watchLivePublicRooms(),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return _DiscoverErrorState(
+                    message: _readableError(snapshot.error!),
+                  );
+                }
 
-              final allRooms = snapshot.data ?? const <VoiceRoom>[];
-              final filteredRooms = _filterRooms(allRooms);
-              final sections = _createSections(filteredRooms);
+                final allRooms = snapshot.data ?? const <VoiceRoom>[];
+                final filteredRooms = _filterRooms(allRooms);
+                final sections = _createSections(filteredRooms);
 
-              return RefreshIndicator(
-                color: _primary,
-                backgroundColor: _surface,
-                onRefresh: () async {
-                  setState(() {});
-                  await Future<void>.delayed(const Duration(milliseconds: 350));
-                },
-                child: CustomScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(
-                    parent: BouncingScrollPhysics(),
+                return RefreshIndicator(
+                  color: _primary,
+                  backgroundColor: _surface,
+                  onRefresh: () async {
+                    setState(() {});
+                    await Future<void>.delayed(
+                      const Duration(milliseconds: 350),
+                    );
+                  },
+                  child: CustomScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(
+                      parent: BouncingScrollPhysics(),
+                    ),
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
+                          child: _DiscoverHeader(
+                            searchController: _searchController,
+                            onSearchChanged: _onSearchChanged,
+                            liveRoomCount: allRooms.length,
+                            isRootTab: widget.isRootTab,
+                          ),
+                        ),
+                      ),
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 21),
+                          child: _CategorySelector(
+                            categories: _categories,
+                            selectedCategory: _selectedCategory,
+                            onSelected: (category) {
+                              setState(() {
+                                _selectedCategory = category;
+                              });
+                            },
+                          ),
+                        ),
+                      ),
+                      if (snapshot.connectionState == ConnectionState.waiting &&
+                          !snapshot.hasData)
+                        const SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: _DiscoverLoadingState(),
+                        )
+                      else if (filteredRooms.isEmpty)
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: _DiscoverEmptyState(
+                            hasFilters: _hasFilters,
+                            onClear: _clearFilters,
+                          ),
+                        )
+                      else if (_hasFilters)
+                        ..._buildSearchResults(filteredRooms)
+                      else
+                        ..._buildPremiumSections(sections),
+                    ],
                   ),
-                  slivers: [
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
-                        child: _DiscoverHeader(
-                          searchController: _searchController,
-                          onSearchChanged: _onSearchChanged,
-                          liveRoomCount: allRooms.length,
-                          isRootTab: widget.isRootTab,
-                        ),
-                      ),
-                    ),
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 21),
-                        child: _CategorySelector(
-                          categories: _categories,
-                          selectedCategory: _selectedCategory,
-                          onSelected: (category) {
-                            setState(() {
-                              _selectedCategory = category;
-                            });
-                          },
-                        ),
-                      ),
-                    ),
-                    if (snapshot.connectionState == ConnectionState.waiting &&
-                        !snapshot.hasData)
-                      const SliverFillRemaining(
-                        hasScrollBody: false,
-                        child: _DiscoverLoadingState(),
-                      )
-                    else if (filteredRooms.isEmpty)
-                      SliverFillRemaining(
-                        hasScrollBody: false,
-                        child: _DiscoverEmptyState(
-                          hasFilters: _hasFilters,
-                          onClear: _clearFilters,
-                        ),
-                      )
-                    else if (_hasFilters)
-                      ..._buildSearchResults(filteredRooms)
-                    else
-                      ..._buildPremiumSections(sections),
-                  ],
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
         ),
       ),
@@ -462,26 +468,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
       widgets.add(
         SliverToBoxAdapter(
-          child: SizedBox(
-            height: 222,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 18),
-              physics: const BouncingScrollPhysics(),
-              itemCount: sections.featured.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 13),
-              itemBuilder: (context, index) {
-                final room = sections.featured[index];
-
-                return SizedBox(
-                  width: 282,
-                  child: _FeaturedRoomCard(
-                    room: room,
-                    onPressed: () => _openRoom(room),
-                  ),
-                );
-              },
-            ),
+          child: DiscoverFeaturedRooms(
+            rooms: sections.featured,
+            onRoomPressed: _openRoom,
           ),
         ),
       );
@@ -873,11 +862,79 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
+/// Featured rooms remain a quick horizontal carousel at standard text sizes,
+/// then become an intrinsic-height vertical list when accessibility text no
+/// longer fits the compact card. The surrounding Discover scroll view owns
+/// vertical scrolling in that mode.
+class DiscoverFeaturedRooms extends StatelessWidget {
+  const DiscoverFeaturedRooms({
+    required this.rooms,
+    required this.onRoomPressed,
+    super.key,
+  });
+
+  final List<VoiceRoom> rooms;
+  final ValueChanged<VoiceRoom> onRoomPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
+    final useVerticalLayout = textScale > 1.4;
+
+    if (useVerticalLayout) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18),
+        child: Column(
+          children: [
+            for (var index = 0; index < rooms.length; index++) ...[
+              _FeaturedRoomCard(
+                key: ValueKey('discover-featured-${rooms[index].id}'),
+                room: rooms[index],
+                expandedLayout: true,
+                onPressed: () => onRoomPressed(rooms[index]),
+              ),
+              if (index != rooms.length - 1) const SizedBox(height: 13),
+            ],
+          ],
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 222 + ((textScale - 1) * 60),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 18),
+        physics: const BouncingScrollPhysics(),
+        itemCount: rooms.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 13),
+        itemBuilder: (context, index) {
+          final room = rooms[index];
+          return SizedBox(
+            width: 282 + ((textScale - 1) * 40),
+            child: _FeaturedRoomCard(
+              key: ValueKey('discover-featured-${room.id}'),
+              room: room,
+              onPressed: () => onRoomPressed(room),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _FeaturedRoomCard extends StatelessWidget {
-  const _FeaturedRoomCard({required this.room, required this.onPressed});
+  const _FeaturedRoomCard({
+    required this.room,
+    required this.onPressed,
+    this.expandedLayout = false,
+    super.key,
+  });
 
   final VoiceRoom room;
   final VoidCallback onPressed;
+  final bool expandedLayout;
 
   Color get _accent {
     if (room.isBroadcast) {
@@ -947,6 +1004,9 @@ class _FeaturedRoomCard extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.all(17),
                 child: Column(
+                  mainAxisSize: expandedLayout
+                      ? MainAxisSize.min
+                      : MainAxisSize.max,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
@@ -967,7 +1027,7 @@ class _FeaturedRoomCard extends StatelessWidget {
                     const SizedBox(height: 15),
                     Text(
                       room.name,
-                      maxLines: 2,
+                      maxLines: expandedLayout ? 3 : 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Colors.white,
@@ -981,7 +1041,7 @@ class _FeaturedRoomCard extends StatelessWidget {
                       room.description.isEmpty
                           ? 'Hosted by ${room.hostName}'
                           : room.description,
-                      maxLines: 2,
+                      maxLines: expandedLayout ? 4 : 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: _DiscoverScreenState._secondaryText,
@@ -989,51 +1049,14 @@ class _FeaturedRoomCard extends StatelessWidget {
                         height: 1.35,
                       ),
                     ),
-                    const Spacer(),
-                    Row(
-                      children: [
-                        _HostAvatar(
-                          photoUrl: room.hostPhotoUrl,
-                          hostName: room.hostName,
-                          accent: accent,
-                          size: 26,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            room.hostName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        UserIdentityBadges(
-                          uid: room.hostId,
-                          variant: IdentityBadgeVariant.icon,
-                        ),
-                        const SizedBox(width: 8),
-                        Icon(
-                          room.isBroadcast
-                              ? Icons.headphones_rounded
-                              : Icons.people_alt_rounded,
-                          color: accent,
-                          size: 15,
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          '${room.participantCount}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ],
+                    if (expandedLayout)
+                      const SizedBox(height: 17)
+                    else
+                      const Spacer(),
+                    _FeaturedRoomFooter(
+                      room: room,
+                      accent: accent,
+                      expandedLayout: expandedLayout,
                     ),
                   ],
                 ),
@@ -1042,6 +1065,91 @@ class _FeaturedRoomCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _FeaturedRoomFooter extends StatelessWidget {
+  const _FeaturedRoomFooter({
+    required this.room,
+    required this.accent,
+    required this.expandedLayout,
+  });
+
+  final VoiceRoom room;
+  final Color accent;
+  final bool expandedLayout;
+
+  Widget _host(BuildContext context) {
+    return Row(
+      children: [
+        _HostAvatar(
+          photoUrl: room.hostPhotoUrl,
+          hostName: room.hostName,
+          accent: accent,
+          size: 26,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            room.hostName,
+            maxLines: expandedLayout ? 2 : 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        const SizedBox(width: 4),
+        UserIdentityBadges(
+          uid: room.hostId,
+          variant: IdentityBadgeVariant.icon,
+        ),
+      ],
+    );
+  }
+
+  Widget _audience() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          room.isBroadcast
+              ? Icons.headphones_rounded
+              : Icons.people_alt_rounded,
+          color: accent,
+          size: 15,
+        ),
+        const SizedBox(width: 5),
+        Text(
+          '${room.participantCount}',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 11,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (expandedLayout) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [_host(context), const SizedBox(height: 10), _audience()],
+      );
+    }
+
+    return Row(
+      children: [
+        Expanded(child: _host(context)),
+        const SizedBox(width: 8),
+        _audience(),
+      ],
     );
   }
 }

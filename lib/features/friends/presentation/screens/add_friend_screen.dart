@@ -6,6 +6,7 @@ import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class AddFriendScreen extends StatefulWidget {
   const AddFriendScreen({super.key});
@@ -268,12 +269,16 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
           ),
         ),
         child: SafeArea(
-          child: Column(
-            children: [
-              _buildHeader(),
-              _buildSearchField(),
-              Expanded(child: _buildContent()),
-            ],
+          child: ResponsiveContentFrame(
+            width: ResponsiveContentWidth.list,
+            alignment: ResponsiveContentAlignment.topLeft,
+            child: Column(
+              children: [
+                _buildHeader(),
+                _buildSearchField(),
+                Expanded(child: _buildContent()),
+              ],
+            ),
           ),
         ),
       ),
@@ -310,7 +315,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
                 ),
                 SizedBox(height: 3),
                 Text(
-                  'Search by username or email',
+                  'Search by name or username',
                   style: TextStyle(
                     color: _secondaryText,
                     fontSize: 13,
@@ -332,7 +337,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         controller: _searchController,
         onChanged: _onSearchChanged,
         textInputAction: TextInputAction.search,
-        keyboardType: TextInputType.emailAddress,
+        keyboardType: TextInputType.text,
         style: const TextStyle(
           color: Colors.white,
           fontSize: 15,
@@ -407,7 +412,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
       return const _SearchState(
         icon: Icons.search_off_rounded,
         title: 'No users found',
-        subtitle: 'Try another username or email address.',
+        subtitle: 'Try another display name or username.',
       );
     }
 
@@ -439,7 +444,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
             icon: Icons.person_search_rounded,
             title: 'Find someone you know',
             subtitle:
-                'Enter at least 2 characters from their username or email address.',
+                'Enter at least 2 characters from their display name or username.',
           );
         }
 
@@ -663,10 +668,10 @@ class _UserResultCard extends StatelessWidget {
                     UserIdentityBadges(uid: user.id),
                   ],
                 ),
-                if (user.email.isNotEmpty) ...[
+                if (user.username.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Text(
-                    user.email,
+                    '@${user.username}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(

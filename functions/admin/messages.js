@@ -38,6 +38,13 @@ const MESSAGE_TYPES = Object.freeze({
 });
 
 const ALL_TYPES = new Set(Object.values(MESSAGE_TYPES));
+const MAX_ATTACHMENT_REFERENCES = 8;
+const MAX_ATTACHMENT_REFERENCE_LENGTH = 4096;
+const FIREBASE_STORAGE_DOWNLOAD_HOST = "firebasestorage.googleapis.com";
+const ATTACHMENT_METADATA = Object.freeze({
+  MESSAGE_PATH: "yovoiceMessagePath",
+  OWNER_UID: "yovoiceOwnerUid",
+});
 
 /// Firestore ids may not be empty, contain a slash, or be a path segment
 /// that escapes upward. Rejecting these is what keeps a derived path
@@ -135,28 +142,148 @@ async function requireMatchingReport({ reportId, conversationId, messageId }) {
   return report;
 }
 
+function canonicalObjectPath(encodedPath) {
+  let objectPath;
+  try {
+    objectPath = decodeURIComponent(encodedPath);
+  } catch (_) {
+    return null;
+  }
+  if (
+    !objectPath ||
+    objectPath.startsWith("/") ||
+    objectPath.endsWith("/") ||
+    Buffer.byteLength(objectPath, "utf8") > 1024 ||
+    /[\\\u0000-\u001f\u007f]/u.test(objectPath) ||
+    /%[0-9a-f]{2}/iu.test(objectPath)
+  ) {
+    return null;
+  }
+  const segments = objectPath.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    return null;
+  }
+  return objectPath;
+}
+
+/**
+ * Parses only canonical references to this app's configured bucket.
+ * Merely containing `/o/` is not enough: an attacker-controlled message may
+ * point at any URL, and the Admin SDK must not become a cross-bucket deletion
+ * deputy. Bare paths, arbitrary hosts, credentials and traversal are denied.
+ */
+function parseStorageObjectReference(value, expectedBucketName) {
+  const reference = typeof value === "string" ? value.trim() : "";
+  if (
+    !reference ||
+    reference.length > MAX_ATTACHMENT_REFERENCE_LENGTH ||
+    typeof expectedBucketName !== "string" ||
+    !expectedBucketName ||
+    // WHATWG URL canonicalisation removes encoded dot-segments before the
+    // pathname is exposed. Reject them in the raw input so `safe/%2e%2e/x`
+    // cannot silently become a different object path.
+    /%2e/iu.test(reference) ||
+    /(?:^|\/)\.\.?(?:\/|$)/u.test(reference)
+  ) {
+    return null;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(reference);
+  } catch (_) {
+    return null;
+  }
+  if (parsed.username || parsed.password || parsed.hash) return null;
+
+  if (parsed.protocol === "gs:") {
+    if (parsed.hostname !== expectedBucketName || parsed.search) return null;
+    const objectPath = canonicalObjectPath(parsed.pathname.slice(1));
+    return objectPath ? { bucketName: parsed.hostname, objectPath } : null;
+  }
+
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.hostname !== FIREBASE_STORAGE_DOWNLOAD_HOST
+  ) {
+    return null;
+  }
+  const segments = parsed.pathname.split("/");
+  if (
+    segments.length !== 6 ||
+    segments[1] !== "v0" ||
+    segments[2] !== "b" ||
+    segments[3] !== expectedBucketName ||
+    segments[4] !== "o"
+  ) {
+    return null;
+  }
+  const objectPath = canonicalObjectPath(segments[5]);
+  return objectPath ? { bucketName: segments[3], objectPath } : null;
+}
+
+function attachmentReferences(message) {
+  const candidates = [
+    message.audioUrl,
+    message.imageUrl,
+    message.mediaUrl,
+    ...(Array.isArray(message.attachments) ? message.attachments : []),
+  ];
+  const validStrings = candidates
+    .filter((value) => typeof value === "string")
+    .map((value) => value.trim())
+    .filter((value) => value && value.length <= MAX_ATTACHMENT_REFERENCE_LENGTH);
+  return {
+    references: validStrings.slice(0, MAX_ATTACHMENT_REFERENCES),
+    skipped: Math.max(0, validStrings.length - MAX_ATTACHMENT_REFERENCES),
+  };
+}
+
 /// Best-effort removal of media the message referenced.
 ///
 /// Never fatal: a message whose audio is already gone must still redact.
-/// The outcome is reported in the audit entry rather than swallowed.
-async function deleteAttachments(urls) {
+/// A valid bucket/path is still not authority to delete: the object must carry
+/// server/uploader metadata binding it to this exact Firestore message and
+/// author. Existing profile/room/Moment objects do not carry that binding, so
+/// pointing a malicious message at one can never delete it.
+async function deleteAttachments(
+  urls,
+  { messagePath, authorId, bucket: bucketOverride = null },
+) {
   const results = [];
+  let bucket = bucketOverride;
+  if (!bucket) {
+    try {
+      bucket = getStorage().bucket();
+    } catch (_) {
+      return urls.map(() => ({ deleted: false, reason: "bucket-unavailable" }));
+    }
+  }
+  const bucketName = bucket?.name;
   for (const url of urls) {
     try {
-      const bucket = getStorage().bucket();
-      // Accepts both a gs:// path and a download URL's object segment.
-      const match = String(url).match(/\/o\/([^?]+)/);
-      const objectPath = match
-        ? decodeURIComponent(match[1])
-        : String(url).replace(/^gs:\/\/[^/]+\//, "");
-      if (!objectPath || objectPath.startsWith("http")) {
-        results.push({ url, deleted: false, reason: "unrecognised" });
+      const parsed = parseStorageObjectReference(url, bucketName);
+      if (!parsed) {
+        results.push({ deleted: false, reason: "invalid-reference" });
         continue;
       }
-      await bucket.file(objectPath).delete({ ignoreNotFound: true });
-      results.push({ url, deleted: true });
+      const file = bucket.file(parsed.objectPath);
+      const [metadata] = await file.getMetadata();
+      const customMetadata = metadata?.metadata ?? {};
+      if (
+        customMetadata[ATTACHMENT_METADATA.MESSAGE_PATH] !== messagePath ||
+        customMetadata[ATTACHMENT_METADATA.OWNER_UID] !== authorId
+      ) {
+        results.push({ deleted: false, reason: "ownership-mismatch" });
+        continue;
+      }
+      await file.delete({ ignoreNotFound: true });
+      results.push({ deleted: true });
     } catch (error) {
-      results.push({ url, deleted: false, reason: error?.code ?? "error" });
+      results.push({
+        deleted: false,
+        reason: typeof error?.code === "string" ? error.code : "error",
+      });
     }
   }
   return results;
@@ -225,14 +352,15 @@ const adminDeleteMessage = onCall(
       return { outcome: "alreadyRemoved", redacted: false };
     }
 
-    const attachmentUrls = [
-      message.audioUrl,
-      message.imageUrl,
-      message.mediaUrl,
-      ...(Array.isArray(message.attachments) ? message.attachments : []),
-    ].filter((value) => typeof value === "string" && value.length > 0);
-
-    const media = await deleteAttachments(attachmentUrls);
+    const plannedAttachments = attachmentReferences(message);
+    const authorId = normalizeText(
+      message.senderId ?? message.authorId,
+      128,
+    );
+    const media = await deleteAttachments(plannedAttachments.references, {
+      messagePath: ref.path,
+      authorId,
+    });
 
     // The tombstone: identity of the author is kept so moderation history
     // stays meaningful, content and media are stripped, and the row
@@ -265,7 +393,9 @@ const adminDeleteMessage = onCall(
         reportId,
         outcome: "redacted",
         attachmentsRemoved: media.filter((item) => item.deleted).length,
-        attachmentsFailed: media.filter((item) => !item.deleted).length,
+        attachmentsFailed:
+          media.filter((item) => !item.deleted).length +
+          plannedAttachments.skipped,
         ...ids,
       },
     });
@@ -279,4 +409,8 @@ module.exports = {
   MESSAGE_TYPES,
   resolveMessageRef,
   safeId,
+  attachmentReferences,
+  deleteAttachments,
+  parseStorageObjectReference,
+  ATTACHMENT_METADATA,
 };

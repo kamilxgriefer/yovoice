@@ -30,6 +30,7 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/live_now_hero.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_card.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({this.onOpenDiscover, super.key});
@@ -130,9 +131,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       if (!mounted) return;
       await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => RoomEntryScreen(room: room),
-        ),
+        MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
       );
     } catch (error) {
       if (!mounted) return;
@@ -268,69 +267,72 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         child: SafeArea(
           bottom: false,
-          child: CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(
-                child: StreamBuilder<UserProfile>(
-                  stream: _profile,
-                  builder: (context, snapshot) {
-                    final profile = snapshot.data;
-                    // Firestore's profile doc is the single source of truth
-                    // other screens (Settings, Creator Studio) already read
-                    // from -- FirebaseAuth's own currentUser.photoURL/
-                    // displayName are a non-reactive snapshot that only
-                    // updates on full sign-in, so a freshly-uploaded avatar
-                    // never appeared here until the next cold start. Fall
-                    // back to the Auth snapshot only for the first frame,
-                    // before the stream has emitted.
-                    final name = profile != null
-                        ? (profile.displayName.trim().isNotEmpty
-                              ? profile.displayName.trim().split(' ').first
-                              : fallbackName)
-                        : fallbackName;
-                    // Single source of truth: the Firestore profile doc.
-                    // This used to fall back to FirebaseAuth's own
-                    // currentUser.photoURL whenever profile.photoUrl was
-                    // null, which meant Home could show a stale Google
-                    // avatar (or nothing) while Profile showed the real
-                    // one. Before the stream's first emission `profile` is
-                    // null and the avatar simply renders its placeholder.
-                    return _header(
-                      name,
-                      profile?.photoUrl,
-                      premium: profile?.premiumIdentity ?? false,
-                    );
-                  },
+          child: ResponsiveContentFrame(
+            width: ResponsiveContentWidth.feed,
+            child: CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(
+                  child: StreamBuilder<UserProfile>(
+                    stream: _profile,
+                    builder: (context, snapshot) {
+                      final profile = snapshot.data;
+                      // Firestore's profile doc is the single source of truth
+                      // other screens (Settings, Creator Studio) already read
+                      // from -- FirebaseAuth's own currentUser.photoURL/
+                      // displayName are a non-reactive snapshot that only
+                      // updates on full sign-in, so a freshly-uploaded avatar
+                      // never appeared here until the next cold start. Fall
+                      // back to the Auth snapshot only for the first frame,
+                      // before the stream has emitted.
+                      final name = profile != null
+                          ? (profile.displayName.trim().isNotEmpty
+                                ? profile.displayName.trim().split(' ').first
+                                : fallbackName)
+                          : fallbackName;
+                      // Single source of truth: the Firestore profile doc.
+                      // This used to fall back to FirebaseAuth's own
+                      // currentUser.photoURL whenever profile.photoUrl was
+                      // null, which meant Home could show a stale Google
+                      // avatar (or nothing) while Profile showed the real
+                      // one. Before the stream's first emission `profile` is
+                      // null and the avatar simply renders its placeholder.
+                      return _header(
+                        name,
+                        profile?.photoUrl,
+                        premium: profile?.premiumIdentity ?? false,
+                      );
+                    },
+                  ),
                 ),
-              ),
-              // Mockup order: LIVE NOW hero → Your people → Rooms for
-              // you → From your Clubs; Moments/feed follow below. The
-              // hero absorbs the old Live Pulse stat card (same _rooms
-              // stream, presented as a place instead of a number).
-              SliverToBoxAdapter(
-                child: StreamBuilder<List<VoiceRoom>>(
-                  stream: _rooms,
-                  builder: (context, snapshot) {
-                    final live = snapshot.data ?? const <VoiceRoom>[];
-                    return LiveNowHero(
-                      room: live.isEmpty ? null : live.first,
-                      onJoin: _openRoom,
-                    );
-                  },
+                // Mockup order: LIVE NOW hero → Your people → Rooms for
+                // you → From your Clubs; Moments/feed follow below. The
+                // hero absorbs the old Live Pulse stat card (same _rooms
+                // stream, presented as a place instead of a number).
+                SliverToBoxAdapter(
+                  child: StreamBuilder<List<VoiceRoom>>(
+                    stream: _rooms,
+                    builder: (context, snapshot) {
+                      final live = snapshot.data ?? const <VoiceRoom>[];
+                      return LiveNowHero(
+                        room: live.isEmpty ? null : live.first,
+                        onJoin: _openRoom,
+                      );
+                    },
+                  ),
                 ),
-              ),
-              SliverToBoxAdapter(child: _activeFriends()),
-              SliverToBoxAdapter(child: _liveRooms()),
-              SliverToBoxAdapter(
-                child: FromYourClubs(onJoinLounge: _joinClubLounge),
-              ),
-              SliverToBoxAdapter(child: _voiceStories()),
-              SliverToBoxAdapter(child: _sectionTitle('Your feed')),
-              SliverToBoxAdapter(child: _feed()),
-              SliverToBoxAdapter(child: _suggestedClubs()),
-              SliverToBoxAdapter(child: _trending()),
-              const SliverToBoxAdapter(child: SizedBox(height: 120)),
-            ],
+                SliverToBoxAdapter(child: _activeFriends()),
+                SliverToBoxAdapter(child: _liveRooms()),
+                SliverToBoxAdapter(
+                  child: FromYourClubs(onJoinLounge: _joinClubLounge),
+                ),
+                SliverToBoxAdapter(child: _voiceStories()),
+                SliverToBoxAdapter(child: _sectionTitle('Your feed')),
+                SliverToBoxAdapter(child: _feed()),
+                SliverToBoxAdapter(child: _suggestedClubs()),
+                SliverToBoxAdapter(child: _trending()),
+                const SliverToBoxAdapter(child: SizedBox(height: 120)),
+              ],
+            ),
           ),
         ),
       ),
@@ -429,15 +431,25 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(width: 10),
           // Your own avatar is always a door to your Profile — Profile
           // left the primary navigation when Friends took its tab.
-          GestureDetector(
-            onTap: () => Navigator.of(context).push<void>(
-              MaterialPageRoute<void>(builder: (_) => const ProfileScreen()),
-            ),
-            child: UserAvatar(
-              radius: 24,
-              photoUrl: photoUrl,
-              fallbackIcon: Icons.person_rounded,
-              premium: premium,
+          Semantics(
+            button: true,
+            label: 'Open your profile',
+            child: Tooltip(
+              message: 'Open your profile',
+              child: InkResponse(
+                onTap: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const ProfileScreen(),
+                  ),
+                ),
+                radius: 28,
+                child: UserAvatar(
+                  radius: 24,
+                  photoUrl: photoUrl,
+                  fallbackIcon: Icons.person_rounded,
+                  premium: premium,
+                ),
+              ),
             ),
           ),
         ],

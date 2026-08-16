@@ -7,6 +7,7 @@ import 'package:yovoice/features/premium/data/models/subscription_entitlements.d
 import 'package:yovoice/features/premium/data/premium_plans.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_badge_pill.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 
 /// The plans & purchase screen — where the "Check plans" CTA lands.
 ///
@@ -219,7 +220,9 @@ class _PlanToggle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 48,
+      // Four pixels of inset on each side still leaves a 48px target for
+      // both keyboard- and touch-selectable segments.
+      height: 56,
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: AppColors.surface.withValues(alpha: .55),
@@ -242,8 +245,12 @@ class _PlanToggle extends StatelessWidget {
   }) {
     final active = selected == plan;
     return Expanded(
-      child: GestureDetector(
+      child: AccessibleTapRegion(
         onTap: () => onChanged(plan),
+        semanticLabel: 'Select $label billing plan',
+        tooltip: 'Select $label billing',
+        selected: active,
+        borderRadius: 999,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOut,
@@ -374,8 +381,13 @@ class _PlanCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final card = GestureDetector(
+    final card = AccessibleTapRegion(
       onTap: () => onSelect(product.plan),
+      semanticLabel:
+          'Select ${product.plan.label} plan, ${product.displayPrice}',
+      tooltip: 'Select ${product.plan.label} plan',
+      selected: selected,
+      borderRadius: 22,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,

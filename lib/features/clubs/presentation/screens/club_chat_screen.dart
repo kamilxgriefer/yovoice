@@ -7,6 +7,8 @@ import 'package:yovoice/features/clubs/data/models/club_channel.dart';
 import 'package:yovoice/features/clubs/data/models/club_message.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_context_action.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class ClubChatScreen extends StatefulWidget {
   const ClubChatScreen({
@@ -143,74 +145,77 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
       ),
       body: SafeArea(
         top: false,
-        child: Column(
-          children: [
-            Expanded(
-              child: StreamBuilder<List<ClubMessage>>(
-                stream: _service.watchMessages(
-                  clubId: widget.clubId,
-                  channelId: widget.channel.id,
-                ),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(
-                      child: CircularProgressIndicator(color: _purple),
-                    );
-                  }
-                  if (snapshot.hasError) {
-                    return _ChatState(
-                      icon: Icons.cloud_off_rounded,
-                      title: 'Could not load messages',
-                      subtitle: friendlyErrorMessage(
-                        snapshot.error ?? 'unknown',
-                        fallback: 'Could not load this chat.',
-                      ),
-                    );
-                  }
-                  final messages = snapshot.data ?? const <ClubMessage>[];
-                  if (messages.isEmpty) {
-                    return _ChatState(
-                      icon: _isAnnouncements
-                          ? Icons.campaign_rounded
-                          : Icons.forum_rounded,
-                      title: _isAnnouncements
-                          ? 'No announcements yet'
-                          : 'Start the club conversation',
-                      subtitle: _isAnnouncements
-                          ? 'Important club updates will appear here.'
-                          : 'Be the first member to write in #${widget.channel.name}.',
-                    );
-                  }
-                  return ListView.builder(
-                    reverse: true,
-                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
-                    itemCount: messages.length,
-                    itemBuilder: (context, index) {
-                      final message = messages[index];
-                      return _ClubMessageTile(
-                        message: message,
-                        isMine: message.senderId == _currentUserId,
-                        onLongPress:
-                            message.senderId == _currentUserId &&
-                                !message.isDeleted
-                            ? () => _delete(message)
-                            : null,
+        child: ResponsiveContentFrame(
+          width: ResponsiveContentWidth.list,
+          child: Column(
+            children: [
+              Expanded(
+                child: StreamBuilder<List<ClubMessage>>(
+                  stream: _service.watchMessages(
+                    clubId: widget.clubId,
+                    channelId: widget.channel.id,
+                  ),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(
+                        child: CircularProgressIndicator(color: _purple),
                       );
-                    },
-                  );
-                },
+                    }
+                    if (snapshot.hasError) {
+                      return _ChatState(
+                        icon: Icons.cloud_off_rounded,
+                        title: 'Could not load messages',
+                        subtitle: friendlyErrorMessage(
+                          snapshot.error ?? 'unknown',
+                          fallback: 'Could not load this chat.',
+                        ),
+                      );
+                    }
+                    final messages = snapshot.data ?? const <ClubMessage>[];
+                    if (messages.isEmpty) {
+                      return _ChatState(
+                        icon: _isAnnouncements
+                            ? Icons.campaign_rounded
+                            : Icons.forum_rounded,
+                        title: _isAnnouncements
+                            ? 'No announcements yet'
+                            : 'Start the club conversation',
+                        subtitle: _isAnnouncements
+                            ? 'Important club updates will appear here.'
+                            : 'Be the first member to write in #${widget.channel.name}.',
+                      );
+                    }
+                    return ListView.builder(
+                      reverse: true,
+                      padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
+                      itemCount: messages.length,
+                      itemBuilder: (context, index) {
+                        final message = messages[index];
+                        return _ClubMessageTile(
+                          message: message,
+                          isMine: message.senderId == _currentUserId,
+                          onLongPress:
+                              message.senderId == _currentUserId &&
+                                  !message.isDeleted
+                              ? () => _delete(message)
+                              : null,
+                        );
+                      },
+                    );
+                  },
+                ),
               ),
-            ),
-            _Composer(
-              controller: _controller,
-              focusNode: _focusNode,
-              sending: _sending,
-              hint: _isAnnouncements
-                  ? 'Write an announcement…'
-                  : 'Message #${widget.channel.name}',
-              onSend: _send,
-            ),
-          ],
+              _Composer(
+                controller: _controller,
+                focusNode: _focusNode,
+                sending: _sending,
+                hint: _isAnnouncements
+                    ? 'Write an announcement…'
+                    : 'Message #${widget.channel.name}',
+                onSend: _send,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -233,9 +238,10 @@ class _ClubMessageTile extends StatelessWidget {
     final hasPhoto = message.senderPhotoUrl?.isNotEmpty ?? false;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onLongPress: onLongPress,
+      child: AccessibleContextAction(
+        onOpen: onLongPress,
+        semanticLabel: 'Open actions for ${message.senderName} message',
+        borderRadius: 16,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

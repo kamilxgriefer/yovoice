@@ -14,6 +14,7 @@ import 'package:yovoice/features/staff/presentation/sections/staff_operations_se
 import 'package:yovoice/features/staff/presentation/sections/staff_overview_section.dart';
 import 'package:yovoice/features/staff/presentation/sections/staff_section_shared.dart';
 import 'package:yovoice/features/staff/presentation/sections/staff_users_section.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 /// The Staff Center — one screen, seven real sections, each rendered
 /// only when the SERVER-derived capability that backs it exists:
@@ -111,7 +112,8 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
             setState(() {
               _capabilities = capabilities;
               _loading = false;
-              _section = _visibleSections(capabilities).firstOrNull ??
+              _section =
+                  _visibleSections(capabilities).firstOrNull ??
                   StaffSection.overview;
             });
           }
@@ -225,62 +227,64 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
               actions: [
                 IconButton(
                   tooltip: 'Home',
-                  onPressed: () => Navigator.of(
-                    context,
-                  ).popUntil((route) => route.isFirst),
+                  onPressed: () =>
+                      Navigator.of(context).popUntil((route) => route.isFirst),
                   icon: const Icon(Icons.home_rounded),
                 ),
               ],
             ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : sections.isEmpty
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'The Staff Center is reserved for the application owner '
-                  'and staff.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Color(0xFFA69CAF), fontSize: 14),
+      body: ResponsiveContentFrame(
+        width: ResponsiveContentWidth.workbench,
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : sections.isEmpty
+            ? const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Text(
+                    'The Staff Center is reserved for the application owner '
+                    'and staff.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Color(0xFFA69CAF), fontSize: 14),
+                  ),
                 ),
-              ),
-            )
-          : LayoutBuilder(
-              builder: (context, constraints) {
-                final wide = constraints.maxWidth >= 980;
-                if (wide) {
-                  return Row(
+              )
+            : LayoutBuilder(
+                builder: (context, constraints) {
+                  final wide = constraints.maxWidth >= 980;
+                  if (wide) {
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _rail(sections),
+                        const VerticalDivider(
+                          width: 1,
+                          color: StaffCenterStyle.border,
+                        ),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(22, 18, 22, 12),
+                            child: _sectionBody(capabilities),
+                          ),
+                        ),
+                      ],
+                    );
+                  }
+                  return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _rail(sections),
-                      const VerticalDivider(
-                        width: 1,
-                        color: StaffCenterStyle.border,
-                      ),
+                      _tabs(sections),
                       Expanded(
                         child: Padding(
-                          padding: const EdgeInsets.fromLTRB(22, 18, 22, 12),
+                          padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
                           child: _sectionBody(capabilities),
                         ),
                       ),
                     ],
                   );
-                }
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _tabs(sections),
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-                        child: _sectionBody(capabilities),
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
+                },
+              ),
+      ),
     );
   }
 
@@ -403,8 +407,7 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
         return StaffOverviewSection(
           overviewService: widget.overviewService,
           onOpenUsers: _openUsers,
-          onOpenReports: () =>
-              setState(() => _section = StaffSection.reports),
+          onOpenReports: () => setState(() => _section = StaffSection.reports),
           onOpenRooms: () => setState(() => _section = StaffSection.rooms),
           onOpenSanctions: () =>
               setState(() => _section = StaffSection.sanctions),
@@ -425,9 +428,7 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
           firestore: widget.firestore,
         );
       case StaffSection.reports:
-        return StaffReportsSection(
-          moderationService: widget.moderationService,
-        );
+        return StaffReportsSection(moderationService: widget.moderationService);
       case StaffSection.rooms:
         return StaffRoomsSection(
           capabilities: capabilities,

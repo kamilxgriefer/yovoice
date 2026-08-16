@@ -113,7 +113,14 @@ async function requireActiveSuperAdmin(request) {
   const claimIsSuperAdmin = role === USER_ROLES.SUPER_ADMIN;
   const recordIsSuperAdmin = profile.role === USER_ROLES.SUPER_ADMIN;
 
-  if (!claimIsSuperAdmin || !recordIsSuperAdmin || profile.banned === true) {
+  if (
+    !claimIsSuperAdmin ||
+    !recordIsSuperAdmin ||
+    profile.banned === true ||
+    profile.disabled === true ||
+    profile.deleted === true ||
+    profile.status === "deleted"
+  ) {
     throw new HttpsError(
       "permission-denied",
       "Only a super administrator can perform this action.",
@@ -176,7 +183,10 @@ async function requireVerifiedStaff(request, allowedRoles, message) {
   if (
     !allowedRoles.has(role) ||
     profile.role !== role ||
-    profile.banned === true
+    profile.banned === true ||
+    profile.disabled === true ||
+    profile.deleted === true ||
+    profile.status === "deleted"
   ) {
     throw new HttpsError("permission-denied", message);
   }

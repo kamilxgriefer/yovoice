@@ -217,10 +217,12 @@ class _NavTileState extends State<_NavTile> {
     final active = widget.active;
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: GestureDetector(
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onHover: (value) => setState(() => _hovered = value),
           onTap: () => widget.onTap(widget.item),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 140),
@@ -367,10 +369,12 @@ class _CreateMomentButtonState extends State<_CreateMomentButton> {
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onHover: (value) => setState(() => _hovered = value),
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 140),
@@ -547,5 +551,3 @@ class _ProfileCard extends StatelessWidget {
     );
   }
 }
-
-

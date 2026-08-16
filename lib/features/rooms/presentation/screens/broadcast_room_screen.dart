@@ -20,6 +20,7 @@ import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheet
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/share_room_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class BroadcastRoomScreen extends StatefulWidget {
   const BroadcastRoomScreen({required this.room, super.key});
@@ -193,10 +194,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
     _confirmingRemoval = true;
     unawaited(
       _rooms
-          .isParticipantRemovedOnServer(
-            roomId: widget.room.id,
-            userId: _uid,
-          )
+          .isParticipantRemovedOnServer(roomId: widget.room.id, userId: _uid)
           .then((removed) {
             _confirmingRemoval = false;
             if (!removed || !mounted || _ending) return;
@@ -234,6 +232,10 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 720,
+      ),
       backgroundColor: BroadcastRoomColors.surface,
       builder: (_) => FractionallySizedBox(
         heightFactor: .86,
@@ -263,6 +265,10 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
   void _openShareSheet() {
     showModalBottomSheet<void>(
       context: context,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 560,
+      ),
       backgroundColor: BroadcastRoomColors.surface,
       showDragHandle: true,
       builder: (_) => ShareRoomSheet(
@@ -282,6 +288,10 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 720,
+      ),
       backgroundColor: BroadcastRoomColors.surface,
       builder: (_) =>
           BroadcastSettingsSheet(room: widget.room, service: _rooms),
@@ -296,6 +306,10 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 560,
+      ),
       backgroundColor: BroadcastRoomColors.surface,
       showDragHandle: true,
       builder: (_) => OwnerMenuSheet(
@@ -338,6 +352,10 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
 
     showModalBottomSheet<void>(
       context: context,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 560,
+      ),
       backgroundColor: BroadcastRoomColors.surface,
       showDragHandle: true,
       builder: (_) => Padding(
@@ -555,99 +573,109 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
                 const Positioned.fill(child: BroadcastBackground()),
                 Column(
                   children: [
-                    BroadcastTopBar(
-                      title: widget.room.name,
-                      count: participants.length,
-                      isHost: _isHost,
-                      onBack: () => Navigator.of(context).pop(),
-                      onPeople: () => _openParticipants(participants),
-                      onMenu: () => _openOwnerMenu(participants),
-                      onShare: _openShareSheet,
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 1200),
+                        child: BroadcastTopBar(
+                          title: widget.room.name,
+                          count: participants.length,
+                          isHost: _isHost,
+                          onBack: () => Navigator.of(context).pop(),
+                          onPeople: () => _openParticipants(participants),
+                          onMenu: () => _openOwnerMenu(participants),
+                          onShare: _openShareSheet,
+                        ),
+                      ),
                     ),
                     Expanded(
-                      child: ListView(
-                        padding: const EdgeInsets.fromLTRB(18, 12, 18, 22),
-                        children: [
-                          BroadcastLiveBadge(isLive: widget.room.isLive),
-                          const SizedBox(height: 18),
-                          BroadcastHostStage(
-                            participant: host,
-                            fallbackName: widget.room.hostName,
-                            pulse: _pulse,
-                          ),
-                          if (_isHost) ...[
-                            const SizedBox(height: 16),
-                            BroadcastOwnerQuickActions(
-                              raisedHands: raised.length,
-                              onParticipants: () =>
-                                  _openParticipants(participants),
-                              onHands: () => _openParticipants(
-                                participants,
-                                initialFilter: 'hands',
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 1200),
+                          child: ListView(
+                            padding: const EdgeInsets.fromLTRB(18, 12, 18, 22),
+                            children: [
+                              BroadcastLiveBadge(isLive: widget.room.isLive),
+                              const SizedBox(height: 18),
+                              BroadcastHostStage(
+                                participant: host,
+                                fallbackName: widget.room.hostName,
+                                pulse: _pulse,
                               ),
-                              onManage: () => _openOwnerMenu(participants),
-                              onShare: _openShareSheet,
-                            ),
-                          ],
-                          const SizedBox(height: 22),
-                          BroadcastClickableStats(
-                            speakers: 1 + speakers.length,
-                            listeners: listeners.length,
-                            raisedHands: raised.length,
-                            onSpeakers: () => _openParticipants(
-                              participants,
-                              initialFilter: 'speakers',
-                            ),
-                            onListeners: () => _openParticipants(
-                              participants,
-                              initialFilter: 'listeners',
-                            ),
-                            onHands: () => _openParticipants(
-                              participants,
-                              initialFilter: 'hands',
-                            ),
+                              if (_isHost) ...[
+                                const SizedBox(height: 16),
+                                BroadcastOwnerQuickActions(
+                                  raisedHands: raised.length,
+                                  onParticipants: () =>
+                                      _openParticipants(participants),
+                                  onHands: () => _openParticipants(
+                                    participants,
+                                    initialFilter: 'hands',
+                                  ),
+                                  onManage: () => _openOwnerMenu(participants),
+                                  onShare: _openShareSheet,
+                                ),
+                              ],
+                              const SizedBox(height: 22),
+                              BroadcastClickableStats(
+                                speakers: 1 + speakers.length,
+                                listeners: listeners.length,
+                                raisedHands: raised.length,
+                                onSpeakers: () => _openParticipants(
+                                  participants,
+                                  initialFilter: 'speakers',
+                                ),
+                                onListeners: () => _openParticipants(
+                                  participants,
+                                  initialFilter: 'listeners',
+                                ),
+                                onHands: () => _openParticipants(
+                                  participants,
+                                  initialFilter: 'hands',
+                                ),
+                              ),
+                              const SizedBox(height: 22),
+                              BroadcastSectionHeader(
+                                title: 'On stage',
+                                subtitle: 'Host and approved speakers',
+                                count: speakers.length + 1,
+                              ),
+                              const SizedBox(height: 12),
+                              if (speakers.isEmpty)
+                                const BroadcastEmptyStage()
+                              else
+                                Wrap(
+                                  spacing: 12,
+                                  runSpacing: 12,
+                                  children: speakers
+                                      .map(
+                                        (speaker) => BroadcastSpeakerTile(
+                                          participant: speaker,
+                                          isHostView: _isHost,
+                                          onManage: () => _openParticipants(
+                                            participants,
+                                            initialFilter: 'speakers',
+                                          ),
+                                        ),
+                                      )
+                                      .toList(growable: false),
+                                ),
+                              const SizedBox(height: 24),
+                              BroadcastSectionHeader(
+                                title: 'Audience',
+                                subtitle: 'Listeners can request the stage',
+                                count: listeners.length,
+                              ),
+                              const SizedBox(height: 12),
+                              BroadcastAudiencePreview(
+                                listeners: listeners,
+                                onOpen: () => _openParticipants(
+                                  participants,
+                                  initialFilter: 'listeners',
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 22),
-                          BroadcastSectionHeader(
-                            title: 'On stage',
-                            subtitle: 'Host and approved speakers',
-                            count: speakers.length + 1,
-                          ),
-                          const SizedBox(height: 12),
-                          if (speakers.isEmpty)
-                            const BroadcastEmptyStage()
-                          else
-                            Wrap(
-                              spacing: 12,
-                              runSpacing: 12,
-                              children: speakers
-                                  .map(
-                                    (speaker) => BroadcastSpeakerTile(
-                                      participant: speaker,
-                                      isHostView: _isHost,
-                                      onManage: () => _openParticipants(
-                                        participants,
-                                        initialFilter: 'speakers',
-                                      ),
-                                    ),
-                                  )
-                                  .toList(growable: false),
-                            ),
-                          const SizedBox(height: 24),
-                          BroadcastSectionHeader(
-                            title: 'Audience',
-                            subtitle: 'Listeners can request the stage',
-                            count: listeners.length,
-                          ),
-                          const SizedBox(height: 12),
-                          BroadcastAudiencePreview(
-                            listeners: listeners,
-                            onOpen: () => _openParticipants(
-                              participants,
-                              initialFilter: 'listeners',
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                     BroadcastBottomControls(

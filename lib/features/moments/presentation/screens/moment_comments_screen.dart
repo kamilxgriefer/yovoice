@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class MomentCommentsScreen extends StatefulWidget {
   const MomentCommentsScreen({required this.moment, super.key});
@@ -98,103 +99,106 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
         title: const Text('Comments'),
       ),
       body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: _comments
-                    .orderBy('createdAt', descending: false)
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.hasError) {
-                    return const Center(
-                      child: Text(
-                        'Could not load comments.',
-                        style: TextStyle(color: _muted),
-                      ),
-                    );
-                  }
-                  if (!snapshot.hasData) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  final comments = snapshot.data!.docs;
-                  if (comments.isEmpty) {
-                    return const Center(
-                      child: Text(
-                        'Be the first to comment.',
-                        style: TextStyle(color: _muted),
-                      ),
-                    );
-                  }
-                  return ListView.separated(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: comments.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) {
-                      final data = comments[index].data();
-                      final name =
-                          data['authorName'] as String? ?? 'YO Voice user';
-                      final photo = data['authorPhotoUrl'] as String?;
-                      final type = data['type'] as String? ?? 'text';
-                      return _CommentCard(
-                        name: name,
-                        authorId: data['authorId'] as String? ?? '',
-                        photo: photo,
-                        data: data,
-                        isVoice: type == 'voice',
+        child: ResponsiveContentFrame(
+          width: ResponsiveContentWidth.form,
+          child: Column(
+            children: [
+              Expanded(
+                child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                  stream: _comments
+                      .orderBy('createdAt', descending: false)
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return const Center(
+                        child: Text(
+                          'Could not load comments.',
+                          style: TextStyle(color: _muted),
+                        ),
                       );
-                    },
-                  );
-                },
+                    }
+                    if (!snapshot.hasData) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    final comments = snapshot.data!.docs;
+                    if (comments.isEmpty) {
+                      return const Center(
+                        child: Text(
+                          'Be the first to comment.',
+                          style: TextStyle(color: _muted),
+                        ),
+                      );
+                    }
+                    return ListView.separated(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: comments.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 10),
+                      itemBuilder: (context, index) {
+                        final data = comments[index].data();
+                        final name =
+                            data['authorName'] as String? ?? 'YO Voice user';
+                        final photo = data['authorPhotoUrl'] as String?;
+                        final type = data['type'] as String? ?? 'text';
+                        return _CommentCard(
+                          name: name,
+                          authorId: data['authorId'] as String? ?? '',
+                          photo: photo,
+                          data: data,
+                          isVoice: type == 'voice',
+                        );
+                      },
+                    );
+                  },
+                ),
               ),
-            ),
-            Container(
-              padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-              decoration: const BoxDecoration(
-                color: _surface,
-                border: Border(top: BorderSide(color: _border)),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _controller,
-                      minLines: 1,
-                      maxLines: 4,
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (_) => _sendComment(),
-                      style: const TextStyle(color: Colors.white),
-                      decoration: InputDecoration(
-                        hintText: 'Write a comment...',
-                        hintStyle: const TextStyle(color: _muted),
-                        filled: true,
-                        fillColor: _background,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(18),
-                          borderSide: BorderSide.none,
+              Container(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+                decoration: const BoxDecoration(
+                  color: _surface,
+                  border: Border(top: BorderSide(color: _border)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _controller,
+                        minLines: 1,
+                        maxLines: 4,
+                        textInputAction: TextInputAction.send,
+                        onSubmitted: (_) => _sendComment(),
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          hintText: 'Write a comment...',
+                          hintStyle: const TextStyle(color: _muted),
+                          filled: true,
+                          fillColor: _background,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(18),
+                            borderSide: BorderSide.none,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  IconButton.filled(
-                    onPressed: _sending ? null : _sendComment,
-                    style: IconButton.styleFrom(backgroundColor: _primary),
-                    icon: _sending
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.send_rounded),
-                  ),
-                ],
+                    const SizedBox(width: 10),
+                    IconButton.filled(
+                      onPressed: _sending ? null : _sendComment,
+                      style: IconButton.styleFrom(backgroundColor: _primary),
+                      icon: _sending
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.send_rounded),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

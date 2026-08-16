@@ -52,13 +52,27 @@ Top-level collections (from `firestore.rules`):
 
 | Collection | Subcollections |
 |---|---|
-| `users/{userId}` | `friendRequests`, `sentFriendRequests`, `friends`, `blocked`, `following`, `followers`, `clubs`, `notifications`, `fcmTokens` |
+| `users/{userId}` (private; owner get only, never client-listable) | `friendRequests`, `sentFriendRequests`, `friends`, `blocked`, `following`, `followers`, `clubs`, `notifications`, `fcmTokens` |
+| `publicProfiles/{userId}` (server-owned exact public profile) | — |
+| `socialPresence/{userId}` (server-owned, self/canonical-friend read) | — |
+| `privateRateLimits/{id}` (Admin-only search budgets) | — |
 | `conversations/{id}` | `messages` |
 | `clubs/{clubId}` | `members`, `invites`, `channels` → `messages` |
 | `rooms/{roomId}` | `participants`, `roomMembers`, `messages`, `handRequests` |
 | `voiceMoments/{momentId}` | `likes`, `comments` |
 
 Notable fields:
+
+- **Public-profile projection** — the safe `publicProfiles/{userId}` schema is
+  `uid`, `displayName`, `username`, normalized name/username search keys,
+  `photoUrl`, `bannerUrl`, `bio`, country/language/website/status fields,
+  `accountType`, `premiumIdentity`, three public social counts,
+  `schemaVersion` and `updatedAt`. No email, presence, notification settings,
+  staff/moderation state or device data is valid here. Clients can get a known
+  active account but cannot list or write; prefix discovery is the bounded
+  `searchPublicProfiles` callable. Presence lives separately in
+  `socialPresence` and requires self or both friendship mirrors. Full decision:
+  [ADR-054](Decisions.md#adr-054-private-account-records-are-split-from-exact-server-owned-public-profiles).
 
 - **`unlockedTitleTimestamps`** on `users/{userId}` — a map of achievement
   id → server timestamp, written by `AchievementService` whenever a title
@@ -145,7 +159,7 @@ cd firestore-tests && npm install && npm test
 ```
 
 Full details in [`firestore-tests/README.md`](../firestore-tests/README.md)
-and [TESTING.md](TESTING.md) — 43 checks, regression + attack-scenario
+and [TESTING.md](TESTING.md) — 265 checks, regression + attack-scenario
 coverage. Always run against a freshly-started emulator before trusting a
 "green" result; see
 [ADR-007](Decisions.md#adr-007-firestore-rules-changes-are-always-emulator-tested-against-a-real-collectiongroup-query)

@@ -10,6 +10,7 @@ import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 import 'package:yovoice/features/clubs/presentation/screens/create_club_screen.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class ClubsScreen extends StatefulWidget {
   const ClubsScreen({this.isRootTab = false, super.key});
@@ -91,116 +92,121 @@ class _ClubsScreenState extends State<ClubsScreen> {
       backgroundColor: _background,
       body: SafeArea(
         bottom: false,
-        child: Column(
-          children: [
-            _Header(
-              onCreatePressed: _openCreateClub,
-              isRootTab: widget.isRootTab,
-            ),
-            Expanded(
-              child: StreamBuilder<List<ClubInvite>>(
-                stream: _clubService.watchMyClubInvites(),
-                builder: (context, inviteSnapshot) {
-                  final invites = inviteSnapshot.data ?? const <ClubInvite>[];
-                  return StreamBuilder<List<Club>>(
-                    stream: _clubService.watchMyClubs(),
-                    builder: (context, clubSnapshot) {
-                      if (clubSnapshot.connectionState ==
-                              ConnectionState.waiting &&
-                          !clubSnapshot.hasData) {
-                        return const Center(
-                          child: CircularProgressIndicator(color: _purple),
-                        );
-                      }
-                      if (clubSnapshot.hasError) {
-                        return _ErrorState(
-                          message: friendlyErrorMessage(
-                            clubSnapshot.error ?? 'unknown',
-                            fallback: 'Could not load your clubs.',
-                          ),
-                          onRetry: () => setState(() {}),
-                        );
-                      }
-
-                      final clubs = clubSnapshot.data ?? const <Club>[];
-                      if (clubs.isEmpty && invites.isEmpty) {
-                        return _EmptyState(onCreatePressed: _openCreateClub);
-                      }
-
-                      return RefreshIndicator(
-                        color: _purple,
-                        backgroundColor: _surfaceLight,
-                        onRefresh: () async => setState(() {}),
-                        child: ListView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.fromLTRB(18, 10, 18, 130),
-                          children: [
-                            if (invites.isNotEmpty) ...[
-                              const Text(
-                                'Club invitations',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 19,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              for (final invite in invites) ...[
-                                _ClubInviteCard(
-                                  invite: invite,
-                                  busy: _processingInvites.contains(
-                                    invite.clubId,
-                                  ),
-                                  onAccept: () =>
-                                      _respondToInvite(invite, true),
-                                  onDecline: () =>
-                                      _respondToInvite(invite, false),
-                                ),
-                                const SizedBox(height: 12),
-                              ],
-                              const SizedBox(height: 8),
-                            ],
-                            if (clubs.isNotEmpty) ...[
-                              _SummaryCard(clubCount: clubs.length),
-                              const SizedBox(height: 18),
-                              const Text(
-                                'Your clubs',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 19,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              for (final club in clubs) ...[
-                                _ClubCard(
-                                  club: club,
-                                  onTap: () => _openClub(club),
-                                ),
-                                const SizedBox(height: 12),
-                              ],
-                            ],
-                          ],
-                        ),
-                      );
-                    },
-                  );
-                },
+        child: ResponsiveContentFrame(
+          width: ResponsiveContentWidth.feed,
+          alignment: ResponsiveContentAlignment.topLeft,
+          child: Column(
+            children: [
+              _Header(
+                onCreatePressed: _openCreateClub,
+                isRootTab: widget.isRootTab,
               ),
-            ),
-          ],
+              Expanded(
+                child: StreamBuilder<List<ClubInvite>>(
+                  stream: _clubService.watchMyClubInvites(),
+                  builder: (context, inviteSnapshot) {
+                    final invites = inviteSnapshot.data ?? const <ClubInvite>[];
+                    return StreamBuilder<List<Club>>(
+                      stream: _clubService.watchMyClubs(),
+                      builder: (context, clubSnapshot) {
+                        if (clubSnapshot.connectionState ==
+                                ConnectionState.waiting &&
+                            !clubSnapshot.hasData) {
+                          return const Center(
+                            child: CircularProgressIndicator(color: _purple),
+                          );
+                        }
+                        if (clubSnapshot.hasError) {
+                          return _ErrorState(
+                            message: friendlyErrorMessage(
+                              clubSnapshot.error ?? 'unknown',
+                              fallback: 'Could not load your clubs.',
+                            ),
+                            onRetry: () => setState(() {}),
+                          );
+                        }
+
+                        final clubs = clubSnapshot.data ?? const <Club>[];
+                        if (clubs.isEmpty && invites.isEmpty) {
+                          return _EmptyState(onCreatePressed: _openCreateClub);
+                        }
+
+                        return RefreshIndicator(
+                          color: _purple,
+                          backgroundColor: _surfaceLight,
+                          onRefresh: () async => setState(() {}),
+                          child: ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.fromLTRB(18, 10, 18, 130),
+                            children: [
+                              if (invites.isNotEmpty) ...[
+                                const Text(
+                                  'Club invitations',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 19,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                for (final invite in invites) ...[
+                                  ClubInviteCard(
+                                    invite: invite,
+                                    busy: _processingInvites.contains(
+                                      invite.clubId,
+                                    ),
+                                    onAccept: () =>
+                                        _respondToInvite(invite, true),
+                                    onDecline: () =>
+                                        _respondToInvite(invite, false),
+                                  ),
+                                  const SizedBox(height: 12),
+                                ],
+                                const SizedBox(height: 8),
+                              ],
+                              if (clubs.isNotEmpty) ...[
+                                _SummaryCard(clubCount: clubs.length),
+                                const SizedBox(height: 18),
+                                const Text(
+                                  'Your clubs',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 19,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                for (final club in clubs) ...[
+                                  _ClubCard(
+                                    club: club,
+                                    onTap: () => _openClub(club),
+                                  ),
+                                  const SizedBox(height: 12),
+                                ],
+                              ],
+                            ],
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _ClubInviteCard extends StatelessWidget {
-  const _ClubInviteCard({
+class ClubInviteCard extends StatelessWidget {
+  const ClubInviteCard({
     required this.invite,
     required this.busy,
     required this.onAccept,
     required this.onDecline,
+    super.key,
   });
 
   final ClubInvite invite;
@@ -260,33 +266,50 @@ class _ClubInviteCard extends StatelessWidget {
                   style: const TextStyle(color: _ClubsScreenState._muted),
                 ),
                 const SizedBox(height: 11),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: busy ? null : onDecline,
-                        child: const Text('Decline'),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final textScale = MediaQuery.textScalerOf(context).scale(1);
+                    final stackActions =
+                        textScale > 1.4 || constraints.maxWidth < 250;
+                    final accept = FilledButton(
+                      key: const ValueKey('club-invite-accept'),
+                      onPressed: busy ? null : onAccept,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                        backgroundColor: _ClubsScreenState._purple,
                       ),
-                    ),
-                    const SizedBox(width: 9),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: busy ? null : onAccept,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _ClubsScreenState._purple,
-                        ),
-                        child: busy
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text('Accept'),
+                      child: busy
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Accept'),
+                    );
+                    final decline = OutlinedButton(
+                      key: const ValueKey('club-invite-decline'),
+                      onPressed: busy ? null : onDecline,
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
                       ),
-                    ),
-                  ],
+                      child: const Text('Decline'),
+                    );
+
+                    if (stackActions) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [accept, const SizedBox(height: 9), decline],
+                      );
+                    }
+
+                    return Row(
+                      children: [
+                        Expanded(child: decline),
+                        const SizedBox(width: 9),
+                        Expanded(child: accept),
+                      ],
+                    );
+                  },
                 ),
               ],
             ),

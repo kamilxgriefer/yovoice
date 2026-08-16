@@ -6,96 +6,249 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    // Mirrors firestore.rules' isVerified() — gates uploads tied to
-    // content that gets shown to other users (room/club images, voice
-    // moments/replies). Profile photos are deliberately left out: setting
-    // one up during onboarding, before verification completes, is normal.
     function isVerified() {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
-    // Emulator-tested in firestore-tests/storage.test.js (run in CI).
-    //
-    // Size cap: since the crop editor landed (ADR-025), every profile
-    // upload is a re-encoded JPEG — 1024x1024 avatars / 1920x1080
-    // banners at quality 85, ~100-500 KB in practice. 2 MB is generous
-    // headroom over the largest possible re-encode while cutting the old
-    // as-is-upload ceiling (10 MB) fivefold. The three content types are
-    // kept (not narrowed to JPEG alone) so any not-yet-refreshed client
-    // that still uploads a validated original PNG/WebP keeps working.
+    // Auth disabling/revocation does not invalidate an already-issued token
+    // immediately. Mirror the authoritative Firestore account status wherever
+    // the two-document cross-service budget permits it. Existing Club media
+    // instead consumes that budget on its root + live membership/ban mirror.
+    function isActiveUser(userId) {
+      let userPath = /databases/(default)/documents/users/$(userId);
+      return isSignedIn() &&
+          request.auth.uid == userId &&
+          firestore.exists(userPath) &&
+          firestore.get(userPath).data.get('banned', false) != true &&
+          firestore.get(userPath).data.get('disabled', false) != true;
+    }
+
+    function isAllowedImageType() {
+      return request.resource.contentType in [
+        'image/jpeg', 'image/png', 'image/webp'
+      ];
+    }
+
+    function isAllowedAudioType() {
+      return request.resource.contentType in [
+        'audio/mp4', 'audio/m4a', 'audio/x-m4a'
+      ];
+    }
+
+    function isValidImagePayload(maxBytes) {
+      return request.resource.size >= 128 &&
+          request.resource.size <= maxBytes &&
+          isAllowedImageType();
+    }
+
+    function isValidAudioPayload() {
+      return request.resource.size >= 1024 &&
+          request.resource.size <= 12 * 1024 * 1024 &&
+          isAllowedAudioType();
+    }
+
+    function imageExtensionMatchesMime(fileName) {
+      return (
+        fileName.matches('.*[.](jpg|jpeg)') &&
+        request.resource.contentType == 'image/jpeg'
+      ) || (
+        fileName.matches('.*[.]png') &&
+        request.resource.contentType == 'image/png'
+      ) || (
+        fileName.matches('.*[.]webp') &&
+        request.resource.contentType == 'image/webp'
+      );
+    }
+
+    // Profile images remain public by product design. Creates are append-only;
+    // the client switches the Firestore pointer before deleting the old object.
     match /users/{userId}/profile/{fileName} {
-      allow read: if true;
-      allow write: if isSignedIn()
-          && request.auth.uid == userId
-          && request.resource.size <= 2 * 1024 * 1024
-          && request.resource.contentType in [
-               'image/jpeg', 'image/png', 'image/webp'
-             ];
-    }
-
-    // room_image_service.dart uploads to room_images/{roomId}/{uid}_{ts}.ext —
-    // the segment right after room_images/ is the ROOM, not the uploader, so
-    // matching it against request.auth.uid (as this rule used to) could
-    // never succeed unless a room's ID happened to equal someone's uid.
-    // Every room image upload was rejected. Validate via the filename
-    // prefix instead, which is the uploader's uid by construction.
-    match /room_images/{roomId}/{fileName} {
-      allow read: if true;
-      allow write: if isVerified()
-          && fileName.matches(request.auth.uid + '_.*')
-          && request.resource.size < 8 * 1024 * 1024
-          && request.resource.contentType.matches('image/.*');
-    }
-
-    // club_service.dart uploads to clubs/{uid}/{clubId}/{kind}_{ts}.ext —
-    // there was no rule for this path at all, so every club image upload
-    // was rejected by the default deny.
-    match /clubs/{userId}/{clubId}/{fileName} {
-      allow read: if true;
-      allow write: if isVerified()
-          && request.auth.uid == userId
-          && request.resource.size < 8 * 1024 * 1024
-          && request.resource.contentType.matches('image/.*');
-    }
-
-    // Family Moment audio. Scoped to the family room, not just to the
-    // uploader, because unlike a public Moment this must not be readable
-    // by every signed-in account. Storage rules can query Firestore, so
-    // the gate is the SAME membership document firestore.rules checks —
-    // losing membership closes the audio at the same instant it closes
-    // the Moment row.
-    match /family_moments/{clubId}/{userId}/{fileName} {
-      function isFamilyMember() {
-        return isSignedIn() && firestore.exists(
-          /databases/(default)/documents/clubs/$(clubId)/members/$(request.auth.uid)
-        );
+      function validProfileUpload() {
+        return fileName.matches('(avatar|banner)_[0-9]+[.](jpg|jpeg|png|webp)') &&
+            imageExtensionMatchesMime(fileName) &&
+            isValidImagePayload(2 * 1024 * 1024);
       }
 
-      allow read: if isFamilyMember();
-      allow create, update: if isVerified()
-          && request.auth.uid == userId
-          && isFamilyMember()
-          && request.resource.size < 12 * 1024 * 1024
-          && request.resource.contentType.matches('audio/.*');
-      allow delete: if isSignedIn() && request.auth.uid == userId;
+      allow read: if true;
+      allow create: if resource == null &&
+          isActiveUser(userId) &&
+          validProfileUpload();
+      allow update: if false;
+      allow delete: if isActiveUser(userId);
+    }
+
+    match /room_images/{roomId}/{fileName} {
+      function canManageActiveRoom() {
+        let roomPath = /databases/(default)/documents/rooms/$(roomId);
+        return isActiveUser(request.auth.uid) &&
+            firestore.exists(roomPath) &&
+            firestore.get(roomPath).data.hostId == request.auth.uid &&
+            firestore.get(roomPath).data.get('status', 'active') == 'active' &&
+            firestore.get(roomPath).data.get('deletionInProgress', false) != true;
+      }
+
+      function validRoomImageUpload() {
+        return fileName.matches(request.auth.uid + '_[0-9]+[.](jpg|png)') &&
+            imageExtensionMatchesMime(fileName) &&
+            isValidImagePayload(8 * 1024 * 1024);
+      }
+
+      allow read: if true;
+      allow create: if resource == null &&
+          isVerified() &&
+          canManageActiveRoom() &&
+          validRoomImageUpload();
+      allow update: if false;
+      allow delete: if isVerified() && canManageActiveRoom();
+    }
+
+    match /clubs/{userId}/{clubId}/{fileName} {
+      function clubPath() {
+        return /databases/(default)/documents/clubs/$(clubId);
+      }
+
+      function memberPath() {
+        return /databases/(default)/documents/clubs/$(clubId)/members/$(request.auth.uid);
+      }
+
+      function isPreRootCreator() {
+        // Check the Club first. For an existing Club this short-circuits
+        // before the user lookup, leaving the two-document budget to the
+        // canonical Club + membership authorization below.
+        return !firestore.exists(clubPath()) &&
+            request.auth.uid == userId &&
+            isActiveUser(userId);
+      }
+
+      // Authority comes from the live Club root and membership, never from
+      // the historical uid embedded in the object path. This closes the
+      // former-owner overwrite after an ownership transfer.
+      function canManageExistingClub() {
+        return firestore.exists(clubPath()) &&
+            firestore.get(clubPath()).data.get('status', 'active') == 'active' &&
+            firestore.get(clubPath()).data.get('deletionInProgress', false) != true &&
+            firestore.exists(memberPath()) &&
+            firestore.get(memberPath()).data.userId == request.auth.uid &&
+            firestore.get(memberPath()).data.get('banned', false) != true &&
+            (
+              (
+                firestore.get(clubPath()).data.ownerId == request.auth.uid &&
+                firestore.get(memberPath()).data.role == 'owner'
+              ) ||
+              firestore.get(memberPath()).data.role in ['coOwner', 'admin']
+            );
+      }
+
+      function validClubImageUpload() {
+        return fileName in ['avatar', 'banner'] &&
+            isValidImagePayload(8 * 1024 * 1024);
+      }
+
+      allow read: if true;
+      // Creation uploads are pre-root today. Keep that narrow two-name
+      // exception for idempotent retry/cleanup; existing Club authority comes
+      // from its live root and membership instead of the historical path uid.
+      // Cloud Storage classifies writes to object contents (including a
+      // replacement) as `create`; `update` is metadata-only. Existing
+      // resource state therefore selects retry/replacement authority here.
+      allow create: if isVerified() &&
+          validClubImageUpload() &&
+          (
+            (
+              resource == null &&
+              (
+                isPreRootCreator() ||
+                (
+                  canManageExistingClub() &&
+                  userId == firestore.get(clubPath()).data.ownerId
+                )
+              )
+            ) ||
+            (
+              resource != null &&
+              (isPreRootCreator() || canManageExistingClub())
+            )
+          );
+      allow update: if false;
+      allow delete: if isVerified() &&
+          (isPreRootCreator() || canManageExistingClub());
+    }
+
+    // No shipping client currently implements Family Moment uploads. Keep
+    // existing member-only reads, but fail closed on client writes until a
+    // server-issued upload session can bind object, author and Firestore row
+    // without exceeding Storage Rules' two cross-service document reads.
+    match /family_moments/{clubId}/{userId}/{fileName} {
+      function isActiveFamilyMember() {
+        let familyPath = /databases/(default)/documents/clubs/$(clubId);
+        let membershipPath = /databases/(default)/documents/clubs/$(clubId)/members/$(request.auth.uid);
+        return isSignedIn() &&
+            firestore.exists(familyPath) &&
+            firestore.get(familyPath).data.type == 'family' &&
+            firestore.get(familyPath).data.get('status', 'active') == 'active' &&
+            firestore.get(familyPath).data.get('deletionInProgress', false) != true &&
+            firestore.exists(membershipPath) &&
+            firestore.get(membershipPath).data.userId == request.auth.uid &&
+            firestore.get(membershipPath).data.get('banned', false) != true;
+      }
+
+      allow read: if isActiveFamilyMember();
+      allow create, update, delete: if false;
     }
 
     match /voice_moments/{userId}/{fileName} {
+      function validUnpublishedDraft() {
+        let momentId = request.resource.metadata.get('momentId', '');
+        let momentPath = /databases/(default)/documents/voiceMoments/$(momentId);
+        return request.resource.metadata.keys().hasOnly(['authorId', 'momentId']) &&
+            request.resource.metadata.get('authorId', '') == userId &&
+            momentId.matches('[A-Za-z0-9]{20}') &&
+            fileName == momentId + '.m4a' &&
+            firestore.exists(momentPath) &&
+            firestore.get(momentPath).data.authorId == userId &&
+            firestore.get(momentPath).data.get('isPublished', true) == false &&
+            firestore.get(momentPath).data.get('audioUrl', null) == null &&
+            firestore.get(momentPath).data.storagePath ==
+                'voice_moments/' + userId + '/' + fileName &&
+            firestore.get(momentPath).data.durationSeconds is int &&
+            firestore.get(momentPath).data.durationSeconds >= 1 &&
+            firestore.get(momentPath).data.durationSeconds <= 60;
+      }
+
       allow read: if isSignedIn();
-      allow create, update: if isVerified()
-          && request.auth.uid == userId
-          && request.resource.size < 12 * 1024 * 1024
-          && request.resource.contentType.matches('audio/.*');
-      allow delete: if isSignedIn() && request.auth.uid == userId;
-    }
-    match /voice_replies/{userId}/{momentId}/{fileName} {
-      allow read: if isSignedIn();
-      allow create, update: if isVerified()
-          && request.auth.uid == userId
-          && request.resource.size < 12 * 1024 * 1024
-          && request.resource.contentType.matches('audio/.*');
-      allow delete: if isSignedIn() && request.auth.uid == userId;
+      allow create: if resource == null &&
+          isVerified() &&
+          isActiveUser(userId) &&
+          isValidAudioPayload() &&
+          validUnpublishedDraft();
+      allow update: if false;
+      allow delete: if isActiveUser(userId);
     }
 
+    match /voice_replies/{userId}/{momentId}/{fileName} {
+      function validPublishedParent() {
+        let parentPath = /databases/(default)/documents/voiceMoments/$(momentId);
+        let commentId = request.resource.metadata.get('commentId', '');
+        return request.resource.metadata.keys().hasOnly([
+              'authorId', 'momentId', 'commentId'
+            ]) &&
+            request.resource.metadata.get('authorId', '') == userId &&
+            request.resource.metadata.get('momentId', '') == momentId &&
+            commentId.matches('[A-Za-z0-9]{20}') &&
+            fileName == commentId + '.m4a' &&
+            firestore.exists(parentPath) &&
+            firestore.get(parentPath).data.get('isPublished', false) == true &&
+            firestore.get(parentPath).data.get('isDeleted', false) != true;
+      }
+
+      allow read: if isSignedIn();
+      allow create: if resource == null &&
+          isVerified() &&
+          isActiveUser(userId) &&
+          isValidAudioPayload() &&
+          validPublishedParent();
+      allow update: if false;
+      allow delete: if isActiveUser(userId);
+    }
   }
 }

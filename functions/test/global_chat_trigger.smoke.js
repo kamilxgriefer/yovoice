@@ -11,7 +11,7 @@
 // in the catalogue. Run it deliberately:
 //
 //   firebase emulators:start --only functions,firestore \
-//     --project yovoice-fn-test
+//     --project demo-yovoice
 //   node test/global_chat_trigger.smoke.js
 //
 // Exits non-zero on failure so it can gate a release if it is ever
@@ -19,7 +19,7 @@
 
 process.env.FIRESTORE_EMULATOR_HOST =
   process.env.FIRESTORE_EMULATOR_HOST ?? "127.0.0.1:8080";
-process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT ?? "yovoice-fn-test";
+process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT ?? "demo-yovoice";
 
 const assert = require("node:assert/strict");
 const { getApps, initializeApp } = require("firebase-admin/app");

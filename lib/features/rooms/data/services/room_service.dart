@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
@@ -9,12 +10,20 @@ import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 
 class RoomService {
-  RoomService({FirebaseFirestore? firestore, FirebaseAuth? auth})
-    : _firestore = firestore ?? FirebaseFirestore.instance,
-      _auth = auth ?? FirebaseAuth.instance;
+  RoomService({
+    FirebaseFirestore? firestore,
+    FirebaseAuth? auth,
+    FirebaseFunctions? functions,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _auth = auth ?? FirebaseAuth.instance,
+       _functionsOverride = functions;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
+  final FirebaseFunctions? _functionsOverride;
+  FirebaseFunctions get _functions =>
+      _functionsOverride ??
+      FirebaseFunctions.instanceFor(region: 'europe-west1');
 
   CollectionReference<Map<String, dynamic>> get _rooms =>
       _firestore.collection('rooms');
@@ -34,10 +43,7 @@ class RoomService {
   Future<({String displayName, String? photoUrl})> _identity() async {
     final user = _user;
     try {
-      final snapshot = await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .get();
+      final snapshot = await _firestore.collection('users').doc(user.uid).get();
       final data = snapshot.data();
       final name = (data?['displayName'] as String?)?.trim();
       final photo = (data?['photoUrl'] as String?)?.trim();
@@ -100,15 +106,12 @@ class RoomService {
       // firestore.rules refuses the cross-type write independently.
       'targetAudience': targetAudience.value,
       'topicTags': RoomMetadataLimits.normalizeTags(topicTags),
-      'roomGuidelines': roomGuidelines
-          .trim()
-          .substring(
-            0,
-            roomGuidelines.trim().length >
-                    RoomMetadataLimits.maxGuidelinesLength
-                ? RoomMetadataLimits.maxGuidelinesLength
-                : roomGuidelines.trim().length,
-          ),
+      'roomGuidelines': roomGuidelines.trim().substring(
+        0,
+        roomGuidelines.trim().length > RoomMetadataLimits.maxGuidelinesLength
+            ? RoomMetadataLimits.maxGuidelinesLength
+            : roomGuidelines.trim().length,
+      ),
       if (conversationStyle != null)
         'conversationStyle': conversationStyle.value,
       if (newcomerFriendly) 'newcomerFriendly': true,
@@ -365,16 +368,11 @@ class RoomService {
   }
 
   Future<void> setRoomStatus(String roomId, RoomStatus status) async {
-    await _requireHost(roomId);
-    await _rooms.doc(roomId).update({
+    final callable = _functions.httpsCallable('setRoomStatusSelf');
+    await callable.call<Map<Object?, Object?>>({
+      'roomId': roomId,
       'status': status.name,
-      if (status != RoomStatus.active) 'isLive': false,
-      if (status != RoomStatus.active) 'participantCount': 0,
-      'updatedAt': FieldValue.serverTimestamp(),
     });
-    if (status != RoomStatus.active) {
-      await _deleteCollection(_rooms.doc(roomId).collection('participants'));
-    }
   }
 
   Future<VoiceRoom> joinRoom(String roomId) async {
@@ -480,14 +478,8 @@ class RoomService {
   }
 
   Future<void> endCommunityVoice(String roomId) async {
-    await _requireHost(roomId);
-    await _rooms.doc(roomId).update({
-      'isLive': false,
-      'participantCount': 0,
-      'endedAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-    await _deleteCollection(_rooms.doc(roomId).collection('participants'));
+    final callable = _functions.httpsCallable('endRoomVoiceSelf');
+    await callable.call<Map<Object?, Object?>>({'roomId': roomId});
   }
 
   DocumentReference<Map<String, dynamic>> clubLoungeReference(String clubId) {
@@ -595,17 +587,6 @@ class RoomService {
   Future<void> leaveClubLounge(String clubId) async {
     final roomId = clubLoungeReference(clubId).id;
     await leaveRoom(roomId);
-
-    final room = await clubLoungeReference(clubId).get();
-    final count = (room.data()?['participantCount'] as num?)?.toInt() ?? 0;
-    if (count <= 0) {
-      await clubLoungeReference(clubId).update({
-        'participantCount': 0,
-        'isLive': false,
-        'endedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    }
   }
 
   /// Toggles the caller's [emoji] reaction on a room message. The rules
@@ -616,8 +597,7 @@ class RoomService {
     required String emoji,
   }) async {
     final uid = _user.uid;
-    final reference =
-        _rooms.doc(roomId).collection('messages').doc(messageId);
+    final reference = _rooms.doc(roomId).collection('messages').doc(messageId);
     await _firestore.runTransaction((tx) async {
       final snapshot = await tx.get(reference);
       if (!snapshot.exists) return;
@@ -671,9 +651,10 @@ class RoomService {
   }
 
   Future<void> setMuted({required String roomId, required bool isMuted}) async {
-    await _rooms.doc(roomId).collection('participants').doc(_user.uid).update({
+    final callable = _functions.httpsCallable('setOwnRoomParticipantMute');
+    await callable.call<Map<Object?, Object?>>({
+      'roomId': roomId,
       'isMuted': isMuted,
-      'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
@@ -694,15 +675,11 @@ class RoomService {
     required String roomId,
     required String participantId,
   }) async {
-    await _requireHost(roomId);
-    await _rooms
-        .doc(roomId)
-        .collection('participants')
-        .doc(participantId)
-        .update({
-          'isHandRaised': false,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+    await _moderateParticipant(
+      roomId: roomId,
+      participantId: participantId,
+      lowerHand: true,
+    );
   }
 
   Future<void> moderateParticipantMute({
@@ -710,19 +687,11 @@ class RoomService {
     required String participantId,
     required bool isMuted,
   }) async {
-    await _requireHost(roomId);
-    final room = await getRoom(roomId);
-    if (participantId == room.hostId) {
-      throw StateError('The room owner cannot be muted by moderation.');
-    }
-    await _rooms
-        .doc(roomId)
-        .collection('participants')
-        .doc(participantId)
-        .update({
-          'isMuted': isMuted,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+    await _moderateParticipant(
+      roomId: roomId,
+      participantId: participantId,
+      isMuted: isMuted,
+    );
   }
 
   Future<void> setParticipantSpeakerStatus({
@@ -730,93 +699,59 @@ class RoomService {
     required String participantId,
     required bool isSpeaker,
   }) async {
-    await _requireHost(roomId);
-    final room = await getRoom(roomId);
-    if (participantId == room.hostId && !isSpeaker) {
-      throw StateError('The room owner must remain on stage.');
-    }
-    await _rooms
-        .doc(roomId)
-        .collection('participants')
-        .doc(participantId)
-        .update({
-          'role': participantId == room.hostId
-              ? 'host'
-              : (isSpeaker ? 'speaker' : 'listener'),
-          'isSpeaker': isSpeaker,
-          'isMuted': isSpeaker ? true : true,
-          'isHandRaised': false,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+    await _moderateParticipant(
+      roomId: roomId,
+      participantId: participantId,
+      isSpeaker: isSpeaker,
+    );
   }
 
   Future<void> removeParticipant({
     required String roomId,
     required String participantId,
   }) async {
-    await _requireHost(roomId);
-    final roomReference = _rooms.doc(roomId);
-    await _firestore.runTransaction((transaction) async {
-      final roomSnapshot = await transaction.get(roomReference);
-      final data = roomSnapshot.data();
-      if (!roomSnapshot.exists || data == null) {
-        throw StateError('The room no longer exists.');
-      }
-      if (participantId == data['hostId']) {
-        throw StateError('The room owner cannot be removed.');
-      }
-      final participantReference = roomReference
-          .collection('participants')
-          .doc(participantId);
-      final participantSnapshot = await transaction.get(participantReference);
-      if (!participantSnapshot.exists) return;
-      final count = (data['participantCount'] as num?)?.toInt() ?? 0;
-      transaction.delete(participantReference);
-      transaction.update(roomReference, {
-        'participantCount': count > 0 ? count - 1 : 0,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+    final callable = _functions.httpsCallable('removeRoomParticipantSelf');
+    await callable.call<Map<Object?, Object?>>({
+      'roomId': roomId,
+      'participantId': participantId,
     });
   }
 
   Future<void> leaveRoom(String roomId) async {
     final user = _user;
     final room = _rooms.doc(roomId);
-    final participant = room.collection('participants').doc(user.uid);
-    await _firestore.runTransaction((transaction) async {
-      final roomSnapshot = await transaction.get(room);
-      final data = roomSnapshot.data();
-      if (!roomSnapshot.exists || data == null) return;
-      final participantSnapshot = await transaction.get(participant);
-      if (!participantSnapshot.exists) return;
-      final count = (data['participantCount'] as num?)?.toInt() ?? 0;
-      final isHost = data['hostId'] == user.uid;
-      final type = RoomType.fromValue(data['roomType']);
-      transaction.delete(participant);
-      final update = <String, dynamic>{
-        'participantCount': count > 0 ? count - 1 : 0,
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
-      if (isHost && type == RoomType.temporary) {
-        update['isLive'] = false;
-        update['endedAt'] = FieldValue.serverTimestamp();
-      }
-      final isClubLounge = data['roomKind'] == 'clubLounge';
-      if (isClubLounge && count <= 1) {
-        update['participantCount'] = 0;
-        update['isLive'] = false;
-        update['endedAt'] = FieldValue.serverTimestamp();
-      }
-      transaction.update(room, update);
-    });
+    final currentRoom = await room.get();
+    final currentData = currentRoom.data();
+    if (currentData != null &&
+        currentData['hostId'] == user.uid &&
+        RoomType.fromValue(currentData['roomType']) == RoomType.temporary) {
+      await endCommunityVoice(roomId);
+      return;
+    }
+    final callable = _functions.httpsCallable('leaveRoomSelf');
+    await callable.call<Map<Object?, Object?>>({'roomId': roomId});
   }
 
   Future<void> deleteRoom(String roomId) async {
-    await _requireHost(roomId);
-    await _deleteCollection(_rooms.doc(roomId).collection('participants'));
-    await _deleteCollection(_rooms.doc(roomId).collection('roomMembers'));
-    await _deleteCollection(_rooms.doc(roomId).collection('messages'));
-    await _rooms.doc(roomId).delete();
+    final callable = _functions.httpsCallable('deleteRoomSelf');
+    await callable.call<Map<Object?, Object?>>({'roomId': roomId});
+  }
+
+  Future<void> _moderateParticipant({
+    required String roomId,
+    required String participantId,
+    bool? isMuted,
+    bool? isSpeaker,
+    bool lowerHand = false,
+  }) async {
+    final callable = _functions.httpsCallable('moderateRoomParticipantSelf');
+    await callable.call<Map<Object?, Object?>>({
+      'roomId': roomId,
+      'participantId': participantId,
+      'isMuted': ?isMuted,
+      'isSpeaker': ?isSpeaker,
+      if (lowerHand) 'lowerHand': true,
+    });
   }
 
   Future<bool> _isMember(String roomId, String userId) async {
@@ -832,20 +767,6 @@ class RoomService {
     final room = await _rooms.doc(roomId).get();
     if (!room.exists || room.data()?['hostId'] != _user.uid) {
       throw StateError('Only the room owner can do this.');
-    }
-  }
-
-  Future<void> _deleteCollection(
-    CollectionReference<Map<String, dynamic>> collection,
-  ) async {
-    while (true) {
-      final snapshot = await collection.limit(100).get();
-      if (snapshot.docs.isEmpty) return;
-      final batch = _firestore.batch();
-      for (final document in snapshot.docs) {
-        batch.delete(document.reference);
-      }
-      await batch.commit();
     }
   }
 

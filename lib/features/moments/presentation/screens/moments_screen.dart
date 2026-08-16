@@ -9,6 +9,7 @@ import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -18,11 +19,7 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 /// styling, no invented content: each section shows a compact empty
 /// state when its real source is empty.
 class MomentsScreen extends StatefulWidget {
-  const MomentsScreen({
-    this.momentService,
-    this.feedService,
-    super.key,
-  });
+  const MomentsScreen({this.momentService, this.feedService, super.key});
 
   final MomentService? momentService;
   final HomeFeedService? feedService;
@@ -56,9 +53,9 @@ class _MomentsScreenState extends State<MomentsScreen> {
       MaterialPageRoute<bool>(builder: (_) => const RecordVoiceMomentScreen()),
     );
     if (created == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Voice Moment posted.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Voice Moment posted.')));
     }
   }
 
@@ -116,7 +113,8 @@ class _MomentsScreenState extends State<MomentsScreen> {
                       return _EmptyState(
                         icon: Icons.mic_none_rounded,
                         title: 'No Moments yet',
-                        body: 'Record a short voice update — it appears here '
+                        body:
+                            'Record a short voice update — it appears here '
                             'and in your followers’ feeds.',
                         actionLabel: 'Create your Moment',
                         onAction: _createMoment,
@@ -146,7 +144,8 @@ class _MomentsScreenState extends State<MomentsScreen> {
                       return const _EmptyState(
                         icon: Icons.graphic_eq_rounded,
                         title: 'Nothing here yet',
-                        body: 'Moments from friends and people you follow '
+                        body:
+                            'Moments from friends and people you follow '
                             'will show up here.',
                       );
                     }
@@ -204,9 +203,7 @@ class _CreateMomentButton extends StatelessWidget {
       style: FilledButton.styleFrom(
         backgroundColor: AppColors.primary,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
       icon: const Icon(Icons.mic_rounded, size: 18, color: Colors.white),
       label: const Text(
@@ -283,13 +280,16 @@ class _MomentCardState extends State<MomentCard> {
         children: [
           Row(
             children: [
-              GestureDetector(
+              AccessibleTapRegion(
                 onTap: () => showProfilePreview(
                   context,
                   userId: moment.authorId,
                   displayName: moment.authorName,
                   photoUrl: moment.authorPhotoUrl,
                 ),
+                semanticLabel: 'Open profile for ${moment.authorName}',
+                tooltip: 'Open ${moment.authorName}\'s profile',
+                circular: true,
                 child: UserAvatar(
                   radius: 18,
                   photoUrl: moment.authorPhotoUrl,
@@ -352,11 +352,7 @@ class _MomentCardState extends State<MomentCard> {
           const SizedBox(height: 12),
           Row(
             children: [
-              _PlayButton(
-                playing: _playing,
-                enabled: playable,
-                onTap: _toggle,
-              ),
+              _PlayButton(playing: _playing, enabled: playable, onTap: _toggle),
               const SizedBox(width: 12),
               const Expanded(child: _Waveform()),
               const SizedBox(width: 10),
@@ -381,10 +377,7 @@ class _MomentCardState extends State<MomentCard> {
               const SizedBox(width: 5),
               Text(
                 '${moment.likeCount}',
-                style: const TextStyle(
-                  color: Color(0xFF9A90AC),
-                  fontSize: 12,
-                ),
+                style: const TextStyle(color: Color(0xFF9A90AC), fontSize: 12),
               ),
               const SizedBox(width: 16),
               TextButton.icon(
@@ -460,8 +453,26 @@ class _Waveform extends StatelessWidget {
   const _Waveform();
 
   static const _bars = <double>[
-    .35, .6, .45, .8, .55, .3, .7, .5, .85, .4,
-    .65, .3, .55, .75, .45, .6, .35, .5, .7, .4,
+    .35,
+    .6,
+    .45,
+    .8,
+    .55,
+    .3,
+    .7,
+    .5,
+    .85,
+    .4,
+    .65,
+    .3,
+    .55,
+    .75,
+    .45,
+    .6,
+    .35,
+    .5,
+    .7,
+    .4,
   ];
 
   @override

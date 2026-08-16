@@ -113,6 +113,61 @@ each Cloud Function's own authorization checks (principle 1, above)
 don't already gate — those remain the actual authorization boundary
 regardless of App Check's status.
 
+## Private account records and public profiles
+
+`users/{uid}` is private account state, not a public profile API. It mixes
+email, notification preferences, presence, moderation/ban state, staff mirrors
+and operational counters with editable profile fields. Firestore authorizes an
+entire document, so hiding fields after a foreign read in Flutter would already
+be a data leak. Current rules therefore permit a client to get only its own
+root user document and deny every list/query, including moderator and
+super-admin client sessions. Owner/staff account management uses protected
+callables that select an explicit response schema.
+
+Public identity is projected by the retryable `onUserPrivacySourceChanged`
+trigger into two server-owned documents:
+
+- `publicProfiles/{uid}`: exact public identity/profile/count fields; known-id
+  get for active authenticated accounts, no list and no client write;
+- `socialPresence/{uid}`: online/last-seen only; known-id get for self or when
+  both server-owned `friendshipGuards` exist, no list and no client write.
+
+The trigger re-reads current source state, replaces rather than merges, deletes
+both projections for banned/disabled/deleted accounts and is idempotent under
+retry/out-of-order delivery. The Auth deletion trigger also retires every
+identity projection and marks a lingering private record inactive. Both the
+trigger and the bounded backfill check Firebase Auth, so a Firestore orphan
+cannot republish a deleted Auth identity. Rules also recheck the private
+target's active state, so a stale projection is denied during the trigger's
+short consistency window. UIDs are treated as opaque, case-sensitive values
+and are never normalized into an alias.
+
+Ordinary discovery goes through `searchPublicProfiles`: verified-account-only,
+bounded name/username prefixes, blocks filtered in both directions, active
+candidates rechecked, and a five-field response allowlist. Email search exists
+only in the protected-owner staff directory. That directory derives email from
+Auth only and exposes a staff role only when the Auth claim agrees with the
+server-owned role mirror. App Check is not enforced yet, so each search attempt
+consumes an Admin-only transactional budget before querying (30/minute,
+300/hour per authenticated uid).
+
+Friendship authority is a pair of server-owned `friendshipGuards`, created in
+the same transaction as canonical request acceptance and removed atomically on
+unfriend or block. Client-writable historical friend mirrors never mint a
+guard. Every social mutation/read consumes a private transactional rate budget,
+graph degree and pending/block collections have hard caps, and every bounded
+read requests `MAX + 1` so an oversized graph fails closed instead of silently
+truncating authority. Follow edges contain only uid and server time; display
+identity is resolved from the current public projection and inactive endpoints
+are denied.
+
+New friend requests and conversations copy no email field; compatibility
+parsers tolerate legacy documents without using email as visible identity. A
+bounded, resumable, aggregate-only scrub removes historical request emails,
+empties conversation email snapshots and replaces follow edges with their
+exact schema. See
+[ADR-054](Decisions.md#adr-054-private-account-records-are-split-from-exact-server-owned-public-profiles).
+
 ## Global Chat (public write surface)
 
 `globalChat/main/messages` is the product's only surface where one

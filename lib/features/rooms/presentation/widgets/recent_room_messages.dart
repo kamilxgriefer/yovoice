@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// The floating recent-messages strip over the live stage (board
@@ -72,8 +73,12 @@ class _MessageBubble extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         Flexible(
-          child: GestureDetector(
+          child: AccessibleTapRegion(
             onTap: onTap,
+            semanticLabel:
+                'Open room chat. Message from ${message.senderName}: ${message.text}',
+            tooltip: 'Open room chat',
+            borderRadius: 999,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
               decoration: BoxDecoration(

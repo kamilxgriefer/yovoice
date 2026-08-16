@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 const int _kResendCooldownSeconds = 60;
 
@@ -22,6 +23,10 @@ Future<void> showCheckInboxSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
+    constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+      context,
+      maxWidth: 480,
+    ),
     builder: (_) => _CheckInboxSheet(email: email),
   );
 }

@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const assert = require("node:assert/strict");
 const {
   initializeTestEnvironment,
   assertSucceeds,
@@ -10,6 +11,7 @@ const {
   getDoc,
   getDocs,
   deleteDoc,
+  deleteField,
   collection,
   collectionGroup,
   query,
@@ -42,7 +44,7 @@ async function check(name, fn) {
 
 async function main() {
   const testEnv = await initializeTestEnvironment({
-    projectId: "rules-test-yovoice",
+    projectId: "demo-yovoice",
     firestore: {
       rules: fs.readFileSync(RULES_PATH, "utf8"),
       host: "127.0.0.1",
@@ -74,6 +76,32 @@ async function main() {
     email_verified: false,
   });
 
+  // These are established app accounts. Communication rules intentionally
+  // require the authoritative profile so a server-side ban takes effect even
+  // while an old Firebase Auth token is still valid. Dedicated bootstrap
+  // cases below use separate fresh identities.
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await Promise.all([
+      setDoc(doc(db, "users/host-uid"), {
+        displayName: "Host",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/attacker-uid"), {
+        displayName: "Attacker",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/invitee-uid"), {
+        displayName: "Invitee",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/unverified-uid"), {
+        displayName: "Unverified",
+        banned: false,
+      }),
+    ]);
+  });
+
   // --- Room creation + host's own participant doc (batch/getAfter path) ---
   await check(
     "host can create a room + their own host participant doc in one batch",
@@ -100,14 +128,19 @@ async function main() {
         slowModeSeconds: 0,
         autoMuteNewUsers: true,
         membersCanStartVoice: false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
       batch.set(participantRef, {
         userId: "host-uid",
         displayName: "Host",
+        photoUrl: null,
         role: "host",
         isMuted: false,
         isSpeaker: true,
         isHandRaised: false,
+        joinedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
       await assertSucceeds(batch.commit());
     },
@@ -141,15 +174,24 @@ async function main() {
     async () => {
       const db = attacker.firestore();
       const ref = doc(db, "rooms/room1/participants/attacker-uid");
+      const batch = writeBatch(db);
+      batch.set(ref, {
+        userId: "attacker-uid",
+        displayName: "Attacker",
+        photoUrl: null,
+        role: "listener",
+        isMuted: true,
+        isSpeaker: false,
+        isHandRaised: false,
+        joinedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      batch.update(doc(db, "rooms/room1"), {
+        participantCount: 2,
+        updatedAt: serverTimestamp(),
+      });
       await assertSucceeds(
-        setDoc(ref, {
-          userId: "attacker-uid",
-          displayName: "Attacker",
-          role: "listener",
-          isMuted: true,
-          isSpeaker: false,
-          isHandRaised: false,
-        }),
+        batch.commit(),
       );
     },
   );
@@ -178,19 +220,25 @@ async function main() {
   await check("regression: participant can mute/unmute themselves", async () => {
     const db = attacker.firestore();
     const ref = doc(db, "rooms/room1/participants/attacker-uid");
-    await assertSucceeds(updateDoc(ref, { isMuted: false }));
+    await assertSucceeds(
+      updateDoc(ref, { isMuted: false, updatedAt: serverTimestamp() }),
+    );
   });
 
   await check("regression: participant can raise their own hand", async () => {
     const db = attacker.firestore();
     const ref = doc(db, "rooms/room1/participants/attacker-uid");
-    await assertSucceeds(updateDoc(ref, { isHandRaised: true }));
+    await assertSucceeds(
+      updateDoc(ref, { isHandRaised: true, updatedAt: serverTimestamp() }),
+    );
   });
 
-  await check("regression: host can moderate (mute) another participant", async () => {
+  await check("SECURITY: host moderation bypasses direct writes and uses callable", async () => {
     const db = host.firestore();
     const ref = doc(db, "rooms/room1/participants/attacker-uid");
-    await assertSucceeds(updateDoc(ref, { isMuted: true }));
+    await assertFails(
+      updateDoc(ref, { hostMuted: true, updatedAt: serverTimestamp() }),
+    );
   });
 
   await check("SECURITY: non-host cannot hijack the room (rename it)", async () => {
@@ -214,23 +262,367 @@ async function main() {
     },
   );
 
-  await check("regression: any joined participant can bump participantCount", async () => {
+  await check("SECURITY: a participant cannot bump participantCount without a join", async () => {
     const db = attacker.firestore();
     const ref = doc(db, "rooms/room1");
-    await assertSucceeds(updateDoc(ref, { participantCount: 2 }));
+    await assertFails(updateDoc(ref, { participantCount: 3 }));
   });
 
   await check("regression: host can update room name/description/etc", async () => {
     const db = host.firestore();
     const ref = doc(db, "rooms/room1");
-    await assertSucceeds(updateDoc(ref, { name: "Renamed by host" }));
+    await assertSucceeds(
+      updateDoc(ref, {
+        name: "Renamed by host",
+        updatedAt: serverTimestamp(),
+      }),
+    );
   });
+
+  await check(
+    "SECURITY ROOMS: a private-room participant row cannot be self-forged",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "rooms/private-voice"), {
+          hostId: "host-uid",
+          hostName: "Host",
+          name: "Private voice",
+          description: "",
+          category: "talk",
+          visibility: "private",
+          language: "English",
+          maxParticipants: 25,
+          participantCount: 0,
+          memberCount: 0,
+          isLive: true,
+          roomType: "temporary",
+          status: "active",
+          approvalRequired: false,
+          slowModeSeconds: 0,
+          autoMuteNewUsers: true,
+          membersCanStartVoice: false,
+        });
+      });
+      const db = attacker.firestore();
+      const participant = doc(
+        db,
+        "rooms/private-voice/participants/attacker-uid",
+      );
+      await assertFails(
+        setDoc(participant, {
+          userId: "attacker-uid",
+          displayName: "Attacker",
+          role: "listener",
+          isMuted: true,
+          isSpeaker: false,
+          isHandRaised: false,
+        }),
+      );
+
+      const batch = writeBatch(db);
+      batch.set(participant, {
+        userId: "attacker-uid",
+        displayName: "Attacker",
+        role: "listener",
+        isMuted: true,
+        isSpeaker: false,
+        isHandRaised: false,
+        joinedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      batch.update(doc(db, "rooms/private-voice"), {
+        participantCount: 1,
+        updatedAt: serverTimestamp(),
+      });
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
+    "ROOMS: a host can explicitly admit a private-room participant",
+    async () => {
+      await assertSucceeds(
+        setDoc(
+          doc(host.firestore(), "rooms/private-voice/participants/invitee-uid"),
+          {
+            userId: "invitee-uid",
+            displayName: "Invitee",
+            role: "speaker",
+            isMuted: true,
+            isSpeaker: true,
+            isHandRaised: false,
+            admittedBy: "host-uid",
+            updatedAt: serverTimestamp(),
+          },
+        ),
+      );
+      await assertSucceeds(
+        getDoc(doc(invitee.firestore(), "rooms/private-voice")),
+      );
+      await assertFails(
+        getDoc(doc(attacker.firestore(), "rooms/private-voice")),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY ROOMS: Club Lounge join requires active canonical membership",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, "clubs/voice-access-club"), {
+          ownerId: "host-uid",
+          status: "active",
+          type: "community",
+        });
+        await setDoc(
+          doc(db, "clubs/voice-access-club/members/invitee-uid"),
+          { userId: "invitee-uid", role: "member", banned: false },
+        );
+        await setDoc(doc(db, "rooms/club-lounge-security"), {
+          hostId: "host-uid",
+          hostName: "Host",
+          name: "Club Lounge",
+          description: "",
+          category: "club",
+          visibility: "private",
+          language: "English",
+          maxParticipants: null,
+          participantCount: 0,
+          memberCount: 1,
+          isLive: true,
+          roomType: "community",
+          status: "active",
+          approvalRequired: false,
+          slowModeSeconds: 0,
+          autoMuteNewUsers: false,
+          membersCanStartVoice: true,
+          clubId: "voice-access-club",
+          roomKind: "clubLounge",
+        });
+      });
+
+      function loungeJoinBatch(db, uid) {
+        const batch = writeBatch(db);
+        batch.set(
+          doc(db, `rooms/club-lounge-security/participants/${uid}`),
+          {
+            userId: uid,
+            displayName: uid,
+            photoUrl: null,
+            role: "listener",
+            isMuted: false,
+            isSpeaker: false,
+            isHandRaised: false,
+            joinedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          },
+        );
+        batch.update(doc(db, "rooms/club-lounge-security"), {
+          participantCount: 1,
+          updatedAt: serverTimestamp(),
+        });
+        return batch;
+      }
+
+      await assertFails(
+        loungeJoinBatch(attacker.firestore(), "attacker-uid").commit(),
+      );
+      await assertSucceeds(
+        loungeJoinBatch(invitee.firestore(), "invitee-uid").commit(),
+      );
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "clubs/voice-access-club"), {
+          deletionInProgress: true,
+        });
+      });
+      await assertFails(
+        getDoc(doc(invitee.firestore(), "rooms/club-lounge-security")),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY ROOMS: participant leave is callable-only, even with a counter batch",
+    async () => {
+      const db = attacker.firestore();
+      const batch = writeBatch(db);
+      batch.delete(doc(db, "rooms/room1/participants/attacker-uid"));
+      batch.update(doc(db, "rooms/room1"), {
+        participantCount: 1,
+        updatedAt: serverTimestamp(),
+      });
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
+    "SECURITY VOICE: active session mirrors are invisible and server-only",
+    async () => {
+      const path = "activeVoiceSessions/attacker-uid/rooms/room1";
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), path), {
+          userId: "attacker-uid",
+          roomId: "room1",
+          participantIdentity: "attacker-uid",
+          expiresAt: Timestamp.fromMillis(Date.now() + 300000),
+        });
+      });
+      const reference = doc(attacker.firestore(), path);
+      await assertFails(getDoc(reference));
+      await assertFails(updateDoc(reference, { roomId: "other-room" }));
+      await assertFails(deleteDoc(reference));
+      await assertFails(
+        setDoc(
+          doc(host.firestore(), "activeVoiceSessions/host-uid/rooms/room1"),
+          {
+            userId: "host-uid",
+            roomId: "room1",
+            participantIdentity: "host-uid",
+          },
+        ),
+      );
+    },
+  );
+
+  await check(
+    "ROOMS: watchOwnedRooms can list the host's private rooms only",
+    async () => {
+      await assertSucceeds(
+        getDocs(
+          query(
+            collection(host.firestore(), "rooms"),
+            where("hostId", "==", "host-uid"),
+          ),
+        ),
+      );
+      await assertFails(
+        getDocs(
+          query(
+            collection(attacker.firestore(), "rooms"),
+            where("hostId", "==", "host-uid"),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY ROOMS: self-join cannot forge host admission or authority fields",
+    async () => {
+      const db = attacker.firestore();
+      const participant = doc(db, "rooms/room1/participants/attacker-uid");
+      const batch = writeBatch(db);
+      batch.set(participant, {
+        userId: "attacker-uid",
+        displayName: "Attacker",
+        photoUrl: null,
+        role: "listener",
+        isMuted: true,
+        isSpeaker: false,
+        isHandRaised: false,
+        admittedBy: "host-uid",
+        joinedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      batch.update(doc(db, "rooms/room1"), {
+        participantCount: 2,
+        updatedAt: serverTimestamp(),
+      });
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
+    "SECURITY ROOMS: self update cannot clear host/staff moderation mute",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), "rooms/room1/participants/attacker-uid"),
+          {
+            userId: "attacker-uid",
+            role: "speaker",
+            isMuted: true,
+            isSpeaker: true,
+            isHandRaised: false,
+            hostMuted: true,
+            serverMuted: true,
+          },
+        );
+      });
+      await assertFails(
+        updateDoc(
+          doc(
+            attacker.firestore(),
+            "rooms/room1/participants/attacker-uid",
+          ),
+          {
+            isMuted: false,
+            hostMuted: false,
+            serverMuted: false,
+            updatedAt: serverTimestamp(),
+          },
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY ROOMS: host cannot restore moderation status or close outside callable",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "rooms/moderated-room"), {
+          hostId: "host-uid",
+          name: "Moderated",
+          visibility: "public",
+          status: "suspended",
+          isLive: false,
+          participantCount: 0,
+        });
+      });
+      await assertFails(
+        updateDoc(doc(host.firestore(), "rooms/moderated-room"), {
+          status: "active",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(host.firestore(), "rooms/room1"), {
+          status: "closed",
+          isLive: false,
+          participantCount: 0,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY ROOMS: ordinary room create cannot forge Club Lounge authority",
+    async () => {
+      await assertFails(
+        setDoc(doc(host.firestore(), "rooms/forged-lounge"), {
+          hostId: "host-uid",
+          hostName: "Host",
+          name: "Forged lounge",
+          visibility: "private",
+          status: "active",
+          isLive: false,
+          participantCount: 0,
+          roomType: "community",
+          clubId: "victim-club",
+          roomKind: "clubLounge",
+        }),
+      );
+    },
+  );
 
   // --- Club ownership hijack (#2) ---
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     await setDoc(doc(ctx.firestore(), "clubs/club1"), {
       ownerId: "host-uid",
       name: "Test club",
+      status: "active",
       memberCount: 1,
     });
     await setDoc(doc(ctx.firestore(), "clubs/club1/invites/invitee-uid"), {
@@ -244,35 +636,63 @@ async function main() {
     const db = attacker.firestore();
     const ref = doc(db, "clubs/club1/members/attacker-uid");
     await assertFails(
-      setDoc(ref, { userId: "attacker-uid", role: "owner", joinedAt: null }),
+      setDoc(ref, {
+        userId: "attacker-uid",
+        displayName: "Attacker",
+        photoUrl: null,
+        role: "owner",
+        isOnline: true,
+        joinedAt: serverTimestamp(),
+        invitedBy: null,
+      }),
     );
   });
 
   await check(
-    "regression: real club owner can still self-appoint as owner (createClub path)",
+    "SECURITY: an existing Club root cannot be reused to self-appoint an owner",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         await setDoc(doc(ctx.firestore(), "clubs/club2"), {
           ownerId: "host-uid",
           name: "Second club",
+          status: "active",
           memberCount: 0,
         });
       });
       const db = host.firestore();
       const ref = doc(db, "clubs/club2/members/host-uid");
-      await assertSucceeds(
-        setDoc(ref, { userId: "host-uid", role: "owner", joinedAt: null }),
+      await assertFails(
+        setDoc(ref, {
+          userId: "host-uid",
+          displayName: "Host",
+          photoUrl: null,
+          role: "owner",
+          isOnline: true,
+          joinedAt: serverTimestamp(),
+          invitedBy: null,
+        }),
       );
     },
   );
 
-  await check("regression: invited user can still join as a plain member", async () => {
-    const db = invitee.firestore();
-    const ref = doc(db, "clubs/club1/members/invitee-uid");
-    await assertSucceeds(
-      setDoc(ref, { userId: "invitee-uid", role: "member", joinedAt: null }),
-    );
-  });
+  await check(
+    "SECURITY: an invitee cannot create membership outside the acceptance batch",
+    async () => {
+      const db = invitee.firestore();
+      const ref = doc(db, "clubs/club1/members/invitee-uid");
+      await assertFails(
+        setDoc(ref, {
+          userId: "invitee-uid",
+          displayName: "Invitee",
+          photoUrl: null,
+          role: "member",
+          isOnline: true,
+          joinedAt: serverTimestamp(),
+          invitedBy: "host-uid",
+        }),
+      );
+    },
+  );
 
   // --- /users/{userId} field validation (#6) ---
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
@@ -327,11 +747,22 @@ async function main() {
   });
 
   await check(
-    "regression: follow_service can bump the OTHER user's followerCount",
+    "SECURITY: clients cannot change another user's followerCount",
     async () => {
       const db = attacker.firestore();
       const ref = doc(db, "users/host-uid");
-      await assertSucceeds(updateDoc(ref, { followerCount: 1 }));
+      await assertFails(updateDoc(ref, { followerCount: 1 }));
+    },
+  );
+
+  await check(
+    "SECURITY: clients cannot forge their own social counters",
+    async () => {
+      const db = host.firestore();
+      const ref = doc(db, "users/host-uid");
+      await assertFails(updateDoc(ref, { friendCount: 999 }));
+      await assertFails(updateDoc(ref, { followerCount: 999 }));
+      await assertFails(updateDoc(ref, { followingCount: 999 }));
     },
   );
 
@@ -345,10 +776,10 @@ async function main() {
   );
 
   // --- sentFriendRequests (#10) ---
-  await check("regression: user can create their own sentFriendRequests entry", async () => {
+  await check("SECURITY: sentFriendRequests are server-write-only", async () => {
     const db = attacker.firestore();
     const ref = doc(db, "users/attacker-uid/sentFriendRequests/host-uid");
-    await assertSucceeds(setDoc(ref, { receiverId: "host-uid", createdAt: null }));
+    await assertFails(setDoc(ref, { receiverId: "host-uid", createdAt: null }));
   });
 
   await check(
@@ -367,7 +798,7 @@ async function main() {
     await assertFails(setDoc(ref, { userId: "attacker-uid", createdAt: null }));
   });
 
-  await check("regression: accepting a real friend request still works", async () => {
+  await check("SECURITY: even a real request cannot be accepted by direct client writes", async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       await setDoc(doc(ctx.firestore(), "users/host-uid/friendRequests/attacker-uid"), {
         senderId: "attacker-uid",
@@ -376,14 +807,14 @@ async function main() {
     });
     const db = host.firestore();
     const ref = doc(db, "users/host-uid/friends/attacker-uid");
-    await assertSucceeds(setDoc(ref, { userId: "attacker-uid", createdAt: null }));
+    await assertFails(setDoc(ref, { userId: "attacker-uid", createdAt: null }));
   });
 
   // --- following/followers (#10) ---
-  await check("regression: user can follow someone (own following entry)", async () => {
+  await check("SECURITY: following edges are server-write-only", async () => {
     const db = attacker.firestore();
     const ref = doc(db, "users/attacker-uid/following/host-uid");
-    await assertSucceeds(setDoc(ref, { uid: "host-uid", followedAt: null }));
+    await assertFails(setDoc(ref, { uid: "host-uid", followedAt: null }));
   });
 
   await check(
@@ -396,11 +827,11 @@ async function main() {
   );
 
   await check(
-    "regression: user can add themselves to the target's followers list",
+    "SECURITY: followers edges are server-write-only",
     async () => {
       const db = attacker.firestore();
       const ref = doc(db, "users/host-uid/followers/attacker-uid");
-      await assertSucceeds(setDoc(ref, { uid: "attacker-uid", followedAt: null }));
+      await assertFails(setDoc(ref, { uid: "attacker-uid", followedAt: null }));
     },
   );
 
@@ -409,17 +840,39 @@ async function main() {
     await setDoc(doc(ctx.firestore(), "rooms/broadcastRoom"), {
       hostId: "host-uid",
       experience: "broadcast",
+      visibility: "public",
+      status: "active",
+      isLive: true,
+      handRaisingEnabled: true,
     });
+    await setDoc(
+      doc(ctx.firestore(), "rooms/broadcastRoom/participants/attacker-uid"),
+      { userId: "attacker-uid", role: "listener" },
+    );
     await setDoc(doc(ctx.firestore(), "rooms/communityRoom"), {
       hostId: "host-uid",
       experience: "community",
+    });
+    await setDoc(doc(ctx.firestore(), "rooms/privateBroadcastRoom"), {
+      hostId: "host-uid",
+      experience: "broadcast",
+      visibility: "private",
+      status: "active",
+      isLive: true,
+      handRaisingEnabled: true,
     });
   });
 
   await check("regression: raising a hand in a broadcast room works", async () => {
     const db = attacker.firestore();
     const ref = doc(db, "rooms/broadcastRoom/handRequests/attacker-uid");
-    await assertSucceeds(setDoc(ref, { displayName: "Attacker", createdAt: null }));
+    await assertSucceeds(
+      setDoc(ref, {
+        displayName: "Attacker",
+        photoUrl: null,
+        createdAt: serverTimestamp(),
+      }),
+    );
   });
 
   await check("regression: raising a hand in a non-broadcast room is rejected", async () => {
@@ -427,6 +880,31 @@ async function main() {
     const ref = doc(db, "rooms/communityRoom/handRequests/attacker-uid");
     await assertFails(setDoc(ref, { displayName: "Attacker", createdAt: null }));
   });
+
+  await check(
+    "SECURITY: outsider cannot read or write a private room hand queue",
+    async () => {
+      const db = attacker.firestore();
+      await assertFails(
+        setDoc(
+          doc(
+            db,
+            "rooms/privateBroadcastRoom/handRequests/attacker-uid",
+          ),
+          {
+            displayName: "Attacker",
+            photoUrl: null,
+            createdAt: serverTimestamp(),
+          },
+        ),
+      );
+      await assertFails(
+        getDocs(
+          collection(db, "rooms/privateBroadcastRoom/handRequests"),
+        ),
+      );
+    },
+  );
 
   // --- voiceMoments likes/comments (#7) ---
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
@@ -524,6 +1002,7 @@ async function main() {
     await setDoc(doc(ctx.firestore(), "clubs/club3"), {
       ownerId: "host-uid",
       name: "Third club",
+      status: "active",
       memberCount: 1,
     });
     await setDoc(doc(ctx.firestore(), "clubs/club3/members/attacker-uid"), {
@@ -557,6 +1036,110 @@ async function main() {
     await assertSucceeds(getDoc(ref));
   });
 
+  await check(
+    "SECURITY CLUBS: banned members, inactive Clubs, deletion and global bans deny all Club content",
+    async () => {
+      const clubId = "content-gate-club";
+      const clubPath = `clubs/${clubId}`;
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, clubPath), {
+          ownerId: "host-uid",
+          type: "community",
+          status: "active",
+          deletionInProgress: false,
+        });
+        await setDoc(doc(db, `${clubPath}/members/attacker-uid`), {
+          userId: "attacker-uid",
+          role: "member",
+          banned: false,
+        });
+        await setDoc(doc(db, `${clubPath}/members/host-uid`), {
+          userId: "host-uid",
+          role: "owner",
+          banned: false,
+        });
+        await setDoc(doc(db, `${clubPath}/channels/general`), {
+          name: "general",
+        });
+        await setDoc(doc(db, `${clubPath}/channels/general/messages/m1`), {
+          senderId: "host-uid",
+          content: "private Club content",
+        });
+        await setDoc(doc(db, `${clubPath}/moments/m1`), {
+          authorId: "host-uid",
+        });
+        await setDoc(doc(db, `${clubPath}/checkIns/c1`), {
+          userId: "host-uid",
+          status: "home",
+        });
+      });
+
+      const db = attacker.firestore();
+      const contentReferences = [
+        doc(db, `${clubPath}/channels/general`),
+        doc(db, `${clubPath}/channels/general/messages/m1`),
+        doc(db, `${clubPath}/moments/m1`),
+        doc(db, `${clubPath}/checkIns/c1`),
+      ];
+      for (const reference of contentReferences) {
+        await assertSucceeds(getDoc(reference));
+      }
+      await assertSucceeds(getDocs(collection(db, `${clubPath}/members`)));
+      await assertSucceeds(getDocs(collection(db, `${clubPath}/channels`)));
+
+      async function assertContentDenied() {
+        for (const reference of contentReferences) {
+          await assertFails(getDoc(reference));
+        }
+        await assertFails(getDocs(collection(db, `${clubPath}/members`)));
+        await assertFails(getDocs(collection(db, `${clubPath}/channels`)));
+      }
+
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(
+          doc(ctx.firestore(), `${clubPath}/members/attacker-uid`),
+          { banned: true },
+        );
+      });
+      await assertContentDenied();
+
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const serverDb = ctx.firestore();
+        await updateDoc(doc(serverDb, `${clubPath}/members/attacker-uid`), {
+          banned: false,
+        });
+        await updateDoc(doc(serverDb, clubPath), { status: "suspended" });
+      });
+      await assertContentDenied();
+
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const serverDb = ctx.firestore();
+        await updateDoc(doc(serverDb, clubPath), {
+          status: "active",
+          deletionInProgress: true,
+        });
+      });
+      await assertContentDenied();
+
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const serverDb = ctx.firestore();
+        await updateDoc(doc(serverDb, clubPath), {
+          deletionInProgress: false,
+        });
+        await updateDoc(doc(serverDb, "users/attacker-uid"), {
+          banned: true,
+        });
+      });
+      await assertContentDenied();
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users/attacker-uid"), {
+          banned: false,
+        });
+      });
+    },
+  );
+
   // --- real collectionGroup() queries, not just direct doc reads ---
   //
   // A nested `match /parent/{id}/collection/{doc}` rule ONLY covers reads/
@@ -576,7 +1159,10 @@ async function main() {
     await setDoc(doc(ctx.firestore(), "rooms/cg-room1/roomMembers/attacker-uid"), {
       userId: "attacker-uid",
     });
-    await setDoc(doc(ctx.firestore(), "clubs/cg-club1"), { ownerId: "host-uid" });
+    await setDoc(doc(ctx.firestore(), "clubs/cg-club1"), {
+      ownerId: "host-uid",
+      status: "active",
+    });
     await setDoc(doc(ctx.firestore(), "clubs/cg-club1/invites/attacker-uid"), {
       inviteeId: "attacker-uid",
       inviterId: "host-uid",
@@ -646,6 +1232,22 @@ async function main() {
   });
 
   await check(
+    "SECURITY: block edges are server-write-only",
+    async () => {
+      const db = stranger.firestore();
+      await assertFails(
+        setDoc(doc(db, "users/stranger-uid/blocked/host-uid"), {
+          userId: "host-uid",
+          createdAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(
+        deleteDoc(doc(blocker.firestore(), "users/blocker-uid/blocked/blockee-uid")),
+      );
+    },
+  );
+
+  await check(
     "SECURITY: a blocked user cannot send a friend request to their blocker",
     async () => {
       const db = blockee.firestore();
@@ -668,11 +1270,11 @@ async function main() {
   );
 
   await check(
-    "regression: an unrelated user can still send a friend request normally",
+    "SECURITY: even an unrelated user must use the friend-request callable",
     async () => {
       const db = stranger.firestore();
       const ref = doc(db, "users/blocker-uid/friendRequests/stranger-uid");
-      await assertSucceeds(
+      await assertFails(
         setDoc(ref, { senderId: "stranger-uid", createdAt: new Date() }),
       );
     },
@@ -817,15 +1419,12 @@ async function main() {
   // --- Notifications (users/{userId}/notifications/{notificationId}) ---
 
   await check(
-    "regression: an actor can write a still-client-creatable notification " +
-      "into someone else's inbox",
+    "SECURITY: no notification type remains client-creatable",
     async () => {
       const db = host.firestore();
       const ref = doc(db, "users/invitee-uid/notifications/notif-1");
-      await assertSucceeds(
+      await assertFails(
         setDoc(ref, {
-          // friendRequest/friendAccepted/follow are server-derived now
-          // (ADR-041); clubInvite is still a legitimate client write.
           type: "clubInvite",
           actorId: "host-uid",
           actorName: "Host",
@@ -839,6 +1438,22 @@ async function main() {
       );
     },
   );
+
+  // Seed the canonical server-authored row used by the owner read/update/
+  // delete regressions below. Admin SDK writers bypass client rules.
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), "users/invitee-uid/notifications/notif-1"), {
+      type: "clubInvite",
+      actorId: "host-uid",
+      actorName: "Host",
+      actorPhotoUrl: null,
+      targetId: "club-1",
+      targetLabel: "Club",
+      isRead: false,
+      createdAt: new Date(),
+      dedupeKey: "clubInvite_club-1_invitee-uid",
+    });
+  });
 
   await check(
     "SECURITY: cannot forge a notification claiming to be sent by someone else",
@@ -1104,7 +1719,7 @@ async function main() {
       const db = host.firestore();
       const ref = doc(db, "users/host-uid/fcmTokens/token-abc");
       await assertSucceeds(
-        setDoc(ref, { platform: "ios", updatedAt: new Date() }),
+        setDoc(ref, { platform: "ios", updatedAt: serverTimestamp() }),
       );
     },
   );
@@ -1115,8 +1730,35 @@ async function main() {
       const db = attacker.firestore();
       const ref = doc(db, "users/host-uid/fcmTokens/token-hijack");
       await assertFails(
-        setDoc(ref, { platform: "ios", updatedAt: new Date() }),
+        setDoc(ref, { platform: "ios", updatedAt: serverTimestamp() }),
       );
+    },
+  );
+
+  await check(
+    "SECURITY FCM: platform and freshness are exact server-authoritative fields",
+    async () => {
+      const db = host.firestore();
+      const ref = doc(db, "users/host-uid/fcmTokens/token-shape");
+      await assertFails(setDoc(ref, { platform: "desktop" }));
+      await assertFails(setDoc(ref, {
+        platform: "ios",
+        updatedAt: new Date(Date.now() + 86_400_000),
+      }));
+      await assertFails(setDoc(ref, {
+        platform: "android",
+        updatedAt: serverTimestamp(),
+        ownerId: "attacker-uid",
+      }));
+      await assertSucceeds(setDoc(ref, {
+        platform: "other",
+        updatedAt: serverTimestamp(),
+      }));
+      await assertFails(updateDoc(ref, { platform: "desktop" }));
+      await assertSucceeds(updateDoc(ref, {
+        platform: "web",
+        updatedAt: serverTimestamp(),
+      }));
     },
   );
 
@@ -1311,6 +1953,9 @@ async function main() {
       await setDoc(doc(ctx.firestore(), "entitlements/host-uid"), {
         status: "active",
         currentPeriodEnd: new Date(Date.now() + 86400000),
+        creatorEnabled: true,
+        canCreateClubs: true,
+        premiumIdentityEnabled: true,
       });
     });
     await assertSucceeds(getDoc(doc(host.firestore(), "entitlements/host-uid")));
@@ -1319,15 +1964,93 @@ async function main() {
     );
   });
 
-  await check("club creation requires active premium", async () => {
-    // host has active entitlements (seeded above); attacker has none.
-    await assertSucceeds(
-      setDoc(doc(host.firestore(), "clubs/premium-club"), {
-        ownerId: "host-uid",
-        name: "Premium Club",
-        memberCount: 1,
-      }),
-    );
+  await check("community Club creation is callable-only", async () => {
+    // Even a fully entitled client cannot skip the serialized server quota by
+    // submitting the old real ClubService batch directly. The callable's
+    // Admin transaction is covered in functions/test/club_creation.test.js.
+    const db = host.firestore();
+    const clubPath = "clubs/premium-club";
+    const batch = writeBatch(db);
+    batch.set(doc(db, clubPath), {
+      ownerId: "host-uid",
+      ownerName: "Host",
+      name: "Premium Club",
+      description: "A complete creation batch",
+      privacy: "public",
+      type: "community",
+      defaultLanguage: "English",
+      memberCount: 1,
+      onlineCount: 1,
+      defaultChatChannelId: "general",
+      defaultVoiceChannelId: "lounge",
+      loungeRoomId: "club_lounge_premium-club",
+      announcementChannelId: "announcements",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(db, `${clubPath}/members/host-uid`), {
+      userId: "host-uid",
+      displayName: "Host",
+      photoUrl: null,
+      role: "owner",
+      isOnline: true,
+      joinedAt: serverTimestamp(),
+      invitedBy: null,
+    });
+    batch.set(doc(db, "users/host-uid/clubs/premium-club"), {
+      clubId: "premium-club",
+      name: "Premium Club",
+      avatarUrl: null,
+      role: "owner",
+      joinedAt: serverTimestamp(),
+    });
+    for (const [id, type, position] of [
+      ["general", "chat", 0],
+      ["announcements", "announcement", 1],
+      ["lounge", "voice", 2],
+    ]) {
+      batch.set(doc(db, `${clubPath}/channels/${id}`), {
+        name: id,
+        type,
+        position,
+        isPrivate: false,
+        createdBy: "host-uid",
+        ...(id === "lounge"
+          ? { roomId: "club_lounge_premium-club" }
+          : {}),
+        createdAt: serverTimestamp(),
+      });
+    }
+    batch.set(doc(db, "rooms/club_lounge_premium-club"), {
+      hostId: "host-uid",
+      hostName: "Host",
+      hostPhotoUrl: null,
+      name: "Premium Club Lounge",
+      description: "Private voice lounge for Premium Club members.",
+      category: "club",
+      visibility: "private",
+      language: "English",
+      maxParticipants: null,
+      participantCount: 0,
+      memberCount: 1,
+      isLive: false,
+      roomType: "community",
+      status: "active",
+      imageUrl: null,
+      approvalRequired: false,
+      slowModeSeconds: 0,
+      autoMuteNewUsers: false,
+      membersCanStartVoice: true,
+      experience: "community",
+      clubId: "premium-club",
+      roomKind: "clubLounge",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    await assertFails(batch.commit());
+
+    // host has active entitlements (seeded above); attacker has none. Both
+    // direct paths are denied for community Clubs.
     await assertFails(
       setDoc(doc(attacker.firestore(), "clubs/free-club"), {
         ownerId: "attacker-uid",
@@ -1352,6 +2075,450 @@ async function main() {
       }),
     );
   });
+
+  // ── Club invitation acceptance authorization ─────────────────────
+  // A pending invitation authorizes exactly one plain membership for the
+  // invitee. It must never become a path for self-assigning an organizer
+  // role or smuggling permission-like fields into the membership document.
+  async function seedClubInviteAcceptanceCase(clubId) {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, `clubs/${clubId}`), {
+        ownerId: "host-uid",
+        name: "Invitation security club",
+        type: "community",
+        status: "active",
+        memberCount: 1,
+        onlineCount: 1,
+      });
+      await setDoc(doc(db, `clubs/${clubId}/invites/invitee-uid`), {
+        clubId,
+        clubName: "Invitation security club",
+        clubAvatarUrl: null,
+        inviteeId: "invitee-uid",
+        inviterId: "host-uid",
+        inviterName: "Host",
+        status: "pending",
+        createdAt: serverTimestamp(),
+      });
+    });
+  }
+
+  function invitedMemberDocument(overrides = {}) {
+    return {
+      userId: "invitee-uid",
+      displayName: "Invitee",
+      photoUrl: null,
+      role: "member",
+      isOnline: true,
+      joinedAt: serverTimestamp(),
+      invitedBy: "host-uid",
+      ...overrides,
+    };
+  }
+
+  function inviteAcceptanceBatch(
+    db,
+    clubId,
+    clubUpdate = {},
+    projectionUpdate = {},
+  ) {
+    const batch = writeBatch(db);
+    batch.set(
+      doc(db, `clubs/${clubId}/members/invitee-uid`),
+      invitedMemberDocument(),
+    );
+    batch.set(doc(db, `users/invitee-uid/clubs/${clubId}`), {
+      clubId,
+      name: "Invitation security club",
+      avatarUrl: null,
+      role: "member",
+      joinedAt: serverTimestamp(),
+      ...projectionUpdate,
+    });
+    batch.update(doc(db, `clubs/${clubId}`), {
+      memberCount: 2,
+      onlineCount: 2,
+      updatedAt: serverTimestamp(),
+      ...clubUpdate,
+    });
+    batch.delete(doc(db, `clubs/${clubId}/invites/invitee-uid`));
+    return batch;
+  }
+
+  for (const privilegedRole of ["owner", "coOwner", "admin"]) {
+    await check(
+      `SECURITY CLUBS: an invitee cannot join as ${privilegedRole}`,
+      async () => {
+        const clubId = `invite-role-${privilegedRole}`;
+        await seedClubInviteAcceptanceCase(clubId);
+        await assertFails(
+          setDoc(
+            doc(invitee.firestore(), `clubs/${clubId}/members/invitee-uid`),
+            invitedMemberDocument({ role: privilegedRole }),
+          ),
+        );
+      },
+    );
+  }
+
+  await check(
+    "SECURITY CLUBS: an invitee cannot add privileged membership fields",
+    async () => {
+      const clubId = "invite-extra-fields";
+      await seedClubInviteAcceptanceCase(clubId);
+      await assertFails(
+        setDoc(
+          doc(invitee.firestore(), `clubs/${clubId}/members/invitee-uid`),
+          invitedMemberDocument({
+            permissions: ["manageMembers", "manageChannels"],
+            isAdmin: true,
+          }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUBS: membership cannot consume an invite without the Club transition",
+    async () => {
+      const clubId = "invite-no-root-transition";
+      await seedClubInviteAcceptanceCase(clubId);
+      const db = invitee.firestore();
+      const batch = writeBatch(db);
+      batch.set(
+        doc(db, `clubs/${clubId}/members/invitee-uid`),
+        invitedMemberDocument(),
+      );
+      batch.delete(doc(db, `clubs/${clubId}/invites/invitee-uid`));
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
+    "SECURITY CLUBS: a standalone user Club mirror cannot forge membership",
+    async () => {
+      const clubId = "invite-forged-user-mirror";
+      await seedClubInviteAcceptanceCase(clubId);
+      await assertFails(
+        setDoc(doc(invitee.firestore(), `users/invitee-uid/clubs/${clubId}`), {
+          clubId,
+          name: "Invitation security club",
+          avatarUrl: null,
+          role: "owner",
+          joinedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUBS: invite acceptance cannot forge its private mirror role",
+    async () => {
+      const clubId = "invite-forged-mirror-role";
+      await seedClubInviteAcceptanceCase(clubId);
+      const batch = inviteAcceptanceBatch(
+        invitee.firestore(),
+        clubId,
+        {},
+        { role: "owner" },
+      );
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
+    "SECURITY CLUBS: a membership mirror cannot be deleted while membership remains",
+    async () => {
+      const clubId = "invite-hidden-owner-count";
+      await seedClubInviteAcceptanceCase(clubId);
+      await assertSucceeds(
+        inviteAcceptanceBatch(invitee.firestore(), clubId).commit(),
+      );
+      await assertFails(
+        deleteDoc(
+          doc(invitee.firestore(), `users/invitee-uid/clubs/${clubId}`),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUBS: a stale invite cannot be reused for standalone membership",
+    async () => {
+      const clubId = "invite-reuse-token";
+      await seedClubInviteAcceptanceCase(clubId);
+      await assertFails(
+        setDoc(
+          doc(invitee.firestore(), `clubs/${clubId}/members/invitee-uid`),
+          invitedMemberDocument(),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUBS: a pending invite cannot authorize a standalone Club counter update",
+    async () => {
+      const clubId = "invite-standalone-root-update";
+      await seedClubInviteAcceptanceCase(clubId);
+      await assertFails(
+        updateDoc(doc(invitee.firestore(), `clubs/${clubId}`), {
+          memberCount: 2,
+          onlineCount: 2,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUBS: a pending invite cannot repeatedly bump Club counters",
+    async () => {
+      const clubId = "invite-repeated-root-update";
+      await seedClubInviteAcceptanceCase(clubId);
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), `clubs/${clubId}/members/invitee-uid`),
+          {
+            userId: "invitee-uid",
+            displayName: "Invitee",
+            photoUrl: null,
+            role: "member",
+            isOnline: true,
+            joinedAt: serverTimestamp(),
+            invitedBy: "host-uid",
+          },
+        );
+      });
+      await assertFails(
+        updateDoc(doc(invitee.firestore(), `clubs/${clubId}`), {
+          memberCount: 2,
+          onlineCount: 2,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUBS: invite acceptance cannot mutate Club metadata",
+    async () => {
+      const clubId = "invite-metadata-tamper";
+      await seedClubInviteAcceptanceCase(clubId);
+      const batch = inviteAcceptanceBatch(invitee.firestore(), clubId, {
+        name: "Hijacked Club",
+        visibility: "public",
+        defaultChatChannelId: "attacker-chat",
+        defaultVoiceChannelId: "attacker-voice",
+        announcementChannelId: "attacker-announcements",
+      });
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
+    "SECURITY CLUBS: invite acceptance cannot forge onlineCount",
+    async () => {
+      const clubId = "invite-counter-tamper";
+      await seedClubInviteAcceptanceCase(clubId);
+      const batch = inviteAcceptanceBatch(invitee.firestore(), clubId, {
+        onlineCount: 99,
+      });
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
+    "SECURITY CLUBS: invite acceptance requires a server update timestamp",
+    async () => {
+      const clubId = "invite-timestamp-tamper";
+      await seedClubInviteAcceptanceCase(clubId);
+      const batch = inviteAcceptanceBatch(invitee.firestore(), clubId, {
+        updatedAt: new Date(0),
+      });
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
+    "CLUBS: an invitee can accept as a plain member in the real batch shape",
+    async () => {
+      const clubId = "invite-plain-member";
+      await seedClubInviteAcceptanceCase(clubId);
+      const db = invitee.firestore();
+      const batch = inviteAcceptanceBatch(db, clubId);
+      await assertSucceeds(batch.commit());
+    },
+  );
+
+  await check(
+    "SECURITY CLUBS: direct manager removal is denied in favor of the callable",
+    async () => {
+      const clubId = "manager-removes-member";
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, `clubs/${clubId}`), {
+          ownerId: "host-uid",
+          name: "Managed club",
+          type: "community",
+          status: "active",
+          memberCount: 2,
+          onlineCount: 2,
+        });
+        await setDoc(doc(db, `clubs/${clubId}/members/host-uid`), {
+          userId: "host-uid",
+          displayName: "Host",
+          photoUrl: null,
+          role: "owner",
+          isOnline: true,
+          joinedAt: serverTimestamp(),
+          invitedBy: null,
+        });
+        await setDoc(doc(db, `clubs/${clubId}/members/invitee-uid`), {
+          userId: "invitee-uid",
+          displayName: "Invitee",
+          photoUrl: null,
+          role: "member",
+          isOnline: true,
+          joinedAt: serverTimestamp(),
+          invitedBy: "host-uid",
+        });
+        await setDoc(doc(db, `users/invitee-uid/clubs/${clubId}`), {
+          clubId,
+          name: "Managed club",
+          avatarUrl: null,
+          role: "member",
+          joinedAt: serverTimestamp(),
+        });
+      });
+
+      const db = host.firestore();
+      const batch = writeBatch(db);
+      batch.delete(doc(db, `clubs/${clubId}/members/invitee-uid`));
+      batch.delete(doc(db, `users/invitee-uid/clubs/${clubId}`));
+      batch.update(doc(db, `clubs/${clubId}`), {
+        memberCount: 1,
+        onlineCount: 1,
+        updatedAt: serverTimestamp(),
+      });
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
+    "CLUBS: owner and co-owner can edit only validated Club metadata",
+    async () => {
+      const clubId = "metadata-edit-club";
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, `clubs/${clubId}`), {
+          ownerId: "host-uid",
+          name: "Before Club",
+          description: "Before",
+          defaultLanguage: "English",
+          privacy: "public",
+          type: "community",
+          status: "active",
+          memberCount: 2,
+          onlineCount: 2,
+          defaultChatChannelId: "general",
+        });
+        await setDoc(doc(db, `clubs/${clubId}/members/host-uid`), {
+          userId: "host-uid",
+          role: "owner",
+          joinedAt: serverTimestamp(),
+        });
+        await setDoc(doc(db, `clubs/${clubId}/members/invitee-uid`), {
+          userId: "invitee-uid",
+          role: "coOwner",
+          joinedAt: serverTimestamp(),
+        });
+      });
+
+      for (const db of [host.firestore(), invitee.firestore()]) {
+        await assertSucceeds(
+          updateDoc(doc(db, `clubs/${clubId}`), {
+            name: "Edited Club",
+            description: "Validated metadata",
+            defaultLanguage: "Polish",
+            privacy: "private",
+            updatedAt: serverTimestamp(),
+          }),
+        );
+      }
+    },
+  );
+
+  await check(
+    "SECURITY CLUBS: managers cannot forge root authority or counters",
+    async () => {
+      const clubId = "root-authority-tamper";
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, `clubs/${clubId}`), {
+          ownerId: "host-uid",
+          name: "Secure Club",
+          description: "Before",
+          defaultLanguage: "English",
+          privacy: "public",
+          type: "community",
+          status: "active",
+          memberCount: 2,
+          onlineCount: 2,
+          defaultChatChannelId: "general",
+        });
+        await setDoc(doc(db, `clubs/${clubId}/members/host-uid`), {
+          userId: "host-uid",
+          role: "owner",
+          joinedAt: serverTimestamp(),
+        });
+        await setDoc(doc(db, `clubs/${clubId}/members/invitee-uid`), {
+          userId: "invitee-uid",
+          role: "admin",
+          joinedAt: serverTimestamp(),
+        });
+      });
+
+      await assertFails(
+        updateDoc(doc(invitee.firestore(), `clubs/${clubId}`), {
+          name: "Admin takeover",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(host.firestore(), `clubs/${clubId}`), {
+          memberCount: 999,
+          defaultChatChannelId: "attacker-channel",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(host.firestore(), `clubs/${clubId}`), {
+          name: "x",
+          description: "",
+          defaultLanguage: "English",
+          privacy: "public",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUBS: direct owner deletion is denied to prevent orphaned subcollections",
+    async () => {
+      const clubId = "direct-delete-denied";
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), `clubs/${clubId}`), {
+          ownerId: "host-uid",
+          name: "Do not orphan",
+          type: "community",
+        });
+      });
+      await assertFails(deleteDoc(doc(host.firestore(), `clubs/${clubId}`)));
+    },
+  );
 
   await check(
     "room chat: reactions-only updates allowed for people in the room; text immutable; host-only delete",
@@ -1480,6 +2647,130 @@ async function main() {
     },
   );
 
+  await check(
+    "SECURITY: first users-doc write allows normal bootstrap but rejects forged premium identity",
+    async () => {
+      const fresh = testEnv.authenticatedContext("fresh-profile-uid", {
+        email_verified: true,
+      });
+      await assertSucceeds(
+        setDoc(doc(fresh.firestore(), "users/fresh-profile-uid"), {
+          uid: "fresh-profile-uid",
+          email: "fresh@yovoice.app",
+          displayName: "Fresh Profile",
+          username: "fresh",
+          accountType: "personal",
+          friendCount: 0,
+          isOnline: true,
+          lastSeen: serverTimestamp(),
+        }),
+      );
+
+      const presence = testEnv.authenticatedContext("presence-first-uid", {
+        email_verified: true,
+      });
+      await assertSucceeds(
+        setDoc(doc(presence.firestore(), "users/presence-first-uid"), {
+          isOnline: true,
+          lastSeen: serverTimestamp(),
+          presenceUpdatedAt: serverTimestamp(),
+        }),
+      );
+
+      const forged = testEnv.authenticatedContext("forged-profile-uid", {
+        email_verified: true,
+      });
+      await assertFails(
+        setDoc(doc(forged.firestore(), "users/forged-profile-uid"), {
+          uid: "forged-profile-uid",
+          accountType: "creator",
+        }),
+      );
+      await assertFails(
+        setDoc(doc(forged.firestore(), "users/forged-profile-uid"), {
+          uid: "forged-profile-uid",
+          premiumIdentity: true,
+        }),
+      );
+      await assertFails(
+        setDoc(doc(forged.firestore(), "users/forged-profile-uid"), {
+          uid: "forged-profile-uid",
+          role: "superAdmin",
+        }),
+      );
+      await assertFails(
+        setDoc(doc(forged.firestore(), "users/forged-profile-uid"), {
+          uid: "forged-profile-uid",
+          friendCount: 500,
+          followerCount: 500,
+          followingCount: 500,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "active subscription cannot bypass disabled Creator/Clubs capability flags",
+    async () => {
+      const limited = testEnv.authenticatedContext("limited-premium-uid", {
+        email_verified: true,
+      });
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "users/limited-premium-uid"), {
+          uid: "limited-premium-uid",
+          accountType: "personal",
+        });
+        await setDoc(
+          doc(ctx.firestore(), "entitlements/limited-premium-uid"),
+          {
+            status: "active",
+            currentPeriodEnd: new Date(Date.now() + 86400000),
+            creatorEnabled: false,
+            canCreateClubs: false,
+            premiumIdentityEnabled: true,
+          },
+        );
+      });
+
+      await assertFails(
+        updateDoc(doc(limited.firestore(), "users/limited-premium-uid"), {
+          accountType: "creator",
+        }),
+      );
+      await assertFails(
+        setDoc(doc(limited.firestore(), "clubs/limited-premium-club"), {
+          ownerId: "limited-premium-uid",
+          name: "No capability",
+          memberCount: 1,
+        }),
+      );
+
+      // Legacy/malformed entitlement documents must fail closed too. The
+      // rules default absent capability flags to false, matching Flutter.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), "entitlements/limited-premium-uid"),
+          {
+            status: "active",
+            currentPeriodEnd: new Date(Date.now() + 86400000),
+          },
+        );
+      });
+      await assertFails(
+        updateDoc(doc(limited.firestore(), "users/limited-premium-uid"), {
+          accountType: "creator",
+        }),
+      );
+      await assertFails(
+        setDoc(doc(limited.firestore(), "clubs/missing-capability-club"), {
+          ownerId: "limited-premium-uid",
+          name: "Missing capability",
+          memberCount: 1,
+        }),
+      );
+    },
+  );
+
   await check("client cannot write premiumIdentity on users doc", async () => {
     await assertFails(
       updateDoc(doc(host.firestore(), "users/host-uid"), {
@@ -1533,11 +2824,18 @@ async function main() {
     },
   );
 
-  // The three social notification types moved to server triggers
-  // (ADR-041). A client writing one is now, by definition, a forgery:
-  // rules cannot verify that a friendship or a follow edge exists, but
-  // the trigger reads the authoritative document and can.
-  for (const forged of ["friendRequest", "friendAccepted", "follow"]) {
+  // All notification types are now server-derived. A client writing one is,
+  // by definition, a forgery; only safe owner acknowledgement remains.
+  for (const forged of [
+    "friendRequest",
+    "friendAccepted",
+    "follow",
+    "clubInvite",
+    "clubInviteAccepted",
+    "roomInvite",
+    "broadcastInvite",
+    "mention",
+  ]) {
     await check(
       `SECURITY: a client cannot write a '${forged}' notification — it is ` +
         "server-derived",
@@ -1634,6 +2932,20 @@ async function main() {
       // server-written mirror, which is what assignUserRole maintains.
       role: "moderator",
     });
+    // Historical record retained for Admin SDK moderation/export. Rules must
+    // keep it invisible and immutable to every client, including staff.
+    await setDoc(doc(db, "globalChat/main/messages/g-ok-1"), {
+      senderId: "host-uid",
+      senderName: "Host",
+      senderPhotoUrl: null,
+      senderIsCreator: false,
+      senderIsStaff: false,
+      content: "legacy community message",
+      sentAt: new Date(),
+      isDeleted: false,
+      deletedBy: null,
+      deletedAt: null,
+    });
   });
 
   const moderator = testEnv.authenticatedContext("mod-uid", {
@@ -1671,24 +2983,20 @@ async function main() {
   }
 
   await check(
-    "GLOBAL: a verified member can post to the community channel",
+    "SECURITY GLOBAL: an old verified client cannot post after retirement",
     async () => {
-      await assertSucceeds(
+      await assertFails(
         sendGlobal(host.firestore(), "host-uid", "Host", "g-ok-1"),
       );
     },
   );
 
   await check(
-    "GLOBAL: a DIFFERENT signed-in account reads the SAME canonical " +
-      "message — one shared channel, not a per-user feed",
+    "SECURITY GLOBAL: historical messages are client-invisible",
     async () => {
-      const snapshot = await assertSucceeds(
+      await assertFails(
         getDoc(doc(attacker.firestore(), `${GLOBAL}/g-ok-1`)),
       );
-      if (snapshot.data().content !== "hello community") {
-        throw new Error("second account did not read the same message");
-      }
     },
   );
 
@@ -1933,9 +3241,9 @@ async function main() {
   );
 
   await check(
-    "GLOBAL: a moderator (role claim) CAN soft-delete a member's message",
+    "SECURITY GLOBAL: staff clients cannot mutate historical messages",
     async () => {
-      await assertSucceeds(
+      await assertFails(
         updateDoc(doc(moderator.firestore(), `${GLOBAL}/g-ok-1`), {
           isDeleted: true,
           deletedBy: "mod-uid",
@@ -1947,7 +3255,7 @@ async function main() {
   );
 
   await check(
-    "GLOBAL: an author CAN soft-delete their own message",
+    "SECURITY GLOBAL: authors cannot mutate retired history",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (context) => {
         await setDoc(doc(context.firestore(), "users/invitee-uid"), {
@@ -1956,10 +3264,10 @@ async function main() {
           accountType: "personal",
         });
       });
-      await assertSucceeds(
+      await assertFails(
         sendGlobal(invitee.firestore(), "invitee-uid", "Invitee", "g-mine"),
       );
-      await assertSucceeds(
+      await assertFails(
         updateDoc(doc(invitee.firestore(), `${GLOBAL}/g-mine`), {
           isDeleted: true,
           deletedBy: "invitee-uid",
@@ -1981,10 +3289,9 @@ async function main() {
   );
 
   await check(
-    "GLOBAL: paging the channel is a plain ordered/limited read and is " +
-      "allowed for any member",
+    "SECURITY GLOBAL: old-client paging is denied",
     async () => {
-      await assertSucceeds(
+      await assertFails(
         getDocs(
           query(
             collection(attacker.firestore(), GLOBAL),
@@ -2443,9 +3750,9 @@ async function main() {
   );
 
   await check(
-    "an ACTIVE account with no `banned` field at all is unaffected",
+    "SECURITY GLOBAL: retirement denies even an otherwise active account",
     async () => {
-      await assertSucceeds(
+      await assertFails(
         getDocs(
           query(
             collection(invitee.firestore(), GLOBAL),
@@ -2462,8 +3769,7 @@ async function main() {
   // ==================================================================
 
   await check(
-    "GLOBAL: the channel needs NO globalChat/main parent document — " +
-      "messages read and write with the parent absent",
+    "SECURITY GLOBAL: an absent parent cannot reopen retired messages",
     async () => {
       let parentExists = true;
       await testEnv.withSecurityRulesDisabled(async (context) => {
@@ -2477,8 +3783,7 @@ async function main() {
           "the suite never created globalChat/main, yet it exists",
         );
       }
-      // Everything above this point already read and wrote the channel.
-      await assertSucceeds(
+      await assertFails(
         getDocs(
           query(
             collection(invitee.firestore(), GLOBAL),
@@ -2539,7 +3844,7 @@ async function main() {
   );
 
   await check(
-    "RATE: the 200th message inside the window is still allowed (boundary)",
+    "SECURITY GLOBAL: retirement supersedes the former rate-limit boundary",
     async () => {
       const windowStart = new Date(Date.now() - 30 * 60 * 1000);
       await testEnv.withSecurityRulesDisabled(async (context) => {
@@ -2570,7 +3875,7 @@ async function main() {
         windowStartAt: windowStart,
         windowCount: 200,
       });
-      await assertSucceeds(batch.commit());
+      await assertFails(batch.commit());
     },
   );
 
@@ -2613,8 +3918,7 @@ async function main() {
   );
 
   await check(
-    "RATE: once the fixed hour has fully elapsed a NEW window opens " +
-      "and sending resumes",
+    "SECURITY GLOBAL: retirement supersedes a rolled rate-limit window",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (context) => {
         await setDoc(doc(context.firestore(), SENDER_STATE("invitee-uid")), {
@@ -2644,7 +3948,7 @@ async function main() {
         windowStartAt: serverTimestamp(),
         windowCount: 1,
       });
-      await assertSucceeds(batch.commit());
+      await assertFails(batch.commit());
     },
   );
 
@@ -2663,10 +3967,9 @@ async function main() {
   });
 
   await check(
-    "VERIFY: an ACTIVE but UNVERIFIED account can READ Global Chat — a " +
-      "new account should see the room it is joining",
+    "SECURITY GLOBAL: an unverified old client cannot read retired history",
     async () => {
-      await assertSucceeds(
+      await assertFails(
         getDocs(
           query(
             collection(unverified.firestore(), GLOBAL),
@@ -2693,7 +3996,7 @@ async function main() {
   );
 
   await check(
-    "VERIFY: a VERIFIED active account CAN send",
+    "SECURITY GLOBAL: verification does not reopen the retired channel",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (context) => {
         await setDoc(doc(context.firestore(), "users/verified-uid"), {
@@ -2705,7 +4008,7 @@ async function main() {
       const verified = testEnv.authenticatedContext("verified-uid", {
         email_verified: true,
       });
-      await assertSucceeds(
+      await assertFails(
         sendGlobal(
           verified.firestore(),
           "verified-uid",
@@ -3041,6 +4344,27 @@ async function main() {
   });
   const FAMILY = "clubs/family_parent-uid";
 
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await Promise.all([
+      setDoc(doc(db, "users/parent-uid"), {
+        displayName: "Parent",
+        banned: false,
+        disabled: false,
+      }),
+      setDoc(doc(db, "users/sibling-uid"), {
+        displayName: "Sibling",
+        banned: false,
+        disabled: false,
+      }),
+      setDoc(doc(db, "users/outsider-uid"), {
+        displayName: "Outsider",
+        banned: false,
+        disabled: false,
+      }),
+    ]);
+  });
+
   function familyDoc(overrides = {}) {
     return {
       name: "The Family",
@@ -3048,6 +4372,7 @@ async function main() {
       ownerId: "parent-uid",
       ownerName: "Parent",
       type: "family",
+      status: "active",
       privacy: "inviteOnly",
       defaultLanguage: "English",
       memberCount: 1,
@@ -3055,6 +4380,11 @@ async function main() {
       defaultChatChannelId: "general",
       defaultVoiceChannelId: "lounge",
       announcementChannelId: "announcements",
+      avatarUrl: null,
+      bannerUrl: null,
+      loungeRoomId: "club_lounge_family_parent-uid",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
       ...overrides,
     };
   }
@@ -3294,7 +4624,7 @@ async function main() {
   );
 
   await check(
-    "FAMILY: only an organizer may invite, and a plain member may not",
+    "FAMILY SECURITY: every invite, including organizer invites, uses the callable",
     async () => {
       await assertFails(
         setDoc(doc(sibling.firestore(), `${FAMILY}/invites/outsider-uid`), {
@@ -3303,7 +4633,7 @@ async function main() {
           status: "pending",
         }),
       );
-      await assertSucceeds(
+      await assertFails(
         setDoc(doc(parent.firestore(), `${FAMILY}/invites/outsider-uid`), {
           inviteeId: "outsider-uid",
           inviterId: "parent-uid",
@@ -3335,7 +4665,12 @@ async function main() {
       await assertFails(updateDoc(doc(db, FAMILY), { type: "community" }));
       await assertFails(updateDoc(doc(db, FAMILY), { ownerId: "attacker-uid" }));
       // An ordinary rename still works.
-      await assertSucceeds(updateDoc(doc(db, FAMILY), { name: "Our Family" }));
+      await assertSucceeds(
+        updateDoc(doc(db, FAMILY), {
+          name: "Our Family",
+          updatedAt: serverTimestamp(),
+        }),
+      );
     },
   );
 
@@ -3399,35 +4734,59 @@ async function main() {
       roomType: "temporary",
       status: "active",
       experience: "community",
+      approvalRequired: false,
+      slowModeSeconds: 0,
+      autoMuteNewUsers: true,
+      membersCanStartVoice: false,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
       ...overrides,
     };
   }
 
+  function createMetadataRoom(roomId, overrides = {}) {
+    const db = host.firestore();
+    const batch = writeBatch(db);
+    batch.set(doc(db, `rooms/${roomId}`), roomDoc(overrides));
+    batch.set(doc(db, `rooms/${roomId}/participants/host-uid`), {
+      userId: "host-uid",
+      displayName: "Host",
+      photoUrl: null,
+      role: "host",
+      isMuted: false,
+      isSpeaker: true,
+      isHandRaised: false,
+      joinedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return batch.commit();
+  }
+
   await check("ROOM META: a community room persists its own metadata", () =>
     assertSucceeds(
-      setDoc(
-        doc(host.firestore(), "rooms/meta-community"),
-        roomDoc({
+      createMetadataRoom(
+        "meta-community",
+        {
           targetAudience: "newcomers",
           topicTags: ["flutter", "dart"],
           roomGuidelines: "Be kind.",
           conversationStyle: "supportive",
           newcomerFriendly: true,
-        }),
+        },
       ),
     ),
   );
 
   await check("ROOM META: a podcast room persists its own metadata", () =>
     assertSucceeds(
-      setDoc(
-        doc(host.firestore(), "rooms/meta-podcast"),
-        roomDoc({
+      createMetadataRoom(
+        "meta-podcast",
+        {
           experience: "broadcast",
           targetAudience: "professionals",
           topicTags: ["interview"],
           showFormat: "panel",
-        }),
+        },
       ),
     ),
   );
@@ -3435,19 +4794,14 @@ async function main() {
   await check(
     "ROOM META regression: a legacy room with NO metadata still writes",
     () =>
-      assertSucceeds(
-        setDoc(doc(host.firestore(), "rooms/meta-legacy"), roomDoc()),
-      ),
+      assertSucceeds(createMetadataRoom("meta-legacy")),
   );
 
   await check(
     "ROOM META SECURITY: a community room cannot forge podcast-only fields",
     async () => {
       await assertFails(
-        setDoc(
-          doc(host.firestore(), "rooms/forge-1"),
-          roomDoc({ showFormat: "panel" }),
-        ),
+        createMetadataRoom("forge-1", { showFormat: "panel" }),
       );
     },
   );
@@ -3456,16 +4810,16 @@ async function main() {
     "ROOM META SECURITY: a podcast room cannot forge community-only fields",
     async () => {
       await assertFails(
-        setDoc(
-          doc(host.firestore(), "rooms/forge-2"),
-          roomDoc({ experience: "broadcast", conversationStyle: "casual" }),
-        ),
+        createMetadataRoom("forge-2", {
+          experience: "broadcast",
+          conversationStyle: "casual",
+        }),
       );
       await assertFails(
-        setDoc(
-          doc(host.firestore(), "rooms/forge-3"),
-          roomDoc({ experience: "broadcast", newcomerFriendly: true }),
-        ),
+        createMetadataRoom("forge-3", {
+          experience: "broadcast",
+          newcomerFriendly: true,
+        }),
       );
     },
   );
@@ -3474,22 +4828,16 @@ async function main() {
     "ROOM META SECURITY: invented enum values are refused for every field",
     async () => {
       await assertFails(
-        setDoc(
-          doc(host.firestore(), "rooms/bad-1"),
-          roomDoc({ targetAudience: "vip" }),
-        ),
+        createMetadataRoom("bad-1", { targetAudience: "vip" }),
       );
       await assertFails(
-        setDoc(
-          doc(host.firestore(), "rooms/bad-2"),
-          roomDoc({ conversationStyle: "chaotic" }),
-        ),
+        createMetadataRoom("bad-2", { conversationStyle: "chaotic" }),
       );
       await assertFails(
-        setDoc(
-          doc(host.firestore(), "rooms/bad-3"),
-          roomDoc({ experience: "broadcast", showFormat: "livestream" }),
-        ),
+        createMetadataRoom("bad-3", {
+          experience: "broadcast",
+          showFormat: "livestream",
+        }),
       );
     },
   );
@@ -3499,22 +4847,17 @@ async function main() {
       + "are refused",
     async () => {
       await assertFails(
-        setDoc(
-          doc(host.firestore(), "rooms/bad-4"),
-          roomDoc({ topicTags: ["a", "b", "c", "d"] }),
-        ),
+        createMetadataRoom("bad-4", {
+          topicTags: ["a", "b", "c", "d"],
+        }),
       );
       await assertFails(
-        setDoc(
-          doc(host.firestore(), "rooms/bad-5"),
-          roomDoc({ roomGuidelines: "x".repeat(281) }),
-        ),
+        createMetadataRoom("bad-5", {
+          roomGuidelines: "x".repeat(281),
+        }),
       );
       await assertFails(
-        setDoc(
-          doc(host.firestore(), "rooms/bad-6"),
-          roomDoc({ topicTags: "not-a-list" }),
-        ),
+        createMetadataRoom("bad-6", { topicTags: "not-a-list" }),
       );
     },
   );
@@ -3536,6 +4879,7 @@ async function main() {
       await assertSucceeds(
         updateDoc(doc(host.firestore(), "rooms/meta-community"), {
           targetAudience: "enthusiasts",
+          updatedAt: serverTimestamp(),
         }),
       );
     },
@@ -3672,6 +5016,55 @@ async function main() {
     },
   );
 
+  await check(
+    "BAN SECURITY: a globally banned account cannot create or communicate",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await updateDoc(doc(db, "users/attacker-uid"), { banned: true });
+        await setDoc(doc(db, "rooms/banned-join-room"), {
+          hostId: "host-uid",
+          visibility: "public",
+          status: "active",
+          isLive: true,
+          participantCount: 0,
+        });
+      });
+      const db = attacker.firestore();
+      await assertFails(
+        setDoc(doc(db, "voiceMoments/banned-voice-moment"), {
+          authorId: "attacker-uid",
+          caption: "should not publish",
+        }),
+      );
+      const batch = writeBatch(db);
+      batch.set(
+        doc(db, "rooms/banned-join-room/participants/attacker-uid"),
+        {
+          userId: "attacker-uid",
+          displayName: "Attacker",
+          photoUrl: null,
+          role: "listener",
+          isMuted: true,
+          isSpeaker: false,
+          isHandRaised: false,
+          joinedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+      );
+      batch.update(doc(db, "rooms/banned-join-room"), {
+        participantCount: 1,
+        updatedAt: serverTimestamp(),
+      });
+      await assertFails(batch.commit());
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users/attacker-uid"), {
+          banned: false,
+        });
+      });
+    },
+  );
+
   // --- staff communication mute (restrictions/{uid}) --------------------
 
   const mutedUser = testEnv.authenticatedContext("muted-uid", {
@@ -3697,33 +5090,6 @@ async function main() {
     },
   );
 
-  function mutedGlobalMessage(id) {
-    // The COMPLETE send contract: the message plus the sender-state doc
-    // in one batch, exactly as the app writes it — the rate-limit clause
-    // requires getAfter(senders/...) to point at THIS message.
-    const mutedDb = mutedUser.firestore();
-    const batch = writeBatch(mutedDb);
-    batch.set(doc(mutedDb, `globalChat/main/messages/${id}`), {
-      senderId: "muted-uid",
-      senderName: "Muted",
-      senderPhotoUrl: null,
-      senderIsCreator: false,
-      senderIsStaff: false,
-      content: "hello from muted-uid",
-      sentAt: serverTimestamp(),
-      isDeleted: false,
-      deletedBy: null,
-      deletedAt: null,
-    });
-    batch.set(doc(mutedDb, "globalChat/main/senders/muted-uid"), {
-      lastMessageAt: serverTimestamp(),
-      lastMessageId: id,
-      windowStartAt: serverTimestamp(),
-      windowCount: 1,
-    });
-    return batch.commit();
-  }
-
   await check(
     "MUTE: an active mute closes every public communication path",
     async () => {
@@ -3735,12 +5101,15 @@ async function main() {
           accountType: "personal",
         });
       });
-      // Baseline FIRST: with no restriction, the write shape passes — so
-      // every later denial can only be the mute itself.
-      await assertSucceeds(mutedGlobalMessage("mute-m0"));
-      await testEnv.withSecurityRulesDisabled(async (ctx) => {
-        await deleteDoc(doc(ctx.firestore(), "globalChat/main/senders/muted-uid"));
-      });
+      // Baseline FIRST on a current publishing surface, so the later denial
+      // is attributable to the restriction rather than retired Global Chat.
+      await assertSucceeds(
+        setDoc(doc(mutedUser.firestore(), "voiceMoments/mute-vm0"), {
+          authorId: "muted-uid",
+          caption: "baseline",
+          isPublished: true,
+        }),
+      );
 
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         await setDoc(doc(ctx.firestore(), "restrictions/muted-uid"), {
@@ -3750,8 +5119,10 @@ async function main() {
       });
       const mutedDb = mutedUser.firestore();
 
-      // Global Chat.
-      await assertFails(mutedGlobalMessage("mute-m1"));
+      // Global Chat stays retired regardless of the restriction state.
+      await assertFails(
+        sendGlobal(mutedDb, "muted-uid", "Muted", "mute-legacy"),
+      );
       // Public voice moment.
       await assertFails(
         setDoc(doc(mutedDb, "voiceMoments/mute-vm1"), {
@@ -3780,10 +5151,13 @@ async function main() {
           expiresAt: Timestamp.fromMillis(Date.now() - 60_000),
         });
       });
-      await assertSucceeds(mutedGlobalMessage("mute-m2"));
-      await testEnv.withSecurityRulesDisabled(async (ctx) => {
-        await deleteDoc(doc(ctx.firestore(), "globalChat/main/senders/muted-uid"));
-      });
+      await assertSucceeds(
+        setDoc(doc(mutedUser.firestore(), "voiceMoments/mute-vm2"), {
+          authorId: "muted-uid",
+          caption: "expired restriction",
+          isPublished: true,
+        }),
+      );
     },
   );
 
@@ -3799,7 +5173,13 @@ async function main() {
           { blockedAt: serverTimestamp() },
         );
       });
-      await assertSucceeds(mutedGlobalMessage("mute-m3"));
+      await assertSucceeds(
+        setDoc(doc(mutedUser.firestore(), "voiceMoments/mute-vm3"), {
+          authorId: "muted-uid",
+          caption: "personal block is not a sanction",
+          isPublished: true,
+        }),
+      );
     },
   );
 
@@ -3817,6 +5197,477 @@ async function main() {
         setDoc(doc(attacker.firestore(), "users/host-uid/muted/x"), {
           mutedAt: serverTimestamp(),
         }),
+      );
+    },
+  );
+
+  // ==================================================================
+  // PRIVATE ACCOUNT RECORDS + SERVER-OWNED PUBLIC IDENTITY PROJECTIONS
+  // ==================================================================
+
+  const privacyReader = testEnv.authenticatedContext("privacy-reader-uid", {
+    email_verified: true,
+  });
+  const privacyTarget = testEnv.authenticatedContext("privacy-target-uid", {
+    email_verified: true,
+  });
+  const privacyStranger = testEnv.authenticatedContext("privacy-stranger-uid", {
+    email_verified: true,
+  });
+  const privacyModerator = testEnv.authenticatedContext("privacy-mod-uid", {
+    email_verified: true,
+    role: "moderator",
+  });
+  const privacyStaleModerator = testEnv.authenticatedContext(
+    "privacy-stale-mod-uid",
+    { email_verified: true, role: "moderator" },
+  );
+  const privacyBannedModerator = testEnv.authenticatedContext(
+    "privacy-banned-mod-uid",
+    { email_verified: true, role: "moderator" },
+  );
+  const privacySuperAdmin = testEnv.authenticatedContext(
+    "privacy-super-admin-uid",
+    { email_verified: true, role: "superAdmin" },
+  );
+  const privacyUnauthenticated = testEnv.unauthenticatedContext();
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await Promise.all([
+      setDoc(doc(db, "users/privacy-reader-uid"), {
+        uid: "privacy-reader-uid",
+        displayName: "Reader",
+        email: "reader@private.invalid",
+        notificationPreferences: { directMessage: false },
+        isOnline: true,
+        lastSeen: Timestamp.now(),
+        role: "user",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/privacy-target-uid"), {
+        uid: "privacy-target-uid",
+        displayName: "Target",
+        email: "target@private.invalid",
+        notificationPreferences: { directMessage: false },
+        isOnline: true,
+        lastSeen: Timestamp.now(),
+        role: "superAdmin",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/privacy-stranger-uid"), {
+        uid: "privacy-stranger-uid",
+        displayName: "Stranger",
+        role: "user",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/privacy-mod-uid"), {
+        uid: "privacy-mod-uid",
+        displayName: "Moderator",
+        role: "moderator",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/privacy-stale-mod-uid"), {
+        uid: "privacy-stale-mod-uid",
+        displayName: "Stale moderator",
+        role: "user",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/privacy-banned-mod-uid"), {
+        uid: "privacy-banned-mod-uid",
+        displayName: "Banned moderator",
+        role: "moderator",
+        banned: true,
+      }),
+      setDoc(doc(db, "users/privacy-super-admin-uid"), {
+        uid: "privacy-super-admin-uid",
+        displayName: "Super admin",
+        role: "superAdmin",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/privacy-banned-target-uid"), {
+        uid: "privacy-banned-target-uid",
+        displayName: "Banned target",
+        role: "user",
+        banned: true,
+      }),
+      setDoc(doc(db, "publicProfiles/privacy-target-uid"), {
+        uid: "privacy-target-uid",
+        displayName: "Target",
+        username: "target",
+        displayNameSearch: "target",
+        usernameSearch: "target",
+        photoUrl: null,
+        bannerUrl: null,
+        bio: "Public bio",
+        country: "",
+        nativeLanguage: "Polish",
+        spokenLanguages: ["English"],
+        learningLanguages: [],
+        website: null,
+        statusMessage: "Public vibe",
+        accountType: "personal",
+        premiumIdentity: false,
+        friendCount: 1,
+        followerCount: 2,
+        followingCount: 3,
+        schemaVersion: 1,
+        updatedAt: Timestamp.now(),
+      }),
+      setDoc(doc(db, "socialPresence/privacy-target-uid"), {
+        uid: "privacy-target-uid",
+        isOnline: true,
+        lastSeen: Timestamp.now(),
+        schemaVersion: 1,
+        updatedAt: Timestamp.now(),
+      }),
+      setDoc(doc(db, "publicProfiles/privacy-banned-target-uid"), {
+        uid: "privacy-banned-target-uid",
+        displayName: "Stale banned projection",
+      }),
+      setDoc(
+        doc(db, "users/privacy-reader-uid/friends/privacy-target-uid"),
+        { userId: "privacy-target-uid" },
+      ),
+      setDoc(
+        doc(db, "users/privacy-target-uid/friends/privacy-reader-uid"),
+        { userId: "privacy-reader-uid" },
+      ),
+      setDoc(
+        doc(
+          db,
+          "friendshipGuards/privacy-reader-uid/friends/privacy-target-uid",
+        ),
+        {
+          ownerId: "privacy-reader-uid",
+          friendId: "privacy-target-uid",
+          schemaVersion: 1,
+          establishedAt: Timestamp.now(),
+        },
+      ),
+      setDoc(
+        doc(
+          db,
+          "friendshipGuards/privacy-target-uid/friends/privacy-reader-uid",
+        ),
+        {
+          ownerId: "privacy-target-uid",
+          friendId: "privacy-reader-uid",
+          schemaVersion: 1,
+          establishedAt: Timestamp.now(),
+        },
+      ),
+      setDoc(doc(db, "privateRateLimits/searchPublicProfiles_private"), {
+        kind: "searchPublicProfiles",
+        minuteCount: 1,
+      }),
+    ]);
+  });
+
+  await check("PRIVACY: an account can read its own private users document", async () => {
+    const snapshot = await assertSucceeds(
+      getDoc(doc(privacyReader.firestore(), "users/privacy-reader-uid")),
+    );
+    assert.equal(snapshot.data().email, "reader@private.invalid");
+  });
+
+  await check(
+    "SECURITY PRIVACY: ordinary users cannot get another private account record",
+    async () => {
+      await assertFails(
+        getDoc(doc(privacyReader.firestore(), "users/privacy-target-uid")),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PRIVACY: ordinary users cannot list or query private users",
+    async () => {
+      await assertFails(getDocs(collection(privacyReader.firestore(), "users")));
+      await assertFails(
+        getDocs(
+          query(
+            collection(privacyReader.firestore(), "users"),
+            where("username", "==", "target"),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PRIVACY: a moderator cannot get or list private user records",
+    async () => {
+      await assertFails(
+        getDoc(doc(privacyModerator.firestore(), "users/privacy-target-uid")),
+      );
+      await assertFails(
+        getDocs(collection(privacyModerator.firestore(), "users")),
+      );
+      await assertFails(
+        getDocs(
+          query(
+            collection(privacyModerator.firestore(), "users"),
+            where("email", "==", "target@private.invalid"),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PRIVACY: a super-admin client cannot bypass private user callables",
+    async () => {
+      await assertFails(
+        getDoc(doc(privacySuperAdmin.firestore(), "users/privacy-target-uid")),
+      );
+      await assertFails(
+        getDocs(collection(privacySuperAdmin.firestore(), "users")),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PRIVACY: stale or banned staff claims cannot read private records",
+    async () => {
+      await assertFails(
+        getDoc(
+          doc(
+            privacyStaleModerator.firestore(),
+            "users/privacy-target-uid",
+          ),
+        ),
+      );
+      await assertFails(
+        getDoc(
+          doc(
+            privacyBannedModerator.firestore(),
+            "users/privacy-target-uid",
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "PRIVACY: a known public profile is readable but contains no private fields",
+    async () => {
+      const snapshot = await assertSucceeds(
+        getDoc(
+          doc(privacyReader.firestore(), "publicProfiles/privacy-target-uid"),
+        ),
+      );
+      const data = snapshot.data();
+      for (const forbidden of [
+        "email",
+        "notificationPreferences",
+        "isOnline",
+        "lastSeen",
+        "role",
+        "banned",
+        "disabled",
+      ]) {
+        assert.equal(forbidden in data, false, forbidden);
+      }
+    },
+  );
+
+  await check(
+    "SECURITY PRIVACY: unauthenticated and banned-target profile reads fail",
+    async () => {
+      await assertFails(
+        getDoc(
+          doc(
+            privacyUnauthenticated.firestore(),
+            "publicProfiles/privacy-target-uid",
+          ),
+        ),
+      );
+      await assertFails(
+        getDoc(
+          doc(
+            privacyReader.firestore(),
+            "publicProfiles/privacy-banned-target-uid",
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PRIVACY: public profiles are no-list and server-write-only",
+    async () => {
+      await assertFails(
+        getDocs(collection(privacyReader.firestore(), "publicProfiles")),
+      );
+      await assertFails(
+        setDoc(
+          doc(privacyReader.firestore(), "publicProfiles/privacy-reader-uid"),
+          { uid: "privacy-reader-uid", displayName: "Forged" },
+        ),
+      );
+      await assertFails(
+        updateDoc(
+          doc(privacyReader.firestore(), "publicProfiles/privacy-target-uid"),
+          { role: "superAdmin" },
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PRIVACY: poisoned public projection schemas fail closed",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(
+          doc(
+            context.firestore(),
+            "publicProfiles/privacy-target-uid",
+          ),
+          { email: "must-not-leak@private.invalid" },
+        );
+      });
+      await assertFails(
+        getDoc(
+          doc(
+            privacyReader.firestore(),
+            "publicProfiles/privacy-target-uid",
+          ),
+        ),
+      );
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(
+          doc(
+            context.firestore(),
+            "publicProfiles/privacy-target-uid",
+          ),
+          { email: deleteField() },
+        );
+      });
+    },
+  );
+
+  await check(
+    "PRIVACY: social presence is available to a canonical friend",
+    async () => {
+      await assertSucceeds(
+        getDoc(
+          doc(privacyReader.firestore(), "socialPresence/privacy-target-uid"),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PRIVACY: strangers and legacy friend mirrors without both guards cannot read presence",
+    async () => {
+      await assertFails(
+        getDoc(
+          doc(privacyStranger.firestore(), "socialPresence/privacy-target-uid"),
+        ),
+      );
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await deleteDoc(
+          doc(
+            context.firestore(),
+            "friendshipGuards/privacy-target-uid/friends/privacy-reader-uid",
+          ),
+        );
+      });
+      await assertFails(
+        getDoc(
+          doc(privacyReader.firestore(), "socialPresence/privacy-target-uid"),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PRIVACY: friendship guards are invisible and immutable to clients",
+    async () => {
+      const guard = doc(
+        privacyReader.firestore(),
+        "friendshipGuards/privacy-reader-uid/friends/privacy-target-uid",
+      );
+      await assertFails(getDoc(guard));
+      await assertFails(
+        setDoc(guard, {
+          ownerId: "privacy-reader-uid",
+          friendId: "privacy-target-uid",
+          schemaVersion: 1,
+          establishedAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(deleteDoc(guard));
+    },
+  );
+
+  await check(
+    "SECURITY PRIVACY: poisoned presence and follow-edge schemas fail closed",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await Promise.all([
+          updateDoc(doc(db, "socialPresence/privacy-target-uid"), {
+            email: "presence-leak@private.invalid",
+          }),
+          setDoc(
+            doc(
+              db,
+              "users/privacy-target-uid/followers/privacy-reader-uid",
+            ),
+            {
+              uid: "privacy-reader-uid",
+              followedAt: Timestamp.now(),
+              displayName: "Stale identity snapshot",
+            },
+          ),
+        ]);
+      });
+      await assertFails(
+        getDoc(
+          doc(
+            privacyTarget.firestore(),
+            "socialPresence/privacy-target-uid",
+          ),
+        ),
+      );
+      await assertFails(
+        getDoc(
+          doc(
+            privacyReader.firestore(),
+            "users/privacy-target-uid/followers/privacy-reader-uid",
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PRIVACY: presence and search quota documents are Admin-only",
+    async () => {
+      await assertFails(
+        setDoc(
+          doc(privacyReader.firestore(), "socialPresence/privacy-reader-uid"),
+          { uid: "privacy-reader-uid", isOnline: true },
+        ),
+      );
+      await assertFails(
+        getDoc(
+          doc(
+            privacyReader.firestore(),
+            "privateRateLimits/searchPublicProfiles_private",
+          ),
+        ),
+      );
+      await assertFails(
+        setDoc(
+          doc(
+            privacyReader.firestore(),
+            "privateRateLimits/searchPublicProfiles_private",
+          ),
+          { minuteCount: 0 },
+        ),
       );
     },
   );

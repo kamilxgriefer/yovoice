@@ -4,7 +4,7 @@ const { Timestamp, FieldValue } = require("firebase-admin/firestore");
 const { logger } = require("firebase-functions/v2");
 
 const { db } = require("../utils/firestore");
-const { requireUserManager } = require("../utils/auth");
+const { requireProtectedOwner } = require("../utils/auth");
 
 const REGION = "europe-west1";
 
@@ -20,6 +20,11 @@ const PLANS = Object.freeze({
 const ACTIVE_STATUSES = Object.freeze(["active", "trialing", "grace"]);
 
 const DEFAULT_MAX_OWNED_CLUBS = 3;
+// Each expired entitlement produces two writes (entitlement + public user
+// mirror). 200 keeps every transaction comfortably below Firestore's
+// 500-write ceiling while still amortising query overhead.
+const PREMIUM_EXPIRY_PAGE_SIZE = 200;
+const MAX_PREMIUM_EXPIRY_PAGES = 50;
 
 /**
  * The single writer for `entitlements/{uid}` — the trusted subscription
@@ -76,9 +81,14 @@ async function applyEntitlements(uid, { plan, status, currentPeriodEnd, source }
  * plan 'none' revokes.
  */
 const adminSetPremiumEntitlements = onCall(
-  { region: REGION },
+  {
+    region: REGION,
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
+  },
   async (request) => {
-    requireUserManager(request);
+    // Paid capability grants are ownership-level writes. A stale or
+    // separately assigned superAdmin claim must never mint Premium.
+    await requireProtectedOwner(request);
 
     const uid = String(request.data?.uid ?? "").trim();
     const plan = String(request.data?.plan ?? "").trim();
@@ -147,28 +157,38 @@ const verifyPurchase = onCall({ region: REGION }, async (request) => {
   );
 });
 
-/**
- * Daily sweep: the authoritative premium check is time-based
- * (currentPeriodEnd), so expiry needs no job — but the cosmetic
- * users/{uid}.premiumIdentity mirror would otherwise linger after
- * expiry. This keeps the visible ring honest within a day of lapse.
- */
-const expirePremiumIdentity = onSchedule(
-  { region: REGION, schedule: "every 24 hours" },
-  async () => {
-    const now = Timestamp.now();
-    const stale = await db
-      .collection("entitlements")
-      .where("isPremium", "==", true)
-      .where("currentPeriodEnd", "<", now)
-      .get();
+async function fetchExpiredPremiumPage({ now, limit }) {
+  const snapshot = await db
+    .collection("entitlements")
+    .where("isPremium", "==", true)
+    .where("currentPeriodEnd", "<", now)
+    .limit(limit)
+    .get();
+  return snapshot.docs;
+}
 
-    if (stale.empty) return;
-
-    const batch = db.batch();
-    for (const doc of stale.docs) {
-      batch.set(
-        doc.ref,
+async function commitExpiredPremiumPage(documents, { now }) {
+  if (documents.length === 0) return 0;
+  return db.runTransaction(async (transaction) => {
+    // Re-read inside the transaction so a concurrent verified renewal cannot
+    // be overwritten by a sweep that queried the old expiry milliseconds
+    // earlier. Firestore retries this transaction on any concurrent change.
+    const currentDocuments = await transaction.getAll(
+      ...documents.map((document) => document.ref),
+    );
+    let expired = 0;
+    for (const document of currentDocuments) {
+      const data = document.data() ?? {};
+      const periodEndMillis = data.currentPeriodEnd?.toMillis?.();
+      if (
+        data.isPremium !== true ||
+        !Number.isFinite(periodEndMillis) ||
+        periodEndMillis >= now.toMillis()
+      ) {
+        continue;
+      }
+      transaction.set(
+        document.ref,
         {
           isPremium: false,
           creatorEnabled: false,
@@ -179,14 +199,95 @@ const expirePremiumIdentity = onSchedule(
         },
         { merge: true },
       );
-      batch.set(
-        db.collection("users").doc(doc.id),
+      transaction.set(
+        db.collection("users").doc(document.id),
         { premiumIdentity: false },
         { merge: true },
       );
+      expired += 1;
     }
-    await batch.commit();
-    logger.info("premium identity expired", { count: stale.size });
+    return expired;
+  });
+}
+
+/**
+ * Drains expired Premium projections in bounded pages. The query repeats
+ * without a cursor because every committed page leaves the predicate
+ * (`isPremium == true`) atomically; this also makes a retry resume naturally.
+ */
+async function expirePremiumIdentityPages({
+  now = Timestamp.now(),
+  pageSize = PREMIUM_EXPIRY_PAGE_SIZE,
+  maxPages = MAX_PREMIUM_EXPIRY_PAGES,
+  fetchPage = fetchExpiredPremiumPage,
+  commitPage = commitExpiredPremiumPage,
+} = {}) {
+  if (
+    !Number.isInteger(pageSize) ||
+    pageSize < 1 ||
+    pageSize > PREMIUM_EXPIRY_PAGE_SIZE
+  ) {
+    throw new TypeError(`pageSize must be between 1 and ${PREMIUM_EXPIRY_PAGE_SIZE}.`);
+  }
+  if (!Number.isInteger(maxPages) || maxPages < 1) {
+    throw new TypeError("maxPages must be a positive integer.");
+  }
+
+  let expiredCount = 0;
+  let pages = 0;
+  let lastPageWasFull = false;
+
+  while (pages < maxPages) {
+    const documents = await fetchPage({ now, limit: pageSize });
+    if (!Array.isArray(documents) || documents.length === 0) {
+      lastPageWasFull = false;
+      break;
+    }
+    if (documents.length > pageSize) {
+      throw new Error("Premium expiry source exceeded its bounded page size.");
+    }
+    const committed = await commitPage(documents, { now });
+    expiredCount += Number.isFinite(committed)
+      ? committed
+      : documents.length;
+    pages += 1;
+    lastPageWasFull = documents.length === pageSize;
+    if (!lastPageWasFull) break;
+  }
+
+  // At the invocation cap, one bounded probe distinguishes an exactly-full
+  // final page from actual remaining work. Access is still time-gated by the
+  // authoritative entitlement; only the public identity mirror is delayed.
+  let truncated = false;
+  if (pages === maxPages && lastPageWasFull) {
+    const remaining = await fetchPage({ now, limit: 1 });
+    truncated = Array.isArray(remaining) && remaining.length > 0;
+  }
+
+  return { expiredCount, pages, truncated };
+}
+
+/**
+ * Daily sweep: the authoritative premium check is time-based
+ * (currentPeriodEnd), so expiry needs no job — but the cosmetic
+ * users/{uid}.premiumIdentity mirror would otherwise linger after
+ * expiry. This keeps the visible ring honest within a day of lapse.
+ */
+const expirePremiumIdentity = onSchedule(
+  {
+    region: REGION,
+    schedule: "every 24 hours",
+    timeoutSeconds: 300,
+    memory: "512MiB",
+  },
+  async () => {
+    const outcome = await expirePremiumIdentityPages();
+    if (outcome.expiredCount > 0) {
+      logger.info("premium identity expired", outcome);
+    }
+    if (outcome.truncated) {
+      logger.warn("premium expiry sweep reached its invocation bound", outcome);
+    }
   },
 );
 
@@ -194,5 +295,10 @@ module.exports = {
   adminSetPremiumEntitlements,
   verifyPurchase,
   expirePremiumIdentity,
+  expirePremiumIdentityPages,
+  fetchExpiredPremiumPage,
+  commitExpiredPremiumPage,
+  PREMIUM_EXPIRY_PAGE_SIZE,
+  MAX_PREMIUM_EXPIRY_PAGES,
   applyEntitlements,
 };

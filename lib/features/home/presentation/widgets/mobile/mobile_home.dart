@@ -20,6 +20,7 @@ import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// The MOBILE Home — "Voice Briefing".
@@ -315,8 +316,11 @@ class _MobileHeader extends StatelessWidget {
               tooltip: 'Notifications',
             ),
             const SizedBox(width: 10),
-            GestureDetector(
+            AccessibleTapRegion(
               onTap: onProfile,
+              semanticLabel: 'Open your profile',
+              tooltip: 'Profile',
+              circular: true,
               child: Container(
                 padding: const EdgeInsets.all(2),
                 decoration: BoxDecoration(

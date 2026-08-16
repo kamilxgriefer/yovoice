@@ -14,6 +14,7 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_settings_screen.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class ClubOverviewScreen extends StatefulWidget {
   const ClubOverviewScreen({required this.clubId, super.key});
@@ -72,9 +73,7 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
 
       if (!mounted) return;
       await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => RoomEntryScreen(room: room),
-        ),
+        MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
       );
     } catch (error) {
       if (!mounted) return;
@@ -93,6 +92,7 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
       builder: (_) => _InviteFriendsSheet(club: club),
     );
   }
@@ -106,6 +106,10 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 520,
+      ),
       builder: (sheetContext) => _ClubOptionsSheet(
         canManage: canManage,
         onSettings: canManage
@@ -139,186 +143,191 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _background,
-      body: StreamBuilder<Club>(
-        stream: _club,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-              child: CircularProgressIndicator(color: _purple),
-            );
-          }
+      body: ResponsiveContentFrame(
+        width: ResponsiveContentWidth.feed,
+        child: StreamBuilder<Club>(
+          stream: _club,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(
+                child: CircularProgressIndicator(color: _purple),
+              );
+            }
 
-          if (snapshot.hasError || !snapshot.hasData) {
-            return _ClubLoadError(message: snapshot.error?.toString());
-          }
+            if (snapshot.hasError || !snapshot.hasData) {
+              return _ClubLoadError(message: snapshot.error?.toString());
+            }
 
-          final club = snapshot.data!;
-          return CustomScrollView(
-            slivers: [
-              SliverAppBar(
-                pinned: true,
-                expandedHeight: 238,
-                backgroundColor: _background,
-                surfaceTintColor: Colors.transparent,
-                leading: IconButton.filledTonal(
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.arrow_back_rounded),
-                ),
-                actions: [
-                  IconButton.filledTonal(
-                    onPressed: () => _showClubOptions(club),
-                    tooltip: 'Club options',
-                    icon: const Icon(Icons.more_horiz_rounded),
+            final club = snapshot.data!;
+            return CustomScrollView(
+              slivers: [
+                SliverAppBar(
+                  pinned: true,
+                  expandedHeight: 238,
+                  backgroundColor: _background,
+                  surfaceTintColor: Colors.transparent,
+                  leading: IconButton.filledTonal(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.arrow_back_rounded),
                   ),
-                  const SizedBox(width: 10),
-                ],
-                flexibleSpace: FlexibleSpaceBar(
-                  background: _ClubHero(club: club),
+                  actions: [
+                    IconButton.filledTonal(
+                      onPressed: () => _showClubOptions(club),
+                      tooltip: 'Club options',
+                      icon: const Icon(Icons.more_horiz_rounded),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
+                  flexibleSpace: FlexibleSpaceBar(
+                    background: _ClubHero(club: club),
+                  ),
                 ),
-              ),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        club.name,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 28,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: -0.5,
-                        ),
-                      ),
-                      const SizedBox(height: 7),
-                      Text(
-                        club.description.isEmpty
-                            ? 'A permanent place for your people.'
-                            : club.description,
-                        style: const TextStyle(
-                          color: Color(0xFFB6ACBB),
-                          fontSize: 13,
-                          height: 1.45,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          _ClubStat(
-                            value: club.memberCount.toString(),
-                            label: 'Members',
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          club.name,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 28,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.5,
                           ),
-                          const SizedBox(width: 10),
-                          _ClubStat(
-                            value: club.onlineCount.toString(),
-                            label: 'Online',
+                        ),
+                        const SizedBox(height: 7),
+                        Text(
+                          club.description.isEmpty
+                              ? 'A permanent place for your people.'
+                              : club.description,
+                          style: const TextStyle(
+                            color: Color(0xFFB6ACBB),
+                            fontSize: 13,
+                            height: 1.45,
                           ),
-                          const SizedBox(width: 10),
-                          _ClubStat(
-                            value: club.defaultLanguage,
-                            label: 'Language',
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            _ClubStat(
+                              value: club.memberCount.toString(),
+                              label: 'Members',
+                            ),
+                            const SizedBox(width: 10),
+                            _ClubStat(
+                              value: club.onlineCount.toString(),
+                              label: 'Online',
+                            ),
+                            const SizedBox(width: 10),
+                            _ClubStat(
+                              value: club.defaultLanguage,
+                              label: 'Language',
+                            ),
+                          ],
+                        ),
+                        // A Family Room's quick check-ins sit right under
+                        // the header, above the lounge — they are the thing
+                        // most likely to be wanted on opening the space.
+                        if (club.isFamilyRoom) ...[
+                          const SizedBox(height: 18),
+                          StreamBuilder<List<ClubMember>>(
+                            stream: _members,
+                            builder: (context, memberSnapshot) {
+                              final me = memberSnapshot.data
+                                  ?.where((member) => member.userId == _uid)
+                                  .firstOrNull;
+                              return FamilyCheckInPanel(
+                                clubId: club.id,
+                                currentUserId: _uid,
+                                canManage: me?.role.canEditClub ?? false,
+                                clubService: _clubService,
+                              );
+                            },
                           ),
                         ],
-                      ),
-                      // A Family Room's quick check-ins sit right under
-                      // the header, above the lounge — they are the thing
-                      // most likely to be wanted on opening the space.
-                      if (club.isFamilyRoom) ...[
                         const SizedBox(height: 18),
-                        StreamBuilder<List<ClubMember>>(
-                          stream: _members,
-                          builder: (context, memberSnapshot) {
-                            final me = memberSnapshot.data
-                                ?.where((member) => member.userId == _uid)
-                                .firstOrNull;
-                            return FamilyCheckInPanel(
-                              clubId: club.id,
-                              currentUserId: _uid,
-                              canManage: me?.role.canEditClub ?? false,
-                              clubService: _clubService,
-                            );
+                        Row(
+                          children: [
+                            Expanded(
+                              child: FilledButton.icon(
+                                onPressed: _openingLounge
+                                    ? null
+                                    : () => _openClubLounge(club),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: _purple,
+                                  minimumSize: const Size.fromHeight(52),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                ),
+                                icon: _openingLounge
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2.2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Icon(Icons.graphic_eq_rounded),
+                                label: Text(
+                                  _openingLounge ? 'OPENING...' : 'CLUB LOUNGE',
+                                  style: TextStyle(fontWeight: FontWeight.w900),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            IconButton.outlined(
+                              onPressed: () => _showInviteFriends(club),
+                              tooltip: 'Invite members',
+                              style: IconButton.styleFrom(
+                                minimumSize: const Size(52, 52),
+                                side: const BorderSide(
+                                  color: Color(0xFF4A385A),
+                                ),
+                              ),
+                              icon: const Icon(
+                                Icons.person_add_alt_1_rounded,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 22),
+                        _ClubTabs(
+                          selectedIndex: _selectedTab,
+                          onSelected: (index) {
+                            setState(() {
+                              _selectedTab = index;
+                            });
                           },
                         ),
                       ],
-                      const SizedBox(height: 18),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: FilledButton.icon(
-                              onPressed: _openingLounge
-                                  ? null
-                                  : () => _openClubLounge(club),
-                              style: FilledButton.styleFrom(
-                                backgroundColor: _purple,
-                                minimumSize: const Size.fromHeight(52),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                              ),
-                              icon: _openingLounge
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.2,
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                  : const Icon(Icons.graphic_eq_rounded),
-                              label: Text(
-                                _openingLounge ? 'OPENING...' : 'CLUB LOUNGE',
-                                style: TextStyle(fontWeight: FontWeight.w900),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          IconButton.outlined(
-                            onPressed: () => _showInviteFriends(club),
-                            tooltip: 'Invite members',
-                            style: IconButton.styleFrom(
-                              minimumSize: const Size(52, 52),
-                              side: const BorderSide(color: Color(0xFF4A385A)),
-                            ),
-                            icon: const Icon(
-                              Icons.person_add_alt_1_rounded,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 22),
-                      _ClubTabs(
-                        selectedIndex: _selectedTab,
-                        onSelected: (index) {
-                          setState(() {
-                            _selectedTab = index;
-                          });
-                        },
-                      ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 120),
-                sliver: SliverToBoxAdapter(
-                  child: switch (_selectedTab) {
-                    1 => _MembersPreview(
-                      clubId: widget.clubId,
-                      stream: _members,
-                    ),
-                    _ => _ChannelsPreview(
-                      clubName: club.name,
-                      stream: _channels,
-                      onOpenVoice: () => _openClubLounge(club),
-                    ),
-                  },
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 120),
+                  sliver: SliverToBoxAdapter(
+                    child: switch (_selectedTab) {
+                      1 => _MembersPreview(
+                        clubId: widget.clubId,
+                        stream: _members,
+                      ),
+                      _ => _ChannelsPreview(
+                        clubName: club.name,
+                        stream: _channels,
+                        onOpenVoice: () => _openClubLounge(club),
+                      ),
+                    },
+                  ),
                 ),
-              ),
-            ],
-          );
-        },
+              ],
+            );
+          },
+        ),
       ),
     );
   }

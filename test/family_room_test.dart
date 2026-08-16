@@ -9,6 +9,7 @@ import 'package:yovoice/features/clubs/data/models/family_check_in.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/widgets/family_check_in_panel.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -32,8 +33,11 @@ void main() {
   );
 
   setUp(() {
+    EntitlementService.resetCache();
     db = FakeFirebaseFirestore();
   });
+
+  tearDown(EntitlementService.resetCache);
 
   Widget host(Widget child) => MaterialApp(home: child);
 
@@ -91,6 +95,82 @@ void main() {
       ]) {
         expect(find.text(copy), findsOneWidget, reason: copy);
       }
+    });
+
+    testWidgets('the ordinary Club creation route requires Premium before '
+        'opening the form', (tester) async {
+      usePhone(tester, const Size(390, 2400));
+      final mockAuth = auth();
+      await tester.pumpWidget(
+        host(
+          RoomTypeSelectorScreen(
+            entitlementService: EntitlementService(
+              firestore: db,
+              auth: mockAuth,
+            ),
+            clubService: ClubService(
+              firestore: db,
+              auth: mockAuth,
+              storage: MockFirebaseStorage(),
+              notificationService: NotificationService(
+                firestore: db,
+                auth: mockAuth,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('Club'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Create your own space'), findsOneWidget);
+      expect(find.text('Explore Premium'), findsOneWidget);
+      expect(find.byType(CreateClubScreen), findsNothing);
+    });
+
+    testWidgets('active Premium opens the ordinary Club form', (tester) async {
+      usePhone(tester, const Size(390, 2400));
+      final mockAuth = auth();
+      await db.collection('entitlements').doc('me').set({
+        'plan': 'monthly',
+        'status': 'active',
+        'currentPeriodEnd': Timestamp.fromDate(
+          DateTime.now().add(const Duration(days: 30)),
+        ),
+        'creatorEnabled': true,
+        'canCreateClubs': true,
+        'premiumIdentityEnabled': true,
+        'maxOwnedClubs': 3,
+      });
+      await tester.pumpWidget(
+        host(
+          RoomTypeSelectorScreen(
+            entitlementService: EntitlementService(
+              firestore: db,
+              auth: mockAuth,
+            ),
+            clubService: ClubService(
+              firestore: db,
+              auth: mockAuth,
+              storage: MockFirebaseStorage(),
+              notificationService: NotificationService(
+                firestore: db,
+                auth: mockAuth,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('Club'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byType(CreateClubScreen), findsOneWidget);
+      expect(find.text('Create your own space'), findsNothing);
     });
 
     testWidgets('Family Room carries the emerald identity, and no other '
@@ -303,10 +383,7 @@ void main() {
         expect(find.text(label), findsOneWidget, reason: label);
       }
       // Nothing here may read as an emergency or location feature.
-      expect(
-        find.textContaining('Not an emergency feature'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('Not an emergency feature'), findsOneWidget);
       expect(find.textContaining('no location'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });

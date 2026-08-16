@@ -4,6 +4,12 @@ const { logger } = require("firebase-functions/v2");
 
 const { db } = require("../utils/firestore");
 const { buildPushMessage } = require("./push_payload");
+const {
+  FIRESTORE_CLEANUP_BATCH_SIZE,
+  MAX_FCM_TOKEN_DOCUMENT_READS,
+  planTokenDocuments,
+  sendMulticastInChunks,
+} = require("./push_delivery");
 
 const REGION = "europe-west1";
 
@@ -37,6 +43,25 @@ const PUSH_TITLES = {
   moderation: (_actor, label) => label || "A moderator took action on your account",
   system: (_actor, label) => label || "YoVoice",
 };
+
+async function deleteTokenReferences(references) {
+  const unique = new Map();
+  for (const reference of references) {
+    if (reference?.path) unique.set(reference.path, reference);
+  }
+  const bounded = [...unique.values()];
+  for (let index = 0; index < bounded.length;
+    index += FIRESTORE_CLEANUP_BATCH_SIZE) {
+    const batch = db.batch();
+    for (const reference of bounded.slice(
+      index,
+      index + FIRESTORE_CLEANUP_BATCH_SIZE,
+    )) {
+      batch.delete(reference);
+    }
+    await batch.commit();
+  }
+}
 
 // notification_service.dart writes the Firestore doc directly from the
 // client (see firestore.rules) — there is no Cloud Function in that path.
@@ -74,41 +99,53 @@ exports.onNotificationCreated = onDocumentCreated(
         .collection("users")
         .doc(userId)
         .collection("fcmTokens")
+        // Security Rules require this to equal request.time, so a client
+        // cannot forge a future timestamp to crowd out real devices.
+        .orderBy("updatedAt", "desc")
+        // Bound both Firestore cost and cleanup work even if a modified
+        // client previously created an excessive number of token docs.
+        .limit(MAX_FCM_TOKEN_DOCUMENT_READS)
         .get();
       if (tokensSnap.empty) return;
 
       const actorName = notification.actorName || "YoVoice user";
       const title = buildTitle(actorName, notification.targetLabel || null);
-      const tokens = tokensSnap.docs.map((doc) => doc.id);
-
-      const response = await getMessaging().sendEachForMulticast(buildPushMessage({
-        tokens,
-        type,
-        targetId: notification.targetId,
-        actorId: notification.actorId,
-        notificationId,
-        title,
-      }));
-
-      const staleTokens = [];
-      response.responses.forEach((result, index) => {
-        if (result.success) return;
-        const code = result.error?.code;
-        if (
-          code === "messaging/invalid-registration-token" ||
-          code === "messaging/registration-token-not-registered"
-        ) {
-          staleTokens.push(tokens[index]);
-        } else {
-          logger.error("FCM send failed", { code, message: result.error?.message });
-        }
+      const plan = planTokenDocuments(tokensSnap.docs);
+      const delivery = await sendMulticastInChunks({
+        tokens: plan.tokens,
+        messaging: getMessaging(),
+        buildMessage: (tokens) => buildPushMessage({
+          tokens,
+          type,
+          targetId: notification.targetId,
+          actorId: notification.actorId,
+          notificationId,
+          title,
+        }),
       });
 
-      if (staleTokens.length > 0) {
-        const batch = db.batch();
-        const tokensRef = db.collection("users").doc(userId).collection("fcmTokens");
-        staleTokens.forEach((token) => batch.delete(tokensRef.doc(token)));
-        await batch.commit();
+      for (const failure of delivery.failures) {
+        logger.error("FCM send failed", { code: failure.code });
+      }
+      for (const failure of delivery.batchErrors) {
+        logger.error("FCM multicast batch failed", failure);
+      }
+
+      const staleReferences = delivery.staleTokens
+        .map((token) => plan.tokenReferences.get(token))
+        .filter(Boolean);
+      await deleteTokenReferences([
+        ...plan.overflowReferences,
+        ...staleReferences,
+      ]);
+
+      if (plan.overflowReferences.length > 0) {
+        logger.warn("Pruned FCM tokens above the per-user cap", {
+          userId,
+          pruned: plan.overflowReferences.length,
+          readLimitReached:
+            tokensSnap.size === MAX_FCM_TOKEN_DOCUMENT_READS,
+        });
       }
     } catch (error) {
       // A push-delivery failure must never surface as a retried, crashing
@@ -118,3 +155,8 @@ exports.onNotificationCreated = onDocumentCreated(
     }
   },
 );
+
+module.exports = {
+  onNotificationCreated: exports.onNotificationCreated,
+  deleteTokenReferences,
+};

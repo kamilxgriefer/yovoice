@@ -12,6 +12,7 @@ import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -235,6 +236,10 @@ class _ChatScreenState extends State<ChatScreen> {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 520,
+      ),
       builder: (sheetContext) {
         return _MessageActionsSheet(
           isMine: message.isMine(_currentUserId),
@@ -452,112 +457,115 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         child: SafeArea(
           bottom: false,
-          child: Column(
-            children: [
-              _ChatHeader(
-                userId: widget.otherUserId,
-                displayName: widget.otherDisplayName,
-                photoUrl: widget.otherPhotoUrl,
-                presenceStream: _presence,
-                muted: _isMuted,
-                onBack: () => Navigator.pop(context),
-                onMute: _toggleMute,
-                onArchive: _archiveConversation,
-                onProfileTap: () => showProfilePreview(
-                  context,
+          child: ResponsiveContentFrame(
+            width: ResponsiveContentWidth.list,
+            child: Column(
+              children: [
+                _ChatHeader(
                   userId: widget.otherUserId,
                   displayName: widget.otherDisplayName,
                   photoUrl: widget.otherPhotoUrl,
+                  presenceStream: _presence,
+                  muted: _isMuted,
+                  onBack: () => Navigator.pop(context),
+                  onMute: _toggleMute,
+                  onArchive: _archiveConversation,
+                  onProfileTap: () => showProfilePreview(
+                    context,
+                    userId: widget.otherUserId,
+                    displayName: widget.otherDisplayName,
+                    photoUrl: widget.otherPhotoUrl,
+                  ),
                 ),
-              ),
-              Expanded(
-                child: StreamBuilder<List<Message>>(
-                  stream: _messages,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting &&
-                        !snapshot.hasData) {
-                      return const Center(
-                        child: CircularProgressIndicator(
-                          color: _primary,
-                          strokeWidth: 2.5,
-                        ),
-                      );
-                    }
-
-                    if (snapshot.hasError) {
-                      return const Center(
-                        child: Text(
-                          'Could not load this conversation.',
-                          style: TextStyle(color: _muted),
-                        ),
-                      );
-                    }
-
-                    final messages = snapshot.data ?? const <Message>[];
-
-                    if (messages.isEmpty) {
-                      return _EmptyConversation(
-                        name: widget.otherDisplayName,
-                        photoUrl: widget.otherPhotoUrl,
-                      );
-                    }
-
-                    unawaited(_markRead());
-
-                    return ListView.builder(
-                      reverse: true,
-                      padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
-                      itemCount: messages.length,
-                      itemBuilder: (context, index) {
-                        final message = messages[index];
-                        final nextMessage = index + 1 < messages.length
-                            ? messages[index + 1]
-                            : null;
-                        final showDate =
-                            nextMessage == null ||
-                            !_sameDay(message.sentAt, nextMessage.sentAt);
-
-                        return Column(
-                          children: [
-                            if (showDate) _DateDivider(date: message.sentAt),
-                            MessageBubble(
-                              message: message,
-                              currentUserId: _currentUserId,
-                              onLongPress: () => _messageActions(message),
-                            ),
-                          ],
+                Expanded(
+                  child: StreamBuilder<List<Message>>(
+                    stream: _messages,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting &&
+                          !snapshot.hasData) {
+                        return const Center(
+                          child: CircularProgressIndicator(
+                            color: _primary,
+                            strokeWidth: 2.5,
+                          ),
                         );
-                      },
-                    );
-                  },
-                ),
-              ),
-              StreamBuilder<bool>(
-                stream: _typing,
-                builder: (context, snapshot) {
-                  if (snapshot.data != true) {
-                    return const SizedBox.shrink();
-                  }
+                      }
 
-                  return const _TypingIndicator();
-                },
-              ),
-              if (_replyTo != null)
-                _ReplyPreview(
-                  message: _replyTo!,
-                  onClose: () {
-                    setState(() => _replyTo = null);
+                      if (snapshot.hasError) {
+                        return const Center(
+                          child: Text(
+                            'Could not load this conversation.',
+                            style: TextStyle(color: _muted),
+                          ),
+                        );
+                      }
+
+                      final messages = snapshot.data ?? const <Message>[];
+
+                      if (messages.isEmpty) {
+                        return _EmptyConversation(
+                          name: widget.otherDisplayName,
+                          photoUrl: widget.otherPhotoUrl,
+                        );
+                      }
+
+                      unawaited(_markRead());
+
+                      return ListView.builder(
+                        reverse: true,
+                        padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
+                        itemCount: messages.length,
+                        itemBuilder: (context, index) {
+                          final message = messages[index];
+                          final nextMessage = index + 1 < messages.length
+                              ? messages[index + 1]
+                              : null;
+                          final showDate =
+                              nextMessage == null ||
+                              !_sameDay(message.sentAt, nextMessage.sentAt);
+
+                          return Column(
+                            children: [
+                              if (showDate) _DateDivider(date: message.sentAt),
+                              MessageBubble(
+                                message: message,
+                                currentUserId: _currentUserId,
+                                onLongPress: () => _messageActions(message),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+                StreamBuilder<bool>(
+                  stream: _typing,
+                  builder: (context, snapshot) {
+                    if (snapshot.data != true) {
+                      return const SizedBox.shrink();
+                    }
+
+                    return const _TypingIndicator();
                   },
                 ),
-              _Composer(
-                controller: _controller,
-                focusNode: _focusNode,
-                sending: _sending,
-                onSend: _send,
-                onPhoto: () => _showAttachmentNotice('Photo sharing'),
-                onVoice: () => _showAttachmentNotice('Voice messages'),
-              ),
-            ],
+                if (_replyTo != null)
+                  _ReplyPreview(
+                    message: _replyTo!,
+                    onClose: () {
+                      setState(() => _replyTo = null);
+                    },
+                  ),
+                _Composer(
+                  controller: _controller,
+                  focusNode: _focusNode,
+                  sending: _sending,
+                  onSend: _send,
+                  onPhoto: () => _showAttachmentNotice('Photo sharing'),
+                  onVoice: () => _showAttachmentNotice('Voice messages'),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -609,59 +617,70 @@ class _ChatHeader extends StatelessWidget {
         children: [
           IconButton(
             onPressed: onBack,
+            tooltip: 'Back to chats',
             icon: const Icon(
               Icons.arrow_back_ios_new_rounded,
               color: Colors.white,
               size: 20,
             ),
           ),
-          GestureDetector(
-            onTap: onProfileTap,
-            child: _Avatar(name: displayName, url: photoUrl, radius: 20),
-          ),
-          const SizedBox(width: 11),
           Expanded(
-            child: GestureDetector(
-              onTap: onProfileTap,
-              behavior: HitTestBehavior.opaque,
-              child: StreamBuilder<ChatPresence>(
-              stream: presenceStream,
-              builder: (context, snapshot) {
-                final presence = snapshot.data;
+            child: Semantics(
+              button: true,
+              label: 'Open $displayName profile',
+              child: InkWell(
+                onTap: onProfileTap,
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    children: [
+                      _Avatar(name: displayName, url: photoUrl, radius: 20),
+                      const SizedBox(width: 11),
+                      Expanded(
+                        child: StreamBuilder<ChatPresence>(
+                          stream: presenceStream,
+                          builder: (context, snapshot) {
+                            final presence = snapshot.data;
 
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Wrap(
-                      spacing: 6,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Text(
-                          displayName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w900,
-                          ),
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Wrap(
+                                  spacing: 6,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    Text(
+                                      displayName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    UserIdentityBadges(uid: userId),
+                                  ],
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  _presenceText(presence),
+                                  style: TextStyle(
+                                    color: presence?.isOnline == true
+                                        ? const Color(0xFF50DF86)
+                                        : _ChatScreenState._muted,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
                         ),
-                        UserIdentityBadges(uid: userId),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _presenceText(presence),
-                      style: TextStyle(
-                        color: presence?.isOnline == true
-                            ? const Color(0xFF50DF86)
-                            : _ChatScreenState._muted,
-                        fontSize: 11,
                       ),
-                    ),
-                  ],
-                );
-              },
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -676,6 +695,7 @@ class _ChatHeader extends StatelessWidget {
             icon: Icon(Icons.call_outlined, color: Colors.white38),
           ),
           PopupMenuButton<String>(
+            tooltip: 'Conversation options',
             color: _ChatScreenState._surface,
             icon: const Icon(Icons.more_horiz_rounded, color: Colors.white),
             onSelected: (value) {
@@ -976,6 +996,7 @@ class _ReplyPreview extends StatelessWidget {
           ),
           IconButton(
             onPressed: onClose,
+            tooltip: 'Close reply',
             icon: const Icon(
               Icons.close_rounded,
               color: _ChatScreenState._muted,
@@ -1022,6 +1043,7 @@ class _Composer extends StatelessWidget {
         children: [
           IconButton(
             onPressed: onPhoto,
+            tooltip: 'Add photo',
             style: IconButton.styleFrom(
               backgroundColor: _ChatScreenState._surface2,
               foregroundColor: Colors.white,
@@ -1067,6 +1089,7 @@ class _Composer extends StatelessWidget {
                             ? IconButton(
                                 key: const ValueKey('send'),
                                 onPressed: sending ? null : onSend,
+                                tooltip: sending ? 'Sending message' : 'Send',
                                 icon: sending
                                     ? const SizedBox(
                                         width: 20,
@@ -1084,6 +1107,7 @@ class _Composer extends StatelessWidget {
                             : IconButton(
                                 key: const ValueKey('voice'),
                                 onPressed: onVoice,
+                                tooltip: 'Record voice message',
                                 icon: const Icon(
                                   Icons.mic_none_rounded,
                                   color: Colors.white,

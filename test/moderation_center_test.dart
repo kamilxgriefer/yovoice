@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
@@ -75,16 +76,15 @@ void main() {
     db = FakeFirebaseFirestore();
   });
 
-  ModerationService service(String uid, {String? role}) =>
-      ModerationService(firestore: db, auth: authFor(uid, role: role));
+  ModerationService service(String uid, {String? role}) => ModerationService(
+    firestore: db,
+    auth: authFor(uid, role: role),
+  );
 
   /// A real desktop surface. MaterialApp's `home` is laid out against
   /// the test WINDOW, so a SizedBox alone would still be squeezed into
   /// the default 800x600 and take the panel's narrow branch.
-  void useDesktop(
-    WidgetTester tester, {
-    Size size = const Size(1440, 1200),
-  }) {
+  void useDesktop(WidgetTester tester, {Size size = const Size(1440, 1200)}) {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -314,6 +314,32 @@ void main() {
       expect(find.text('Claim and review'), findsOneWidget);
     });
 
+    testWidgets('a report row can be focused and opened with Enter', (
+      tester,
+    ) async {
+      await seedReport(id: 'keyboard-report', reason: 'spam');
+      await openAsStaff(tester);
+      final semantics = tester.ensureSemantics();
+
+      final row = find.bySemanticsLabel(RegExp(r'Spam or scam, Open'));
+      expect(row, findsOneWidget);
+      final inkWell = find.descendant(of: row, matching: find.byType(InkWell));
+      expect(inkWell, findsOneWidget);
+
+      final control = tester.widget<InkWell>(inkWell);
+      expect(control.focusNode, isNotNull);
+      control.focusNode!.requestFocus();
+      await tester.pump();
+      expect(control.focusNode!.hasFocus, isTrue);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+
+      expect(find.text('keyboard-report'), findsOneWidget);
+      expect(find.text('Claim and review'), findsOneWidget);
+      semantics.dispose();
+    });
+
     testWidgets('a live update does not move the selection', (tester) async {
       await seedReport(id: 'r1', reason: 'spam', age: const Duration(hours: 2));
       await openAsStaff(tester);
@@ -358,26 +384,28 @@ void main() {
       expect(report.reason, ReportReason.spam);
     });
 
-    test('an unknown status or reason degrades safely instead of throwing',
-        () async {
-      await db.collection('reports').doc('odd').set({
-        'reporterId': 'r',
-        'targetType': 'somethingNew',
-        'targetId': 't',
-        'reportedUserId': 'a',
-        'reason': 'somethingNew',
-        'note': '',
-        'createdAt': Timestamp.now(),
-        'status': 'somethingNew',
-      });
+    test(
+      'an unknown status or reason degrades safely instead of throwing',
+      () async {
+        await db.collection('reports').doc('odd').set({
+          'reporterId': 'r',
+          'targetType': 'somethingNew',
+          'targetId': 't',
+          'reportedUserId': 'a',
+          'reason': 'somethingNew',
+          'note': '',
+          'createdAt': Timestamp.now(),
+          'status': 'somethingNew',
+        });
 
-      final report = ModerationReport.fromFirestore(
-        await db.collection('reports').doc('odd').get(),
-      );
-      expect(report.status, ReportStatus.open);
-      expect(report.reason, isNull);
-      expect(report.targetType, isNull);
-    });
+        final report = ModerationReport.fromFirestore(
+          await db.collection('reports').doc('odd').get(),
+        );
+        expect(report.status, ReportStatus.open);
+        expect(report.reason, isNull);
+        expect(report.targetType, isNull);
+      },
+    );
   });
 
   group('idempotency keys', () {

@@ -120,8 +120,13 @@ class ProfileService {
   }
 
   Stream<UserProfile> watchProfile(String userId) {
+    // The complete users/{uid} document is private account state. Only the
+    // signed-in account watches its source record; every other profile comes
+    // from the exact server-owned public projection (no email, preferences,
+    // presence, staff/ban or achievement internals).
+    final collection = userId == _uid ? 'users' : 'publicProfiles';
     return _firestore
-        .collection('users')
+        .collection(collection)
         .doc(userId)
         .snapshots()
         .map(UserProfile.fromFirestore);

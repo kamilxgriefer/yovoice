@@ -15,8 +15,6 @@ const { deriveCapabilities } = require("../utils/capabilities");
 
 const {
   requireAuthentication,
-  requireSuperAdmin,
-  requireUserManager,
   requireVerifiedStaff,
   requireProtectedOwner,
 } = require("../utils/auth");
@@ -29,6 +27,10 @@ const {
 } = require("../utils/firestore");
 
 const { writeUserAuditLog } = require("../utils/audit");
+const {
+  EVENT_TYPES,
+  enqueueVoiceEnforcement,
+} = require("../staff/voice_enforcement");
 
 const auth = getAuth();
 
@@ -106,6 +108,32 @@ exports.bootstrapSuperAdmin = onCall(
     }
 
     const callerRecord = await auth.getUser(authenticatedUser.uid);
+    const callerProfile = await db
+      .collection("users")
+      .doc(authenticatedUser.uid)
+      .get();
+
+    // Bootstrap is the one owner path that cannot use
+    // requireProtectedOwner yet (the role does not exist yet). The
+    // immutable uid is therefore necessary but not sufficient: reject a
+    // disabled Auth record, a server-side ban, or a stale verification
+    // claim before writing the ownership role.
+    if (
+      callerRecord.disabled === true ||
+      callerProfile.data()?.banned === true
+    ) {
+      throw new HttpsError(
+        "permission-denied",
+        "This account is not allowed to become the application owner.",
+      );
+    }
+
+    if (callerRecord.emailVerified !== true) {
+      throw new HttpsError(
+        "permission-denied",
+        "Verify your e-mail address before becoming the application owner.",
+      );
+    }
 
     const existingClaims = callerRecord.customClaims ?? {};
 
@@ -309,10 +337,11 @@ exports.assignUserRole = onCall(
 exports.getUserRole = onCall(
   {
     region: "europe-west1",
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
     enforceAppCheck: false,
   },
   async (request) => {
-    requireSuperAdmin(request);
+    await requireProtectedOwner(request);
 
     const targetUid = normalizeText(request.data?.uid, 128);
 
@@ -353,10 +382,11 @@ exports.getUserRole = onCall(
 exports.listAdminUsers = onCall(
   {
     region: "europe-west1",
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
     enforceAppCheck: false,
   },
   async (request) => {
-    requireUserManager(request);
+    await requireProtectedOwner(request);
 
     const limit = positiveInteger(request.data?.limit, 50, 100);
 
@@ -505,9 +535,23 @@ exports.setUserBan = onCall(
       );
     }
 
-    const targetRole = targetUser.customClaims?.role ?? USER_ROLES.USER;
+    const targetProfileSnapshot = await db
+      .collection("users")
+      .doc(targetUid)
+      .get();
+    const targetProfile = targetProfileSnapshot.data() ?? {};
+    const targetClaimRole = targetUser.customClaims?.role ?? USER_ROLES.USER;
+    const targetMirrorRole = targetProfile.role ?? USER_ROLES.USER;
 
-    if (targetRole !== USER_ROLES.USER && !caps.sanctionStaff) {
+    // Either authoritative source saying "staff" is enough to protect
+    // the account. This fails closed during the short claim/mirror
+    // convergence window and under manual data drift instead of letting
+    // a moderator sanction a staff account by catching the stale side.
+    const targetIsStaff =
+      targetClaimRole !== USER_ROLES.USER ||
+      targetMirrorRole !== USER_ROLES.USER;
+
+    if (targetIsStaff && !caps.sanctionStaff) {
       throw new HttpsError(
         "permission-denied",
         "Only the application owner can sanction staff accounts.",
@@ -519,35 +563,51 @@ exports.setUserBan = onCall(
         ? Timestamp.fromMillis(Date.now() + durationHours * 60 * 60 * 1000)
         : null;
 
-    await auth.updateUser(targetUid, {
-      disabled: banned,
-    });
+    const targetReference = db.collection("users").doc(targetUid);
+    const banState = {
+      banned,
+      banReason: banned ? reason || "Administrative action" : null,
+      bannedAt: banned ? FieldValue.serverTimestamp() : null,
+      bannedUntil,
+      bannedBy: banned ? caller.uid : null,
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+    let enforcementEvent = null;
 
-    // Disabling an account stops it minting NEW ID tokens, but one the
-    // client already holds stays cryptographically valid until it
-    // expires — up to an hour of continued access on a banned account.
-    // Revoking refresh tokens invalidates every outstanding session, so
-    // the client cannot renew, and Firestore rules additionally read the
-    // `banned` field written below, which takes effect on the very next
-    // request rather than at token expiry. See docs/SECURITY.md.
     if (banned) {
-      await auth.revokeRefreshTokens(targetUid);
-    }
+      // State + outbox are one atomic commit. Once it succeeds, rules and
+      // token issuance fail closed immediately, and a retrying trigger owns
+      // every already-issued LiveKit session even if this callable crashes.
+      const batch = db.batch();
+      enforcementEvent = enqueueVoiceEnforcement(batch, {
+        targetUid,
+        type: EVENT_TYPES.BAN,
+        requestedBy: caller.uid,
+        source: "setUserBan",
+      });
+      batch.set(targetReference, {
+        ...banState,
+        banEnforcementEventId: enforcementEvent.id,
+      }, { merge: true });
+      await batch.commit();
 
-    await db
-      .collection("users")
-      .doc(targetUid)
-      .set(
-        {
-          banned,
-          banReason: banned ? reason || "Administrative action" : null,
-          bannedAt: banned ? FieldValue.serverTimestamp() : null,
-          bannedUntil,
-          bannedBy: banned ? caller.uid : null,
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
+      // Disabling an account stops it minting NEW ID tokens, but one the
+      // client already holds stays cryptographically valid until expiry.
+      // Refresh-token revocation plus the server-side banned mirror closes
+      // both paths; the durable event independently removes voice sessions.
+      await auth.updateUser(targetUid, { disabled: true });
+      await auth.revokeRefreshTokens(targetUid);
+    } else {
+      // Enabling Auth before clearing Firestore remains fail-closed: rules
+      // and token issuance still see banned=true during this short window.
+      // A lift deliberately does not guess at LiveKit permissions; a fresh
+      // join derives them from the current canonical room state.
+      await auth.updateUser(targetUid, { disabled: false });
+      await targetReference.set({
+        ...banState,
+        banEnforcementEventId: null,
+      }, { merge: true });
+    }
 
     await writeUserAuditLog({
       caller,
@@ -557,6 +617,7 @@ exports.setUserBan = onCall(
       details: {
         reason: banned ? reason || "Administrative action" : null,
         durationHours,
+        voiceEnforcementEventId: enforcementEvent?.id ?? null,
       },
     });
 
@@ -565,6 +626,9 @@ exports.setUserBan = onCall(
       uid: targetUid,
       banned,
       bannedUntil: timestampToIso(bannedUntil),
+      voiceEnforcement: enforcementEvent
+        ? { status: "queued", eventId: enforcementEvent.id }
+        : null,
     };
   },
 );

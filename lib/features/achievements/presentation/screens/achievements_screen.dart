@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 import '../../../profile/data/models/user_profile.dart';
 import '../../../profile/data/services/profile_service.dart';
@@ -156,16 +157,22 @@ class AwardsProgress {
 }
 
 class AchievementsScreen extends StatefulWidget {
-  const AchievementsScreen({required this.profile, super.key});
+  const AchievementsScreen({
+    required this.profile,
+    this.achievementService,
+    super.key,
+  });
 
   final UserProfile profile;
+  final AchievementService? achievementService;
 
   @override
   State<AchievementsScreen> createState() => _AchievementsScreenState();
 }
 
 class _AchievementsScreenState extends State<AchievementsScreen> {
-  final _service = AchievementService();
+  late final AchievementService _service =
+      widget.achievementService ?? AchievementService();
   bool _saving = false;
   AchievementCategory? _selectedCategory;
 
@@ -182,6 +189,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
                     .contains(item.metric),
               )
               .toList(growable: false);
+    final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
 
     return Scaffold(
       backgroundColor: const Color(0xFF09050F),
@@ -189,6 +197,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
         backgroundColor: const Color(0xFF09050F),
         foregroundColor: Colors.white,
         elevation: 0,
+        toolbarHeight: 58 + ((textScale - 1) * 34),
         titleSpacing: 0,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -209,74 +218,80 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
           ],
         ),
       ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final isWide = constraints.maxWidth >= 900;
+      body: ResponsiveContentFrame(
+        width: ResponsiveContentWidth.dashboard,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth >= 900;
+            final textScale = MediaQuery.textScalerOf(
+              context,
+            ).scale(1).clamp(1.0, 2.0);
 
-          return CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(
-                child: _AwardsHeader(
-                  progress: awardsProgress,
-                  selectedCategory: _selectedCategory,
-                  onSelectCategory: (value) =>
-                      setState(() => _selectedCategory = value),
-                  isWide: isWide,
-                ),
-              ),
-              SliverPadding(
-                padding: EdgeInsets.fromLTRB(
-                  isWide ? 24 : 16,
-                  4,
-                  isWide ? 24 : 16,
-                  40,
-                ),
-                sliver: SliverGrid(
-                  gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: isWide ? 560 : 520,
-                    mainAxisExtent: 250,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
+            return CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(
+                  child: _AwardsHeader(
+                    progress: awardsProgress,
+                    selectedCategory: _selectedCategory,
+                    onSelectCategory: (value) =>
+                        setState(() => _selectedCategory = value),
+                    isWide: isWide,
                   ),
-                  delegate: SliverChildBuilderDelegate((context, index) {
-                    final achievement = visibleAchievements[index];
-                    final isUnlocked = unlockedIds.contains(achievement.id);
-                    final progress =
-                        widget.profile.achievementStats[achievement.metric] ??
-                        0;
-                    final isSelected =
-                        widget.profile.selectedTitleId == achievement.id;
+                ),
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(
+                    isWide ? 24 : 16,
+                    4,
+                    isWide ? 24 : 16,
+                    40,
+                  ),
+                  sliver: SliverGrid(
+                    gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: isWide ? 560 : 520,
+                      mainAxisExtent: 250 + ((textScale - 1) * 150),
+                      crossAxisSpacing: 16,
+                      mainAxisSpacing: 16,
+                    ),
+                    delegate: SliverChildBuilderDelegate((context, index) {
+                      final achievement = visibleAchievements[index];
+                      final isUnlocked = unlockedIds.contains(achievement.id);
+                      final progress =
+                          widget.profile.achievementStats[achievement.metric] ??
+                          0;
+                      final isSelected =
+                          widget.profile.selectedTitleId == achievement.id;
 
-                    return _AchievementCard(
-                      achievement: achievement,
-                      progress: progress,
-                      unlocked: isUnlocked,
-                      selected: isSelected,
-                      saving: _saving,
-                      onSelect: isUnlocked
-                          ? () async {
-                              final navigator = Navigator.of(context);
+                      return _AchievementCard(
+                        achievement: achievement,
+                        progress: progress,
+                        unlocked: isUnlocked,
+                        selected: isSelected,
+                        saving: _saving,
+                        onSelect: isUnlocked
+                            ? () async {
+                                final navigator = Navigator.of(context);
 
-                              setState(() => _saving = true);
-                              try {
-                                await _service.selectTitle(achievement.id);
+                                setState(() => _saving = true);
+                                try {
+                                  await _service.selectTitle(achievement.id);
 
-                                if (!mounted) return;
-                                navigator.pop();
-                              } finally {
-                                if (mounted) {
-                                  setState(() => _saving = false);
+                                  if (!mounted) return;
+                                  navigator.pop();
+                                } finally {
+                                  if (mounted) {
+                                    setState(() => _saving = false);
+                                  }
                                 }
                               }
-                            }
-                          : null,
-                    );
-                  }, childCount: visibleAchievements.length),
+                            : null,
+                      );
+                    }, childCount: visibleAchievements.length),
+                  ),
                 ),
-              ),
-            ],
-          );
-        },
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -316,7 +331,11 @@ class _AwardsHeader extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           SizedBox(
-            height: 40,
+            height:
+                48 +
+                ((MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0) -
+                        1) *
+                    24),
             child: ListView(
               scrollDirection: Axis.horizontal,
               children: [
@@ -467,13 +486,24 @@ class _StatsRow extends StatelessWidget {
       ),
     ];
 
-    return Row(
-      children: [
-        for (var index = 0; index < tiles.length; index++) ...[
-          if (index > 0) const SizedBox(width: 10),
-          Expanded(child: tiles[index]),
-        ],
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(
+          context,
+        ).scale(1).clamp(1.0, 2.0);
+        final columns = constraints.maxWidth < 420 || textScale > 1.4 ? 2 : 4;
+        const gap = 10.0;
+        final tileWidth =
+            (constraints.maxWidth - ((columns - 1) * gap)) / columns;
+
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final tile in tiles) SizedBox(width: tileWidth, child: tile),
+          ],
+        );
+      },
     );
   }
 }
@@ -620,7 +650,11 @@ class _RecentUnlocks extends StatelessWidget {
           )
         else
           SizedBox(
-            height: 88,
+            height:
+                96 +
+                ((MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0) -
+                        1) *
+                    54),
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: dated.length > 8 ? 8 : dated.length,
@@ -647,7 +681,7 @@ class _RecentUnlocks extends StatelessWidget {
                       const Spacer(),
                       Text(
                         achievement.title,
-                        maxLines: 1,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Colors.white,
@@ -695,6 +729,7 @@ class _AchievementCard extends StatelessWidget {
         : achievement.threshold;
     final ratio = (progress / safeThreshold).clamp(0.0, 1.0);
     final shownProgress = progress.clamp(0, achievement.threshold);
+    final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.4;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 240),
@@ -786,7 +821,7 @@ class _AchievementCard extends StatelessWidget {
                                   children: [
                                     Text(
                                       achievement.title,
-                                      maxLines: 2,
+                                      maxLines: largeText ? 3 : 2,
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
                                         color: unlocked
@@ -817,7 +852,7 @@ class _AchievementCard extends StatelessWidget {
                         const SizedBox(height: 18),
                         Text(
                           achievement.description,
-                          maxLines: 2,
+                          maxLines: largeText ? 3 : 2,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: unlocked

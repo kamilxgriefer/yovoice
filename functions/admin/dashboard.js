@@ -1,6 +1,6 @@
 const { onCall } = require("firebase-functions/v2/https");
 
-const { requireAdminCenterAccess } = require("../utils/auth");
+const { requireProtectedOwner } = require("../utils/auth");
 
 const { db } = require("../utils/firestore");
 
@@ -9,10 +9,11 @@ const REGION = "europe-west1";
 const getAdminDashboard = onCall(
   {
     region: REGION,
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
     enforceAppCheck: false,
   },
   async (request) => {
-    requireAdminCenterAccess(request);
+    await requireProtectedOwner(request);
 
     const [users, rooms, clubs, activeRooms] = await Promise.all([
       db.collection("users").count().get(),

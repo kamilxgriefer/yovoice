@@ -33,6 +33,16 @@ backward compatibility. Do not remove that mapping until production data
 is confirmed migrated — see
 [ADR-001](Decisions.md#adr-001-legacy-podcast-room-experience-stays-supported).
 
+## Profile
+
+`lib/features/profile/` — editable identity/media, account type and real
+activity counters. `Your YO Voice journey` presents Communities, Messages,
+Voice time and Rooms created as one compact four-row list with intrinsic
+height, so desktop width no longer turns four short metrics into oversized
+cards. Changing a Personal profile into Creator requires the trusted Creator
+capability and is checked again on Save; an existing Creator profile and its
+content are not erased when Premium expires.
+
 ## Clubs
 
 Persistent communities (`lib/features/clubs/`): channels (chat + voice),
@@ -41,6 +51,14 @@ member roles (`owner`/`coOwner`/regular member, ranked by
 (`transferClubOwnershipSelf` Cloud Function). Club rosters are readable by
 members; role changes are power-ranked so a `coOwner` can't promote someone
 above their own level or touch the `owner` role directly.
+
+The More → Clubs hub and ordinary Club creation require the trusted Clubs
+capability. This is not a membership paywall: existing club membership,
+invites and direct participation remain free. Family Rooms use the same Club
+primitives but keep their separate free, invite-only, deterministic-id path.
+Creation is one atomic seven-document batch (Club, owner member, user
+projection, three default channels and lounge room); rules validate the new
+root with `getAfter()` so the dependent writes see the same commit.
 
 ## Friends & Social
 
@@ -93,9 +111,26 @@ adds:
 `lib/features/creator/` — a real dashboard over the signed-in user's owned
 rooms, clubs, and Voice Moments, with quick actions into the existing
 create-room/create-club/record-moment flows and a share-based invite flow.
+Creator Studio requires the trusted Creator capability; More shows the locked
+state to free users and the destination independently rechecks entitlement,
+including expiry while it is open.
 **Analytics, monetization, and audience-growth charts are intentionally
 not built** — shown as visible, disabled "Coming soon" cards rather than
 hidden or faked.
+
+## Premium entitlements
+
+`entitlements/{uid}` is the only paid-access source. A capability requires an
+active/trialing/grace subscription whose period has not ended, the common
+`premiumIdentityEnabled` flag and its feature flag (`creatorEnabled` or
+`canCreateClubs`). `users/{uid}.premiumIdentity` and the visible VIP badge are
+public presentation data only; neither authorizes Creator, Creator Studio or
+Clubs. Client gates fail closed and Firestore Rules enforce protected writes.
+
+The subscription plumbing is ready for verified grants, but real App
+Store/Google Play purchase adapters and an IAP client are not configured.
+`verifyPurchase` therefore declines today; only the guarded
+`adminSetPremiumEntitlements` admin path can issue a working grant.
 
 ## Settings
 

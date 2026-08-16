@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:image_picker/image_picker.dart';
@@ -71,6 +72,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
   String _language = 'English';
   bool _busy = false;
   bool _pickingImage = false;
+  String? _communityCreationId;
 
   XFile? _avatarFile;
   XFile? _bannerFile;
@@ -142,6 +144,12 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
               defaultLanguage: _language,
               avatarFile: _avatarFile,
               bannerFile: _bannerFile,
+              // Keep one server idempotency key for the lifetime of this
+              // form. If the callable commits and its response is lost, the
+              // next tap recovers the same Club rather than allocating a
+              // second id and consuming another quota slot.
+              documentId: _communityCreationId ??= _clubService
+                  .newClubDocumentId(),
             );
 
       if (!mounted) return;
@@ -202,205 +210,215 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
           style: const TextStyle(fontWeight: FontWeight.w900),
         ),
       ),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(18, 10, 18, 130),
-          children: [
-            _HeroCard(identity: _identity, isFamily: widget.isFamily),
-            const SizedBox(height: 24),
-            _SectionTitle(
-              title: widget.isFamily ? 'Family identity' : 'Club identity',
-              subtitle: widget.isFamily
-                  ? 'Name the space your family will recognize.'
-                  : 'Give your people a place they will recognize.',
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: _MediaPickerCard(
-                    icon: Icons.groups_2_rounded,
-                    label: widget.isFamily ? 'Family avatar' : 'Club avatar',
-                    helper: _avatarBytes == null
-                        ? 'Choose image'
-                        : 'Tap to replace',
-                    bytes: _avatarBytes,
-                    circularPreview: true,
-                    onTap: () => _pickImage(avatar: true),
-                    onRemove: _avatarBytes == null
-                        ? null
-                        : () => setState(() {
-                            _avatarFile = null;
-                            _avatarBytes = null;
-                          }),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _MediaPickerCard(
-                    icon: Icons.image_rounded,
-                    label: widget.isFamily ? 'Family banner' : 'Club banner',
-                    helper: _bannerBytes == null
-                        ? 'Choose image'
-                        : 'Tap to replace',
-                    bytes: _bannerBytes,
-                    onTap: () => _pickImage(avatar: false),
-                    onRemove: _bannerBytes == null
-                        ? null
-                        : () => setState(() {
-                            _bannerFile = null;
-                            _bannerBytes = null;
-                          }),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            _Field(
-              controller: _nameController,
-              label: widget.isFamily ? 'Family name' : 'Club name',
-              hint: 'e.g. YO Voice Founders',
-              maxLength: 40,
-              validator: (value) {
-                final length = value?.trim().length ?? 0;
-                if (length < 3) return 'Enter at least 3 characters';
-                return null;
-              },
-            ),
-            const SizedBox(height: 14),
-            _Field(
-              controller: _descriptionController,
-              label: 'Description',
-              hint: 'What brings this club together?',
-              maxLength: 220,
-              maxLines: 4,
-            ),
-            const SizedBox(height: 26),
-            // A Family Room has exactly one privacy model, so there is
-            // nothing to choose: offering "Public" on a space defined as
-            // private would be a lie the service would then ignore.
-            if (!widget.isFamily) ...[
-              const _SectionTitle(
-                title: 'Privacy',
-                subtitle: 'Choose how new members can enter.',
+      body: ResponsiveContentFrame(
+        width: ResponsiveContentWidth.form,
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(18, 10, 18, 130),
+            children: [
+              _HeroCard(identity: _identity, isFamily: widget.isFamily),
+              const SizedBox(height: 24),
+              _SectionTitle(
+                title: widget.isFamily ? 'Family identity' : 'Club identity',
+                subtitle: widget.isFamily
+                    ? 'Name the space your family will recognize.'
+                    : 'Give your people a place they will recognize.',
               ),
               const SizedBox(height: 14),
-              _PrivacyChoice(
-                title: 'Public',
-                subtitle: 'Anyone can discover and join the club.',
-                icon: Icons.public_rounded,
-                value: ClubPrivacy.public,
-                selectedValue: _privacy,
-                onChanged: (value) => setState(() => _privacy = value),
-              ),
-              const SizedBox(height: 10),
-              _PrivacyChoice(
-                title: 'Private',
-                subtitle: 'The club is hidden and members join by invitation.',
-                icon: Icons.lock_rounded,
-                value: ClubPrivacy.private,
-                selectedValue: _privacy,
-                onChanged: (value) => setState(() => _privacy = value),
-              ),
-              const SizedBox(height: 10),
-              _PrivacyChoice(
-                title: 'Invite only',
-                subtitle: 'Visible club, but every member needs an invite.',
-                icon: Icons.mail_rounded,
-                value: ClubPrivacy.inviteOnly,
-                selectedValue: _privacy,
-                onChanged: (value) => setState(() => _privacy = value),
-              ),
-            ],
-            const SizedBox(height: 26),
-            _SectionTitle(
-              title: widget.isFamily
-                  ? 'Primary family language'
-                  : 'Default language',
-              subtitle: widget.isFamily
-                  ? 'Everyone can still speak any language here.'
-                  : 'Members can still use any language in the club.',
-            ),
-            const SizedBox(height: 14),
-            DropdownButtonFormField<String>(
-              initialValue: _language,
-              dropdownColor: _surfaceStrong,
-              iconEnabledColor: _primary,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
-              ),
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: _surface,
-                prefixIcon: Icon(Icons.language_rounded, color: _primary),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(18),
-                  borderSide: const BorderSide(color: _border),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(18),
-                  borderSide: const BorderSide(color: _border),
-                ),
-              ),
-              items: _languages
-                  .map(
-                    (language) => DropdownMenuItem<String>(
-                      value: language,
-                      child: Text(language),
+              Row(
+                children: [
+                  Expanded(
+                    child: _MediaPickerCard(
+                      icon: Icons.groups_2_rounded,
+                      label: widget.isFamily ? 'Family avatar' : 'Club avatar',
+                      helper: _avatarBytes == null
+                          ? 'Choose image'
+                          : 'Tap to replace',
+                      bytes: _avatarBytes,
+                      circularPreview: true,
+                      onTap: () => _pickImage(avatar: true),
+                      onRemove: _avatarBytes == null
+                          ? null
+                          : () => setState(() {
+                              _avatarFile = null;
+                              _avatarBytes = null;
+                            }),
                     ),
-                  )
-                  .toList(growable: false),
-              onChanged: (value) {
-                if (value != null) setState(() => _language = value);
-              },
-            ),
-            const SizedBox(height: 24),
-            _WhatGetsCreatedCard(isFamily: widget.isFamily),
-          ],
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _MediaPickerCard(
+                      icon: Icons.image_rounded,
+                      label: widget.isFamily ? 'Family banner' : 'Club banner',
+                      helper: _bannerBytes == null
+                          ? 'Choose image'
+                          : 'Tap to replace',
+                      bytes: _bannerBytes,
+                      onTap: () => _pickImage(avatar: false),
+                      onRemove: _bannerBytes == null
+                          ? null
+                          : () => setState(() {
+                              _bannerFile = null;
+                              _bannerBytes = null;
+                            }),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _Field(
+                controller: _nameController,
+                label: widget.isFamily ? 'Family name' : 'Club name',
+                hint: 'e.g. YO Voice Founders',
+                maxLength: 40,
+                validator: (value) {
+                  final length = value?.trim().length ?? 0;
+                  if (length < 3) return 'Enter at least 3 characters';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 14),
+              _Field(
+                controller: _descriptionController,
+                label: 'Description',
+                hint: 'What brings this club together?',
+                maxLength: 220,
+                maxLines: 4,
+              ),
+              const SizedBox(height: 26),
+              // A Family Room has exactly one privacy model, so there is
+              // nothing to choose: offering "Public" on a space defined as
+              // private would be a lie the service would then ignore.
+              if (!widget.isFamily) ...[
+                const _SectionTitle(
+                  title: 'Privacy',
+                  subtitle: 'Choose how new members can enter.',
+                ),
+                const SizedBox(height: 14),
+                _PrivacyChoice(
+                  title: 'Public',
+                  subtitle: 'Anyone can discover and join the club.',
+                  icon: Icons.public_rounded,
+                  value: ClubPrivacy.public,
+                  selectedValue: _privacy,
+                  onChanged: (value) => setState(() => _privacy = value),
+                ),
+                const SizedBox(height: 10),
+                _PrivacyChoice(
+                  title: 'Private',
+                  subtitle:
+                      'The club is hidden and members join by invitation.',
+                  icon: Icons.lock_rounded,
+                  value: ClubPrivacy.private,
+                  selectedValue: _privacy,
+                  onChanged: (value) => setState(() => _privacy = value),
+                ),
+                const SizedBox(height: 10),
+                _PrivacyChoice(
+                  title: 'Invite only',
+                  subtitle: 'Visible club, but every member needs an invite.',
+                  icon: Icons.mail_rounded,
+                  value: ClubPrivacy.inviteOnly,
+                  selectedValue: _privacy,
+                  onChanged: (value) => setState(() => _privacy = value),
+                ),
+              ],
+              const SizedBox(height: 26),
+              _SectionTitle(
+                title: widget.isFamily
+                    ? 'Primary family language'
+                    : 'Default language',
+                subtitle: widget.isFamily
+                    ? 'Everyone can still speak any language here.'
+                    : 'Members can still use any language in the club.',
+              ),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
+                initialValue: _language,
+                dropdownColor: _surfaceStrong,
+                iconEnabledColor: _primary,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: _surface,
+                  prefixIcon: Icon(Icons.language_rounded, color: _primary),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(18),
+                    borderSide: const BorderSide(color: _border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(18),
+                    borderSide: const BorderSide(color: _border),
+                  ),
+                ),
+                items: _languages
+                    .map(
+                      (language) => DropdownMenuItem<String>(
+                        value: language,
+                        child: Text(language),
+                      ),
+                    )
+                    .toList(growable: false),
+                onChanged: (value) {
+                  if (value != null) setState(() => _language = value);
+                },
+              ),
+              const SizedBox(height: 24),
+              _WhatGetsCreatedCard(isFamily: widget.isFamily),
+            ],
+          ),
         ),
       ),
       bottomNavigationBar: SafeArea(
         top: false,
         child: Container(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
           decoration: const BoxDecoration(
             color: Color(0xFF100B18),
             border: Border(top: BorderSide(color: Color(0xFF30243D))),
           ),
-          child: SizedBox(
-            height: 58,
-            child: FilledButton.icon(
-              onPressed: _busy || _pickingImage ? null : _createClub,
-              style: FilledButton.styleFrom(
-                backgroundColor: _primary,
-                disabledBackgroundColor: _primary.withValues(alpha: .45),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(19),
-                ),
-              ),
-              icon: _busy
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.add_business_rounded),
-              label: Text(
-                _busy
-                    ? (widget.isFamily
-                          ? 'Creating Family Room...'
-                          : 'Creating club...')
-                    : (widget.isFamily
-                          ? 'Create Family Room'
-                          : 'Create Club'),
-                style: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w900,
+          child: ResponsiveContentFrame(
+            width: ResponsiveContentWidth.form,
+            fillHeight: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+              child: SizedBox(
+                height: 58,
+                child: FilledButton.icon(
+                  onPressed: _busy || _pickingImage ? null : _createClub,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _primary,
+                    disabledBackgroundColor: _primary.withValues(alpha: .45),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(19),
+                    ),
+                  ),
+                  icon: _busy
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.add_business_rounded),
+                  label: Text(
+                    _busy
+                        ? (widget.isFamily
+                              ? 'Creating Family Room...'
+                              : 'Creating club...')
+                        : (widget.isFamily
+                              ? 'Create Family Room'
+                              : 'Create Club'),
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -452,10 +470,7 @@ class _HeroCard extends StatelessWidget {
                             'closest to you.'
                       : 'A Club is permanent: members, roles, a main chat, '
                             'announcements and a private voice lounge.',
-                  style: TextStyle(
-                    color: Color(0xFFD1C4DA),
-                    height: 1.42,
-                  ),
+                  style: TextStyle(color: Color(0xFFD1C4DA), height: 1.42),
                 ),
               ],
             ),

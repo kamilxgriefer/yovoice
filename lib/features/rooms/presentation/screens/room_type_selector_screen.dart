@@ -3,12 +3,23 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart' show ClubType;
+import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/create_club_screen.dart';
+import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
+import 'package:yovoice/features/premium/premium_gates.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class RoomTypeSelectorScreen extends StatelessWidget {
-  const RoomTypeSelectorScreen({super.key});
+  const RoomTypeSelectorScreen({
+    this.entitlementService,
+    this.clubService,
+    super.key,
+  });
+
+  final EntitlementService? entitlementService;
+  final ClubService? clubService;
 
   static const _background = Color(0xFF080711);
   static const _muted = Color(0xFFA69CAF);
@@ -28,7 +39,15 @@ class RoomTypeSelectorScreen extends StatelessWidget {
     );
   }
 
-  void _openClub(BuildContext context) {
+  Future<void> _openClub(BuildContext context) async {
+    if (!await PremiumGates.ensureCanCreateClub(
+      context,
+      entitlementService: entitlementService,
+      clubService: clubService,
+    )) {
+      return;
+    }
+    if (!context.mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute<void>(builder: (_) => const CreateClubScreen()),
     );
@@ -47,6 +66,59 @@ class RoomTypeSelectorScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final choices = <Widget>[
+      _RoomChoice(
+        title: 'Community Room',
+        eyebrow: 'OPEN CONVERSATION',
+        subtitle: 'A relaxed live room where everyone can speak.',
+        identity: SpaceIdentity.community,
+        features: const [
+          'Free-flowing voice conversation',
+          'Live chat and reactions',
+          'Calm stage with speaker tiles',
+        ],
+        onTap: () => _openRoom(context, RoomExperience.community),
+      ),
+      _RoomChoice(
+        title: 'Podcast Room',
+        eyebrow: 'HOST + AUDIENCE',
+        subtitle: 'A hosted show with a stage, audience and requests.',
+        identity: SpaceIdentity.podcast,
+        features: const [
+          'Host and speaker stage',
+          'Audience raise-hand queue',
+          'Invite to stage and moderation',
+        ],
+        onTap: () => _openRoom(context, RoomExperience.broadcast),
+      ),
+      _RoomChoice(
+        title: 'Club',
+        eyebrow: 'PERMANENT COMMUNITY',
+        subtitle: 'Members, roles, chat, announcements and a Club Lounge.',
+        identity: SpaceIdentity.club,
+        highlighted: true,
+        features: const [
+          'Invite friends and manage members',
+          'Owner, Co-owner, Admin and more',
+          'Persistent chat and private voice lounge',
+        ],
+        onTap: () => _openClub(context),
+      ),
+      _RoomChoice(
+        title: 'Family Room',
+        eyebrow: 'PRIVATE FAMILY SPACE',
+        subtitle:
+            'A permanent, invite-only space for the people closest to you.',
+        identity: SpaceIdentity.family,
+        features: const [
+          'Always-open family voice lounge',
+          'Private chat, announcements and quick check-ins',
+          'Organizer and Member roles',
+        ],
+        onTap: () => _openFamilyRoom(context),
+      ),
+    ];
+
     return Scaffold(
       backgroundColor: _background,
       appBar: AppBar(
@@ -58,78 +130,53 @@ class RoomTypeSelectorScreen extends StatelessWidget {
         ),
         centerTitle: true,
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 40),
-        children: [
-          const Text(
-            'What do you want to build?',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 27,
-              fontWeight: FontWeight.w900,
-              height: 1.1,
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Start a conversation, host an audience or build a permanent home for your people.',
-            style: TextStyle(color: _muted, height: 1.45),
-          ),
-          const SizedBox(height: 26),
-          _RoomChoice(
-            title: 'Community Room',
-            eyebrow: 'OPEN CONVERSATION',
-            subtitle: 'A relaxed live room where everyone can speak.',
-            identity: SpaceIdentity.community,
-            features: const [
-              'Free-flowing voice conversation',
-              'Live chat and reactions',
-              'Calm stage with speaker tiles',
-            ],
-            onTap: () => _openRoom(context, RoomExperience.community),
-          ),
-          const SizedBox(height: 16),
-          _RoomChoice(
-            title: 'Podcast Room',
-            eyebrow: 'HOST + AUDIENCE',
-            subtitle: 'A hosted show with a stage, audience and requests.',
-            identity: SpaceIdentity.podcast,
-            features: const [
-              'Host and speaker stage',
-              'Audience raise-hand queue',
-              'Invite to stage and moderation',
-            ],
-            onTap: () => _openRoom(context, RoomExperience.broadcast),
-          ),
-          const SizedBox(height: 16),
-          _RoomChoice(
-            title: 'Club',
-            eyebrow: 'PERMANENT COMMUNITY',
-            subtitle: 'Members, roles, chat, announcements and a Club Lounge.',
-            identity: SpaceIdentity.club,
-            highlighted: true,
-            features: const [
-              'Invite friends and manage members',
-              'Owner, Co-owner, Admin and more',
-              'Persistent chat and private voice lounge',
-            ],
-            onTap: () => _openClub(context),
-          ),
-          const SizedBox(height: 16),
-          _RoomChoice(
-            title: 'Family Room',
-            eyebrow: 'PRIVATE FAMILY SPACE',
-            subtitle:
-                'A permanent, invite-only space for the people closest to you.',
-            identity: SpaceIdentity.family,
-            features: const [
-              'Always-open family voice lounge',
-              'Private chat, announcements and quick check-ins',
-              'Organizer and Member roles',
-            ],
-            onTap: () => _openFamilyRoom(context),
-          ),
-        ],
+      body: ResponsiveContentFrame(
+        width: ResponsiveContentWidth.feed,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const horizontalPadding = 20.0;
+            const gap = 16.0;
+            final innerWidth = constraints.maxWidth - horizontalPadding * 2;
+            final useTwoColumns = constraints.maxWidth >= 900;
+            final cardWidth = useTwoColumns
+                ? (innerWidth - gap) / 2
+                : innerWidth;
+
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(
+                horizontalPadding,
+                18,
+                horizontalPadding,
+                40,
+              ),
+              children: [
+                const Text(
+                  'What do you want to build?',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 27,
+                    fontWeight: FontWeight.w900,
+                    height: 1.1,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Start a conversation, host an audience or build a permanent home for your people.',
+                  style: TextStyle(color: _muted, height: 1.45),
+                ),
+                const SizedBox(height: 26),
+                Wrap(
+                  spacing: gap,
+                  runSpacing: gap,
+                  children: [
+                    for (final choice in choices)
+                      SizedBox(width: cardWidth, child: choice),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -149,6 +196,7 @@ class _RoomChoice extends StatelessWidget {
   final String title;
   final String eyebrow;
   final String subtitle;
+
   /// Where every colour on this card comes from. Shape, padding, radius,
   /// icon box, type scale and hover stay shared across all four — only
   /// the identity differs.
@@ -175,11 +223,7 @@ class _RoomChoice extends StatelessWidget {
               width: highlighted ? 1.5 : 1,
             ),
             boxShadow: [
-              BoxShadow(
-                color: identity.glow,
-                blurRadius: 24,
-                spreadRadius: 1,
-              ),
+              BoxShadow(color: identity.glow, blurRadius: 24, spreadRadius: 1),
             ],
           ),
           child: Column(
@@ -195,7 +239,11 @@ class _RoomChoice extends StatelessWidget {
                       color: identity.wash,
                       borderRadius: BorderRadius.circular(18),
                     ),
-                    child: Icon(identity.icon, color: identity.primary, size: 30),
+                    child: Icon(
+                      identity.icon,
+                      color: identity.primary,
+                      size: 30,
+                    ),
                   ),
                   const Spacer(),
                   if (highlighted)

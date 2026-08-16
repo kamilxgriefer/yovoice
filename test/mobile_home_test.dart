@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -105,6 +106,7 @@ void main() {
     VoidCallback? onFriends,
     VoidCallback? onCreateMoment,
     VoidCallback? onCreateRoom,
+    VoidCallback? onProfile,
     ValueChanged<Conversation>? onOpenConversation,
   }) {
     final firebaseAuth = auth();
@@ -113,7 +115,7 @@ void main() {
       onOpenDiscover: onDiscover ?? () {},
       onOpenFriends: onFriends ?? () {},
       onOpenNotifications: () {},
-      onOpenProfile: () {},
+      onOpenProfile: onProfile ?? () {},
       onCreateMoment: onCreateMoment ?? () {},
       onCreateRoom: onCreateRoom ?? () {},
       onOpenComments: (_) {},
@@ -176,6 +178,8 @@ void main() {
       'Your circle',
       'Recommended now',
       'Live around you',
+      'Global Chat',
+      'Global conversations',
     ]) {
       expect(find.text(removed), findsNothing, reason: '\$removed returned');
     }
@@ -225,6 +229,25 @@ void main() {
 
     // Friends is a bottom-navigation destination now, not a Home card.
     expect(friends, 0);
+  });
+
+  testWidgets('header profile is a named 44px keyboard action', (tester) async {
+    usePhone(tester, const Size(390, 844));
+    var opens = 0;
+
+    await tester.pumpWidget(host(buildHome(onProfile: () => opens += 1)));
+    await tester.pump(const Duration(milliseconds: 150));
+
+    final profile = find.bySemanticsLabel('Open your profile');
+    expect(profile, findsOneWidget);
+    expect(tester.getSize(profile).height, greaterThanOrEqualTo(44));
+    expect(tester.getSize(profile).width, greaterThanOrEqualTo(44));
+    Focus.of(
+      tester.element(find.descendant(of: profile, matching: find.text('K'))),
+    ).requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    expect(opens, 1);
   });
 
   testWidgets('no live rooms: compact honest empty states', (tester) async {

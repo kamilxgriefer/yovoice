@@ -6,9 +6,8 @@ asserts a legitimate write/read from the app's own services still succeeds
 ("regression"), or that an exploit described in `../docs/Archive/SECURITY_AUDIT.md`
 is blocked ("SECURITY").
 
-There is no other automated test coverage for this project's Firestore rules
-— treat this as the baseline, and add a case here whenever a rule changes,
-before deploying.
+Treat this suite as the authorization baseline and add a regression or attack
+case whenever a rule changes, before deploying.
 
 ## Setup (one-time)
 
@@ -30,7 +29,7 @@ export PATH="/usr/local/opt/openjdk/bin:$PATH"   # add to your shell profile to 
 Start the emulator in one terminal:
 
 ```bash
-firebase emulators:start --only firestore --project yovoice-ec54a
+firebase emulators:start --only firestore --project demo-yovoice
 ```
 
 Then, in another terminal:
@@ -56,11 +55,21 @@ proves nothing. That is why this suite asserts the allowed uploads too;
 if those go red, the gate is not being consulted.
 
 ```bash
-firebase emulators:start --only firestore,storage --project rules-test-yovoice
+firebase emulators:start --only firestore,storage --project demo-yovoice
 npm --prefix firestore-tests run test:family-media
 ```
 
 A green run here is the precondition for deploying `storage.rules`.
+
+## Private-profile boundary
+
+The ADR-054 cases prove document-level privacy rather than relying on client
+field filtering: self root get succeeds; foreign get and every `users` list or
+query fail for ordinary users, moderators and super-admin clients; public
+profiles are known-id-get/server-write only; unauthenticated and inactive
+targets fail; friend presence requires both graph mirrors; and Admin-only
+search quotas cannot be read, reset or forged. Keep these negative cases when
+adding fields to `users` or changing staff capabilities.
 
 ## Adding a case
 

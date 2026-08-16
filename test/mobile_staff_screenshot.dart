@@ -29,8 +29,24 @@ import 'package:yovoice/features/staff/data/staff_overview_service.dart';
 import 'package:yovoice/features/staff/presentation/screens/staff_center_screen.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
-const String _fontRoot =
-    '/usr/local/share/flutter/bin/cache/artifacts/material_fonts';
+String _resolveFontRoot() {
+  final configuredRoot = Platform.environment['FLUTTER_ROOT'];
+  if (configuredRoot != null) {
+    final configured = '$configuredRoot/bin/cache/artifacts/material_fonts';
+    if (File('$configured/Roboto-Regular.ttf').existsSync()) return configured;
+  }
+
+  var directory = File(Platform.resolvedExecutable).parent;
+  while (directory.parent.path != directory.path) {
+    final candidate = '${directory.path}/bin/cache/artifacts/material_fonts';
+    if (File('$candidate/Roboto-Regular.ttf').existsSync()) return candidate;
+    directory = directory.parent;
+  }
+
+  throw StateError('Could not locate Flutter material fonts.');
+}
+
+final String _fontRoot = _resolveFontRoot();
 
 final _capture = GlobalKey();
 
@@ -50,6 +66,10 @@ Future<void> _loadRealFonts() async {
     roboto.addFont(read(face));
   }
   await roboto.load();
+
+  final icons = FontLoader('MaterialIcons')
+    ..addFont(read('MaterialIcons-Regular.otf'));
+  await icons.load();
 }
 
 const _ownerCaps = StaffCapabilities(
@@ -154,15 +174,21 @@ Future<void> _settle(WidgetTester tester) async {
 }
 
 Future<void> _shoot(WidgetTester tester, String name) async {
-  final boundary =
-      _capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-  final image = await boundary.toImage(pixelRatio: 1.0);
-  final data = await image.toByteData(format: ui.ImageByteFormat.png);
-  final file = File('test/.screenshots/$name.png');
-  file.parent.createSync(recursive: true);
-  file.writeAsBytesSync(data!.buffer.asUint8List());
-  // ignore: avoid_print
-  print('wrote ${file.path}');
+  await tester.runAsync(() async {
+    final boundary =
+        _capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    final image = await boundary.toImage(pixelRatio: 1.0);
+    try {
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      final file = File('test/.screenshots/$name.png');
+      file.parent.createSync(recursive: true);
+      file.writeAsBytesSync(data!.buffer.asUint8List());
+      // ignore: avoid_print
+      print('wrote ${file.path}');
+    } finally {
+      image.dispose();
+    }
+  });
 }
 
 Widget _app(Widget home) => MaterialApp(
@@ -180,10 +206,7 @@ void main() {
 
   setUp(() {
     PublicIdentityRepository.instance = PublicIdentityRepository(
-      auth: MockFirebaseAuth(
-        signedIn: true,
-        mockUser: MockUser(uid: 'viewer'),
-      ),
+      auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'viewer')),
       fetchOverride: (uids) async => {
         for (final uid in uids)
           if (uid == 'owner-uid')
@@ -214,11 +237,9 @@ void main() {
               backgroundColor: const Color(0xFF0D0618),
               body: Align(
                 alignment: Alignment.bottomCenter,
-                child: SingleChildScrollView(
-                  child: MoreSheet(
-                    capabilityService: _FakeCapabilities(caps),
-                    currentUid: uid,
-                  ),
+                child: MoreSheet(
+                  capabilityService: _FakeCapabilities(caps),
+                  currentUid: uid,
                 ),
               ),
             ),

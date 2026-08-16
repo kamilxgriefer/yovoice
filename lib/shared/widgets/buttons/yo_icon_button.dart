@@ -15,6 +15,9 @@ class YoIconButton extends StatelessWidget {
     this.foregroundColor,
     this.borderColor,
     this.isLoading = false,
+    this.focusNode,
+    this.autofocus = false,
+    this.semanticLabel,
   });
 
   final IconData icon;
@@ -26,26 +29,53 @@ class YoIconButton extends StatelessWidget {
   final Color? foregroundColor;
   final Color? borderColor;
   final bool isLoading;
+  final FocusNode? focusNode;
+  final bool autofocus;
+  final String? semanticLabel;
 
   bool get _enabled => onPressed != null && !isLoading;
 
+  String? get _inferredLabel {
+    if (icon == Icons.arrow_back_rounded ||
+        icon == Icons.arrow_back_ios_new_rounded) {
+      return 'Back';
+    }
+    if (icon == Icons.close_rounded) return 'Close';
+    if (icon == Icons.settings_rounded) return 'Settings';
+    if (icon == Icons.search_rounded) return 'Search';
+    if (icon == Icons.add_rounded) return 'Add';
+    if (icon == Icons.more_horiz_rounded || icon == Icons.more_vert_rounded) {
+      return 'More options';
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: Tooltip(
-        message: tooltip ?? '',
+    final targetSize = size < 44 ? 44.0 : size;
+    final effectiveLabel = semanticLabel ?? tooltip ?? _inferredLabel;
+    final button = IconButton(
+      tooltip: tooltip ?? effectiveLabel,
+      focusNode: focusNode,
+      autofocus: autofocus,
+      onPressed: _enabled ? onPressed : null,
+      padding: EdgeInsets.zero,
+      constraints: BoxConstraints.tightFor(
+        width: targetSize,
+        height: targetSize,
+      ),
+      splashRadius: targetSize / 2,
+      icon: SizedBox(
+        width: size,
+        height: size,
         child: DecoratedBox(
           decoration: BoxDecoration(
             color: backgroundColor ?? AppColors.surface,
             borderRadius: AppRadius.md,
             border: Border.all(color: borderColor ?? AppColors.border),
           ),
-          child: IconButton(
-            onPressed: _enabled ? onPressed : null,
-            splashRadius: size / 2,
-            icon: AnimatedSwitcher(
+          child: Center(
+            child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 180),
               child: isLoading
                   ? SizedBox(
@@ -63,6 +93,19 @@ class YoIconButton extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+
+    return SizedBox(
+      width: targetSize,
+      height: targetSize,
+      child: Semantics(
+        button: true,
+        enabled: _enabled,
+        label: effectiveLabel,
+        onTap: _enabled ? onPressed : null,
+        excludeSemantics: true,
+        child: button,
       ),
     );
   }

@@ -1,7 +1,10 @@
+import 'dart:ui' as ui;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
@@ -46,116 +49,189 @@ void main() {
   });
 
   for (final size in sizes) {
-    testWidgets(
-      'Premium presentation lays out cleanly at '
-      '${size.width.toInt()}x${size.height.toInt()}',
-      (tester) async {
-        tester.view.physicalSize = size;
-        tester.view.devicePixelRatio = 1.0;
-        addTearDown(tester.view.reset);
-
-        final db = FakeFirebaseFirestore();
-        final auth = _auth();
-        await tester.pumpWidget(
-          MaterialApp(
-            home: PremiumScreen(
-              entitlementService: EntitlementService(
-                firestore: db,
-                auth: auth,
-              ),
-              profileService: ProfileService(firestore: db, auth: auth),
-            ),
-          ),
-        );
-        // Fixed pumps only — the premium hero ring animates forever.
-        await tester.pump(const Duration(milliseconds: 80));
-
-        expect(find.text('More room\nfor your voice.'), findsOneWidget);
-        await tester.scrollUntilVisible(
-          find.text('Check plans'),
-          300,
-          scrollable: find.byType(Scrollable).first,
-        );
-        await tester.pump();
-        expect(find.text('Check plans'), findsOneWidget);
-        expect(tester.takeException(), isNull);
-      },
-    );
-
-    testWidgets(
-      'Plans screen lays out cleanly at '
-      '${size.width.toInt()}x${size.height.toInt()}',
-      (tester) async {
-        tester.view.physicalSize = size;
-        tester.view.devicePixelRatio = 1.0;
-        addTearDown(tester.view.reset);
-
-        final db = FakeFirebaseFirestore();
-        await tester.pumpWidget(
-          MaterialApp(
-            home: PremiumPlansScreen(
-              entitlementService: EntitlementService(
-                firestore: db,
-                auth: _auth(),
-              ),
-            ),
-          ),
-        );
-        await tester.pump(const Duration(milliseconds: 80));
-
-        expect(find.text('€9.99'), findsOneWidget);
-        expect(find.text('€89.99'), findsOneWidget);
-        expect(find.text('Best value'), findsOneWidget);
-        // Force the full lazy list to lay out — overflow below the fold
-        // must fail the matrix too.
-        await tester.scrollUntilVisible(
-          find.text('Restore purchases'),
-          300,
-          scrollable: find.byType(Scrollable).first,
-        );
-        await tester.pump();
-        expect(find.text('Everything Premium includes:'), findsOneWidget);
-        expect(tester.takeException(), isNull);
-      },
-    );
-  }
-
-  testWidgets(
-    'stage message overlay ellipsizes a long message at 320 wide '
-    'instead of overflowing',
-    (tester) async {
-      tester.view.physicalSize = const Size(320, 568);
+    testWidgets('Premium presentation lays out cleanly at '
+        '${size.width.toInt()}x${size.height.toInt()}', (tester) async {
+      tester.view.physicalSize = size;
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 
       final db = FakeFirebaseFirestore();
-      await db.collection('rooms').doc('room-1').collection('messages').add({
-        'senderId': 'other',
-        'senderName': 'Someone',
-        'senderPhotoUrl': null,
-        'text':
-            'an extremely long room message that could never fit on one '
-            'line of a narrow phone and must be ellipsized cleanly',
-        'createdAt': Timestamp.now(),
-        'reactions': <String, List<String>>{},
-      });
-
+      final auth = _auth();
       await tester.pumpWidget(
         MaterialApp(
-          home: Scaffold(
-            body: RecentRoomMessages(
-              roomId: 'room-1',
-              service: RoomService(firestore: db, auth: _auth()),
-              onOpenChat: () {},
+          home: PremiumScreen(
+            entitlementService: EntitlementService(firestore: db, auth: auth),
+            profileService: ProfileService(firestore: db, auth: auth),
+          ),
+        ),
+      );
+      // Fixed pumps only — the premium hero ring animates forever.
+      await tester.pump(const Duration(milliseconds: 80));
+
+      expect(find.text('More room\nfor your voice.'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('Check plans'),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pump();
+      expect(find.text('Check plans'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Plans screen lays out cleanly at '
+        '${size.width.toInt()}x${size.height.toInt()}', (tester) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final db = FakeFirebaseFirestore();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PremiumPlansScreen(
+            entitlementService: EntitlementService(
+              firestore: db,
+              auth: _auth(),
             ),
           ),
         ),
       );
       await tester.pump(const Duration(milliseconds: 80));
 
-      expect(find.byType(RecentRoomMessages), findsOneWidget);
-      expect(find.textContaining('extremely long room message'), findsOneWidget);
+      expect(find.text('€9.99'), findsOneWidget);
+      expect(find.text('€89.99'), findsOneWidget);
+      expect(find.text('Best value'), findsOneWidget);
+      // Force the full lazy list to lay out — overflow below the fold
+      // must fail the matrix too.
+      await tester.scrollUntilVisible(
+        find.text('Restore purchases'),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pump();
+      expect(find.text('Everything Premium includes:'), findsOneWidget);
       expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets(
+    'billing toggle and plan cards are keyboard-selectable controls',
+    (tester) async {
+      tester.view.physicalSize = const Size(560, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PremiumPlansScreen(
+            entitlementService: EntitlementService(
+              firestore: FakeFirebaseFirestore(),
+              auth: _auth(),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 80));
+
+      final monthlyToggle = find.bySemanticsLabel(
+        'Select Monthly billing plan',
+      );
+      final monthlyCard = find.bySemanticsLabel('Select Monthly plan, €9.99');
+      final yearlyCard = find.bySemanticsLabel('Select Yearly plan, €89.99');
+      expect(monthlyToggle, findsOneWidget);
+      expect(monthlyCard, findsOneWidget);
+      expect(yearlyCard, findsOneWidget);
+      expect(tester.getSize(monthlyToggle).height, greaterThanOrEqualTo(44));
+
+      Focus.of(
+        tester.element(
+          find.descendant(of: monthlyToggle, matching: find.text('Monthly')),
+        ),
+      ).requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(
+        tester
+            .getSemantics(monthlyToggle)
+            .getSemanticsData()
+            .flagsCollection
+            .isSelected,
+        ui.Tristate.isTrue,
+      );
+      expect(
+        tester
+            .getSemantics(monthlyCard)
+            .getSemanticsData()
+            .flagsCollection
+            .isSelected,
+        ui.Tristate.isTrue,
+      );
+
+      Focus.of(
+        tester.element(
+          find.descendant(of: yearlyCard, matching: find.text('€89.99')),
+        ),
+      ).requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(
+        tester
+            .getSemantics(yearlyCard)
+            .getSemanticsData()
+            .flagsCollection
+            .isSelected,
+        ui.Tristate.isTrue,
+      );
     },
   );
+
+  testWidgets('stage message overlay ellipsizes a long message at 320 wide '
+      'instead of overflowing', (tester) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final db = FakeFirebaseFirestore();
+    await db.collection('rooms').doc('room-1').collection('messages').add({
+      'senderId': 'other',
+      'senderName': 'Someone',
+      'senderPhotoUrl': null,
+      'text':
+          'an extremely long room message that could never fit on one '
+          'line of a narrow phone and must be ellipsized cleanly',
+      'createdAt': Timestamp.now(),
+      'reactions': <String, List<String>>{},
+    });
+
+    var opens = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: RecentRoomMessages(
+            roomId: 'room-1',
+            service: RoomService(firestore: db, auth: _auth()),
+            onOpenChat: () => opens += 1,
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 80));
+
+    expect(find.byType(RecentRoomMessages), findsOneWidget);
+    expect(find.textContaining('extremely long room message'), findsOneWidget);
+    final bubble = find.bySemanticsLabel(
+      RegExp('Open room chat.*extremely long room message'),
+    );
+    expect(bubble, findsOneWidget);
+    expect(tester.getSize(bubble).height, greaterThanOrEqualTo(44));
+    Focus.of(
+      tester.element(find.textContaining('extremely long room message')),
+    ).requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    expect(opens, 1);
+    expect(tester.takeException(), isNull);
+  });
 }
