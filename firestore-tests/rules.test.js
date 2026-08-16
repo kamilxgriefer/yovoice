@@ -6408,40 +6408,186 @@ async function main() {
   );
 
   await check(
-    "regression: a host evicts a member — same pairing, host authority",
+    "SECURITY: a host cannot delete membership rows — not one, and not " +
+      "twenty behind a single counter decrement",
     async () => {
       const db = testEnv
         .authenticatedContext("cr-host-uid", { email_verified: true })
         .firestore();
       const before = await memberCountOf("cr-private");
+      await assertFails(
+        deleteDoc(doc(db, "rooms/cr-private/roomMembers/rm-disabled-uid")),
+      );
+      // The rule condition is evaluated per write but shared across a commit,
+      // and rules cannot count writes — so a bulk delete behind one −1 is the
+      // shape any counter-paired eviction rule would have let through.
       const batch = writeBatch(db);
       batch.delete(doc(db, "rooms/cr-private/roomMembers/rm-disabled-uid"));
+      batch.delete(doc(db, "rooms/cr-private/roomMembers/rm-banned-uid"));
+      batch.delete(doc(db, "rooms/cr-private/roomMembers/cr-member-uid"));
       batch.update(doc(db, "rooms/cr-private"), {
         memberCount: before - 1,
         updatedAt: serverTimestamp(),
       });
-      await assertSucceeds(batch.commit());
+      await assertFails(batch.commit());
     },
   );
 
+  // F1: the counter must never be able to trap a member in a room. These
+  // three are the starvation primitive and the two no-attacker variants of
+  // the same trap — a drifted counter and a legacy room that predates the
+  // field entirely (ADR-005's rename era produced exactly those).
   await check(
-    "SECURITY: membership removal cannot desynchronise the counter, reach " +
-      "another member, or orphan the room's owner row",
+    "SECURITY: a host cannot move memberCount by hand, so the counter " +
+      "cannot be starved toward zero",
     async () => {
-      const member = communityMember.firestore();
+      const db = testEnv
+        .authenticatedContext("cr-host-uid", { email_verified: true })
+        .firestore();
       const before = await memberCountOf("cr-private");
-      // A standalone delete with no counter move.
       await assertFails(
-        deleteDoc(doc(member, "rooms/cr-private/roomMembers/cr-member-uid")),
-      );
-      // A correctly-shaped counter decrement with no delete behind it.
-      await assertFails(
-        updateDoc(doc(member, "rooms/cr-private"), {
+        updateDoc(doc(db, "rooms/cr-private"), {
           memberCount: before - 1,
           updatedAt: serverTimestamp(),
         }),
       );
-      // Deleting somebody else's row without being the host.
+      await assertFails(
+        updateDoc(doc(db, "rooms/cr-private"), {
+          memberCount: 0,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  const trappedMember = testEnv.authenticatedContext("rm-trapped-uid", {
+    email_verified: true,
+  });
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, "users/rm-trapped-uid"), {
+      displayName: "Trapped member",
+      banned: false,
+    });
+    // A room whose stored counter is already short of its real row count.
+    await setDoc(doc(db, "rooms/rm-starved"), {
+      hostId: "cr-host-uid",
+      roomType: "community",
+      visibility: "public",
+      status: "active",
+      memberCount: 0,
+      participantCount: 0,
+      isLive: false,
+    });
+    await setDoc(doc(db, "rooms/rm-starved/roomMembers/rm-trapped-uid"), {
+      userId: "rm-trapped-uid",
+      role: "member",
+      displayName: "Trapped member",
+    });
+    // A room from before memberCount existed at all.
+    await setDoc(doc(db, "rooms/rm-legacy"), {
+      hostId: "cr-host-uid",
+      roomType: "community",
+      visibility: "public",
+      status: "active",
+    });
+    await setDoc(doc(db, "rooms/rm-legacy/roomMembers/rm-trapped-uid"), {
+      userId: "rm-trapped-uid",
+      role: "member",
+      displayName: "Trapped member",
+    });
+    // A suspended room — staff froze it; its members must still get out.
+    await setDoc(doc(db, "rooms/rm-suspended"), {
+      hostId: "cr-host-uid",
+      roomType: "community",
+      visibility: "public",
+      status: "suspended",
+      memberCount: 2,
+      participantCount: 0,
+      isLive: false,
+    });
+    await setDoc(doc(db, "rooms/rm-suspended/roomMembers/rm-trapped-uid"), {
+      userId: "rm-trapped-uid",
+      role: "member",
+      displayName: "Trapped member",
+    });
+  });
+
+  await check(
+    "regression: a member can leave a room whose memberCount has already " +
+      "drifted to zero",
+    async () => {
+      const db = trappedMember.firestore();
+      await assertSucceeds(
+        deleteDoc(doc(db, "rooms/rm-starved/roomMembers/rm-trapped-uid")),
+      );
+    },
+  );
+
+  await check(
+    "regression: a member can leave a legacy room that carries no " +
+      "memberCount field at all",
+    async () => {
+      const db = trappedMember.firestore();
+      await assertSucceeds(
+        deleteDoc(doc(db, "rooms/rm-legacy/roomMembers/rm-trapped-uid")),
+      );
+    },
+  );
+
+  // F3: a staff suspension freezes the host, not the members. Leaving keeps
+  // working; what the freeze withholds is the room write that would move the
+  // counter and bump updatedAt, which is watchMyCommunities' sort key.
+  await check(
+    "SECURITY: a suspended room stays frozen for its host — no metadata, " +
+      "no counter, no updatedAt bump",
+    async () => {
+      const db = testEnv
+        .authenticatedContext("cr-host-uid", { email_verified: true })
+        .firestore();
+      await assertFails(
+        updateDoc(doc(db, "rooms/rm-suspended"), {
+          name: "Renamed while suspended",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(db, "rooms/rm-suspended"), {
+          memberCount: 1,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "regression: a member still leaves a suspended room, and the frozen " +
+      "room refuses the paired counter write rather than trapping them",
+    async () => {
+      const db = trappedMember.firestore();
+      const paired = writeBatch(db);
+      paired.delete(doc(db, "rooms/rm-suspended/roomMembers/rm-trapped-uid"));
+      paired.update(doc(db, "rooms/rm-suspended"), {
+        memberCount: 1,
+        updatedAt: serverTimestamp(),
+      });
+      await assertFails(paired.commit());
+      await assertSucceeds(
+        deleteDoc(doc(db, "rooms/rm-suspended/roomMembers/rm-trapped-uid")),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: leaving still cannot reach another member's row, inflate the " +
+      "counter, or orphan the room's owner row",
+    async () => {
+      const member = communityMember.firestore();
+      const before = await memberCountOf("cr-private");
+      // Somebody else's row, with or without a counter move.
+      await assertFails(
+        deleteDoc(doc(member, "rooms/cr-private/roomMembers/rm-banned-uid")),
+      );
       const otherBatch = writeBatch(member);
       otherBatch.delete(doc(member, "rooms/cr-private/roomMembers/rm-banned-uid"));
       otherBatch.update(doc(member, "rooms/cr-private"), {
@@ -6449,7 +6595,14 @@ async function main() {
         updatedAt: serverTimestamp(),
       });
       await assertFails(otherBatch.commit());
-      // Leaving must not be a way to inflate the counter either.
+      // A counter decrement with no departure behind it.
+      await assertFails(
+        updateDoc(doc(member, "rooms/cr-private"), {
+          memberCount: before - 1,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      // Leaving must not be a way to inflate the counter.
       const inflateBatch = writeBatch(member);
       inflateBatch.delete(doc(member, "rooms/cr-private/roomMembers/cr-member-uid"));
       inflateBatch.update(doc(member, "rooms/cr-private"), {
@@ -6457,19 +6610,34 @@ async function main() {
         updatedAt: serverTimestamp(),
       });
       await assertFails(inflateBatch.commit());
-      // The owner row is not removable while the room exists, host included.
+      // The owner row stays put so a Community room cannot be orphaned.
       const host = testEnv
         .authenticatedContext("cr-host-uid", { email_verified: true })
         .firestore();
-      const ownerBatch = writeBatch(host);
-      ownerBatch.delete(doc(host, "rooms/cr-private/roomMembers/cr-host-uid"));
-      ownerBatch.update(doc(host, "rooms/cr-private"), {
+      await assertFails(
+        deleteDoc(doc(host, "rooms/cr-private/roomMembers/cr-host-uid")),
+      );
+      if ((await memberCountOf("cr-private")) !== before) {
+        throw new Error("a denied case still moved the counter");
+      }
+    },
+  );
+
+  await check(
+    "regression: the accurate leave — row delete and the room's memberCount " +
+      "decrement in one batch — still works and still lands",
+    async () => {
+      const db = communityMember.firestore();
+      const before = await memberCountOf("cr-private");
+      const batch = writeBatch(db);
+      batch.delete(doc(db, "rooms/cr-private/roomMembers/cr-member-uid"));
+      batch.update(doc(db, "rooms/cr-private"), {
         memberCount: before - 1,
         updatedAt: serverTimestamp(),
       });
-      await assertFails(ownerBatch.commit());
-      if ((await memberCountOf("cr-private")) !== before) {
-        throw new Error("a denied case still moved the counter");
+      await assertSucceeds(batch.commit());
+      if ((await memberCountOf("cr-private")) !== before - 1) {
+        throw new Error("memberCount did not follow the departure");
       }
     },
   );
@@ -6483,9 +6651,24 @@ async function main() {
   // If a nested block could authorize a collectionGroup query, `if true`
   // would do it. It does not, which is what makes the top-level wildcard
   // rule the single thing keeping watchMyCommunities() alive.
-  async function collectionGroupUnderVariantRules(projectId, transform) {
+  //
+  // `edits` is a list of [find, replaceWith] pairs. EACH `find` is asserted
+  // present before anything is replaced — checking only that the result
+  // differs from the source is not enough when a case makes more than one
+  // substitution, because one match is enough to hide the other's silent
+  // miss, and the case then runs a variant that proves nothing while still
+  // reporting OK.
+  async function collectionGroupUnderVariantRules(projectId, edits) {
     const source = fs.readFileSync(RULES_PATH, "utf8");
-    const variant = transform(source);
+    let variant = source;
+    for (const [find, replaceWith] of edits) {
+      if (!variant.includes(find)) {
+        throw new Error(
+          `rule text drifted — variant snippet not found:\n${find}`,
+        );
+      }
+      variant = variant.replace(find, replaceWith);
+    }
     if (variant === source) {
       throw new Error(
         "rule text drifted — the variant transform matched nothing",
@@ -6533,6 +6716,13 @@ async function main() {
     "    match /{path=**}/roomMembers/{memberId} {\n" +
     "      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;\n" +
     "    }";
+  const TOP_LEVEL_ROOM_MEMBERS_DENIED =
+    "    match /{path=**}/roomMembers/{memberId} {\n" +
+    "      allow read: if false;\n" +
+    "    }";
+  const NESTED_ROOM_MEMBERS_READ =
+    "        allow read: if resource.data.userId == request.auth.uid ||\n" +
+    "            canAccessRoom(roomId);";
 
   await check(
     "PROOF: a nested match block cannot authorize a collectionGroup query " +
@@ -6540,20 +6730,10 @@ async function main() {
       "thing that can",
     async () => {
       await assertFails(
-        collectionGroupUnderVariantRules("demo-yovoice-cg-a", (source) =>
-          source
-            .replace(
-              TOP_LEVEL_ROOM_MEMBERS,
-              "    match /{path=**}/roomMembers/{memberId} {\n" +
-                "      allow read: if false;\n" +
-                "    }",
-            )
-            .replace(
-              "        allow read: if resource.data.userId == request.auth.uid ||\n" +
-                "            canAccessRoom(roomId);",
-              "        allow read: if true;",
-            ),
-        ),
+        collectionGroupUnderVariantRules("demo-yovoice-cg-a", [
+          [TOP_LEVEL_ROOM_MEMBERS, TOP_LEVEL_ROOM_MEMBERS_DENIED],
+          [NESTED_ROOM_MEMBERS_READ, "        allow read: if true;"],
+        ]),
       );
     },
   );
@@ -6563,13 +6743,9 @@ async function main() {
       "and the nested rule denying, so the deny above is not incidental",
     async () => {
       const snapshot = await assertSucceeds(
-        collectionGroupUnderVariantRules("demo-yovoice-cg-b", (source) =>
-          source.replace(
-            "        allow read: if resource.data.userId == request.auth.uid ||\n" +
-              "            canAccessRoom(roomId);",
-            "        allow read: if false;",
-          ),
-        ),
+        collectionGroupUnderVariantRules("demo-yovoice-cg-b", [
+          [NESTED_ROOM_MEMBERS_READ, "        allow read: if false;"],
+        ]),
       );
       if (snapshot.size !== 1) {
         throw new Error(`expected 1 membership row, got ${snapshot.size}`);

@@ -557,32 +557,27 @@ service cloud.firestore {
 
     // The mirror image of roomMemberJoinTransitionAllowed: the caller's own
     // membership row must be gone once this commit lands, which is what ties
-    // the counter to a real departure rather than to a claim of one. Account
-    // status is deliberately not required — the same reason
-    // roomParticipantLeaveTransitionAllowed does not require it. Leaving is
-    // never the action to block, and a suspended member's row lingering
-    // forever is the outcome that check would buy.
+    // the counter to a real departure rather than to a claim of one.
+    //
+    // This keeps memberCount ACCURATE. It is deliberately not what makes
+    // leaving POSSIBLE — the delete rule stands on its own, so a room whose
+    // counter has drifted, sits at zero, or predates the field entirely can
+    // still be left. An earlier version of this ruleset made the counter a
+    // precondition for removal and turned every drifted room into a trap.
+    //
+    // The freeze guards match roomMemberJoinTransitionAllowed's: a staff
+    // suspension stops the room's own state from moving, including the
+    // updatedAt that orders watchMyCommunities. Members of a frozen room
+    // still leave; what they lose is the counter write, not the exit.
     function roomMemberLeaveTransitionAllowed(roomId) {
       let memberPath = /databases/$(database)/documents/rooms/$(roomId)/roomMembers/$(request.auth.uid);
       return exists(memberPath) &&
           !existsAfter(memberPath) &&
-          resource.data.memberCount > 0 &&
-          request.resource.data.memberCount == resource.data.memberCount - 1 &&
-          request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['memberCount', 'updatedAt']) &&
-          request.resource.data.updatedAt == request.time;
-    }
-
-    // The host's half of an eviction. Rules cannot name which row a host is
-    // removing the way they can for a self-leave (the evicted uid is not the
-    // caller's), so this decrement is bounded rather than bound: exactly one
-    // off, never below zero, no other field. A host miscounting the members
-    // of their own room is cosmetic self-harm on a counter they already
-    // control indirectly — it moves no membership and grants no access. The
-    // roomMembers delete rule is where the actual removal is authorized.
-    function roomMemberEvictionCountAllowed() {
-      return resource.data.memberCount > 0 &&
-          request.resource.data.memberCount == resource.data.memberCount - 1 &&
+          resource.data.get('status', 'active') == 'active' &&
+          resource.data.get('deletionInProgress', false) != true &&
+          resource.data.get('memberCount', 0) > 0 &&
+          request.resource.data.memberCount ==
+            resource.data.get('memberCount', 0) - 1 &&
           request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['memberCount', 'updatedAt']) &&
           request.resource.data.updatedAt == request.time;
@@ -652,8 +647,7 @@ service cloud.firestore {
             resource.data.get('roomKind', '') &&
           (
             metadata || start ||
-            hostParticipantJoinTransitionAllowed(roomId) ||
-            roomMemberEvictionCountAllowed()
+            hostParticipantJoinTransitionAllowed(roomId)
           );
     }
 
@@ -2203,36 +2197,42 @@ service cloud.firestore {
               request.auth.uid == memberId
             );
 
-        // Leaving and eviction, each paired with the room's own memberCount
-        // decrement in the same commit. `if false` here was never a decision
-        // that membership should be permanent — the stated reason was the
-        // counter desync a standalone delete would cause. That is the same
-        // problem joining already solves, so it gets the same solution: the
-        // membership row and the counter move together or neither moves.
-        // Without this there is no revocation path anywhere in the system —
-        // functions/rooms/participants.js handles the voice-session
-        // `participants` collection only and never touches roomMembers, and
-        // deleteRoomSelf's recursive delete takes the entire room with it.
+        // SELF-LEAVE ONLY, and gated on nothing but who you are.
+        //
+        // Two things this rule deliberately does NOT do, both learned from
+        // the version that shipped before it:
+        //
+        // It does not require the room's memberCount to move. Pairing the
+        // two made a derived counter the gate on an exit: any room whose
+        // stored count had drifted below its real row count — a legacy room
+        // from before the field existed, a half-applied join, a host who
+        // could still edit the number — became a room nobody could leave and
+        // nobody could be removed from, silently and permanently. A counter
+        // that disagrees with reality is a cosmetic defect; a member who
+        // cannot get out is not. roomMemberLeaveTransitionAllowed still
+        // exists to keep the count honest when the client pairs the writes,
+        // and it is the ONLY way memberCount can move down, so leaving
+        // cannot be turned into a way to forge one.
+        //
+        // It does not authorize eviction. A host removing somebody is a
+        // moderation action, and doing it here would delete a roster row
+        // while leaving the evicted account connected to the live audio,
+        // still able to read chat as a participant, and free to rejoin a
+        // public room immediately — a button that looks like removal and
+        // is not. removeRoomParticipantSelf already does the whole job
+        // (roster row, session mirror, LiveKit revocation) and is where a
+        // roomMembers eviction belongs; no client calls a rules-level one
+        // today. Rules also cannot bind a host's delete to a specific
+        // named row the way this rule binds a member to their own, so a
+        // counter-paired host branch let a single decrement carry an
+        // unbounded batch of deletes.
         //
         // The owner row stays undeletable so a Community room can never be
         // left without its owner; disposing of a whole room is still the
-        // deleteRoomSelf callable's job.
+        // deleteRoomSelf callable's recursive job.
         allow delete: if isSignedIn() &&
-            roomExists(roomId) &&
-            resource.data.get('role', 'member') != 'owner' &&
-            (
-              (
-                request.auth.uid == memberId &&
-                resource.data.userId == request.auth.uid
-              ) ||
-              isRoomHost(roomId)
-            ) &&
-            getAfter(
-              /databases/$(database)/documents/rooms/$(roomId)
-            ).data.memberCount ==
-              get(
-                /databases/$(database)/documents/rooms/$(roomId)
-              ).data.memberCount - 1;
+            request.auth.uid == memberId &&
+            resource.data.get('role', 'member') != 'owner';
       }
 
       match /messages/{messageId} {
