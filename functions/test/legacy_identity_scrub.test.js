@@ -44,6 +44,19 @@ function args(phase, apply) {
 }
 
 test("dry run is bounded, aggregate-only and performs no write", async () => {
+  // scrubIdentitySnapshots scans the whole `conversations` collection — it has
+  // no uid/prefix scoping — so this file cannot isolate itself the way wipe()
+  // isolates its own fixtures. `node --test test/*.test.js` runs files
+  // concurrently against one emulator, so any conversation another file has
+  // seeded is counted here too, and asserting an absolute `scanned === 1` made
+  // this test fail only on unlucky interleavings (green locally, red in CI).
+  // Measuring the delta around our own write keeps the assertion exactly as
+  // strong — one document scanned, one scrub planned, nothing written — while
+  // being independent of what else happens to exist.
+  const baseline = await scrubIdentitySnapshots({
+    db,
+    args: args("conversations", false),
+  });
   await db.doc(`conversations/${PREFIX}-conversation`).set({
     participantEmails: {
       owner: "private-owner@example.invalid",
@@ -54,8 +67,9 @@ test("dry run is bounded, aggregate-only and performs no write", async () => {
     db,
     args: args("conversations", false),
   });
-  assert.equal(report.scanned, 1);
-  assert.equal(report.plannedScrubs, 1);
+  assert.equal(report.scanned - baseline.scanned, 1);
+  assert.equal(report.plannedScrubs - baseline.plannedScrubs, 1);
+  assert.equal(baseline.appliedScrubs, 0);
   assert.equal(report.appliedScrubs, 0);
   assert.equal(JSON.stringify(report).includes("@example.invalid"), false);
   const stored = await db.doc(`conversations/${PREFIX}-conversation`).get();
