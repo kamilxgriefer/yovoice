@@ -1,0 +1,118 @@
+name: Backfill public profile projections
+
+# Manual only, and dry-run by default.
+#
+# Why this exists: ADR-054 made users/{uid} private and moved the publicly
+# readable identity into the server-owned publicProfiles/{uid} projection.
+# onUserPrivacySourceChanged builds that projection, but only when something
+# writes users/{uid} — so an account that never opens the app has no
+# projection and is invisible to everyone else. The repair is
+# functions/scripts/backfill_public_profiles.js, which needs Admin
+# credentials that no developer machine here has.
+#
+# Rather than issue and hand around a service-account key, this runs the
+# script on the runner using the FIREBASE_SERVICE_ACCOUNT_YOVOICE_EC54A
+# secret the Hosting deploy already uses. The key never leaves GitHub
+# secrets. The credential file is written under RUNNER_TEMP, never in the
+# workspace, and removed in an always() step.
+#
+# The script itself is bounded and resumable: at most 200 users / 400
+# projection operations in memory and per write batch, at most 500 users per
+# invocation by default with an absolute cap of 5000. Record `nextCursor`
+# from the JSON output and pass it back as start_after until `reachedEnd`
+# is true. See docs/DEPLOYMENT.md, "Private-profile projection cutover".
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Write projections. Leave false for a dry run that performs zero writes.'
+        required: true
+        default: false
+        type: boolean
+      max_users:
+        description: 'Users to process this invocation (script caps at 5000).'
+        required: true
+        default: '500'
+        type: string
+      start_after:
+        description: 'Resume cursor — the nextCursor uid from the previous run. Leave blank to start from the beginning.'
+        required: false
+        default: ''
+        type: string
+      uid_prefix:
+        description: 'Optional uid prefix, for a deliberately scoped recovery.'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-profile-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@1a4442cacd436585916779262731d5b162bc6ec7 # v3.8.2
+        with:
+          node-version: '22'
+
+      - name: Install Functions dependencies
+        run: npm --prefix functions ci
+
+      - name: Write service-account credentials
+        env:
+          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_YOVOICE_EC54A }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SERVICE_ACCOUNT}" ]; then
+            echo "FIREBASE_SERVICE_ACCOUNT_YOVOICE_EC54A is not set for this environment." >&2
+            exit 1
+          fi
+          # Written outside the workspace so it can never be picked up by a
+          # later step, cached, or uploaded as an artifact.
+          printf '%s' "${SERVICE_ACCOUNT}" > "${RUNNER_TEMP}/sa.json"
+          chmod 600 "${RUNNER_TEMP}/sa.json"
+
+      - name: Report intended run
+        run: |
+          set -euo pipefail
+          echo "apply:       ${{ inputs.apply }}"
+          echo "max_users:   ${{ inputs.max_users }}"
+          echo "start_after: ${{ inputs.start_after || '(from the beginning)' }}"
+          echo "uid_prefix:  ${{ inputs.uid_prefix || '(none)' }}"
+          if [ "${{ inputs.apply }}" != "true" ]; then
+            echo "DRY RUN — this invocation performs zero writes."
+          fi
+
+      - name: Run backfill
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        run: |
+          set -euo pipefail
+          ARGS=(--project yovoice-ec54a --max-users "${{ inputs.max_users }}")
+          if [ "${{ inputs.apply }}" = "true" ]; then
+            ARGS+=(--apply)
+          fi
+          if [ -n "${{ inputs.start_after }}" ]; then
+            ARGS+=(--start-after "${{ inputs.start_after }}")
+          fi
+          if [ -n "${{ inputs.uid_prefix }}" ]; then
+            ARGS+=(--uid-prefix "${{ inputs.uid_prefix }}")
+          fi
+          npm --prefix functions run backfill:public-profiles -- "${ARGS[@]}"
+
+      - name: Remove credentials
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/sa.json"
