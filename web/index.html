@@ -56,6 +56,110 @@
       height: 100%;
       background-color: #0D0618;
     }
+
+    #yovoice-bootstrap {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      background: radial-gradient(circle at 50% 40%, #1b0c31 0, #0d0618 64%);
+      color: white;
+      font-family: Inter, Arial, sans-serif;
+      transition: opacity 180ms ease-out;
+    }
+
+    #yovoice-bootstrap.boot-leaving { opacity: 0; }
+
+    .boot-content {
+      display: flex;
+      width: min(520px, calc(100vw - 48px));
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+    }
+
+    .boot-mark {
+      position: relative;
+      display: grid;
+      width: clamp(190px, 22vw, 224px);
+      aspect-ratio: 1;
+      place-items: center;
+    }
+
+    .boot-mark::before,
+    .boot-mark::after {
+      content: "";
+      position: absolute;
+      inset: 18%;
+      border: 2px solid rgba(192, 38, 255, .34);
+      border-radius: 50%;
+      animation: boot-ring 1.8s ease-out infinite;
+    }
+
+    .boot-mark::after { animation-delay: -.9s; }
+
+    .boot-mark img {
+      position: relative;
+      z-index: 1;
+      width: 61%;
+      height: 61%;
+      object-fit: contain;
+      filter: drop-shadow(0 0 22px rgba(192, 38, 255, .22));
+    }
+
+    .boot-title {
+      margin: 18px -.34em 0 0;
+      font-size: clamp(27px, 4vw, 32px);
+      font-weight: 800;
+      letter-spacing: .34em;
+    }
+
+    .boot-copy {
+      margin: 12px 0 0;
+      color: #b4adc8;
+      font-size: 17px;
+      font-weight: 600;
+    }
+
+    .boot-wave {
+      display: flex;
+      height: 54px;
+      margin-top: 38px;
+      align-items: center;
+      gap: clamp(5px, 1.3vw, 10px);
+    }
+
+    .boot-wave span {
+      width: 5px;
+      height: 18%;
+      border-radius: 999px;
+      background: linear-gradient(to top, #6d28d9, #e64dff);
+      animation: boot-wave 1.15s ease-in-out infinite alternate;
+      transform-origin: center;
+    }
+
+    .boot-wave span:nth-child(2n) { animation-delay: -.72s; }
+    .boot-wave span:nth-child(3n) { animation-delay: -.36s; }
+    .boot-wave span:nth-child(4n) { animation-delay: -.94s; }
+    .boot-wave span:nth-child(5n) { animation-delay: -.18s; }
+
+    @keyframes boot-ring {
+      0% { opacity: .72; transform: scale(.72); }
+      100% { opacity: 0; transform: scale(1.48); }
+    }
+
+    @keyframes boot-wave {
+      0% { transform: scaleY(.45); }
+      100% { transform: scaleY(3); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .boot-mark::before, .boot-mark::after, .boot-wave span { animation: none; }
+      .boot-wave span:nth-child(3n + 1) { transform: scaleY(1.8); }
+      .boot-wave span:nth-child(3n + 2) { transform: scaleY(2.6); }
+    }
   </style>
 
   <title>YoVoice</title>
@@ -100,6 +204,22 @@
 </head>
 
 <body>
+
+  <div id="yovoice-bootstrap" role="status" aria-label="Opening YO Voice">
+    <div class="boot-content">
+      <div class="boot-mark" aria-hidden="true">
+        <img src="web-app-manifest-512x512.png?v=2" alt="">
+      </div>
+      <div class="boot-title">YO VOICE</div>
+      <p class="boot-copy">Create your space</p>
+      <div class="boot-wave" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span>
+      </div>
+    </div>
+  </div>
 
   <!--
     You can customize the "flutter_bootstrap.js" script.

@@ -16,6 +16,14 @@ someone decide what to pick up next.
 
 ## Done
 
+- One real startup transition instead of two timed loaders (2026-08-16): the
+  landing `/app` hand-off now redirects immediately, the authenticated
+  four-second welcome delay is removed, and direct/landing entry share one
+  app-owned animated voice-wave surface using the existing `YO VOICE` and
+  `Create your space` copy. It disappears after the first Flutter frame/Auth
+  resolution rather than after a fabricated countdown. See
+  [ADR-052](Decisions.md#adr-052-the-app-origin-owns-the-only-startup-surface-and-no-startup-animation-imposes-a-minimum-delay).
+
 - One canonical logo across favicon and app launchers (2026-08-16): replaced
   the retired black-square source used by native generation with the exact
   favicon mark, regenerated Android adaptive/legacy and iOS/App Store icons,

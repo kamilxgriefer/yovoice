@@ -144,6 +144,20 @@ void main() {
     test('the browser-tab title is untouched', () {
       expect(html, contains('<title>YoVoice</title>'));
     });
+
+    test('owns the one real startup surface with an animated voice wave', () {
+      expect(html, contains('id="yovoice-bootstrap"'));
+      expect(html, contains('class="boot-wave"'));
+      expect(html, contains('YO VOICE'));
+      expect(html, contains('Create your space'));
+
+      final bootstrap = File(
+        '${web.path}/flutter_bootstrap.js',
+      ).readAsStringSync();
+      expect(bootstrap, contains('await appRunner.runApp()'));
+      expect(bootstrap, contains('splash.classList.add("boot-leaving")'));
+      expect(bootstrap, contains('splash.remove()'));
+    });
   });
 
   group('web/site.webmanifest', () {

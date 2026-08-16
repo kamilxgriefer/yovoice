@@ -3100,3 +3100,41 @@ identity without reintroducing an inner square.
   not a black rectangle around the artwork.
 - Future logo changes start from the favicon master and regenerate launchers;
   the retired squared artwork is not a valid generator input.
+
+## ADR-052: The app origin owns the only startup surface and no startup animation imposes a minimum delay
+
+### Context
+
+Entry through the marketing site played a mandatory ~2.8-second `/app`
+transition before navigating to Flutter. After authentication resolved,
+Flutter independently held signed-in users on a second welcome screen for four
+seconds. Direct entry skipped the first screen but still paid the second delay,
+so the experience differed by route and animation—not real work—determined how
+long users waited.
+
+### Decision
+
+The website `/app` route performs an immediate history-replacing navigation and
+renders no transition of its own. The Flutter web host paints one animated
+startup composition during actual engine initialization, removes it after
+`runApp`, and Auth uses the visually matching `StartupLoadingScreen` only while
+its stream is genuinely loading. Signed-in initialization of push/profile
+services stays fire-and-forget and `MainShell` renders immediately. Both layers
+retain `YO VOICE` and `Create your space`, animated voice rings and a waveform;
+reduced-motion users receive a static waveform.
+
+### Reasoning
+
+The destination is the only process that knows when it is ready. Giving it the
+startup surface makes landing and direct entry identical, while matching the
+HTML bootstrap and first Flutter loading frame prevents a second visual jump.
+No animation is allowed to become a minimum timer.
+
+### Consequences
+
+- Landing entry no longer waits 2.8 seconds before starting the app download.
+- Returning signed-in users no longer wait an additional four seconds.
+- On a fast start the animation may be brief; on a slow start it remains until
+  real initialization completes without claiming a percentage.
+- Web bootstrap removal is tied to the first Flutter `runApp`; Auth loading,
+  error, logged-out and signed-in destinations keep their real state semantics.

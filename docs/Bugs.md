@@ -58,6 +58,13 @@ permission flags).
   in-app compact logo now derive from the favicon artwork. Opaque platforms
   receive only the required full-bleed product background, without a second
   black tile around the symbol.
+- **FIXED — opening the app could show two sequential, time-based loading
+  screens.** The landing site's `/app` route imposed a 2.8-second animation
+  before navigation, then authenticated Flutter sessions imposed another
+  four-second welcome timer. `/app` now redirects immediately, the fixed
+  Flutter timer is gone, and the app origin owns one matching sound-wave
+  startup surface that exists only while the engine/Auth state genuinely
+  resolves.
 
 ## Notifications
 
