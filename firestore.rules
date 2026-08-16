@@ -282,8 +282,16 @@ service cloud.firestore {
       );
     }
 
+    // A membership row is AUTHORITY — canAccessRoom() reads it to open a
+    // private room, and roomVoiceStartAllowed() reads it to start that
+    // room's voice session — so it carries the same account-status test
+    // every other private-room branch does. isActiveClubRoomMember()
+    // already calls isActiveAccount(), and a suspension that stops at the
+    // Club lounge door but not the Community room door is not a suspension.
+    // A banned or disabled account keeps its membership row; what it loses
+    // is the ability to use it.
     function isRoomMember(roomId) {
-      return isSignedIn() && exists(
+      return isActiveAccount() && exists(
         /databases/$(database)/documents/rooms/$(roomId)/roomMembers/$(request.auth.uid)
       );
     }
@@ -547,6 +555,39 @@ service cloud.firestore {
           request.resource.data.updatedAt == request.time;
     }
 
+    // The mirror image of roomMemberJoinTransitionAllowed: the caller's own
+    // membership row must be gone once this commit lands, which is what ties
+    // the counter to a real departure rather than to a claim of one. Account
+    // status is deliberately not required — the same reason
+    // roomParticipantLeaveTransitionAllowed does not require it. Leaving is
+    // never the action to block, and a suspended member's row lingering
+    // forever is the outcome that check would buy.
+    function roomMemberLeaveTransitionAllowed(roomId) {
+      let memberPath = /databases/$(database)/documents/rooms/$(roomId)/roomMembers/$(request.auth.uid);
+      return exists(memberPath) &&
+          !existsAfter(memberPath) &&
+          resource.data.memberCount > 0 &&
+          request.resource.data.memberCount == resource.data.memberCount - 1 &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['memberCount', 'updatedAt']) &&
+          request.resource.data.updatedAt == request.time;
+    }
+
+    // The host's half of an eviction. Rules cannot name which row a host is
+    // removing the way they can for a self-leave (the evicted uid is not the
+    // caller's), so this decrement is bounded rather than bound: exactly one
+    // off, never below zero, no other field. A host miscounting the members
+    // of their own room is cosmetic self-harm on a counter they already
+    // control indirectly — it moves no membership and grants no access. The
+    // roomMembers delete rule is where the actual removal is authorized.
+    function roomMemberEvictionCountAllowed() {
+      return resource.data.memberCount > 0 &&
+          request.resource.data.memberCount == resource.data.memberCount - 1 &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['memberCount', 'updatedAt']) &&
+          request.resource.data.updatedAt == request.time;
+    }
+
     function roomVoiceStartAllowed(roomId) {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return resource.data.get('status', 'active') == 'active' &&
@@ -611,7 +652,8 @@ service cloud.firestore {
             resource.data.get('roomKind', '') &&
           (
             metadata || start ||
-            hostParticipantJoinTransitionAllowed(roomId)
+            hostParticipantJoinTransitionAllowed(roomId) ||
+            roomMemberEvictionCountAllowed()
           );
     }
 
@@ -965,15 +1007,31 @@ service cloud.firestore {
     // pinned to a value the caller cannot choose — the acting uid and the
     // server clock. A manager can change someone's role (the surrounding
     // power checks decide whether), but cannot sign that change as another
-    // moderator or date it to a time that suits them. Each field is checked
-    // only when this write actually touches it, so a client that sends fewer
-    // fields is not forced to send more, and `updatedAt` stays accepted for
-    // the plain profile-sync path that shares this document.
+    // moderator or date it to a time that suits them.
+    //
+    // Those two checks are deliberately NOT gated on affectedKeys(), and
+    // that distinction is the whole security of this function: diff()
+    // reports only fields whose VALUE changed, so a guard hanging off
+    // hasAny() is skipped exactly when it matters. A manager resending the
+    // PREVIOUS manager's uid unchanged, or omitting attribution entirely,
+    // changes a role while the audit trail keeps naming somebody else —
+    // both were live until this comment was written. Whenever `role`
+    // moves, the post-write document itself must carry this caller's uid
+    // and this request's timestamp, present or not, changed or not.
+    // `updatedAt` stays accepted for the plain profile-sync path that
+    // shares this document.
     function clubRoleChangeFieldsAllowed() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return changed.hasOnly([
             'role', 'roleUpdatedAt', 'roleUpdatedBy', 'updatedAt'
           ]) &&
+          (
+            !changed.hasAny(['role']) ||
+            (
+              request.resource.data.roleUpdatedBy == request.auth.uid &&
+              request.resource.data.roleUpdatedAt == request.time
+            )
+          ) &&
           (
             !changed.hasAny(['roleUpdatedBy']) ||
             request.resource.data.roleUpdatedBy == request.auth.uid
@@ -1953,6 +2011,7 @@ service cloud.firestore {
                   roomParticipantJoinTransitionAllowed(roomId) ||
                   roomParticipantLeaveTransitionAllowed(roomId) ||
                   roomMemberJoinTransitionAllowed(roomId) ||
+                  roomMemberLeaveTransitionAllowed(roomId) ||
                   roomVoiceStartAllowed(roomId)
                 )
           );
@@ -2057,14 +2116,22 @@ service cloud.firestore {
         //
         // What authorizes that query is the top-level
         // `match /{path=**}/roomMembers/{memberId}` block at the head of this
-        // file, and only that block — re-verified against the emulator on
-        // 2026-08-16 by setting THIS nested rule to `if false` (the query
-        // still succeeded) and then the top-level one to `if false` (the
-        // query was rejected). A nested, parent-scoped match block does not
-        // take part in authorizing a collectionGroup query at all, so the
-        // get()-bearing clause below cannot endanger it. An earlier version
-        // of this comment claimed the opposite and has had reviewers filing
-        // defects against a rule that was never the problem.
+        // file, and only that block. A nested, parent-scoped match block does
+        // not take part in authorizing a collectionGroup query at all, so the
+        // get()-bearing clause below cannot endanger it.
+        //
+        // The experiment that shows this is NOT "set the nested rule to
+        // `if false` and watch the query survive" — an earlier version of
+        // this comment cited exactly that, and it proves nothing, because
+        // Firestore unions allow rules and `false OR <top-level provable>`
+        // is allowed under either hypothesis. The discriminating run is the
+        // opposite one: make the NESTED rule `if true` and the TOP-LEVEL
+        // rule deny. If a nested block could carry a collectionGroup query,
+        // the most permissive rule expressible would carry it. The query is
+        // still rejected. Both runs are pinned as executable cases at the
+        // end of firestore-tests/rules.test.js rather than left as a claim
+        // in a comment; the `if false` one is kept only as the control that
+        // shows the deny is caused by the top-level rule and nothing else.
         //
         // The constraint that does bind is on the TOP-LEVEL rule: it has to
         // stay provable from the query's own filter, which is why it is kept
@@ -2109,21 +2176,63 @@ service cloud.firestore {
                   ).data.memberCount + 1
               )
             );
+        // `userId` is the field watchMyCommunities() filters its
+        // collectionGroup query on, which makes an unpinned membership row a
+        // REMOTE weapon: a host who repoints their own row at somebody
+        // else's uid puts a row that person's query returns into a room that
+        // person cannot read, and Future.wait in room_service.dart rejects
+        // their whole Communities list. The victim cannot delete the row and
+        // never consented to it. The host branch used to carry no invariants
+        // at all — not even that — so it could also inject any field it
+        // liked into a membership document.
+        //
+        // Both branches now write the same thing: display identity. That is
+        // the only mutation either client has ever issued against these rows
+        // (room_service.dart creates them and reads them; nothing updates
+        // them), so the allowlist is the real write surface, not a guess.
+        // Identity, role and join time are all fixed once the row exists.
         allow update: if isSignedIn() &&
+            request.resource.data.userId == resource.data.userId &&
+            request.resource.data.role == resource.data.role &&
+            request.resource.data.get('joinedAt', null) ==
+              resource.data.get('joinedAt', null) &&
+            request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['displayName', 'photoUrl', 'updatedAt']) &&
             (
               isRoomHost(roomId) ||
+              request.auth.uid == memberId
+            );
+
+        // Leaving and eviction, each paired with the room's own memberCount
+        // decrement in the same commit. `if false` here was never a decision
+        // that membership should be permanent — the stated reason was the
+        // counter desync a standalone delete would cause. That is the same
+        // problem joining already solves, so it gets the same solution: the
+        // membership row and the counter move together or neither moves.
+        // Without this there is no revocation path anywhere in the system —
+        // functions/rooms/participants.js handles the voice-session
+        // `participants` collection only and never touches roomMembers, and
+        // deleteRoomSelf's recursive delete takes the entire room with it.
+        //
+        // The owner row stays undeletable so a Community room can never be
+        // left without its owner; disposing of a whole room is still the
+        // deleteRoomSelf callable's job.
+        allow delete: if isSignedIn() &&
+            roomExists(roomId) &&
+            resource.data.get('role', 'member') != 'owner' &&
+            (
               (
                 request.auth.uid == memberId &&
-                request.resource.data.userId == resource.data.userId &&
-                request.resource.data.role == resource.data.role &&
-                request.resource.data.diff(resource.data).affectedKeys()
-                  .hasOnly(['displayName', 'photoUrl', 'updatedAt'])
-              )
-            );
-        // There is no client leave-community transaction today. A standalone
-        // self-delete would desynchronise memberCount, so only the host's
-        // existing whole-room cleanup may remove these documents.
-        allow delete: if false;
+                resource.data.userId == request.auth.uid
+              ) ||
+              isRoomHost(roomId)
+            ) &&
+            getAfter(
+              /databases/$(database)/documents/rooms/$(roomId)
+            ).data.memberCount ==
+              get(
+                /databases/$(database)/documents/rooms/$(roomId)
+              ).data.memberCount - 1;
       }
 
       match /messages/{messageId} {

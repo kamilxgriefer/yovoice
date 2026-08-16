@@ -6103,6 +6103,480 @@ async function main() {
     },
   );
 
+  // ------------------------------------------------------------------
+  // Second review pass. Each case below is a hole the first pass left in
+  // the private-Community-room widening, or in the club role write it
+  // widened alongside it.
+  // ------------------------------------------------------------------
+
+  // --- A membership row is authority, so a suspension has to reach it ---
+  const bannedMember = testEnv.authenticatedContext("rm-banned-uid", {
+    email_verified: true,
+  });
+  const disabledMember = testEnv.authenticatedContext("rm-disabled-uid", {
+    email_verified: true,
+  });
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await Promise.all([
+      setDoc(doc(db, "users/rm-banned-uid"), {
+        displayName: "Banned member",
+        banned: true,
+      }),
+      setDoc(doc(db, "users/rm-disabled-uid"), {
+        displayName: "Disabled member",
+        disabled: true,
+      }),
+    ]);
+    await Promise.all([
+      setDoc(doc(db, "rooms/cr-private/roomMembers/rm-banned-uid"), {
+        userId: "rm-banned-uid",
+        role: "member",
+        displayName: "Banned member",
+      }),
+      setDoc(doc(db, "rooms/cr-private/roomMembers/rm-disabled-uid"), {
+        userId: "rm-disabled-uid",
+        role: "member",
+        displayName: "Disabled member",
+      }),
+      setDoc(doc(db, "rooms/cr-private/participants/cr-host-uid"), {
+        userId: "cr-host-uid",
+        role: "host",
+        isSpeaker: true,
+      }),
+    ]);
+  });
+
+  for (const [label, context] of [
+    ["banned", bannedMember],
+    ["disabled", disabledMember],
+  ]) {
+    await check(
+      `SECURITY: a ${label} account's room membership does not open the ` +
+        "private room, its roster or its participant list",
+      async () => {
+        const db = context.firestore();
+        await assertFails(getDoc(doc(db, "rooms/cr-private")));
+        await assertFails(getDocs(collection(db, "rooms/cr-private/roomMembers")));
+        await assertFails(getDocs(collection(db, "rooms/cr-private/participants")));
+      },
+    );
+  }
+
+  await check(
+    "SECURITY: a banned member cannot start the voice session its " +
+      "membership would otherwise permit",
+    async () => {
+      const db = bannedMember.firestore();
+      await assertFails(
+        updateDoc(doc(db, "rooms/cr-private"), {
+          isLive: true,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  // --- Role attribution has to be unforgeable, including by omission ---
+  //
+  // diff().affectedKeys() reports only fields whose VALUE changed, so a
+  // guard hanging off hasAny() is silently skipped when the caller resends
+  // an existing value or sends nothing at all. Both leave the audit trail
+  // naming somebody else.
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, "users/cm-coowner-uid"), {
+      displayName: "CM CoOwner",
+      banned: false,
+    });
+    await setDoc(doc(db, "clubs/role-club/members/cm-coowner-uid"), {
+      userId: "cm-coowner-uid",
+      role: "coOwner",
+      displayName: "CM CoOwner",
+      joinedAt: Timestamp.fromMillis(1700000000000),
+      banned: false,
+    });
+    // The state a legitimate co-owner write leaves behind.
+    await updateDoc(doc(db, "clubs/role-club/members/cm-member-uid"), {
+      role: "member",
+      roleUpdatedAt: Timestamp.fromMillis(1755000000000),
+      roleUpdatedBy: "cm-coowner-uid",
+    });
+  });
+
+  await check(
+    "SECURITY: a role change cannot keep another manager's attribution by " +
+      "resending its existing value",
+    async () => {
+      const db = clubManager.firestore();
+      await assertFails(
+        updateDoc(doc(db, "clubs/role-club/members/cm-member-uid"), {
+          role: "moderator",
+          roleUpdatedAt: Timestamp.fromMillis(1755000000000),
+          roleUpdatedBy: "cm-coowner-uid",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a role change cannot leave stale attribution standing by " +
+      "omitting the fields entirely",
+    async () => {
+      const db = clubManager.firestore();
+      await assertFails(
+        updateDoc(doc(db, "clubs/role-club/members/cm-member-uid"), {
+          role: "moderator",
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(db, "clubs/role-club/members/cm-member-uid"), {
+          role: "moderator",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "regression: the real client write still lands on a row another " +
+      "manager last touched",
+    async () => {
+      const db = clubManager.firestore();
+      await assertSucceeds(
+        updateDoc(doc(db, "clubs/role-club/members/cm-member-uid"), {
+          role: "moderator",
+          roleUpdatedAt: serverTimestamp(),
+          roleUpdatedBy: "cm-owner-uid",
+        }),
+      );
+    },
+  );
+
+  // --- A room host is not a licence to rewrite a membership row ---
+  //
+  // `userId` is what watchMyCommunities() filters its collectionGroup query
+  // on, so a row carrying somebody else's uid is a remote denial of service
+  // against that person's Communities tab: their query returns the row, the
+  // room it points at is one they cannot read, and Future.wait in
+  // room_service.dart rejects the whole list.
+  const roomAttacker = testEnv.authenticatedContext("rm-attacker-uid", {
+    email_verified: true,
+  });
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, "users/rm-attacker-uid"), {
+      displayName: "Room attacker",
+      banned: false,
+    });
+    await setDoc(doc(db, "rooms/rm-attack-room"), {
+      hostId: "rm-attacker-uid",
+      roomType: "community",
+      visibility: "private",
+      status: "active",
+      memberCount: 1,
+      participantCount: 0,
+      isLive: false,
+    });
+    await setDoc(doc(db, "rooms/rm-attack-room/roomMembers/rm-attacker-uid"), {
+      userId: "rm-attacker-uid",
+      role: "owner",
+      displayName: "Room attacker",
+      joinedAt: Timestamp.fromMillis(1755000000000),
+    });
+  });
+
+  await check(
+    "SECURITY: a room host cannot repoint a membership row at another " +
+      "account's uid",
+    async () => {
+      const db = roomAttacker.firestore();
+      await assertFails(
+        updateDoc(doc(db, "rooms/rm-attack-room/roomMembers/rm-attacker-uid"), {
+          userId: "cr-member-uid",
+        }),
+      );
+      // The victim's Communities tab is unaffected: the query returns only
+      // their own rows and every one of them hydrates.
+      const victim = communityMember.firestore();
+      const snapshot = await assertSucceeds(
+        getDocs(
+          query(
+            collectionGroup(victim, "roomMembers"),
+            where("userId", "==", "cr-member-uid"),
+          ),
+        ),
+      );
+      const roomIds = [
+        ...new Set(
+          snapshot.docs
+            .map((document) => document.ref.parent.parent &&
+              document.ref.parent.parent.id)
+            .filter(Boolean),
+        ),
+      ];
+      if (roomIds.includes("rm-attack-room")) {
+        throw new Error("the forged row reached the victim's query");
+      }
+      await assertSucceeds(
+        Promise.all(roomIds.map((id) => getDoc(doc(victim, `rooms/${id}`)))),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a room host cannot inject fields into a membership row or " +
+      "rewrite its role and join time",
+    async () => {
+      const db = roomAttacker.firestore();
+      await assertFails(
+        updateDoc(doc(db, "rooms/rm-attack-room/roomMembers/rm-attacker-uid"), {
+          role: "superAdmin",
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(db, "rooms/rm-attack-room/roomMembers/rm-attacker-uid"), {
+          banned: true,
+          permissions: ["moderate"],
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(db, "rooms/rm-attack-room/roomMembers/rm-attacker-uid"), {
+          joinedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "regression: a host may still refresh the display identity on a " +
+      "membership row, and a member their own",
+    async () => {
+      const host = roomAttacker.firestore();
+      await assertSucceeds(
+        updateDoc(doc(host, "rooms/rm-attack-room/roomMembers/rm-attacker-uid"), {
+          displayName: "Renamed host",
+          photoUrl: "https://example.invalid/a.jpg",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      const member = communityMember.firestore();
+      await assertSucceeds(
+        updateDoc(doc(member, "rooms/cr-private/roomMembers/cr-member-uid"), {
+          displayName: "Renamed member",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  // --- Membership has to be revocable ---
+  //
+  // Every case here reads the room's live memberCount first, so the only
+  // thing under test is the delete/decrement pairing — never an arithmetic
+  // assumption about what earlier cases left behind.
+  const memberCountOf = async (roomId) => {
+    let count = null;
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const snapshot = await getDoc(doc(ctx.firestore(), `rooms/${roomId}`));
+      count = snapshot.data().memberCount;
+    });
+    if (typeof count !== "number") {
+      throw new Error(`could not read memberCount for ${roomId}`);
+    }
+    return count;
+  };
+
+  await check(
+    "regression: a member leaves a Community room — row delete and the " +
+      "room's memberCount decrement in one batch",
+    async () => {
+      const db = communityStranger.firestore();
+      const before = await memberCountOf("cr-public");
+      const batch = writeBatch(db);
+      batch.delete(doc(db, "rooms/cr-public/roomMembers/cr-stranger-uid"));
+      batch.update(doc(db, "rooms/cr-public"), {
+        memberCount: before - 1,
+        updatedAt: serverTimestamp(),
+      });
+      await assertSucceeds(batch.commit());
+      if ((await memberCountOf("cr-public")) !== before - 1) {
+        throw new Error("memberCount did not follow the departure");
+      }
+    },
+  );
+
+  await check(
+    "regression: a host evicts a member — same pairing, host authority",
+    async () => {
+      const db = testEnv
+        .authenticatedContext("cr-host-uid", { email_verified: true })
+        .firestore();
+      const before = await memberCountOf("cr-private");
+      const batch = writeBatch(db);
+      batch.delete(doc(db, "rooms/cr-private/roomMembers/rm-disabled-uid"));
+      batch.update(doc(db, "rooms/cr-private"), {
+        memberCount: before - 1,
+        updatedAt: serverTimestamp(),
+      });
+      await assertSucceeds(batch.commit());
+    },
+  );
+
+  await check(
+    "SECURITY: membership removal cannot desynchronise the counter, reach " +
+      "another member, or orphan the room's owner row",
+    async () => {
+      const member = communityMember.firestore();
+      const before = await memberCountOf("cr-private");
+      // A standalone delete with no counter move.
+      await assertFails(
+        deleteDoc(doc(member, "rooms/cr-private/roomMembers/cr-member-uid")),
+      );
+      // A correctly-shaped counter decrement with no delete behind it.
+      await assertFails(
+        updateDoc(doc(member, "rooms/cr-private"), {
+          memberCount: before - 1,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      // Deleting somebody else's row without being the host.
+      const otherBatch = writeBatch(member);
+      otherBatch.delete(doc(member, "rooms/cr-private/roomMembers/rm-banned-uid"));
+      otherBatch.update(doc(member, "rooms/cr-private"), {
+        memberCount: before - 1,
+        updatedAt: serverTimestamp(),
+      });
+      await assertFails(otherBatch.commit());
+      // Leaving must not be a way to inflate the counter either.
+      const inflateBatch = writeBatch(member);
+      inflateBatch.delete(doc(member, "rooms/cr-private/roomMembers/cr-member-uid"));
+      inflateBatch.update(doc(member, "rooms/cr-private"), {
+        memberCount: before + 1,
+        updatedAt: serverTimestamp(),
+      });
+      await assertFails(inflateBatch.commit());
+      // The owner row is not removable while the room exists, host included.
+      const host = testEnv
+        .authenticatedContext("cr-host-uid", { email_verified: true })
+        .firestore();
+      const ownerBatch = writeBatch(host);
+      ownerBatch.delete(doc(host, "rooms/cr-private/roomMembers/cr-host-uid"));
+      ownerBatch.update(doc(host, "rooms/cr-private"), {
+        memberCount: before - 1,
+        updatedAt: serverTimestamp(),
+      });
+      await assertFails(ownerBatch.commit());
+      if ((await memberCountOf("cr-private")) !== before) {
+        throw new Error("a denied case still moved the counter");
+      }
+    },
+  );
+
+  // --- The collectionGroup discriminator, run rather than asserted ---
+  //
+  // Setting the nested rule to `if false` proves nothing: Firestore unions
+  // allow rules, so `false || <top-level provable>` is allowed under either
+  // hypothesis. The experiment that separates them is the opposite one —
+  // make the NESTED rule maximally permissive and the TOP-LEVEL rule deny.
+  // If a nested block could authorize a collectionGroup query, `if true`
+  // would do it. It does not, which is what makes the top-level wildcard
+  // rule the single thing keeping watchMyCommunities() alive.
+  async function collectionGroupUnderVariantRules(projectId, transform) {
+    const source = fs.readFileSync(RULES_PATH, "utf8");
+    const variant = transform(source);
+    if (variant === source) {
+      throw new Error(
+        "rule text drifted — the variant transform matched nothing",
+      );
+    }
+    const variantEnv = await initializeTestEnvironment({
+      projectId,
+      firestore: { rules: variant, host: "127.0.0.1", port: 8080 },
+    });
+    try {
+      await variantEnv.clearFirestore();
+      await variantEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, "users/cg-probe-uid"), {
+          displayName: "CG probe",
+          banned: false,
+        });
+        await setDoc(doc(db, "rooms/cg-probe-room"), {
+          hostId: "cg-probe-host",
+          roomType: "community",
+          visibility: "public",
+          status: "active",
+          memberCount: 1,
+        });
+        await setDoc(
+          doc(db, "rooms/cg-probe-room/roomMembers/cg-probe-uid"),
+          { userId: "cg-probe-uid", role: "member" },
+        );
+      });
+      const db = variantEnv
+        .authenticatedContext("cg-probe-uid", { email_verified: true })
+        .firestore();
+      return await getDocs(
+        query(
+          collectionGroup(db, "roomMembers"),
+          where("userId", "==", "cg-probe-uid"),
+        ),
+      );
+    } finally {
+      await variantEnv.cleanup();
+    }
+  }
+
+  const TOP_LEVEL_ROOM_MEMBERS =
+    "    match /{path=**}/roomMembers/{memberId} {\n" +
+    "      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;\n" +
+    "    }";
+
+  await check(
+    "PROOF: a nested match block cannot authorize a collectionGroup query " +
+      "even when it says `if true` — the top-level wildcard is the only " +
+      "thing that can",
+    async () => {
+      await assertFails(
+        collectionGroupUnderVariantRules("demo-yovoice-cg-a", (source) =>
+          source
+            .replace(
+              TOP_LEVEL_ROOM_MEMBERS,
+              "    match /{path=**}/roomMembers/{memberId} {\n" +
+                "      allow read: if false;\n" +
+                "    }",
+            )
+            .replace(
+              "        allow read: if resource.data.userId == request.auth.uid ||\n" +
+                "            canAccessRoom(roomId);",
+              "        allow read: if true;",
+            ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "PROOF: the same query succeeds with the top-level wildcard restored " +
+      "and the nested rule denying, so the deny above is not incidental",
+    async () => {
+      const snapshot = await assertSucceeds(
+        collectionGroupUnderVariantRules("demo-yovoice-cg-b", (source) =>
+          source.replace(
+            "        allow read: if resource.data.userId == request.auth.uid ||\n" +
+              "            canAccessRoom(roomId);",
+            "        allow read: if false;",
+          ),
+        ),
+      );
+      if (snapshot.size !== 1) {
+        throw new Error(`expected 1 membership row, got ${snapshot.size}`);
+      }
+    },
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();
   process.exit(failed > 0 ? 1 : 0);
