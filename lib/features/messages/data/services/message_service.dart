@@ -1,4 +1,8 @@
+import 'dart:async';
+import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
 
@@ -21,13 +25,31 @@ class MessageService {
     // Compatibility injection for existing previews/tests. Notification
     // delivery is now derived by the backend from the committed message.
     NotificationService? notificationService,
+    FirebaseFunctions? functions,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
-       _legacyNotificationService = notificationService;
+       _legacyNotificationService = notificationService,
+       _functionsOverride = functions;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final NotificationService? _legacyNotificationService;
+  final FirebaseFunctions? _functionsOverride;
+
+  FirebaseFunctions? get _functions {
+    if (_functionsOverride != null) {
+      return _functionsOverride;
+    }
+
+    try {
+      return FirebaseFunctions.instanceFor(region: 'europe-west1');
+    } on FirebaseException catch (error) {
+      if (error.code == 'no-app') {
+        return null;
+      }
+      rethrow;
+    }
+  }
 
   CollectionReference<Map<String, dynamic>> get _conversations =>
       _firestore.collection('conversations');
@@ -37,6 +59,47 @@ class MessageService {
 
   CollectionReference<Map<String, dynamic>> get _socialPresence =>
       _firestore.collection('socialPresence');
+
+  String _newRequestId() {
+    final random = Random.secure();
+    final randomPart = List<int>.generate(
+      16,
+      (_) => random.nextInt(256),
+    ).map((value) => value.toRadixString(16).padLeft(2, '0')).join();
+    return '${DateTime.now().millisecondsSinceEpoch.toRadixString(16)}-$randomPart';
+  }
+
+  bool _isCallableUnavailable(Object error) {
+    if (error is FirebaseException && error.code == 'no-app') {
+      return true;
+    }
+    return error is FirebaseFunctionsException &&
+        (error.code == 'unimplemented' || error.code == 'not-found');
+  }
+
+  bool get _preferLegacyBehaviour => _legacyNotificationService != null;
+
+  Future<bool> _tryCallable(String name, Map<String, Object?> data) async {
+    if (_preferLegacyBehaviour) {
+      return false;
+    }
+
+    final functions = _functions;
+
+    if (functions == null) {
+      return false;
+    }
+
+    try {
+      await functions.httpsCallable(name).call(data);
+      return true;
+    } catch (error) {
+      if (_isCallableUnavailable(error)) {
+        return false;
+      }
+      rethrow;
+    }
+  }
 
   String get _currentUserId {
     final user = _auth.currentUser;
@@ -122,8 +185,17 @@ class MessageService {
     required String conversationId,
     required bool isTyping,
   }) async {
-    final userId = _currentUserId;
+    final called = await _tryCallable('setDirectTyping', {
+      'conversationId': conversationId,
+      'isTyping': isTyping,
+      'requestId': _newRequestId(),
+    });
 
+    if (called) {
+      return;
+    }
+
+    final userId = _currentUserId;
     await _conversations.doc(conversationId).set({
       'typing': {
         userId: {
@@ -148,6 +220,29 @@ class MessageService {
 
     if (otherUserId == currentUser.uid) {
       throw ArgumentError('You cannot start a conversation with yourself.');
+    }
+
+    if (!_preferLegacyBehaviour) {
+      final functions = _functions;
+      if (functions != null) {
+        try {
+          final callable = functions.httpsCallable('openDirectConversation');
+          final response = await callable.call<Map<Object?, Object?>>({
+            'targetUserId': otherUserId,
+            'requestId': _newRequestId(),
+          });
+          final data = response.data;
+          final conversationId = data['conversationId'];
+          if (conversationId is String && conversationId.isNotEmpty) {
+            return conversationId;
+          }
+          throw StateError('Malformed server response for opening conversation.');
+        } catch (error) {
+          if (!_isCallableUnavailable(error)) {
+            rethrow;
+          }
+        }
+      }
     }
 
     final conversationId = buildConversationId(currentUser.uid, otherUserId);
@@ -204,6 +299,92 @@ class MessageService {
     final trimmed = text.trim();
 
     if (trimmed.isEmpty) {
+      return;
+    }
+
+    final called = await _tryCallable('sendDirectMessage', {
+      'conversationId': conversationId,
+      'text': trimmed,
+      'requestId': _newRequestId(),
+      'replyToMessageId': replyTo?.id,
+    });
+
+    if (!called) {
+      final legacyNotifications = _legacyNotificationService;
+      bool suppressBell = false;
+      if (legacyNotifications != null) {
+        suppressBell = (await _users
+                .doc(recipientId)
+                .collection('friends')
+                .doc(currentUserId)
+                .get())
+            .exists;
+      }
+
+      // Keep deterministic parity with pre-callable behavior in tests and
+      // old clients: write the message locally and update unread/badges here.
+      final conversation = _conversations.doc(conversationId);
+      final message = conversation.collection('messages').doc();
+      final now = Timestamp.now();
+      final batch = _firestore.batch();
+
+      batch.set(message, {
+        'conversationId': conversationId,
+        'senderId': currentUserId,
+        'type': MessageType.text.name,
+        'content': trimmed,
+        'mediaUrl': null,
+        'durationSeconds': null,
+        'sentAt': now,
+        'readBy': [currentUserId],
+        'reactions': <String, String>{},
+        'isDeleted': false,
+        'editedAt': null,
+        'replyToMessageId': replyTo?.id,
+        'replyToSenderId': replyTo?.senderId,
+        'replyToContent': replyTo == null
+            ? null
+            : replyTo.isDeleted
+            ? 'Message deleted'
+            : replyTo.previewText(),
+      });
+
+      batch.update(conversation, {
+        'lastMessage': trimmed,
+        'lastMessageType': MessageType.text.name,
+        'lastMessageSenderId': currentUserId,
+        'updatedAt': now,
+        'archivedBy': <String>[],
+        'unreadCounts.$currentUserId': 0,
+        'unreadCounts.$recipientId': FieldValue.increment(1),
+        'typing.$currentUserId.isTyping': false,
+        'typing.$currentUserId.updatedAt': now,
+      });
+
+      await batch.commit();
+
+      if (legacyNotifications != null) {
+        final type = replyTo?.senderId == recipientId
+            ? NotificationType.reply
+            : NotificationType.directMessage;
+        try {
+          await legacyNotifications.notify(
+            recipientId: recipientId,
+            type: type,
+            targetId: conversationId,
+            suppressBell: suppressBell,
+          );
+        } catch (_) {
+          if (suppressBell) {
+            await legacyNotifications.notify(
+              recipientId: recipientId,
+              type: type,
+              targetId: conversationId,
+            );
+          }
+        }
+      }
+
       return;
     }
 
@@ -298,6 +479,17 @@ class MessageService {
       return;
     }
 
+    final called = await _tryCallable('editDirectMessage', {
+      'conversationId': conversationId,
+      'messageId': messageId,
+      'text': trimmed,
+      'requestId': _newRequestId(),
+    });
+
+    if (called) {
+      return;
+    }
+
     final reference = _conversations
         .doc(conversationId)
         .collection('messages')
@@ -335,8 +527,21 @@ class MessageService {
     final reactions = Map<String, dynamic>.from(
       snapshot.data()?['reactions'] as Map? ?? const <String, dynamic>{},
     );
+    final current = reactions[userId] as String?;
+    final nextEmoji = current == emoji ? null : emoji;
 
-    if (reactions[userId] == emoji) {
+    final called = await _tryCallable('setDirectMessageReaction', {
+      'conversationId': conversationId,
+      'messageId': messageId,
+      'emoji': nextEmoji,
+      'requestId': _newRequestId(),
+    });
+
+    if (called) {
+      return;
+    }
+
+    if (current == emoji) {
       await reference.update({'reactions.$userId': FieldValue.delete()});
     } else {
       await reference.update({'reactions.$userId': emoji});
@@ -344,6 +549,15 @@ class MessageService {
   }
 
   Future<void> markConversationRead(String conversationId) async {
+    final called = await _tryCallable('markDirectConversationRead', {
+      'conversationId': conversationId,
+      'requestId': _newRequestId(),
+    });
+
+    if (called) {
+      return;
+    }
+
     final currentUserId = _currentUserId;
     final conversation = _conversations.doc(conversationId);
     final latest = await conversation
@@ -376,6 +590,16 @@ class MessageService {
     required String conversationId,
     required String messageId,
   }) async {
+    final called = await _tryCallable('deleteDirectMessage', {
+      'conversationId': conversationId,
+      'messageId': messageId,
+      'requestId': _newRequestId(),
+    });
+
+    if (called) {
+      return;
+    }
+
     final reference = _conversations
         .doc(conversationId)
         .collection('messages')
@@ -399,6 +623,17 @@ class MessageService {
     required String conversationId,
     required bool muted,
   }) async {
+    final called = await _tryCallable('setDirectConversationPreference', {
+      'conversationId': conversationId,
+      'preference': 'muted',
+      'enabled': muted,
+      'requestId': _newRequestId(),
+    });
+
+    if (called) {
+      return;
+    }
+
     final userId = _currentUserId;
 
     await _conversations.doc(conversationId).update({
@@ -409,6 +644,17 @@ class MessageService {
   }
 
   Future<void> archiveConversation(String conversationId) async {
+    final called = await _tryCallable('setDirectConversationPreference', {
+      'conversationId': conversationId,
+      'preference': 'archived',
+      'enabled': true,
+      'requestId': _newRequestId(),
+    });
+
+    if (called) {
+      return;
+    }
+
     final userId = _currentUserId;
 
     await _conversations.doc(conversationId).update({
@@ -418,6 +664,17 @@ class MessageService {
   }
 
   Future<void> unarchiveConversation(String conversationId) async {
+    final called = await _tryCallable('setDirectConversationPreference', {
+      'conversationId': conversationId,
+      'preference': 'archived',
+      'enabled': false,
+      'requestId': _newRequestId(),
+    });
+
+    if (called) {
+      return;
+    }
+
     final userId = _currentUserId;
 
     await _conversations.doc(conversationId).update({

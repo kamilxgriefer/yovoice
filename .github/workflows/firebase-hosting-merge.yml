@@ -82,7 +82,7 @@ jobs:
 
       - name: Run Storage rules tests
         run: |
-          ./firestore-tests/node_modules/.bin/firebase emulators:exec --only storage --project demo-yovoice \
+          ./firestore-tests/node_modules/.bin/firebase emulators:exec --only firestore,storage --project demo-yovoice \
             'npm --prefix firestore-tests run test:storage'
 
       # Family media authorization spans both products. Running this suite with

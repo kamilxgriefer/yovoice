@@ -8,11 +8,13 @@ exist; know which one you're relying on before trusting it.
 
 `firestore-tests/` — a standalone Node project running regression and
 attack-scenario checks against `firestore.rules` via
-`@firebase/rules-unit-testing` and the Firestore emulator — **265/265 checks
-passing as of 2026-08-16** — plus `storage.test.js`, the same treatment for
-`storage.rules` against the Storage emulator (22 checks: per-path
-ownership, size caps, content-type allowlists, read gating, default
-deny). Both suites also run in CI on every push to `main` and gate the
+`@firebase/rules-unit-testing` and the Firestore emulator — **268 checks passing**
+— plus `storage.test.js`, the same treatment for `storage.rules` against the
+Storage emulator (43 checks: path ownership, size caps, content-type allowlists,
+read gating, default deny). Both suites also run in CI on every push to `main`
+and gate the Hosting deploy (see [DEPLOYMENT.md](DEPLOYMENT.md)). Full workflow
+in [`firestore-tests/README.md`](../firestore-tests/README.md) and
+[Firebase.md](Firebase.md#firestore-rules-testing); the short version:
 Hosting deploy (see [DEPLOYMENT.md](DEPLOYMENT.md)). Full workflow in
 [`firestore-tests/README.md`](../firestore-tests/README.md) and
 [Firebase.md](Firebase.md#firestore-rules-testing); the short version:
@@ -22,6 +24,16 @@ brew install openjdk           # one-time, needed for the emulator's JVM
 export PATH="/usr/local/opt/openjdk/bin:$PATH"
 firebase emulators:start --only firestore --project yovoice-ec54a
 cd firestore-tests && npm install && npm test
+```
+
+For the same verification as CI:
+
+```bash
+./firestore-tests/node_modules/.bin/firebase emulators:exec --only firestore --project demo-yovoice 'npm --prefix firestore-tests test'
+./firestore-tests/node_modules/.bin/firebase emulators:exec --only firestore,storage --project demo-yovoice 'npm --prefix firestore-tests run test:storage'
+./firestore-tests/node_modules/.bin/firebase emulators:exec --only firestore,storage --project demo-yovoice 'npm --prefix firestore-tests run test:family-media'
+./firestore-tests/node_modules/.bin/firebase emulators:exec --only auth,firestore --project demo-yovoice 'npm --prefix functions test'
+./firestore-tests/node_modules/.bin/firebase emulators:exec --only functions,auth,firestore --project demo-yovoice 'npm --prefix functions run test:smoke'
 ```
 
 **Why this layer exists and matters more than usual for this project**:
@@ -73,7 +85,7 @@ wrong reason.
 
 ## Dart tests — real, but narrow
 
-`test/` — **396/396 tests across 41 files as of 2026-08-16**, grown mostly
+`test/` — **full suite currently green in local verification**, grown mostly
 out of real bugs rather than an even coverage discipline. The
 pattern throughout: fake the Firebase backends
 (`firebase_auth_mocks` / `fake_cloud_firestore` /

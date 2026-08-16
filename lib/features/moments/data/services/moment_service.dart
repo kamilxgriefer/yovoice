@@ -1,11 +1,11 @@
 import 'dart:io';
+import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
-import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
-import 'package:yovoice/features/achievements/data/services/achievement_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 
 class MomentService {
@@ -13,24 +13,49 @@ class MomentService {
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
     FirebaseStorage? storage,
-    AchievementService? achievementService,
+    FirebaseFunctions? functions,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _storage = storage ?? FirebaseStorage.instance,
-       _achievements =
-           achievementService ??
-           AchievementService(
-             firestore: firestore ?? FirebaseFirestore.instance,
-             auth: auth ?? FirebaseAuth.instance,
-           );
+       _functionsOverride = functions;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final FirebaseStorage _storage;
-  final AchievementService _achievements;
+  final FirebaseFunctions? _functionsOverride;
+
+  FirebaseFunctions? get _functions =>
+      _functionsOverride ??
+      (() {
+        try {
+          return FirebaseFunctions.instanceFor(region: 'europe-west1');
+        } on FirebaseException catch (error) {
+          if (error.code == 'no-app') {
+            return null;
+          }
+          rethrow;
+        }
+      })();
 
   CollectionReference<Map<String, dynamic>> get _moments =>
       _firestore.collection('voiceMoments');
+
+  String _newRequestId() {
+    final random = Random.secure();
+    final randomPart = List<int>.generate(
+      16,
+      (_) => random.nextInt(256),
+    ).map((value) => value.toRadixString(16).padLeft(2, '0')).join();
+    return '${DateTime.now().millisecondsSinceEpoch.toRadixString(16)}-$randomPart';
+  }
+
+  bool _isCallableUnavailable(Object error) {
+    if (error is FirebaseException && error.code == 'no-app') {
+      return true;
+    }
+    return error is FirebaseFunctionsException &&
+        (error.code == 'unimplemented' || error.code == 'not-found');
+  }
 
   Stream<List<VoiceMoment>> watchPublishedMoments({int limit = 30}) {
     return _moments
@@ -95,32 +120,269 @@ class MomentService {
       );
     }
 
-    final userDocument = await _firestore
-        .collection('users')
-        .doc(user.uid)
-        .get();
-    final userData = userDocument.data();
-    final profileName = (userData?['displayName'] as String?)?.trim();
-    final profilePhoto = userData?['photoUrl'] as String?;
-
-    final authorName = profileName?.isNotEmpty == true
-        ? profileName!
-        : user.displayName?.trim().isNotEmpty == true
-        ? user.displayName!.trim()
-        : user.email?.split('@').first ?? 'YO Voice user';
+    final normalizedCaption = caption.trim().isEmpty
+        ? 'Voice Moment'
+        : caption.trim();
 
     if (replyToMomentId != null && replyToMomentId.isNotEmpty) {
+      final identity = await _identity(user);
       return _publishVoiceReply(
         parentMomentId: replyToMomentId,
         file: file,
         durationSeconds: durationSeconds,
-        caption: caption,
+        caption: normalizedCaption,
         authorId: user.uid,
-        authorName: authorName,
-        authorPhotoUrl: profilePhoto ?? user.photoURL,
+        authorName: identity.displayName,
+        authorPhotoUrl: identity.photoUrl,
       );
     }
 
+    try {
+      final functions = _functions;
+      if (functions == null) {
+        throw FirebaseFunctionsException(
+          code: 'no-app',
+          message: 'Cloud Functions unavailable.',
+        );
+      }
+      final requestId = _newRequestId();
+      final reserve = functions.httpsCallable('reserveMomentDraft');
+      final reserved = await reserve.call<Map<Object?, Object?>>({
+        'caption': normalizedCaption,
+        'durationSeconds': durationSeconds,
+        'requestId': requestId,
+      });
+
+      final reservedData = reserved.data;
+      final momentId = reservedData['momentId'] as String?;
+      final storagePath = reservedData['storagePath'] as String?;
+      if (momentId == null ||
+          momentId.isEmpty ||
+          storagePath == null ||
+          storagePath.isEmpty) {
+        throw StateError('Malformed server draft reservation for moment.');
+      }
+      final storageReference = _storage.ref(storagePath);
+      try {
+        final snapshot = await storageReference.putFile(
+          file,
+          SettableMetadata(
+            contentType: 'audio/mp4',
+            customMetadata: {'authorId': user.uid, 'momentId': momentId},
+          ),
+        );
+        final metadata = await snapshot.ref.getMetadata();
+        final objectGeneration = metadata.generation;
+
+        if (objectGeneration == null || objectGeneration.isEmpty) {
+          throw StateError('The upload did not return a valid generation.');
+        }
+
+      final finalize = functions.httpsCallable('finalizeMomentDraft');
+        await finalize.call<Map<Object?, Object?>>({
+          'momentId': momentId,
+          'objectGeneration': objectGeneration,
+          'requestId': requestId,
+        });
+
+        return momentId;
+      } catch (error) {
+        await storageReference.delete().catchError((_) {});
+        rethrow;
+      }
+    } catch (error) {
+      if (!_isCallableUnavailable(error)) {
+        rethrow;
+      }
+    }
+
+    return _publishRecordedMomentLegacy(
+      user: user,
+      file: file,
+      durationSeconds: durationSeconds,
+      caption: normalizedCaption,
+    );
+  }
+
+  Future<String> _publishVoiceReply({
+    required String parentMomentId,
+    required File file,
+    required int durationSeconds,
+    required String caption,
+    required String authorId,
+    required String authorName,
+    required String? authorPhotoUrl,
+  }) async {
+    try {
+      final requestId = _newRequestId();
+      final functions = _functions;
+      if (functions == null) {
+        throw FirebaseFunctionsException(
+          code: 'no-app',
+          message: 'Cloud Functions unavailable.',
+        );
+      }
+      final reserve = functions.httpsCallable('reserveVoiceCommentDraft');
+      final reserved = await reserve.call<Map<Object?, Object?>>({
+        'durationSeconds': durationSeconds,
+        'momentId': parentMomentId,
+        'text': caption,
+        'requestId': requestId,
+      });
+
+      final reservedData = reserved.data;
+      final commentId = reservedData['commentId'] as String?;
+      final storagePath = reservedData['storagePath'] as String?;
+      if (commentId == null ||
+          commentId.isEmpty ||
+          storagePath == null ||
+          storagePath.isEmpty) {
+        throw StateError('Malformed server voice-reply reservation.');
+      }
+      final storageReference = _storage.ref(storagePath);
+      try {
+        final snapshot = await storageReference.putFile(
+          file,
+          SettableMetadata(
+            contentType: 'audio/mp4',
+            customMetadata: {
+              'authorId': authorId,
+              'momentId': parentMomentId,
+              'commentId': commentId,
+            },
+          ),
+        );
+        final metadata = await snapshot.ref.getMetadata();
+        final objectGeneration = metadata.generation;
+
+        if (objectGeneration == null || objectGeneration.isEmpty) {
+          throw StateError('The upload did not return a valid generation.');
+        }
+
+      final finalize = functions.httpsCallable('finalizeVoiceCommentDraft');
+        await finalize.call<Map<Object?, Object?>>({
+          'momentId': parentMomentId,
+          'commentId': commentId,
+          'objectGeneration': objectGeneration,
+          'requestId': requestId,
+        });
+
+        return commentId;
+      } catch (error) {
+        await storageReference.delete().catchError((_) {});
+        rethrow;
+      }
+    } catch (error) {
+      if (!_isCallableUnavailable(error)) {
+        rethrow;
+      }
+    }
+
+    return _publishVoiceReplyLegacy(
+      parentMomentId: parentMomentId,
+      file: file,
+      durationSeconds: durationSeconds,
+      caption: caption,
+      authorId: authorId,
+      authorName: authorName,
+      authorPhotoUrl: authorPhotoUrl,
+    );
+  }
+
+  Future<String> createTextComment({
+    required String momentId,
+    required String text,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw StateError('You must be signed in to comment on a Voice Moment.');
+    }
+
+    final trimmedText = text.trim();
+    if (trimmedText.isEmpty) {
+      return '';
+    }
+
+    final requestId = _newRequestId();
+    try {
+      final functions = _functions;
+      if (functions == null) {
+        throw FirebaseFunctionsException(
+          code: 'no-app',
+          message: 'Cloud Functions unavailable.',
+        );
+      }
+      final callable = functions.httpsCallable('createMomentComment');
+      final response = await callable.call<Map<Object?, Object?>>({
+        'momentId': momentId,
+        'text': trimmedText,
+        'requestId': requestId,
+      });
+
+      final data = response.data;
+      final commentId = data['commentId'];
+      if (commentId == null || commentId is! String || commentId.isEmpty) {
+        throw StateError('Malformed server response for comment creation.');
+      }
+      return commentId;
+    } catch (error) {
+      if (!_isCallableUnavailable(error)) {
+        rethrow;
+      }
+    }
+
+    return _createTextCommentLegacy(
+      momentId: momentId,
+      user: user,
+      text: trimmedText,
+    );
+  }
+
+  Future<String> _createTextCommentLegacy({
+    required String momentId,
+    required User user,
+    required String text,
+  }) async {
+    final userSnapshot = await _firestore
+        .collection('users')
+        .doc(user.uid)
+        .get();
+    final userData = userSnapshot.data();
+    final displayName = (userData?['displayName'] as String?)?.trim();
+    final photoUrl = userData?['photoUrl'] as String?;
+
+    final identityName = displayName?.isNotEmpty == true
+        ? displayName
+        : user.displayName?.trim().isNotEmpty == true
+        ? user.displayName!.trim()
+        : user.email?.split('@').first ?? 'YO Voice user';
+
+    final commentReference = _commentsFor(momentId).doc();
+    final momentReference = _moments.doc(momentId);
+    final batch = _firestore.batch();
+
+    batch.set(commentReference, {
+      'type': 'text',
+      'authorId': user.uid,
+      'authorName': identityName,
+      'authorPhotoUrl': photoUrl ?? user.photoURL,
+      'text': text,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+    batch.update(momentReference, {
+      'commentCount': FieldValue.increment(1),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    await batch.commit();
+    return commentReference.id;
+  }
+
+  Future<String> _publishRecordedMomentLegacy({
+    required User user,
+    required File file,
+    required int durationSeconds,
+    required String caption,
+  }) async {
     final document = _moments.doc();
     final storageReference = _storage.ref(
       'voice_moments/${user.uid}/${document.id}.m4a',
@@ -128,9 +390,9 @@ class MomentService {
 
     await document.set({
       'authorId': user.uid,
-      'authorName': authorName,
-      'authorPhotoUrl': profilePhoto ?? user.photoURL,
-      'caption': caption.trim().isEmpty ? 'Voice Moment' : caption.trim(),
+      'authorName': (await _identity(user)).displayName,
+      'authorPhotoUrl': (await _identity(user)).photoUrl,
+      'caption': caption,
       'audioUrl': null,
       'storagePath': storageReference.fullPath,
       'durationSeconds': durationSeconds,
@@ -159,15 +421,6 @@ class MomentService {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      // Publishing is the SOURCE EVENT for the 'moments' achievement
-      // metric. Nothing incremented momentCount before this, so every
-      // Moment-based achievement sat permanently at 0/N no matter how
-      // many Moments were posted. Best-effort: a counter write must
-      // never fail an already-published Moment.
-      await _achievements
-          .incrementMetric('moments')
-          .catchError((_) => const <AchievementDefinition>[]);
-
       return document.id;
     } catch (_) {
       await document.delete().catchError((_) {});
@@ -176,7 +429,7 @@ class MomentService {
     }
   }
 
-  Future<String> _publishVoiceReply({
+  Future<String> _publishVoiceReplyLegacy({
     required String parentMomentId,
     required File file,
     required int durationSeconds,
@@ -211,7 +464,7 @@ class MomentService {
         'authorId': authorId,
         'authorName': authorName,
         'authorPhotoUrl': authorPhotoUrl,
-        'text': caption.trim(),
+        'text': caption,
         'audioUrl': downloadUrl,
         'storagePath': storageReference.fullPath,
         'durationSeconds': durationSeconds,
@@ -261,6 +514,23 @@ class MomentService {
 
     await momentReference.delete();
   }
+
+  Future<({String displayName, String? photoUrl})> _identity(User user) async {
+    final profile = await _firestore.collection('users').doc(user.uid).get();
+    final profileName = (profile.data()?['displayName'] as String?)?.trim();
+    final profilePhoto = (profile.data()?['photoUrl'] as String?)?.trim();
+    return (
+      displayName: (profileName != null && profileName.isNotEmpty
+          ? profileName
+          : user.displayName?.trim().isNotEmpty == true
+          ? user.displayName!.trim()
+          : user.email?.split('@').first ?? 'YO Voice user'),
+      photoUrl: profilePhoto?.isNotEmpty == true ? profilePhoto : user.photoURL,
+    );
+  }
+
+  CollectionReference<Map<String, dynamic>> _commentsFor(String momentId) =>
+      _moments.doc(momentId).collection('comments');
 
   Future<void> _deleteCollection(
     CollectionReference<Map<String, dynamic>> collection,

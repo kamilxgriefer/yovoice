@@ -1,16 +1,37 @@
+import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../achievement_catalog.dart';
 import '../models/achievement_definition.dart';
 
 class AchievementService {
-  AchievementService({FirebaseFirestore? firestore, FirebaseAuth? auth})
-    : _firestore = firestore ?? FirebaseFirestore.instance,
-      _auth = auth ?? FirebaseAuth.instance;
+  AchievementService({
+    FirebaseFirestore? firestore,
+    FirebaseAuth? auth,
+    FirebaseFunctions? functions,
+  }) : _firestore = firestore ?? FirebaseFirestore.instance,
+       _auth = auth ?? FirebaseAuth.instance,
+       _functionsOverride = functions;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
+  final FirebaseFunctions? _functionsOverride;
+
+  FirebaseFunctions? get _functions =>
+      _functionsOverride ??
+      (() {
+        try {
+          return FirebaseFunctions.instanceFor(region: 'europe-west1');
+        } on FirebaseException catch (error) {
+          if (error.code == 'no-app') {
+            return null;
+          }
+          rethrow;
+        }
+      })();
 
   String get _uid {
     final user = _auth.currentUser;
@@ -20,6 +41,22 @@ class AchievementService {
 
   DocumentReference<Map<String, dynamic>> get _user =>
       _firestore.collection('users').doc(_uid);
+
+  String _newRequestId() {
+    final random = Random.secure();
+    final randomPart = List<int>.generate(
+      16,
+      (_) => random.nextInt(256),
+    ).map((value) => value.toRadixString(16).padLeft(2, '0')).join();
+    return '${DateTime.now().millisecondsSinceEpoch.toRadixString(16)}-$randomPart';
+  }
+
+  bool _isCallableUnavailable(Object error) {
+    return error is FirebaseFunctionsException &&
+        (error.code == 'unimplemented' ||
+            error.code == 'not-found' ||
+            error.code == 'no-app');
+  }
 
   Future<List<AchievementDefinition>> incrementMetric(
     String metric, {
@@ -131,20 +168,40 @@ class AchievementService {
   }
 
   Future<void> selectTitle(String achievementId) async {
-    final snapshot = await _user.get();
-    final unlocked =
-        (snapshot.data()?['unlockedTitleIds'] as List<dynamic>? ??
-                const <dynamic>[])
-            .whereType<String>()
-            .toSet();
+    try {
+      final functions = _functions;
+      if (functions == null) {
+        throw FirebaseFunctionsException(
+          code: 'no-app',
+          message: 'Cloud Functions unavailable.',
+        );
+      }
+      final callable = functions.httpsCallable('selectMyAchievementTitle');
+      await callable.call<Map<Object?, Object?>>({
+        'titleId': achievementId,
+        'requestId': _newRequestId(),
+      });
+      return;
+    } catch (error) {
+      if (_isCallableUnavailable(error)) {
+        final snapshot = await _user.get();
+        final unlocked =
+            (snapshot.data()?['unlockedTitleIds'] as List<dynamic>? ??
+                    const <dynamic>[])
+                .whereType<String>()
+                .toSet();
 
-    if (!unlocked.contains(achievementId)) {
-      throw StateError('This title has not been unlocked.');
+        if (!unlocked.contains(achievementId)) {
+          throw StateError('This title has not been unlocked.');
+        }
+
+        await _user.set({
+          'selectedTitleId': achievementId,
+        }, SetOptions(merge: true));
+        return;
+      }
+      rethrow;
     }
-
-    await _user.set({
-      'selectedTitleId': achievementId,
-    }, SetOptions(merge: true));
   }
 
   String _fieldForMetric(String metric) {

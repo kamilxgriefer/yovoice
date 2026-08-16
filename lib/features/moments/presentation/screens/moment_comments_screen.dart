@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
@@ -26,6 +27,7 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
   final TextEditingController _controller = TextEditingController();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final MomentService _momentService = MomentService();
   bool _sending = false;
 
   CollectionReference<Map<String, dynamic>> get _comments => _firestore
@@ -46,36 +48,10 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
 
     setState(() => _sending = true);
     try {
-      final userSnapshot = await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .get();
-      final userData = userSnapshot.data();
-      final displayName = (userData?['displayName'] as String?)?.trim();
-      final photoUrl = userData?['photoUrl'] as String?;
-      final commentReference = _comments.doc();
-      final momentReference = _firestore
-          .collection('voiceMoments')
-          .doc(widget.moment.id);
-      final batch = _firestore.batch();
-
-      batch.set(commentReference, {
-        'type': 'text',
-        'authorId': user.uid,
-        'authorName': displayName?.isNotEmpty == true
-            ? displayName
-            : user.displayName?.trim().isNotEmpty == true
-            ? user.displayName!.trim()
-            : user.email?.split('@').first ?? 'YO Voice user',
-        'authorPhotoUrl': photoUrl ?? user.photoURL,
-        'text': text,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-      batch.update(momentReference, {
-        'commentCount': FieldValue.increment(1),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      await batch.commit();
+      await _momentService.createTextComment(
+        momentId: widget.moment.id,
+        text: text,
+      );
       _controller.clear();
     } catch (error) {
       if (!mounted) return;

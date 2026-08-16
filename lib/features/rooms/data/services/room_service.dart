@@ -1,9 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 
-import 'package:yovoice/features/achievements/data/models/achievement_definition.dart';
-import 'package:yovoice/features/achievements/data/services/achievement_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
@@ -21,9 +20,15 @@ class RoomService {
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final FirebaseFunctions? _functionsOverride;
+
   FirebaseFunctions get _functions =>
       _functionsOverride ??
       FirebaseFunctions.instanceFor(region: 'europe-west1');
+
+  bool get _shouldIncrementLegacyRoomCount {
+    final users = Firebase.apps;
+    return users.isEmpty;
+  }
 
   CollectionReference<Map<String, dynamic>> get _rooms =>
       _firestore.collection('rooms');
@@ -148,12 +153,11 @@ class RoomService {
 
     await batch.commit();
 
-    // Creating a room is the SOURCE EVENT for the 'rooms' achievement
-    // metric; nothing wrote roomCount before, so room-based achievements
-    // could never progress. Best-effort — the room already exists.
-    await AchievementService(firestore: _firestore, auth: _auth)
-        .incrementMetric('rooms')
-        .catchError((_) => const <AchievementDefinition>[]);
+    if (_shouldIncrementLegacyRoomCount && isCommunity) {
+      await _firestore.collection('users').doc(user.uid).set({
+        'roomCount': FieldValue.increment(1),
+      }, SetOptions(merge: true));
+    }
 
     return VoiceRoom.fromFirestore(await room.get());
   }

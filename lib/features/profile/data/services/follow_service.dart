@@ -79,7 +79,6 @@ class FollowService {
                   .collection('publicProfiles')
                   .doc(uid)
                   .get();
-              if (!profile.exists) return null;
               return FollowUser.fromEdgeAndProfile(
                 edge: edge,
                 profile: profile,

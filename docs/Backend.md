@@ -75,6 +75,24 @@ badge metadata.
   them atomically. Transactional per-user quotas, hard graph caps and
   `MAX + 1` bounded reads prevent unbounded fan-out and oversized-graph oracles.
 
+## Direct messaging, Moments and achievements
+
+Recent hardening moved these feature writes from client-authored side effects
+to server-authoritative callables:
+
+- `openDirectConversation`, `sendDirectMessage`, `editDirectMessage`,
+  `deleteDirectMessage`, `setDirectConversationPreference`, `markDirectConversationRead`,
+  `setDirectMessageReaction`, `setDirectTyping` in `functions/index.js`.
+- `reserveMomentDraft`, `finalizeMomentDraft`, `reserveVoiceCommentDraft`,
+  `finalizeVoiceCommentDraft`, `createMomentComment`, `deleteMomentComment`,
+  `deleteMoment`, `setMomentLike`.
+- `selectMyAchievementTitle`.
+
+All of these are attempted from the Flutter clients first via callable;
+when a callable is unavailable (tests/emulator-only execution or pre-warm local
+environment), the client falls back to a bounded local transaction path that keeps
+invariants, preserves counters and avoids partial writes.
+
 ## Clubs
 
 - `transferClubOwnershipSelf` — self-service ownership transfer (owner

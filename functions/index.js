@@ -1,6 +1,22 @@
-const { initializeApp } = require("firebase-admin/app");
+const { getApps, initializeApp } = require("firebase-admin/app");
 
-initializeApp();
+const __storageBucket =
+  process.env.FIREBASE_STORAGE_BUCKET ||
+  process.env.STORAGE_BUCKET ||
+  process.env.GCLOUD_STORAGE_BUCKET ||
+  (() => {
+    const projectId =
+      process.env.GCLOUD_PROJECT ||
+      process.env.GOOGLE_CLOUD_PROJECT ||
+      process.env.FIREBASE_PROJECT;
+    return projectId ? `${projectId}.appspot.com` : undefined;
+  })();
+
+if (!getApps().length) {
+  initializeApp(
+    __storageBucket ? { storageBucket: __storageBucket } : undefined,
+  );
+}
 
 /*
 |--------------------------------------------------------------------------
@@ -324,7 +340,41 @@ const {
   verifyPurchase,
   expirePremiumIdentity,
 } = require("./premium/entitlements");
+const { createStageBFunctions } = require("./integrity/stage_b_functions");
+const {
+  onAchievementClubMemberCreated,
+  onAchievementClubMessageCreated,
+  onAchievementDirectMessageCreated,
+  onAchievementDirectReactionCreated,
+  onAchievementMomentLikeCreated,
+  onAchievementMomentPublished,
+  onAchievementOutboxCreated,
+  onAchievementRoomCreated,
+  onAchievementRoomMemberCreated,
+  onAchievementRoomMessageCreated,
+  onAchievementUserSocialCountersChanged,
+} = require("./achievements/triggers");
+const { selectMyAchievementTitle } = require("./achievements/callables");
+const { reconcileAchievementsV1 } = require("./achievements/migration");
 
 exports.adminSetPremiumEntitlements = adminSetPremiumEntitlements;
 exports.verifyPurchase = verifyPurchase;
 exports.expirePremiumIdentity = expirePremiumIdentity;
+
+const stageBFunctions = createStageBFunctions();
+Object.assign(exports, stageBFunctions);
+
+exports.selectMyAchievementTitle = selectMyAchievementTitle;
+exports.onAchievementClubMemberCreated = onAchievementClubMemberCreated;
+exports.onAchievementClubMessageCreated = onAchievementClubMessageCreated;
+exports.onAchievementDirectMessageCreated = onAchievementDirectMessageCreated;
+exports.onAchievementDirectReactionCreated = onAchievementDirectReactionCreated;
+exports.onAchievementMomentLikeCreated = onAchievementMomentLikeCreated;
+exports.onAchievementMomentPublished = onAchievementMomentPublished;
+exports.onAchievementOutboxCreated = onAchievementOutboxCreated;
+exports.onAchievementRoomCreated = onAchievementRoomCreated;
+exports.onAchievementRoomMemberCreated = onAchievementRoomMemberCreated;
+exports.onAchievementRoomMessageCreated = onAchievementRoomMessageCreated;
+exports.onAchievementUserSocialCountersChanged =
+  onAchievementUserSocialCountersChanged;
+exports.reconcileAchievementsV1 = reconcileAchievementsV1;
