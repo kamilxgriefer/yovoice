@@ -321,12 +321,25 @@ service cloud.firestore {
     // A private non-Club participant must have been admitted by the current
     // host. This deliberately refuses legacy/self-forged participant rows;
     // Club lounges instead derive admission from canonical Club membership.
+    //
+    // Account-status gated for the same reason isRoomMember() is: this is
+    // the THIRD door into a private room, alongside canonical Club
+    // membership and a roomMembers row, and canAccessRoom() reads all three
+    // interchangeably. The 2026-08-16 pass closed the other two and left
+    // this one on isSignedIn(), so a host-admitted participant kept the
+    // private room, its roster, its participant list and its chat straight
+    // through a suspension. A suspension that stops at two of three doors
+    // is not a suspension. Admission survives the ban — what it loses is
+    // the ability to use it — and leaving is unaffected either way, since
+    // participant rows are deleted only by the leaveRoomSelf/staff
+    // callables (`allow delete: if false` below) and a roomMembers row is
+    // self-deletable on a rule that deliberately checks nothing but uid.
     function isHostAdmittedRoomParticipant(roomId) {
       let room = get(
         /databases/$(database)/documents/rooms/$(roomId)
       ).data;
       let participantPath = /databases/$(database)/documents/rooms/$(roomId)/participants/$(request.auth.uid);
-      return isSignedIn() &&
+      return isActiveAccount() &&
           exists(participantPath) &&
           get(participantPath).data.get('admittedBy', '') == room.hostId;
     }
@@ -617,6 +630,20 @@ service cloud.firestore {
           request.resource.data.updatedAt == request.time;
     }
 
+    // HOST AUTHORITY IS STILL ACCOUNT-STATUS GATED.
+    //
+    // Being the host is an ownership claim, not a licence — isRoomHost()
+    // has always paired the two, and this branch is the one place room
+    // ownership was read without it. Everything this function authorises is
+    // real authority over other people's experience: the metadata every
+    // member sees, the visibility flip that decides whether they can reach
+    // the room at all, and the voice session itself. A banned or disabled
+    // host kept all of it, which contradicted the ban model docs/SECURITY.md
+    // states — reading the account-status document is what makes a ban
+    // effective on the very next request, and this path never read it.
+    //
+    // isActiveAccount() leads so it short-circuits before the transition
+    // helpers below do any further document reads.
     function hostRoomUpdateAllowed(roomId) {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       let metadata = changed.hasOnly([
@@ -640,7 +667,8 @@ service cloud.firestore {
           request.resource.data.isLive == true &&
           request.resource.data.updatedAt == request.time &&
           changed.hasOnly(['isLive', 'endedAt', 'updatedAt']);
-      return request.resource.data.hostId == resource.data.hostId &&
+      return isActiveAccount() &&
+          request.resource.data.hostId == resource.data.hostId &&
           request.resource.data.get('clubId', '') ==
             resource.data.get('clubId', '') &&
           request.resource.data.get('roomKind', '') ==
@@ -1995,6 +2023,16 @@ service cloud.firestore {
       // Every non-host root transition is tied to the exact member/participant
       // write in the same atomic operation. A signed-in outsider can no longer
       // forge counters or start/stop a room by updating the root alone.
+      //
+      // The ternary SELECTOR stays `resource.data.hostId == request.auth.uid`
+      // on purpose; the account-status check belongs inside
+      // hostRoomUpdateAllowed(), not here. Moving it into the selector would
+      // read as the tighter change and is in fact the looser one: a
+      // suspended host would stop matching the host branch and fall through
+      // to the non-host transition set, where roomMemberJoinTransitionAllowed
+      // would hand a disabled host a self-join path it does not have today.
+      // Keeping the selector broad keeps the host branch a CLOSED set — an
+      // inactive host is denied outright rather than rerouted.
       allow update: if isSignedIn() &&
           roomMetadataValid(request.resource.data) &&
           roomTypeFieldsScoped(request.resource.data) &&
@@ -2138,8 +2176,18 @@ service cloud.firestore {
         // firestore-tests/rules.test.js.
         allow read: if resource.data.userId == request.auth.uid ||
             canAccessRoom(roomId);
-        allow create: if isSignedIn() &&
-            !isRestrictedAccount(request.auth.uid) &&
+        // isActiveAccount(), not just !isRestrictedAccount(): the old test
+        // read `banned` alone and passed outright when the account document
+        // was absent, so a DISABLED account could still mint a membership
+        // row and move the room's memberCount. The row it minted was inert
+        // — isRoomMember() requires an active account — but a suspended
+        // account writing into another member's roster is the gap, not what
+        // the row later buys. Room create already requires isActiveAccount()
+        // and the paired participants create already requires
+        // canCommunicate(), so this is the shape the rest of the room
+        // surface already holds; users/{uid} is `allow delete: if false`, so
+        // requiring the document to exist cannot strand a real account.
+        allow create: if isActiveAccount() &&
             request.auth.uid == memberId &&
             (
               (
@@ -2264,7 +2312,15 @@ service cloud.firestore {
         // Room chat reactions (Rooms 2.0): people in the room may toggle
         // the reactions map and NOTHING else — sender, text and
         // timestamps stay immutable. Deletes are host moderation only.
-        allow update: if isSignedIn() &&
+        //
+        // isActiveAccount() matches the create rule directly above, which
+        // already requires canCommunicate(). Without it a suspended account
+        // could not POST in a room but could still write into every message
+        // document in it, through the isRoomParticipant()/canAccessRoom()
+        // branch — a participant row plus a public room, which is exactly
+        // what a host who was banned mid-session still holds. Reacting is
+        // not an exit, so gating it traps nobody.
+        allow update: if isActiveAccount() &&
             (
               (isRoomParticipant(roomId) && canAccessRoom(roomId)) ||
               isRoomMember(roomId) ||

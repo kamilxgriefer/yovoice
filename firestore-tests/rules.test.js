@@ -2532,6 +2532,15 @@ async function main() {
           visibility: "public",
           isLive: true,
         });
+        // A real account behind the participant row. Reacting is now gated
+        // on isActiveAccount() like posting already was, so an account
+        // document is part of the production shape of "someone in the room"
+        // — a participant row is created by a rule that itself requires
+        // canCommunicate(), which cannot pass without this document.
+        await setDoc(doc(db, "users/guest-uid"), {
+          displayName: "Guest",
+          banned: false,
+        });
         await setDoc(doc(db, "rooms/chat-room/participants/guest-uid"), {
           userId: "guest-uid",
           role: "listener",
@@ -6639,6 +6648,705 @@ async function main() {
       if ((await memberCountOf("cr-private")) !== before - 1) {
         throw new Error("memberCount did not follow the departure");
       }
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // A suspension has to reach the HOST, not only the members.
+  //
+  // The 2026-08-16 pass gated isRoomMember() and isActiveClubRoomMember()
+  // on isActiveAccount() and left the room-root update rule's host branch
+  // selecting on `resource.data.hostId == request.auth.uid` alone. A banned
+  // or disabled host kept metadata editing and voice-start on their own
+  // room — the exact shape docs/SECURITY.md's own checklist warns about
+  // ("a branch that selects on resource.data.hostId == request.auth.uid and
+  // stops there grants a banned account everything that ownership grants").
+  //
+  // The cases below come in matched pairs on purpose: every deny has an
+  // active-account counterpart proving the guard bites on account status
+  // and not on being the host, and every guard has an anti-trap case
+  // proving a suspended host's room is still reachable by staff and still
+  // leavable by everyone else. Tightening this already went wrong once
+  // today in the other direction (952d8e4 removed a rules-level eviction
+  // that was trapping members), so both directions are pinned here.
+  // ------------------------------------------------------------------
+  const bannedHost = testEnv.authenticatedContext("hb-banned-uid", {
+    email_verified: true,
+  });
+  const disabledHost = testEnv.authenticatedContext("hb-disabled-uid", {
+    email_verified: true,
+  });
+  const activeHost = testEnv.authenticatedContext("hb-active-uid", {
+    email_verified: true,
+  });
+  const hostRoomMember = testEnv.authenticatedContext("hb-member-uid", {
+    email_verified: true,
+  });
+  const admittedGuest = testEnv.authenticatedContext("hb-guest-uid", {
+    email_verified: true,
+  });
+  const bannedAdmittedGuest = testEnv.authenticatedContext(
+    "hb-banned-guest-uid",
+    { email_verified: true },
+  );
+
+  const hostBanRooms = {
+    banned: "hb-banned-room",
+    disabled: "hb-disabled-room",
+  };
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await Promise.all([
+      setDoc(doc(db, "users/hb-banned-uid"), {
+        displayName: "Banned host",
+        banned: true,
+      }),
+      setDoc(doc(db, "users/hb-disabled-uid"), {
+        displayName: "Disabled host",
+        disabled: true,
+      }),
+      setDoc(doc(db, "users/hb-active-uid"), {
+        displayName: "Active host",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/hb-member-uid"), {
+        displayName: "Room member",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/hb-guest-uid"), {
+        displayName: "Admitted guest",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/hb-banned-guest-uid"), {
+        displayName: "Banned admitted guest",
+        banned: true,
+      }),
+    ]);
+
+    // One public Community room per suspended host, each in the exact shape
+    // room_service.dart leaves behind: the host owns a roomMembers row, sits
+    // in participants, and members may start voice.
+    const room = (hostId, name) => ({
+      hostId,
+      hostName: name,
+      name: `${name}'s room`,
+      description: "Original description",
+      category: "talk",
+      visibility: "public",
+      language: "English",
+      maxParticipants: 25,
+      participantCount: 1,
+      memberCount: 2,
+      isLive: false,
+      roomType: "community",
+      status: "active",
+      approvalRequired: false,
+      slowModeSeconds: 0,
+      autoMuteNewUsers: true,
+      membersCanStartVoice: true,
+    });
+    await Promise.all([
+      setDoc(doc(db, "rooms/hb-banned-room"), room("hb-banned-uid", "Banned host")),
+      setDoc(
+        doc(db, "rooms/hb-disabled-room"),
+        room("hb-disabled-uid", "Disabled host"),
+      ),
+      setDoc(doc(db, "rooms/hb-active-room"), room("hb-active-uid", "Active host")),
+      // A clean join target: no pre-existing membership row for any of the
+      // suspended identities, so a refused join is refused on account status
+      // and not because `create` collided with a document already there.
+      setDoc(doc(db, "rooms/hb-join-target"), {
+        ...room("hb-active-uid", "Active host"),
+        memberCount: 1,
+        participantCount: 0,
+      }),
+      // A private, non-Club room whose only way in for a non-member is the
+      // host-admitted participant row isHostAdmittedRoomParticipant reads.
+      setDoc(doc(db, "rooms/hb-private"), {
+        ...room("hb-active-uid", "Active host"),
+        visibility: "private",
+        participantCount: 2,
+        memberCount: 1,
+      }),
+    ]);
+    await Promise.all([
+      setDoc(doc(db, "rooms/hb-banned-room/roomMembers/hb-banned-uid"), {
+        userId: "hb-banned-uid",
+        role: "owner",
+        displayName: "Banned host",
+      }),
+      setDoc(doc(db, "rooms/hb-banned-room/roomMembers/hb-member-uid"), {
+        userId: "hb-member-uid",
+        role: "member",
+        displayName: "Room member",
+      }),
+      setDoc(doc(db, "rooms/hb-disabled-room/roomMembers/hb-disabled-uid"), {
+        userId: "hb-disabled-uid",
+        role: "owner",
+        displayName: "Disabled host",
+      }),
+      setDoc(doc(db, "rooms/hb-disabled-room/roomMembers/hb-member-uid"), {
+        userId: "hb-member-uid",
+        role: "member",
+        displayName: "Room member",
+      }),
+      setDoc(doc(db, "rooms/hb-active-room/roomMembers/hb-active-uid"), {
+        userId: "hb-active-uid",
+        role: "owner",
+        displayName: "Active host",
+      }),
+      setDoc(doc(db, "rooms/hb-active-room/roomMembers/hb-member-uid"), {
+        userId: "hb-member-uid",
+        role: "member",
+        displayName: "Room member",
+      }),
+      // A plain (non-owner) membership row for the banned host in someone
+      // else's room, so the exit path can be proven separately from the
+      // owner row, which is undeletable by design.
+      setDoc(doc(db, "rooms/hb-active-room/roomMembers/hb-banned-uid"), {
+        userId: "hb-banned-uid",
+        role: "member",
+        displayName: "Banned host",
+      }),
+      setDoc(doc(db, "rooms/hb-private/roomMembers/hb-active-uid"), {
+        userId: "hb-active-uid",
+        role: "owner",
+        displayName: "Active host",
+      }),
+      setDoc(doc(db, "rooms/hb-join-target/roomMembers/hb-active-uid"), {
+        userId: "hb-active-uid",
+        role: "owner",
+        displayName: "Active host",
+      }),
+    ]);
+    await Promise.all([
+      setDoc(doc(db, "rooms/hb-banned-room/participants/hb-banned-uid"), {
+        userId: "hb-banned-uid",
+        displayName: "Banned host",
+        role: "host",
+        isMuted: false,
+        isSpeaker: true,
+        isHandRaised: false,
+      }),
+      setDoc(doc(db, "rooms/hb-disabled-room/participants/hb-disabled-uid"), {
+        userId: "hb-disabled-uid",
+        displayName: "Disabled host",
+        role: "host",
+        isMuted: false,
+        isSpeaker: true,
+        isHandRaised: false,
+      }),
+      setDoc(doc(db, "rooms/hb-active-room/participants/hb-active-uid"), {
+        userId: "hb-active-uid",
+        displayName: "Active host",
+        role: "host",
+        isMuted: false,
+        isSpeaker: true,
+        isHandRaised: false,
+      }),
+      // Both guests were admitted by the private room's current host. Only
+      // their account status differs.
+      setDoc(doc(db, "rooms/hb-private/participants/hb-guest-uid"), {
+        userId: "hb-guest-uid",
+        displayName: "Admitted guest",
+        role: "listener",
+        isMuted: true,
+        isSpeaker: false,
+        isHandRaised: false,
+        admittedBy: "hb-active-uid",
+      }),
+      setDoc(doc(db, "rooms/hb-private/participants/hb-banned-guest-uid"), {
+        userId: "hb-banned-guest-uid",
+        displayName: "Banned admitted guest",
+        role: "listener",
+        isMuted: true,
+        isSpeaker: false,
+        isHandRaised: false,
+        admittedBy: "hb-active-uid",
+      }),
+    ]);
+    await Promise.all([
+      setDoc(doc(db, "rooms/hb-banned-room/messages/hb-banned-msg"), {
+        senderId: "hb-member-uid",
+        senderName: "Room member",
+        text: "hello",
+        reactions: {},
+      }),
+      setDoc(doc(db, "rooms/hb-disabled-room/messages/hb-disabled-msg"), {
+        senderId: "hb-member-uid",
+        senderName: "Room member",
+        text: "hello",
+        reactions: {},
+      }),
+      setDoc(doc(db, "rooms/hb-active-room/messages/hb-active-msg"), {
+        senderId: "hb-member-uid",
+        senderName: "Room member",
+        text: "hello",
+        reactions: {},
+      }),
+      setDoc(doc(db, "rooms/hb-private/messages/hb-private-msg"), {
+        senderId: "hb-active-uid",
+        senderName: "Active host",
+        text: "private hello",
+        reactions: {},
+      }),
+    ]);
+  });
+
+  const hostBanRoomState = async (roomId) => {
+    let data = null;
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const snapshot = await getDoc(doc(ctx.firestore(), `rooms/${roomId}`));
+      data = snapshot.data();
+    });
+    if (!data) throw new Error(`could not read rooms/${roomId}`);
+    return data;
+  };
+
+  for (const [label, context] of [
+    ["banned", bannedHost],
+    ["disabled", disabledHost],
+  ]) {
+    const roomId = hostBanRooms[label];
+    const uid = `hb-${label}-uid`;
+
+    await check(
+      `SECURITY HOST SUSPENSION: a ${label} host cannot edit their room's ` +
+        "metadata",
+      async () => {
+        const db = context.firestore();
+        await assertFails(
+          updateDoc(doc(db, `rooms/${roomId}`), {
+            name: "Renamed while suspended",
+            updatedAt: serverTimestamp(),
+          }),
+        );
+        // Flipping a public room private is the same branch, and it is the
+        // damaging one: canAccessRoom stops serving every member who joined
+        // while the room was public.
+        await assertFails(
+          updateDoc(doc(db, `rooms/${roomId}`), {
+            visibility: "private",
+            updatedAt: serverTimestamp(),
+          }),
+        );
+        await assertFails(
+          updateDoc(doc(db, `rooms/${roomId}`), {
+            description: "Rewritten while suspended",
+            approvalRequired: true,
+            membersCanStartVoice: false,
+            maxParticipants: 2,
+            updatedAt: serverTimestamp(),
+          }),
+        );
+        const stored = await hostBanRoomState(roomId);
+        if (
+          stored.name === "Renamed while suspended" ||
+          stored.visibility !== "public" ||
+          stored.description !== "Original description" ||
+          stored.approvalRequired === true ||
+          stored.membersCanStartVoice !== true
+        ) {
+          throw new Error("a denied metadata write still landed on the room");
+        }
+      },
+    );
+
+    await check(
+      `SECURITY HOST SUSPENSION: a ${label} host cannot start their room's ` +
+        "voice session",
+      async () => {
+        const db = context.firestore();
+        await assertFails(
+          updateDoc(doc(db, `rooms/${roomId}`), {
+            isLive: true,
+            updatedAt: serverTimestamp(),
+          }),
+        );
+        if ((await hostBanRoomState(roomId)).isLive !== false) {
+          throw new Error("a denied voice start still went live");
+        }
+      },
+    );
+
+    await check(
+      `SECURITY HOST SUSPENSION: a ${label} host cannot toggle a reaction on ` +
+        "their own room's chat",
+      async () => {
+        const db = context.firestore();
+        await assertFails(
+          updateDoc(doc(db, `rooms/${roomId}/messages/hb-${label}-msg`), {
+            reactions: { "🔥": [uid] },
+          }),
+        );
+      },
+    );
+
+    // The membership row must be keyed on the caller's OWN uid: both the
+    // create rule (`request.auth.uid == memberId`) and
+    // roomMemberJoinTransitionAllowed (`roomMembers/$(request.auth.uid)`)
+    // key off it, so any other document id is refused on the path and
+    // proves nothing about account status.
+    await check(
+      `SECURITY HOST SUSPENSION: a ${label} account cannot join a Community ` +
+        "room — the real joinCommunity() transaction is refused",
+      async () => {
+        const db = context.firestore();
+        await assertFails(
+          runTransaction(db, async (transaction) => {
+            const snapshot = await transaction.get(doc(db, "rooms/hb-join-target"));
+            const count = snapshot.data().memberCount;
+            transaction.set(
+              doc(db, `rooms/hb-join-target/roomMembers/${uid}`),
+              {
+                userId: uid,
+                displayName: "Suspended joiner",
+                photoUrl: null,
+                role: "member",
+                joinedAt: serverTimestamp(),
+              },
+            );
+            transaction.update(doc(db, "rooms/hb-join-target"), {
+              memberCount: count + 1,
+              updatedAt: serverTimestamp(),
+            });
+          }),
+        );
+        let landed = true;
+        await testEnv.withSecurityRulesDisabled(async (ctx) => {
+          const snapshot = await getDoc(
+            doc(ctx.firestore(), `rooms/hb-join-target/roomMembers/${uid}`),
+          );
+          landed = snapshot.exists();
+        });
+        if (landed) {
+          throw new Error("a denied join still wrote the membership row");
+        }
+      },
+    );
+
+    await check(
+      `SECURITY HOST SUSPENSION: after moderation sweeps the roster, a ` +
+        `${label} host cannot rejoin their own room as its host participant`,
+      async () => {
+        // The state setRoomModerationStatus leaves behind: participants gone.
+        await testEnv.withSecurityRulesDisabled(async (ctx) => {
+          const db = ctx.firestore();
+          await deleteDoc(doc(db, `rooms/${roomId}/participants/${uid}`));
+          await updateDoc(doc(db, `rooms/${roomId}`), { participantCount: 0 });
+        });
+        const db = context.firestore();
+        const batch = writeBatch(db);
+        batch.update(doc(db, `rooms/${roomId}`), {
+          participantCount: 1,
+          updatedAt: serverTimestamp(),
+        });
+        batch.set(doc(db, `rooms/${roomId}/participants/${uid}`), {
+          userId: uid,
+          displayName: "Suspended host",
+          photoUrl: null,
+          role: "host",
+          isMuted: false,
+          isSpeaker: true,
+          isHandRaised: false,
+          joinedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        await assertFails(batch.commit());
+        // The room-root half must be refused on its own too, so the deny is
+        // not resting solely on the participant create rule.
+        await assertFails(
+          updateDoc(doc(db, `rooms/${roomId}`), {
+            participantCount: 1,
+            updatedAt: serverTimestamp(),
+          }),
+        );
+      },
+    );
+  }
+
+  // --- The same guard must not bite an ACTIVE host -------------------
+  await check(
+    "regression: an ACTIVE host still edits metadata, flips visibility, " +
+      "starts voice and reacts in their own room",
+    async () => {
+      const db = activeHost.firestore();
+      await assertSucceeds(
+        updateDoc(doc(db, "rooms/hb-active-room"), {
+          name: "Renamed by its active host",
+          description: "Rewritten by its active host",
+          approvalRequired: true,
+          maxParticipants: 30,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await assertSucceeds(
+        updateDoc(doc(db, "rooms/hb-active-room"), {
+          visibility: "private",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await assertSucceeds(
+        updateDoc(doc(db, "rooms/hb-active-room"), {
+          isLive: true,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await assertSucceeds(
+        updateDoc(doc(db, "rooms/hb-active-room/messages/hb-active-msg"), {
+          reactions: { "🔥": ["hb-active-uid"] },
+        }),
+      );
+      // Put the fixture back the way the remaining cases expect it.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "rooms/hb-active-room"), {
+          visibility: "public",
+          approvalRequired: false,
+          isLive: false,
+        });
+      });
+    },
+  );
+
+  await check(
+    "regression: an ACTIVE member still joins a Community room and an " +
+      "ACTIVE host-admitted guest keeps the private room, its roster, its " +
+      "participants and its chat",
+    async () => {
+      const joiner = testEnv.authenticatedContext("hb-joiner-uid", {
+        email_verified: true,
+      });
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "users/hb-joiner-uid"), {
+          displayName: "Active joiner",
+          banned: false,
+        });
+      });
+      const joinerDb = joiner.firestore();
+      await assertSucceeds(
+        runTransaction(joinerDb, async (transaction) => {
+          const snapshot = await transaction.get(
+            doc(joinerDb, "rooms/hb-active-room"),
+          );
+          const count = snapshot.data().memberCount;
+          transaction.set(
+            doc(joinerDb, "rooms/hb-active-room/roomMembers/hb-joiner-uid"),
+            {
+              userId: "hb-joiner-uid",
+              displayName: "Active joiner",
+              photoUrl: null,
+              role: "member",
+              joinedAt: serverTimestamp(),
+            },
+          );
+          transaction.update(doc(joinerDb, "rooms/hb-active-room"), {
+            memberCount: count + 1,
+            updatedAt: serverTimestamp(),
+          });
+        }),
+      );
+
+      const guestDb = admittedGuest.firestore();
+      await assertSucceeds(getDoc(doc(guestDb, "rooms/hb-private")));
+      await assertSucceeds(
+        getDocs(collection(guestDb, "rooms/hb-private/roomMembers")),
+      );
+      await assertSucceeds(
+        getDocs(collection(guestDb, "rooms/hb-private/participants")),
+      );
+      await assertSucceeds(
+        getDocs(collection(guestDb, "rooms/hb-private/messages")),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY HOST SUSPENSION: a BANNED host-admitted participant loses the " +
+      "private room, its roster, its participants and its chat",
+    async () => {
+      const db = bannedAdmittedGuest.firestore();
+      await assertFails(getDoc(doc(db, "rooms/hb-private")));
+      await assertFails(getDocs(collection(db, "rooms/hb-private/roomMembers")));
+      await assertFails(
+        getDocs(collection(db, "rooms/hb-private/participants")),
+      );
+      await assertFails(getDocs(collection(db, "rooms/hb-private/messages")));
+      await assertFails(
+        updateDoc(doc(db, "rooms/hb-private/messages/hb-private-msg"), {
+          reactions: { "🔥": ["hb-banned-guest-uid"] },
+        }),
+      );
+    },
+  );
+
+  // --- The other direction: a suspended host must stay ACTIONABLE ----
+  //
+  // 952d8e4 removed a rules-level eviction because tightening a room rule
+  // had trapped members. The same failure mode applies here: if hardening
+  // the host branch made a banned host's room unreachable or unleavable,
+  // the fix would be an outage rather than a boundary.
+  await check(
+    "regression ANTI-TRAP: staff moderation still reaches a suspended " +
+      "host's room — the setRoomModerationStatus transaction and its " +
+      "participant sweep land through the Admin SDK",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        // The exact transaction functions/admin/rooms.js runs.
+        await runTransaction(db, async (transaction) => {
+          const snapshot = await transaction.get(doc(db, "rooms/hb-banned-room"));
+          if (!snapshot.exists()) throw new Error("the room vanished");
+          if (snapshot.data().status === "deleted") {
+            throw new Error("unexpected tombstone");
+          }
+          transaction.update(doc(db, "rooms/hb-banned-room"), {
+            status: "suspended",
+            isLive: false,
+            participantCount: 0,
+            moderationReason: "Host suspended",
+            moderatedBy: "hb-staff-uid",
+            moderatedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        });
+        // …and the participant sweep that follows it.
+        await deleteDoc(
+          doc(db, "rooms/hb-banned-room/participants/hb-banned-uid"),
+        );
+      });
+      const stored = await hostBanRoomState("hb-banned-room");
+      if (stored.status !== "suspended" || stored.moderatedBy !== "hb-staff-uid") {
+        throw new Error("staff moderation did not land on the room");
+      }
+      // The banned host must not be able to undo it either.
+      await assertFails(
+        updateDoc(doc(bannedHost.firestore(), "rooms/hb-banned-room"), {
+          status: "active",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "rooms/hb-banned-room"), {
+          status: "active",
+          moderationReason: null,
+        });
+      });
+    },
+  );
+
+  await check(
+    "regression ANTI-TRAP: a suspended host does not freeze their room for " +
+      "everyone else — a member still reads it, still starts voice where " +
+      "membersCanStartVoice allows it, and still leaves with the counter",
+    async () => {
+      const db = hostRoomMember.firestore();
+      await assertSucceeds(getDoc(doc(db, "rooms/hb-banned-room")));
+      await assertSucceeds(
+        getDocs(collection(db, "rooms/hb-banned-room/roomMembers")),
+      );
+      await assertSucceeds(
+        updateDoc(doc(db, "rooms/hb-banned-room"), {
+          isLive: true,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "rooms/hb-banned-room"), {
+          isLive: false,
+        });
+      });
+      const before = await memberCountOf("hb-banned-room");
+      const batch = writeBatch(db);
+      batch.delete(doc(db, "rooms/hb-banned-room/roomMembers/hb-member-uid"));
+      batch.update(doc(db, "rooms/hb-banned-room"), {
+        memberCount: before - 1,
+        updatedAt: serverTimestamp(),
+      });
+      await assertSucceeds(batch.commit());
+      if ((await memberCountOf("hb-banned-room")) !== before - 1) {
+        throw new Error("the member's departure did not move the counter");
+      }
+    },
+  );
+
+  await check(
+    "regression ANTI-TRAP: a suspended account can still LEAVE a room — the " +
+      "exit is deliberately not gated on account status",
+    async () => {
+      await assertSucceeds(
+        deleteDoc(
+          doc(
+            bannedHost.firestore(),
+            "rooms/hb-active-room/roomMembers/hb-banned-uid",
+          ),
+        ),
+      );
+    },
+  );
+
+  // --- The boundary this pass deliberately did NOT move ----------------
+  //
+  // canAccessRoom()'s `visibility == 'public'` clause and the top-level
+  // `match /{path=**}/roomMembers/{memberId}` wildcard both still run on
+  // isSignedIn(), so a suspended account keeps READING public rooms it
+  // belongs to. That is deliberate, and this case exists to prove the host
+  // hardening above did not cascade into it rather than to bless it:
+  //
+  //  - ADR-006 keeps the top-level wildcard narrow and provable from the
+  //    query's own filter, and per docs/SECURITY.md principle 3 getting
+  //    that rule wrong fails OPEN. It is the last rule in this file that
+  //    should acquire an unnecessary conjunct.
+  //  - watchMyCommunities() hydrates every id the query returns inside a
+  //    single Future.wait, so a read denial there empties the whole
+  //    Communities tab. Denying a suspended account's own feed is the
+  //    trap shape 952d8e4 was reverted for, not a containment win.
+  //  - Reading is not authority. Every WRITE this feed could lead to is
+  //    now account-status gated; what is left is a member seeing rooms
+  //    they already joined.
+  //
+  // Run as a real collectionGroup() query, not a per-document get(), per
+  // ADR-007 — the nested roomMembers `create` rule changed in this pass and
+  // a direct-path check would not have proven the query surface intact.
+  await check(
+    "BOUNDARY (deliberate, unchanged): a suspended account's own " +
+      "collectionGroup('roomMembers') feed still resolves and still " +
+      "hydrates its public rooms, so hardening the host branch did not " +
+      "cascade into the top-level wildcard rule",
+    async () => {
+      const db = bannedHost.firestore();
+      const snapshot = await assertSucceeds(
+        getDocs(
+          query(
+            collectionGroup(db, "roomMembers"),
+            where("userId", "==", "hb-banned-uid"),
+          ),
+        ),
+      );
+      if (snapshot.size < 1) {
+        throw new Error(`expected the banned account's own rows, got ${snapshot.size}`);
+      }
+      const roomIds = [
+        ...new Set(
+          snapshot.docs
+            .map((document) =>
+              document.ref.parent.parent && document.ref.parent.parent.id)
+            .filter(Boolean),
+        ),
+      ];
+      // Future.wait in room_service.dart: one denial rejects the whole tab.
+      await assertSucceeds(
+        Promise.all(roomIds.map((id) => getDoc(doc(db, `rooms/${id}`)))),
+      );
+      // …and the feed is still somebody else's uid away from being useful.
+      await assertFails(
+        getDocs(
+          query(
+            collectionGroup(db, "roomMembers"),
+            where("userId", "==", "hb-member-uid"),
+          ),
+        ),
+      );
     },
   );
 
