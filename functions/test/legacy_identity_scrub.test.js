@@ -16,8 +16,11 @@ const db = getFirestore();
 const PREFIX = "legacy-identity-scrub";
 
 async function wipe() {
+  const conversationSnapshot = await db.collection("conversations").get();
   await Promise.all([
-    db.recursiveDelete(db.doc(`conversations/${PREFIX}-conversation`)),
+    ...conversationSnapshot.docs
+      .filter((doc) => doc.id.startsWith(`${PREFIX}-`))
+      .map((doc) => db.recursiveDelete(doc.ref)),
     db.recursiveDelete(db.doc(`users/${PREFIX}-owner`)),
     db.recursiveDelete(db.doc(`users/${PREFIX}-target`)),
     ...["conversations", "friendRequests", "following", "followers"].map(
