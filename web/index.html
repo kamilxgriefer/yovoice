@@ -75,6 +75,7 @@
     .boot-content {
       display: flex;
       width: min(520px, calc(100vw - 48px));
+      transform: translateY(24px);
       flex-direction: column;
       align-items: center;
       text-align: center;
@@ -83,7 +84,7 @@
     .boot-mark {
       position: relative;
       display: grid;
-      width: clamp(190px, 22vw, 224px);
+      width: clamp(250px, 29vw, 300px);
       aspect-ratio: 1;
       place-items: center;
     }
@@ -103,17 +104,19 @@
     .boot-mark img {
       position: relative;
       z-index: 1;
-      width: 61%;
-      height: 61%;
+      width: 68%;
+      height: 68%;
       object-fit: contain;
       filter: drop-shadow(0 0 22px rgba(192, 38, 255, .22));
     }
 
     .boot-title {
-      margin: 18px -.34em 0 0;
+      z-index: 3;
+      margin: -74px -.34em 0 0;
       font-size: clamp(27px, 4vw, 32px);
       font-weight: 800;
       letter-spacing: .34em;
+      text-shadow: 0 0 14px rgba(13, 6, 24, .85), 0 0 4px rgba(43, 10, 68, .6);
     }
 
     .boot-copy {
@@ -159,6 +162,12 @@
       .boot-mark::before, .boot-mark::after, .boot-wave span { animation: none; }
       .boot-wave span:nth-child(3n + 1) { transform: scaleY(1.8); }
       .boot-wave span:nth-child(3n + 2) { transform: scaleY(2.6); }
+    }
+
+    @media (max-width: 419px) {
+      .boot-content { transform: translateY(18px); }
+      .boot-title { margin-top: -66px; }
+      .boot-wave { margin-top: 28px; }
     }
   </style>
 

@@ -64,7 +64,8 @@ permission flags).
   four-second welcome timer. `/app` now redirects immediately, the fixed
   Flutter timer is gone, and the app origin owns one matching sound-wave
   startup surface that exists only while the engine/Auth state genuinely
-  resolves.
+  resolves. Its shared responsive layout uses a larger, lowered logo with the
+  title layered across the mark's lower edge instead of floating too high.
 
 ## Notifications
 

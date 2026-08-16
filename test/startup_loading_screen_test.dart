@@ -30,6 +30,22 @@ void main() {
       expect(find.text('YO VOICE'), findsOneWidget);
       expect(find.text('Create your space'), findsOneWidget);
       expect(find.byKey(const ValueKey('startup-sound-wave')), findsOneWidget);
+      final logoRect = tester.getRect(
+        find.byKey(const ValueKey('startup-logo')),
+      );
+      final titleRect = tester.getRect(
+        find.byKey(const ValueKey('startup-title')),
+      );
+      expect(
+        titleRect.top,
+        lessThan(logoRect.bottom),
+        reason: 'The title should overlap the lower edge of the logo.',
+      );
+      expect(
+        titleRect.bottom,
+        greaterThan(logoRect.bottom),
+        reason: 'The title should remain readable in front of the logo.',
+      );
       expect(find.byType(CircularProgressIndicator), findsNothing);
       expect(tester.takeException(), isNull);
     });

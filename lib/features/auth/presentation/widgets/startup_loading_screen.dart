@@ -64,65 +64,93 @@ class _StartupLoadingScreenState extends State<StartupLoadingScreen>
                 padding: EdgeInsets.symmetric(horizontal: compact ? 24 : 40),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 520),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      AnimatedBuilder(
-                        animation: _controller,
-                        builder: (context, child) {
-                          final progress = reduceMotion
-                              ? 0.18
-                              : _controller.value;
-                          return SizedBox(
-                            width: compact ? 190 : 224,
-                            height: compact ? 190 : 224,
-                            child: CustomPaint(
-                              painter: _VoiceRingsPainter(progress),
-                              child: Center(child: child),
-                            ),
-                          );
-                        },
-                        child: Image.asset(
-                          'assets/images/logo.png',
-                          width: compact ? 116 : 136,
-                          height: compact ? 116 : 136,
-                          fit: BoxFit.contain,
-                          filterQuality: FilterQuality.high,
-                        ),
-                      ),
-                      SizedBox(height: compact ? 16 : 20),
-                      Text(
-                        'YO VOICE',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: compact ? 27 : 32,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: compact ? 8 : 10,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      const Text(
-                        'Create your space',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      SizedBox(height: compact ? 30 : 38),
-                      AnimatedBuilder(
-                        animation: _controller,
-                        builder: (context, _) => CustomPaint(
-                          key: const ValueKey('startup-sound-wave'),
-                          size: Size(compact ? 220 : 286, 54),
-                          painter: _SoundWavePainter(
-                            reduceMotion ? 0.18 : _controller.value,
+                  child: Transform.translate(
+                    offset: Offset(0, compact ? 18 : 24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          key: const ValueKey('startup-logo-title-stage'),
+                          width: compact ? 250 : 300,
+                          height: compact ? 250 : 300,
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            alignment: Alignment.topCenter,
+                            children: [
+                              AnimatedBuilder(
+                                animation: _controller,
+                                builder: (context, child) {
+                                  final progress = reduceMotion
+                                      ? 0.18
+                                      : _controller.value;
+                                  return SizedBox(
+                                    width: compact ? 250 : 300,
+                                    height: compact ? 250 : 300,
+                                    child: CustomPaint(
+                                      painter: _VoiceRingsPainter(progress),
+                                      child: Center(child: child),
+                                    ),
+                                  );
+                                },
+                                child: Image.asset(
+                                  'assets/images/logo.png',
+                                  key: const ValueKey('startup-logo'),
+                                  width: compact ? 170 : 204,
+                                  height: compact ? 170 : 204,
+                                  fit: BoxFit.contain,
+                                  filterQuality: FilterQuality.high,
+                                ),
+                              ),
+                              Positioned(
+                                top: compact ? 184 : 226,
+                                child: Text(
+                                  'YO VOICE',
+                                  key: const ValueKey('startup-title'),
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: compact ? 27 : 32,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: compact ? 8 : 10,
+                                    shadows: const [
+                                      Shadow(
+                                        color: Color(0xD90D0618),
+                                        blurRadius: 14,
+                                      ),
+                                      Shadow(
+                                        color: Color(0x992B0A44),
+                                        blurRadius: 4,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 10),
+                        const Text(
+                          'Create your space',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        SizedBox(height: compact ? 28 : 34),
+                        AnimatedBuilder(
+                          animation: _controller,
+                          builder: (context, _) => CustomPaint(
+                            key: const ValueKey('startup-sound-wave'),
+                            size: Size(compact ? 220 : 286, 54),
+                            painter: _SoundWavePainter(
+                              reduceMotion ? 0.18 : _controller.value,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

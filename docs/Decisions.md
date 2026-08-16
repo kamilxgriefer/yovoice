@@ -3120,8 +3120,11 @@ startup composition during actual engine initialization, removes it after
 `runApp`, and Auth uses the visually matching `StartupLoadingScreen` only while
 its stream is genuinely loading. Signed-in initialization of push/profile
 services stays fire-and-forget and `MainShell` renders immediately. Both layers
-retain `YO VOICE` and `Create your space`, animated voice rings and a waveform;
-reduced-motion users receive a static waveform.
+retain `YO VOICE` and `Create your space`, animated voice rings and a waveform.
+The mark is intentionally large and slightly below optical center; `YO VOICE`
+renders in front of its lower edge with a dark readability shadow, creating one
+matching depth-effect composition on narrow and wide screens. Reduced-motion
+users receive a static waveform.
 
 ### Reasoning
 
