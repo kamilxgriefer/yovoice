@@ -86,6 +86,45 @@ for anything touching `collectionGroup()` queries.
 firebase deploy --only firestore:rules,firestore:indexes --project yovoice-ec54a
 ```
 
+### Reading the deployed ruleset: the verification standard
+
+**The deployed ruleset can be read back exactly.** Until 2026-08-17 this
+file and [SECURITY.md](SECURITY.md) both said the Console's version
+history was the only way to see what is live, and that there was no
+read-only command. That was wrong. With Application Default Credentials
+configured (see the ADC prerequisite below — `gcloud` *and* a quota
+project), the Firebase Rules API returns both the released ruleset's name
+and its full source:
+
+```bash
+# 1. Which ruleset is currently released to Firestore?
+curl -s -H "Authorization: Bearer $(gcloud auth application-default print-access-token)" \
+  https://firebaserules.googleapis.com/v1/projects/yovoice-ec54a/releases/cloud.firestore
+
+# 2. The full source of that ruleset. RULESET_NAME is the `rulesetName`
+#    field from step 1, e.g. projects/yovoice-ec54a/rulesets/<uuid>.
+curl -s -H "Authorization: Bearer $(gcloud auth application-default print-access-token)" \
+  "https://firebaserules.googleapis.com/v1/RULESET_NAME"
+```
+
+Two things this changes, both of which were previously open problems:
+
+1. **A pre-deploy snapshot is now possible.** Fetch the live source into a
+   file *before* any rules deploy. That file is the rollback artifact — the
+   exact bytes that were serving, independent of whether the repository
+   state matches what was deployed. The cutover planning had to proceed
+   without one; it no longer does.
+2. **A post-deploy diff against HEAD is the verification standard.** Do not
+   conclude a rules deploy succeeded from the CLI's own output. Fetch the
+   released source and diff it against `firestore.rules` at the deployed
+   commit. `c75720a` was verified this way on 2026-08-17 and came back
+   **byte-identical**. This is the rules-layer equivalent of fingerprinting
+   `main.dart.js` for a Hosting release
+   ([ADR-055](Decisions.md#adr-055-the-2026-08-16-production-cutover--order-the-deploy-by-what-fails-closed-and-verify-by-fingerprinting-served-bytes)).
+
+The response body carries the source with escaped newlines; extract the
+`content` field before diffing (`jq -r '.source.files[].content'`).
+
 ## Cloud Functions (manual)
 
 ```bash
@@ -394,7 +433,7 @@ curl -s https://app.yovoice.app/main.dart.js | wc -c   # fingerprint the client
 |---|---|---|
 | Cloud Functions | **111 deployed** (was 51) | `firebase functions:list`. The ~60 new ones are the whole ADR-054 privacy layer (`onUserPrivacySourceChanged`, `searchPublicProfiles`, `onAuthUserDeleted`), every social-graph callable (`setFollow`, `sendFriendRequest`, `setUserBlock`, …), every `onAchievement*` trigger, the club and room self-service callables, and the entire Stage B set from `c1d6cd9`. `functions/index.js` names 87 exports directly and adds the rest via `Object.assign(exports, createStageBFunctions())` |
 | Firestore indexes | **15 composites, 3 fieldOverrides** (was 14 / 1) | `firebase firestore:indexes` |
-| `firestore.rules` | **Deployed twice on 2026-08-16** — 20:40 by the operator, 21:06 covering `952d8e4` | Console → Firestore → Rules version history. Still no read-only CLI command; the Console remains the only way to check |
+| `firestore.rules` | **Deployed twice on 2026-08-16** — 20:40 by the operator, 21:06 covering `952d8e4` | Console → Firestore → Rules version history. *(This row said "still no read-only CLI command; the Console remains the only way to check" until 2026-08-17. The Firebase Rules API returns the full deployed source — see [Reading the deployed ruleset](#reading-the-deployed-ruleset-the-verification-standard).)* |
 | `storage.rules` | **Deployed** | includes `validClubImageUpload()` accepting the timestamped `{kind}_{millis}.{ext}` names the shipped client actually writes |
 | Hosting (Flutter web) | **Deployed and fingerprinted** | `https://app.yovoice.app/main.dart.js` is 5,139,256 bytes and contains `publicProfiles`, `searchPublicProfiles`, `selectMyAchievementTitle`. Production previously served commit `9fdd8a9` |
 | `publishPublicStatsSchedule` | **Committed (`cb4651a`), deliberately NOT deployed** | absent from `functions:list`; three preconditions in that commit message |
@@ -406,6 +445,26 @@ currentPeriodEnd)` backs the scheduled `expirePremiumIdentity` query at
 every run failed on the missing composite index and **Premium never
 expired for any account**. No suite could have caught it: the emulator
 does not require composite indexes.
+
+### Changes since — 2026-08-17
+
+| Target | State | Evidence |
+|---|---|---|
+| `firestore.rules` | **Deployed, covering `c75720a`** (account-status gating on four room write paths) | The released ruleset source was fetched through the Firebase Rules API and diffed against `firestore.rules` at HEAD: **byte-identical**. This is stronger evidence than the version-history timestamp used on 2026-08-16 |
+| Hosting (Flutter web) | **Deployed from `6ef4380`** — the first build in which recording works on web at all | Released before the accessibility and visual reviews returned; see the note below |
+| Hosting — does production carry `cefa81a`? | **YES, verified 2026-08-17** | Fingerprinted, not inferred from deploy output: the served `https://app.yovoice.app/main.dart.js` is 5,159,938 bytes, byte-for-byte the size of the local `build/web/main.dart.js`, and contains `No sound detected`, `No microphone was found` and `Discard this take` — three strings that exist only in `cefa81a`. The accessibility and visual fixes are live |
+| Cloud Functions, indexes, `storage.rules` | **Unchanged since 2026-08-16** | No `functions/`, index or Storage-rules change landed in either 2026-08-17 round |
+
+**A process failure worth recording plainly.** The web client was deployed
+from `6ef4380` *before* the accessibility and visual reviews returned, on
+the reasoning that recording was totally broken and a working screen with
+defects beats no screen. That reasoning holds and the deploy was not
+reverted — but **both reviews came back FAIL**, and waiting would have put
+the fixed version in users' hands directly instead of shipping a screen
+that announced a success-sounding line on a failed publish. The rule going
+forward, and it is a rule and not a suggestion: **for a UI change, review
+precedes deploy, exactly as it does for rules.** Recorded as
+[ADR-059](Decisions.md#adr-059-a-ui-change-is-reviewed-before-it-is-deployed-on-the-same-terms-as-a-rules-change).
 
 ### The ordering lesson, restated because it changed direction
 
@@ -724,6 +783,16 @@ equivalent for `functions/`) — there's no one-command "undo the last
 deploy." This is a real gap for a project this project's size to not have
 yet; worth building out if a bad rules or functions deploy ever actually
 happens in production.
+
+**Corrected 2026-08-17 — a rules rollback artifact now exists.** The
+paragraph above described git history as the only source for a previous
+ruleset, which assumes the repository and production agree. They do not
+always: production served commit `9fdd8a9` while the tree was far ahead,
+as the 2026-08-16 cutover found. Snapshot the *live* source with the
+Firebase Rules API before every rules deploy
+([above](#reading-the-deployed-ruleset-the-verification-standard)) and
+keep the file until the deploy is verified. That snapshot is what a
+rollback should restore, because it is what was actually running.
 
 ## Environment configuration
 

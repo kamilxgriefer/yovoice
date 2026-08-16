@@ -15,15 +15,20 @@ per Console → Firestore → Rules version history. First-user-document
 creation and Club invitation acceptance are no longer open production
 risks.
 
-**One authorization gap remains open, pre-existing:** the room-update host
-branch selects on `resource.data.hostId == request.auth.uid` with no
-account-status check, so a **banned or disabled host can still edit room
-metadata and start voice**. Unlike `isRoomMember()` and
-`isActiveClubRoomMember()`, which both gained `isActiveAccount()` in
-`2fc05e5`, this branch was not touched. It predates the 2026-08-16
-hardening pass and was deliberately left for its own change, with its own
-emulator cases and its own deploy. See
-[SECURITY.md](SECURITY.md#still-open-pre-existing-live-in-production).
+**Rules status, 2026-08-17: the banned-host gap is CLOSED and deployed.**
+The room-update host branch, `isHostAdmittedRoomParticipant()`,
+`roomMembers` create and message reaction updates all require
+`isActiveAccount()` as of `c75720a`. Deployed, and verified by reading the
+live ruleset source back through the Firebase Rules API and diffing it
+against `firestore.rules` at HEAD — **byte-identical**. That verification
+is now the project's standard for a rules deploy; the commands are in
+[DEPLOYMENT.md](DEPLOYMENT.md#reading-the-deployed-ruleset-the-verification-standard).
+
+**Two writes behind `canAccessRoom()` are still ungated**, and the claim
+that all of them are is false — see
+[SECURITY.md](SECURITY.md#still-open-pre-existing-live-in-production) and
+[Roadmap 0k](Roadmap.md#0k-gate-the-last-two-writes-behind-canaccessroom).
+Neither escalates privilege.
 
 For the full security model (not just this status snapshot), see
 [SECURITY.md](SECURITY.md). An earlier full audit
@@ -62,6 +67,33 @@ that audit's original 13 items, all are fixed except one:
   pins their deltas and server time. Emulator attack cases cover every
   privileged role, extra permission fields, repeated counter bumps and Club
   metadata mutation.
+
+### Found and fixed 2026-08-17 — live in production, and deployed
+
+- **FIXED (`c75720a`) — a banned or disabled host could still edit room
+  metadata and start voice.** The room-root update rule selected its host
+  branch on `hostId` alone with no account-status check, while
+  `isRoomHost()` did check — so the selector was doing authorization work
+  the branch's own helper was careful about. Four conditions now require
+  `isActiveAccount()`: the host room-update branch,
+  `isHostAdmittedRoomParticipant()`, `roomMembers` create, and message
+  reaction updates. **`roomMembers` create mattered independently**: it
+  gated on `isRestrictedAccount()`, which reads `banned` only and returns
+  false when the account document is *absent*, so disabled accounts passed
+  a check that looked like it covered them. Rules suite 310 passed / 8
+  failed → **318 passed / 0 failed**. Generalized as
+  [SECURITY.md principle 9](SECURITY.md#firestore-security-rules--design-principles).
+
+- **OPEN, pre-existing, live — every non-host room message throws after
+  the message lands, and Home never reorders from non-host talk.**
+  `sendRoomMessage()` bumps `updatedAt` on the room root after each
+  message, and the non-host branch of the room-update rule has no
+  transition that accepts a bare `updatedAt`. The message itself is
+  written, so nothing is lost; what follows is an **unhandled
+  permission-denied** and a room whose ordering in the Home feeds never
+  advances no matter how active the conversation is. Found during the
+  2026-08-17 rules work, not caused by it. Tracked as
+  [Roadmap 0l](Roadmap.md#0l-non-host-room-messages-always-throw-after-the-message-lands).
 
 ### Found and fixed 2026-08-16 — all were live in production
 
@@ -181,6 +213,15 @@ permission flags).
   members in rooms they could not leave. Treat the field as an upper
   bound. Deliberate trade, `952d8e4`,
   [ADR-056](Decisions.md#adr-056-a-moderation-action-belongs-in-a-callable-that-completes-the-whole-removal-not-in-a-rule-that-deletes-one-row).
+
+  **Swept in production 2026-08-17: no victims exist.** 50 rooms examined,
+  **28** whose stored count disagrees with their true row count, **0
+  trapped** — every mismatched room has zero membership rows, so there was
+  never anyone to trap. **24 rooms carry no `memberCount` field at all**,
+  which is precisely the legacy shape that *would* have trapped members had
+  any of those rooms had one. The trap was real; it simply did not land
+  before `952d8e4` removed it. No repair migration is needed, and none
+  should be written for the overcount — it is the accepted direction.
 
 - **Possible orphaned `rooms/{roomId}/members` documents.** When that
   subcollection was renamed to `roomMembers` (see
@@ -407,6 +448,72 @@ permission flags).
   rate.
 
 ## UI
+
+- **Fixed (2026-08-17, `6ef4380`): no production user could record a Voice
+  Moment at all.** The recorder called `getTemporaryDirectory()`, which
+  `path_provider` does not implement on web, and a broad catch turned the
+  `MissingPluginException` into "Could not start recording". Web is the
+  only published client, so the entire creator content loop was closed —
+  and the error text named nothing that would lead anyone to the platform.
+  Fixed by a conditional-export platform seam
+  ([ADR-057](Decisions.md#adr-057-voice-moment-recording-splits-only-at-byte-acquisition-and-byte-upload-and-the-server-pins-the-audio-container)).
+  **The generalizable part: a catch broad enough to swallow
+  `MissingPluginException` converts "this platform is not implemented"
+  into "your action failed", which is the one distinction the user needs.**
+
+- **Fixed (2026-08-17, `6ef4380`): the recording waveform was fabricated
+  data.** It drew `(index * 17) % 48` — a fixed pattern that moved
+  identically whether the microphone heard anything or not — in direct
+  violation of this project's no-fake-data rule, and nobody had caught it.
+  It now draws the real amplitude stream from the recorder backend.
+
+- **Fixed (2026-08-17, `cefa81a`): a failed publish announced a
+  success-sounding line to screen readers.** Flutter web has **no
+  per-node `aria-live`** — `LiveRegion` writes into a single shared
+  announcement element and clears it after 300 ms, so two live regions
+  changing in the same frame overwrite each other. The rule that came out
+  of it, and which applies to every screen:
+  [ADR-058](Decisions.md#adr-058-one-polite-live-region-per-screen-and-errors-go-out-on-the-assertive-channel).
+  **UNVERIFIED with a real screen reader** — no VoiceOver, NVDA or
+  TalkBack run has been performed; keyboard tabbing is widget-tested only.
+
+- **Fixed (2026-08-17, `cefa81a`): missing and busy microphones were
+  reported as a browser block.** `record_web` collapses every
+  `getUserMedia` rejection to a bare `false`, so "no microphone
+  connected", "microphone held by another app" and a merely dismissed
+  prompt all surfaced as "your browser blocked access" — blaming the user
+  for a hardware condition and pointing them at a setting already reading
+  Allow. The flow now calls `getUserMedia` directly and maps
+  `DOMException.name` onto distinct outcomes with distinct copy
+  (`lib/features/moments/data/services/audio_capture/web_microphone_errors.dart`).
+  **UNVERIFIED against a real browser refusal** — the mapping is unit-
+  tested against synthetic exception names; no real denial, unplugged
+  device or device-in-use condition has been reproduced in a browser.
+
+- **Fixed (2026-08-17, `cefa81a`): the recording timer could read
+  `0:60 / 1:00`.** The minute component was hard-coded while the seconds
+  clamped to 60, and the 60-second auto-stop landed users on exactly that
+  frame — so the impossible value was what the last moment of every
+  full-length recording showed, not a rare edge.
+
+- **Fixed (2026-08-17, `cefa81a`): the preview harness rendered under
+  `ThemeData.dark`, not `AppTheme.darkTheme`.** Screenshots taken through
+  it showed neither production typography nor the real input field, so
+  earlier visual sign-off on this screen was evidence about the harness.
+  The screen also migrated wholesale off raw hex onto `AppColors`, so its
+  primary purple finally matches `moments_screen.dart` beside it.
+  **Worth remembering: a preview harness that does not install the
+  production theme produces screenshots that look like proof and are not.**
+
+- **OPEN (2026-08-17): Safari, real microphone capture, and end-to-end
+  publish against Firebase are UNVERIFIED.** Recording is verified in
+  Chromium 148 (MIME negotiation measured directly) and by 521 automated
+  tests; the format decision is described in
+  [ADR-057](Decisions.md#adr-057-voice-moment-recording-splits-only-at-byte-acquisition-and-byte-upload-and-the-server-pins-the-audio-container).
+  Nobody has yet recorded a Voice Moment with a real microphone and
+  watched it publish to production Storage and Firestore. Firefox is
+  **known unsupported** and shows an honest unavailable panel — see
+  [Roadmap 0i](Roadmap.md#0i-voice-moment-recording-on-firefox-needs-a-coordinated-backend-change).
 
 - **Fixed (2026-08-16): Profile journey metrics expanded into four enormous
   desktop panels.** Their grid height followed the available width, so four
@@ -740,6 +847,26 @@ permission flags).
 
 ## Code quality / consolidation
 
+- **Dead rule code in `firestore.rules`, left over from the `952d8e4`
+  eviction removal — and it reads as though a capability exists that does
+  not.** `roomParticipantLeaveRootExists()` has no callers, and
+  `roomParticipantLeaveTransitionAllowed()` is unreachable because
+  `participants` delete is `if false`. Flagged 2026-08-17, deliberately
+  not removed in a security commit. **The hazard is the reading, not the
+  bytes**: the ternary that calls the second helper looks like members can
+  leave a voice room through rules, and they cannot — so anyone reasoning
+  about the leave path from these lines reasons about a path that is off.
+  Remove them in a change of their own, with the emulator suite re-run.
+
+- **`_publishRecordedMomentLegacy` writes a 14-key document where
+  `validateMoment()` requires exactly 20.** The callable fails `data-loss`
+  on a mismatch, so any moment created through this fallback would break
+  every later callable operating on it. Latent only because Stage B is
+  deployed and nothing reaches the path today. It needs a deliberate
+  decision — delete it, or write the canonical shape — not continued
+  coexistence. Tracked as
+  [Roadmap 0j](Roadmap.md#0j-decide-the-fate-of-_publishrecordedmomentlegacy).
+
 - **`RoomScreen` (`lib/features/rooms/presentation/screens/room_screen.dart`,
   ~1,164 lines) and `PodcastRoomScreen`
   (`.../screens/podcast_room_screen.dart`, ~987 lines) are dead code.**
@@ -779,7 +906,7 @@ permission flags).
   time: `functions/test/` holds **510 tests across 82 suites** in 45
   files, running against the Auth + Firestore emulators and gating the
   Hosting release in CI. Current counts live in one place now —
-  [TESTING.md](TESTING.md#current-counts-2026-08-16) — so this file should
+  [TESTING.md](TESTING.md#current-counts-2026-08-17) — so this file should
   reference them rather than restate them.
 
   What remains true, and is the useful part of the original entry:

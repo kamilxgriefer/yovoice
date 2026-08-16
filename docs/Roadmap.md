@@ -16,6 +16,63 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Voice Moment recording works on the web — until this landed, no
+  production user could record one at all** (2026-08-17, `6ef4380` →
+  `cefa81a`, DEPLOYED): the recorder called `getTemporaryDirectory()`,
+  which `path_provider` does not implement on web, and a broad catch
+  turned the resulting `MissingPluginException` into "Could not start
+  recording". Web is the only published client, so the entire creator
+  content loop was closed with no signal that the platform was the cause.
+  The fix is one conditional export
+  (`lib/features/moments/data/services/audio_capture/`) splitting **byte
+  acquisition and byte upload only** — native keeps file → `putFile`, web
+  uses a MediaRecorder blob → `fetch` → `arrayBuffer` → `putData`. State,
+  service, reservation, metadata and UI stay single-implementation.
+  The audio container is **pinned by the server**, not chosen by the
+  client, and the negotiation was measured rather than assumed:
+  `MediaRecorder.isTypeSupported('audio/mp4;codecs=mp4a')` is **false** in
+  Chromium 148 while `'audio/mp4;codecs=mp4a.40.2'` is **true**, so
+  normalizing the codec parameter away before comparing against
+  `AUDIO_TYPES` is load-bearing.
+  [ADR-057](Decisions.md#adr-057-voice-moment-recording-splits-only-at-byte-acquisition-and-byte-upload-and-the-server-pins-the-audio-container).
+  `cefa81a` closed two independent review FAILs — a Flutter-web live-region
+  collision that announced a success-sounding line on a failed publish
+  ([ADR-058](Decisions.md#adr-058-one-polite-live-region-per-screen-and-errors-go-out-on-the-assertive-channel)),
+  and `record_web` collapsing every `getUserMedia` rejection to `false` so
+  absent or busy hardware was reported as a browser block. It also fixed a
+  `0:60 / 1:00` timer, corrected a preview harness that rendered under
+  `ThemeData.dark` instead of `AppTheme.darkTheme`, and migrated the screen
+  wholesale onto `AppColors`. **The waveform had been fabricated data**
+  (`(index * 17) % 48`), against this project's own no-fake-data rule; it
+  now draws the real amplitude stream. Suites **521 tests / 55 files**
+  (from 486/54, and 438/52 before this work); `flutter analyze` clean;
+  `flutter build web` and `flutter build ios --simulator` both pass.
+  Still open, tracked below: Firefox (item 0i) and the legacy publish path
+  (item 0j).
+
+- **A suspension now suspends on every room write path** (2026-08-17,
+  `c75720a` → `c7cea3e`, DEPLOYED — closes the former backlog item 0b):
+  the room-root update rule selected its host branch on `hostId` alone with
+  no account-status check, while `isRoomHost()` did check, so a banned or
+  disabled host could still edit room metadata and start voice. Four
+  conditions now require `isActiveAccount()`: the host room-update branch,
+  `isHostAdmittedRoomParticipant()`, `roomMembers` create, and message
+  reaction updates. `roomMembers` create mattered independently because it
+  gated on `isRestrictedAccount()`, which reads `banned` only and returns
+  false when the account document is **absent** — so disabled accounts
+  passed. Rules suite **310 passed / 8 failed → 318 passed / 0 failed**.
+  Deployed and verified by fetching the live ruleset source through the
+  Firebase Rules API and diffing it: **byte-identical to `firestore.rules`
+  at HEAD** (see [DEPLOYMENT.md](DEPLOYMENT.md#reading-the-deployed-ruleset-the-verification-standard)).
+  `c7cea3e` corrected the comment justifying the broad ternary selector:
+  it claimed the tighter variant would be *looser*, and a built-and-measured
+  variant is identical, denial for denial — the fall-through it described
+  was real only against the `roomMembers` create rule the same commit had
+  already closed. Generalized as
+  [ADR-060](Decisions.md#adr-060-an-explanatory-comment-is-a-claim-measure-it-or-delete-it).
+  The rules design principle is
+  [SECURITY.md principle 9](SECURITY.md#firestore-security-rules--design-principles).
+
 - **Production cutover — everything below this line is now LIVE**
   (2026-08-16, `952d8e4`): Cloud Functions 51 → **111** deployed, Firestore
   indexes 14 → **15** composites and 1 → **3** `fieldOverrides`,
@@ -109,8 +166,8 @@ someone decide what to pick up next.
   fields before update rules applied, plus the Club-invite path that let an
   invitee create an owner/co-owner/admin membership. Verified at the time
   with 396/396 Flutter tests across 41 files and 225/225 Firestore emulator
-  cases; current counts are 438 across 52 files and 301 — see
-  [TESTING.md](TESTING.md#current-counts-2026-08-16). **These rules were
+  cases; current counts are 521 across 55 files and 318 — see
+  [TESTING.md](TESTING.md#current-counts-2026-08-17). **These rules were
   DEPLOYED on 2026-08-16.** This entry read "The new Firestore rules still
   require a manual deploy" until then. Store verification adapters remain
   unconfigured, so `adminSetPremiumEntitlements` is still the only working
@@ -343,7 +400,7 @@ someone decide what to pick up next.
   the member's real avatar in the canonical premium ring) and
   `PremiumPlansScreen` (toggle, side-by-side plan cards, real
   `verifyPurchase` wiring; decline path live-verified against production)
-  ([ADR-031](Decisions.md#adr-031-premium-is-two-surfaces-presentation-and-plans-the-hero-is-the-members-real-identity));
+  ([ADR-031](Decisions.md#adr-031-premium-is-two-surfaces--presentation-and-plans-the-hero-is-the-members-real-identity));
   website Premium surfaces aligned to the same language
   (`yovoice-website` `ed606b3`); board screen 5 profile refinement —
   header chips row (AccountTypeBadge + server-mirrored
@@ -552,20 +609,82 @@ Ordered by rough priority — re-prioritize freely, this isn't a queue.
   `reachedEnd`. Attach a required reviewer to the `production` environment
   before the first `apply` run.
 
-### 0b. Close the banned-host room-update branch
+### 0b. ~~Close the banned-host room-update branch~~ DONE
 
-- **Status**: Not started. Pre-existing, live in production.
-- **Description**: The room-update host branch selects on
-  `resource.data.hostId == request.auth.uid` with no account-status check,
-  so a banned or disabled host can still edit room metadata and start
-  voice. `isRoomMember()` and `isActiveClubRoomMember()` both gained
-  `isActiveAccount()` in `2fc05e5`; this branch was not touched, and the
-  same host-writes-anything property is what made the removed eviction
-  rule exploitable.
-- **Dependencies**: Emulator cases and a rules deploy — see
-  [SECURITY.md](SECURITY.md#still-open-pre-existing-live-in-production).
-- **Priority**: **High.** A suspension that does not stop a host is not a
-  suspension.
+Closed 2026-08-17 in `c75720a`, deployed and verified against the live
+ruleset. See the Done entry above. Two *other* writes behind
+`canAccessRoom()` remain ungated — tracked as item 0k below, which is a
+different and much smaller problem.
+
+### 0i. Voice Moment recording on Firefox needs a coordinated backend change
+
+- **Status**: Not started. Firefox users currently get an honest
+  "unavailable" panel naming the reason, not a silent failure.
+- **Description**: Firefox has no MP4/AAC `MediaRecorder`, and MP4/AAC is
+  the only container this product can publish because the **server** pins
+  it ([ADR-057](Decisions.md#adr-057-voice-moment-recording-splits-only-at-byte-acquisition-and-byte-upload-and-the-server-pins-the-audio-container)).
+  Supporting another container is not a client change.
+- **Dependencies**: A coordinated Functions **and** rules change, in that
+  order — `momentStoragePath()` / `voiceReplyStoragePath()` taking a
+  container argument, `reserveMomentDraft` accepting it, `AUDIO_TYPES`
+  widening, and `validateMoment()` following. **A rules-only widening
+  fails closed against the current server**, so do not start there.
+- **Priority**: Medium. It is a real audience gap, but it fails closed and
+  explains itself, which is the acceptable form of an unsupported platform.
+- **Future considerations**: Whatever container is added has to be
+  playable everywhere the feed renders, not just recordable in Firefox.
+
+### 0j. Decide the fate of `_publishRecordedMomentLegacy`
+
+- **Status**: Not started. Latent, not live — Stage B is deployed, so
+  nothing reaches this path today.
+- **Description**: `_publishRecordedMomentLegacy` writes a **14-key**
+  moment document while `validateMoment()` requires exactly **20** and
+  fails `data-loss` on a mismatch. Any moment created through that
+  fallback would break every later callable operating on it.
+- **Dependencies**: None technical. This needs a deliberate decision:
+  delete the fallback, or make it write the canonical 20-key shape. Do not
+  leave it as a third option.
+- **Priority**: Medium. Zero user impact today and unbounded impact if the
+  fallback ever becomes reachable again — which is exactly the shape of
+  defect this project has shipped before.
+
+### 0k. Gate the last two writes behind `canAccessRoom()`
+
+- **Status**: Not started. Pre-existing; **no client issues either write**,
+  which is what makes this cheap.
+- **Description**: `roomMembers` update lets a banned account rewrite
+  `displayName` / `photoUrl` on its roster row — including a blind write
+  into a private room it can no longer read, with no type or length check
+  — and `participants` update lets it un-mute itself and raise its hand.
+  Neither escalates privilege and neither bypasses audio, because LiveKit
+  will not issue a token to a suspended account. The claim in the
+  2026-08-17 notes that "every write behind `canAccessRoom()` is now
+  gated" was **false**; these two are the remainder.
+- **Dependencies**: Emulator cases and a rules deploy.
+- **Priority**: Low-Medium. Worth doing mostly because gating a write no
+  client makes carries **zero trap risk** — the opposite of the eviction
+  rule that had to be removed in `952d8e4`.
+
+### 0l. Non-host room messages always throw after the message lands
+
+- **Status**: Not started. Pre-existing and **live in production**;
+  unrelated to the 2026-08-17 rules work, found during it.
+- **Description**: `sendRoomMessage()` bumps `updatedAt` on the room root
+  after every message, and the non-host branch of the room-update rule has
+  no transition accepting a bare `updatedAt`. Every non-host message send
+  therefore raises an unhandled permission-denied *after* the message has
+  already been written, and **room ordering in the Home feeds never
+  advances from non-host conversation** — an active room looks stale.
+- **Dependencies**: Either a narrow rules transition accepting exactly
+  `updatedAt` from an admitted participant, or dropping the client-side
+  root write. Decide which side owns room recency before writing either.
+- **Priority**: **High** for a small change: it is user-visible on the main
+  surface, and the thrown error is unhandled.
+- **Future considerations**: The counter-drift lesson from
+  [ADR-056](Decisions.md#adr-056-a-moderation-action-belongs-in-a-callable-that-completes-the-whole-removal-not-in-a-rule-that-deletes-one-row)
+  applies — do not let a room-root field a participant can write become a
+  gate on anything else.
 
 ### 0g. Host eviction as a callable (the rule is gone on purpose)
 

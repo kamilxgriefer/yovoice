@@ -97,7 +97,7 @@ Full function-by-function detail in [Backend.md](Backend.md).
 A standalone Node project (its own `package.json`, `node_modules/`) that
 runs regression and attack-scenario checks against `firestore.rules` and
 `storage.rules` via the Firestore and Storage emulators — three suites,
-301 + 46 + 11 checks as of 2026-08-16. Not part of the Flutter app's
+318 + 46 + 11 checks as of 2026-08-17. Not part of the Flutter app's
 dependency tree at all — see [TESTING.md](TESTING.md) and
 [`firestore-tests/README.md`](../firestore-tests/README.md) for the actual
 workflow.
@@ -105,7 +105,7 @@ workflow.
 ## `test/` — Dart tests
 
 Standard Flutter test location (`flutter test` looks here by default).
-**52** `*_test.dart` files carrying 438 tests as of 2026-08-16 (counted
+**55** `*_test.dart` files carrying 521 tests as of 2026-08-17 (counted
 with `find test -name '*_test.dart'`; the test total is from the suite
 run). Coverage is regression-driven and uneven, not uniform — see
 [TESTING.md](TESTING.md) for what is actually covered and what is not.

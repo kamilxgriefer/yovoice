@@ -55,6 +55,19 @@ given a false-precision date.
 | [018](#adr-018-per-screen-firestore-streams-are-created-once-in-initstate-never-inline-in-build)         | Per-screen Firestore streams are created once in `initState`, never inline in `build()`      | Accepted | 2026-08-07                           |
 | [019](#adr-019-more-menu-destinations-own-their-full-chrome-no-wrapper-scaffold)                        | "More" menu destinations own their full chrome; no wrapper Scaffold                         | Accepted | 2026-08-07                           |
 | [053](#adr-053-paid-capabilities-come-only-from-the-trusted-entitlement-and-every-entry-boundary-fails-closed) | Paid capabilities come only from the trusted entitlement; every entry boundary fails closed | Accepted | 2026-08-16                           |
+| [054](#adr-054-private-account-records-are-split-from-exact-server-owned-public-profiles) | Private account records are split from exact server-owned public profiles | Accepted | 2026-08-16 |
+| [055](#adr-055-the-2026-08-16-production-cutover--order-the-deploy-by-what-fails-closed-and-verify-by-fingerprinting-served-bytes) | The 2026-08-16 production cutover — order the deploy by what fails closed, verify by fingerprinting served bytes | Accepted | 2026-08-16 |
+| [056](#adr-056-a-moderation-action-belongs-in-a-callable-that-completes-the-whole-removal-not-in-a-rule-that-deletes-one-row) | A moderation action belongs in a callable that completes the whole removal, not in a rule that deletes one row | Accepted | 2026-08-16 |
+| [057](#adr-057-voice-moment-recording-splits-only-at-byte-acquisition-and-byte-upload-and-the-server-pins-the-audio-container) | Voice Moment recording splits only at byte acquisition and byte upload; the server pins the audio container | Accepted | 2026-08-17 |
+| [058](#adr-058-one-polite-live-region-per-screen-and-errors-go-out-on-the-assertive-channel) | One polite live region per screen; errors go out on the assertive channel | Accepted | 2026-08-17 |
+| [059](#adr-059-a-ui-change-is-reviewed-before-it-is-deployed-on-the-same-terms-as-a-rules-change) | A UI change is reviewed before it is deployed, on the same terms as a rules change | Accepted | 2026-08-17 |
+| [060](#adr-060-an-explanatory-comment-is-a-claim-measure-it-or-delete-it) | An explanatory comment is a claim — measure it or delete it | Accepted | 2026-08-17 |
+
+> **The index is incomplete and has been for a while**: rows for ADR-020
+> through ADR-052 were never added, though the records themselves are all
+> present below. Noted rather than silently left, and not repaired here —
+> it is a mechanical pass of its own. The records are numbered
+> chronologically, so browsing the headings works meanwhile.
 
 ---
 
@@ -244,7 +257,7 @@ flipping enforcement turns a risky one-shot flag into a monitored rollout.
 Right now, any script holding a valid Firebase Auth ID token can call
 every Cloud Function in this project without App Check attesting it came
 from the real app — see [Bugs.md](Bugs.md#security) and
-[SECURITY.md](SECURITY.md#app-check). This is a real, currently-accepted
+[SECURITY.md](SECURITY.md#firebase-app-check). This is a real, currently-accepted
 gap, not a false negative in this document: it raises the cost of casual
 backend abuse but does not by itself gate anything Firestore rules and
 Cloud Function authorization checks (ADR-003) don't already gate. The
@@ -1301,7 +1314,7 @@ write allowlist with no gate. No billing/IAP code existed anywhere.
   The capability-specific and first-create hardening in ADR-053 is covered by
   the expanded 225-case emulator suite but requires a new manual rules deploy.
   *(Amended 2026-08-16: that deploy has happened — the ADR-053 rules are
-  live. The suite has since grown to 301 checks; 225 is kept as the
+  live. The suite has since grown to 318 checks; 225 is kept as the
   historical figure. Note also that the scheduled `expirePremiumIdentity`
   sweep this ADR depends on had never once succeeded in production, for
   want of a deployed composite index — see
@@ -3285,9 +3298,9 @@ exist.
 
 The rules deploy this ADR required **has happened**; the restrictions are
 live. The 396/396 and 225/225 figures above are kept as the historical
-record of what this ADR shipped against — current counts are 438 Flutter
-tests across 52 files and 301 rules checks, tracked in
-[TESTING.md](TESTING.md#current-counts-2026-08-16).
+record of what this ADR shipped against — current counts are 521 Flutter
+tests across 55 files and 318 rules checks, tracked in
+[TESTING.md](TESTING.md#current-counts-2026-08-17).
 
 The unknown: the scheduled `expirePremiumIdentity` sweep this ADR relies
 on had **never once succeeded in production**. Its query needs a composite
@@ -3627,3 +3640,286 @@ moderator will believe it worked.
   account-status check, so a banned host can edit room metadata and start
   voice. Not introduced here and not fixed here; see
   [SECURITY.md](SECURITY.md#still-open-pre-existing-live-in-production).
+  **Update 2026-08-17**: closed in `c75720a` and deployed. The starvation
+  primitive described above therefore no longer has a banned host to
+  exercise it — but that is defence in depth, not a reason to reconsider
+  removing the eviction rule, which failed with no attacker at all.
+
+---
+
+## ADR-057: Voice Moment recording splits only at byte acquisition and byte upload, and the server pins the audio container
+
+**Status**: Accepted
+**Date**: 2026-08-17
+
+### Context
+
+Until `6ef4380`, **no production user could record a Voice Moment at
+all.** Web is the only published client. The recorder called
+`getTemporaryDirectory()`, which `path_provider` does not implement on
+web, and a broad catch turned the resulting `MissingPluginException` into
+"Could not start recording". The whole creator content loop was closed,
+and the message named nothing that would lead anyone to the platform as
+the cause.
+
+The obvious repair — a second web recording screen, or a web-specific
+service — would have duplicated reservation, metadata, publish and UI
+logic that has nothing platform-specific about it, and duplicated it
+around a feature this project has already shown it does not exercise
+often enough to keep two copies honest.
+
+The second question was which audio format web should produce. That one
+is not open. The deployed backend pins `audio/mp4|m4a|x-m4a` in
+`AUDIO_TYPES` and `isAllowedAudioType()`, and `momentStoragePath()` bakes
+`.m4a` into the object name. The client has no free choice.
+
+### Decision
+
+Split at exactly two points — **how the bytes are acquired, and how they
+are uploaded** — chosen by one conditional export
+(`lib/features/moments/data/services/audio_capture/audio_capture_platform.dart`,
+`export 'audio_capture_io.dart' if (dart.library.js_interop)
+'audio_capture_web.dart'`). Native keeps file → `putFile`; web uses a
+MediaRecorder blob → `fetch` → `arrayBuffer` → `putData`. State, service,
+reservation, metadata and UI stay single-implementation, written once
+against the `AudioCapture` and `VoiceRecorderBackend` interfaces.
+
+Record AAC-LC in an MP4 container everywhere, because that is what the
+server accepts. Probe support *before* requesting the microphone, so an
+unsupported browser explains itself rather than failing at a permission
+prompt.
+
+### Reasoning
+
+**The format was measured, not assumed, and the measurement is
+counter-intuitive.** In Chromium 148,
+`MediaRecorder.isTypeSupported('audio/mp4;codecs=mp4a')` returns **false**
+while `'audio/mp4;codecs=mp4a.40.2'` returns **true** — the more specific
+profile string is the supported one. `record_web` tries its candidates in
+its own fixed order, so which one the browser accepts decides whether the
+recording is publishable at all. Normalizing the codec parameter away
+before comparing against the allowlist is **load-bearing**: the rules
+compare against a bare set, so `audio/mp4;codecs=mp4a.40.2` matches
+nothing unless it is reduced to `audio/mp4` first.
+
+The candidate list is mirrored in `web_mime_negotiation.dart` from
+`record_web`'s own `mimeTypes[AudioEncoder.aacLc]` at the pinned version
+(record 7.1.1 / record_web 2.1.2), with the selection rule kept free of
+`dart:js_interop` so it is unit-testable on the VM. The mirror is a
+liability with an expiry date and is commented as one: upgrade
+`record_web` and the support answer this screen gives its users is only as
+accurate as the mirror.
+
+Keeping the seam this narrow is what makes the format constraint
+enforceable. If the platform choice reached further up — into the service
+or the screen — there would be more than one place where a container could
+be picked, and only one of them would be checked against the server.
+
+### Consequences
+
+- **Recording works on the web.** Suites 486 → **521 tests across 55
+  files**; `flutter analyze` clean; `flutter build web` and `flutter build
+  ios --simulator` both pass.
+- **Firefox is unsupported and says so**, with an honest panel naming the
+  reason and an action. It has no MP4/AAC `MediaRecorder`. Supporting it
+  is **not a client change**: it needs a coordinated Functions *and* rules
+  change — `momentStoragePath()` / `voiceReplyStoragePath()` taking a
+  container, `reserveMomentDraft` accepting it, `AUDIO_TYPES` widening,
+  `validateMoment()` following. **A rules-only widening fails closed
+  against the current server**, which is the trap to avoid. Tracked as
+  [Roadmap 0i](Roadmap.md#0i-voice-moment-recording-on-firefox-needs-a-coordinated-backend-change).
+- **The waveform now draws real amplitude.** It had been `(index * 17) %
+  48` — a fixed pattern that moved identically whether the microphone
+  heard anything or not, in direct violation of this project's no-fake-data
+  rule, present long enough that nobody questioned it. A meter that moves
+  in silence is fabricated audio state, not a placeholder.
+- `_publishRecordedMomentLegacy` writes a **14-key** document where
+  `validateMoment()` requires exactly **20** and fails `data-loss` on a
+  mismatch. Latent only because Stage B is deployed. It needs a deliberate
+  decision — delete it or write the canonical shape —
+  [Roadmap 0j](Roadmap.md#0j-decide-the-fate-of-_publishrecordedmomentlegacy).
+- **UNVERIFIED**: Safari, Firefox's panel in a real Firefox, real
+  microphone capture, and an end-to-end publish into production Storage
+  and Firestore. Chromium 148's MIME negotiation was checked directly;
+  everything else on the web path is seam-tested.
+
+---
+
+## ADR-058: One polite live region per screen, and errors go out on the assertive channel
+
+**Status**: Accepted
+**Date**: 2026-08-17
+
+### Context
+
+On the recording screen, a **failed** publish announced a success-sounding
+line to assistive technology. Both announcements were correct in isolation.
+
+**Flutter web has no per-node `aria-live`.** `LiveRegion` does not
+annotate the widget's own DOM node; it writes into a *single shared*
+announcement element and clears it after 300 ms. Two live regions changing
+in the same frame therefore overwrite each other, and which one survives is
+a race, not a design. Nothing in the widget API suggests this — each
+`LiveRegion` reads as though it owns its own region.
+
+### Decision
+
+**One polite live region per screen.** Route every non-urgent status change
+through that single region. Errors do not share it: they go out on the
+**assertive** channel, which is a separate element and therefore cannot be
+overwritten by a polite update landing in the same frame.
+
+A screen that appears to need two polite regions needs one region and a
+composed message.
+
+### Reasoning
+
+The failure is silent and direction-dependent: the surviving announcement
+is not necessarily the important one, so the bug surfaces as *reassurance
+during a failure* — the worst possible direction for a user who cannot see
+the screen. It cannot be caught by reading a widget tree, because the tree
+looks right.
+
+Separating severity across the two channels is not a stylistic preference
+here. It is the mechanism that makes an error announcement survive, given
+that the polite channel is a single shared slot.
+
+### Consequences
+
+- The recording screen now has exactly one polite region; publish failures
+  announce assertively.
+- **Any new screen with more than one changing status must compose, not
+  add a second `LiveRegion`.** Treat a second polite region in one screen
+  as a defect on sight.
+- **UNVERIFIED, and this must not be softened**: no screen reader has been
+  run against this screen, or any screen in this project, on any platform.
+  The fix is reasoned from Flutter's web `LiveRegion` implementation and
+  covered by widget tests; keyboard tabbing is widget-tested only. Real
+  VoiceOver/NVDA/TalkBack verification remains outstanding.
+- Related, same commit: `record_web` collapses every `getUserMedia`
+  rejection to a bare `false`, so absent hardware, a busy device and a
+  dismissed prompt all surfaced as "your browser blocked access" — copy
+  that blames the user for a hardware condition and points at a setting
+  already reading Allow. The flow now calls `getUserMedia` directly and
+  maps `DOMException.name`. **The generalizable rule: when a library
+  collapses distinguishable failures into a boolean, the copy built on
+  that boolean will be confidently wrong.** Also UNVERIFIED against a real
+  browser refusal.
+
+---
+
+## ADR-059: A UI change is reviewed before it is deployed, on the same terms as a rules change
+
+**Status**: Accepted
+**Date**: 2026-08-17
+
+### Context
+
+On 2026-08-17 the web client was deployed from `6ef4380` **before** the
+accessibility and visual reviews returned. The reasoning was defensible:
+recording was totally broken for every production user, and a working
+screen with defects beats no screen.
+
+Both reviews came back **FAIL**. `cefa81a` closed them.
+
+### Decision
+
+**For a UI change, review precedes deploy** — the same gate this project
+already applies without argument to a rules change.
+
+### Reasoning
+
+The deploy was not wrong about the tradeoff; it was wrong about the
+timeline. The reviews were already in flight. Waiting would have shipped
+the *fixed* version directly, at the cost of a short delay — instead of
+shipping a screen that told screen-reader users a failed publish had
+succeeded, and then shipping again.
+
+The rules-deploy discipline exists because this project has repeatedly
+found that "it passes locally and the fix is urgent" is exactly the
+condition under which mistakes ship. A UI change does not have a smaller
+blast radius in a product whose only published client is the web app; it
+has a *different* one, and it reaches users with less warning because
+nothing fails closed.
+
+Urgency is an argument for reviewing faster. It is not an argument for
+reviewing afterwards.
+
+### Consequences
+
+- The `6ef4380` deploy was not reverted; the tradeoff it made was
+  reasonable and the outcome is now fixed in `cefa81a`.
+- **This is a rule, not a suggestion, and it should not be restated as
+  one.** If a future session finds itself arguing that a UI defect is
+  urgent enough to skip review, that is the case this ADR was written
+  about.
+- Release-status claims for the recorder must be settled with the DevOps
+  and Release Engineer by fingerprinting the served bytes, not inferred
+  from the commit being on `main` — see
+  [DEPLOYMENT.md](DEPLOYMENT.md#changes-since--2026-08-17).
+
+---
+
+## ADR-060: An explanatory comment is a claim, measure it or delete it
+
+**Status**: Accepted
+**Date**: 2026-08-17
+
+### Context
+
+`c7cea3e` corrected a comment in `firestore.rules` that justified a broad
+ternary selector by asserting the tighter variant would be **looser** —
+that a narrower selector would open a fall-through. An audit built the
+tighter variant and measured it against the suite: **identical, denial for
+denial.** The fall-through the comment described was real only against the
+*previous* `roomMembers` create rule, which `c75720a` — the same change the
+comment shipped alongside — had already closed. The comment was justifying
+a shape with a mechanism its own commit had removed.
+
+**This is the third such incident in two days.** ADR-005's collectionGroup
+paragraph claimed an `exists()`-based widening would fail closed; it fails
+**open**, and three emulator runs reproduce the opposite of what the ADR
+said. PROJECT_STRUCTURE's description of the deploy script described a
+script that did something else. Each was written confidently, by someone
+who understood the system, and each was believed for as long as it stood.
+
+### Decision
+
+**An explanatory comment or doc paragraph that asserts a mechanism is a
+claim, and carries the same evidence burden as a test.** Before writing
+"this is necessary because X would happen", either produce X, or write
+what is actually known and say the rest is unverified.
+
+When a change removes a mechanism, **audit what cited that mechanism as a
+reason** in the same commit — comments included, not only code.
+
+### Reasoning
+
+The failure mode is not ignorance; it is a correct explanation outliving
+the thing it explained. All three incidents share a shape: the claim was
+true when written, the surrounding system moved, and the prose stayed
+confident. Confident prose is worse than no prose, because it *stops the
+next reader from checking* — ADR-005's wrong paragraph directly produced
+two spurious defect reports against a rule that was never the problem, and
+would have told an engineer that a fail-open edit was safe to try.
+
+Rules comments are a sharper case than most: they are the only in-place
+documentation of an authorization decision, and the emulator makes the
+counterfactual **cheap to actually run**. There was no reason to assert
+the tighter variant was looser rather than build it, which took one audit
+to do.
+
+### Consequences
+
+- **The measurement is the deliverable, not the assertion.** "The tighter
+  variant denies exactly what the broad one denies, measured against the
+  318-case suite" is a durable sentence; "the tighter variant would be
+  looser" was not.
+- Applies to `docs/` with equal force. Every correction in this repo's
+  documentation history — ADR-005, PROJECT_STRUCTURE's deploy script,
+  SECURITY.md's "there is no read-only CLI command", TESTING.md's stale
+  suite counts — was a confident claim nobody re-derived. When correcting
+  one, say what it previously said and why it was wrong; the existing
+  entries follow that shape deliberately.
+- A claim that cannot be cheaply measured should be labelled UNVERIFIED
+  rather than dropped. The goal is calibration, not silence.

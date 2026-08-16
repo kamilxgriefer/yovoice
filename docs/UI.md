@@ -97,8 +97,35 @@ Use the shared `YoLoadingIndicator` / `YoEmptyState` / `YoErrorState` /
 otherwise match the screen's existing inline-styled equivalents rather than
 introducing a third pattern into one file.
 
+## Announcing status to assistive technology
+
+**One polite live region per screen, and errors on the assertive channel.**
+Flutter web has no per-node `aria-live`: `LiveRegion` writes into a single
+*shared* announcement element and clears it after 300 ms, so two live
+regions changing in the same frame overwrite each other and which one
+survives is a race. This shipped once as a failed publish announcing a
+success-sounding line. A screen that seems to need two polite regions needs
+one region and a composed message. Full reasoning and the failure it came
+from:
+[ADR-058](Decisions.md#adr-058-one-polite-live-region-per-screen-and-errors-go-out-on-the-assertive-channel).
+
 ## Verifying visually
 
 For UI changes, start the dev server / simulator and actually look at the
 golden path and edge cases before calling a change done — see
 [DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md#verification-checklist-before-calling-something-done).
+
+Two traps this project has actually hit, both of which produce screenshots
+that look like proof:
+
+- **A preview harness that does not install the production theme.** The
+  recording screen's harness rendered under `ThemeData.dark` rather than
+  `AppTheme.darkTheme`, so its screenshots showed neither production
+  typography nor the real input field. Check the harness before trusting
+  its output.
+- **A stale `main.dart.js`.** Confirm the deployed bytes contain the
+  change before concluding anything from a browser screenshot (see
+  [CLAUDE.md](../CLAUDE.md)).
+
+**Review precedes deploy for a UI change**, on the same terms as a rules
+change — [ADR-059](Decisions.md#adr-059-a-ui-change-is-reviewed-before-it-is-deployed-on-the-same-terms-as-a-rules-change).

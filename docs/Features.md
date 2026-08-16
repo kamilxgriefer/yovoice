@@ -88,6 +88,16 @@ comments including voice replies, a public feed
 Studio. Like/comment counters are transactionally validated against the
 actual `likes` subcollection — not client-settable to an arbitrary value.
 
+**Recording platform support** (2026-08-17): native and Chromium-based
+browsers record; **Firefox cannot** and shows an explicit unavailable panel
+naming the reason, because MP4/AAC is the only container the backend
+accepts and Firefox's `MediaRecorder` does not produce it
+([ADR-057](Decisions.md#adr-057-voice-moment-recording-splits-only-at-byte-acquisition-and-byte-upload-and-the-server-pins-the-audio-container)).
+Until `6ef4380`, recording failed on web entirely — which, web being the
+only published client, meant nobody could create a Voice Moment. **Safari
+and real end-to-end publish are UNVERIFIED**; verification so far is 521
+automated tests plus a direct Chromium 148 check of the MIME negotiation.
+
 ## Achievements / Awards
 
 `lib/features/achievements/`: a 100-title catalog (`AchievementCatalog`)

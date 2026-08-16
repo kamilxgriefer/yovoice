@@ -110,6 +110,20 @@ production-shipped bug:
    write created a starvation primitive. Removal in full belongs in a
    callable. See
    [ADR-056](Decisions.md#adr-056-a-moderation-action-belongs-in-a-callable-that-completes-the-whole-removal-not-in-a-rule-that-deletes-one-row).
+9. **A branch selector is an authorization condition, and it does not
+   inherit the checks the branch's helpers perform.** The room-root update
+   rule chose its host branch on `resource.data.hostId == request.auth.uid`
+   alone, while `isRoomHost()` — used elsewhere — did check account status.
+   The rule therefore *looked* status-aware anywhere a reader followed the
+   helper, and was not on the path that mattered: a banned or disabled host
+   could edit room metadata and start voice. **When identity selects a
+   branch, re-state the status requirement inside the branch; do not rely
+   on a sibling helper's diligence.** A corollary from the same fix:
+   `isRestrictedAccount()` reads `banned` only and returns **false when the
+   account document does not exist**, so gating on it silently admits
+   disabled accounts — a helper that fails open on an absent document is a
+   different check from the one its name implies. Fixed 2026-08-17
+   (`c75720a`), deployed and verified by diffing the live ruleset source.
 
 Full schema and the exact current rules structure: [Firebase.md](Firebase.md).
 
@@ -406,35 +420,71 @@ Room membership rows can be created and self-deleted, never
 host-deleted — see principle 8 and
 [ADR-056](Decisions.md#adr-056-a-moderation-action-belongs-in-a-callable-that-completes-the-whole-removal-not-in-a-rule-that-deletes-one-row).
 
+The banned-host gap that stood here is **closed and deployed** as of
+2026-08-17 (`c75720a`): the host room-update branch,
+`isHostAdmittedRoomParticipant()`, `roomMembers` create and message
+reaction updates all require `isActiveAccount()`. Rules suite 310 passed /
+8 failed → 318 passed / 0 failed; the deployed ruleset source was read back
+and diffed byte-for-byte against `firestore.rules` at HEAD. The design
+principle it produced is principle 9 above.
+
 ### Still open, pre-existing, live in production
 
-- **A banned host can still edit room metadata and start voice.** The
-  room-update host branch selects on
-  `resource.data.hostId == request.auth.uid` with **no account-status
-  check**, unlike `isRoomMember()` and `isActiveClubRoomMember()`. So the
-  2026-08-16 pass closed the member path against suspended accounts and
-  left the host path open. This predates that pass and was not introduced
-  by it; it is recorded here rather than quietly fixed because a rules
-  change needs its own emulator cases and its own deploy. Tracked in
-  [Bugs.md](Bugs.md#security).
+**"Every write behind `canAccessRoom()` is now gated" is false.** Two
+remain, and stating it plainly here is the point — the claim was made and
+is wrong:
+
+- **`roomMembers` update** lets a banned account rewrite `displayName` and
+  `photoUrl` on its own roster row, **including a blind write into a
+  private room it can no longer read**, with no type or length check on
+  either field.
+- **`participants` update** lets a banned account un-mute itself and raise
+  its hand.
+
+Neither escalates privilege, and neither bypasses audio: LiveKit will not
+issue a token to a suspended account, so an un-muted `participants` row is
+a flag on a document, not a voice in a room. What makes them worth closing
+is the *cost*, not the risk — **no client issues either write**, so gating
+them carries zero trap risk, which is the opposite of the eviction rule
+that had to be removed wholesale in `952d8e4`. Tracked as
+[Roadmap 0k](Roadmap.md#0k-gate-the-last-two-writes-behind-canaccessroom).
+
+Also found during the same pass and **not a security defect**, but live:
+every non-host room message raises an unhandled permission-denied after
+the message has landed, because `sendRoomMessage()` bumps the room root's
+`updatedAt` and the non-host branch accepts no such transition. Room
+ordering on Home never advances from non-host conversation. See
+[Bugs.md](Bugs.md#security) and
+[Roadmap 0l](Roadmap.md#0l-non-host-room-messages-always-throw-after-the-message-lands).
 
 ## Current status
 
-**One known open authorization gap** (the banned-host room-update branch
-directly above), plus App Check enforcement, which stays off
-deliberately. A full audit found 13 issues (3 critical, 3 high, 6 medium,
-1 client/server contract bug); 12 are fixed, verified directly against
-current `firestore.rules`, `storage.rules`, and `functions/` — not assumed
-from the audit's own "fixed" claims.
+**No known open privilege-escalation gap.** What remains behind
+`canAccessRoom()` are the two non-escalating ungated writes directly above,
+plus App Check enforcement, which stays off deliberately. A full audit
+found 13 issues (3 critical, 3 high, 6 medium, 1 client/server contract
+bug); 12 are fixed, verified directly against current `firestore.rules`,
+`storage.rules`, and `functions/` — not assumed from the audit's own
+"fixed" claims.
 
-**Deployment status, 2026-08-16**: the hardened `firestore.rules` and
+**Deployment status, 2026-08-17**: the hardened `firestore.rules` and
 `storage.rules` are **live in production**. `firestore.rules` was deployed
-twice that day — 20:40 by the operator and 21:06 covering `952d8e4` — per
-Console → Firestore → Rules version history, which remains the only way to
-read the deployed ruleset (there is still no read-only CLI command).
-Until this date, both this file and [Bugs.md](Bugs.md) described these
-fixes as "FIXED IN SOURCE, PENDING RULES DEPLOY"; that is no longer true
-and those markers have been cleared.
+twice on 2026-08-16 — 20:40 by the operator and 21:06 covering `952d8e4` —
+and again on 2026-08-17 covering `c75720a`. Until this date, both this file
+and [Bugs.md](Bugs.md) described the 2026-08-16 fixes as "FIXED IN SOURCE,
+PENDING RULES DEPLOY"; that is no longer true and those markers have been
+cleared.
+
+**Corrected 2026-08-17 — the deployed ruleset is readable, so stop
+treating the Console as the only evidence.** This section previously said
+the Console's version history "remains the only way to read the deployed
+ruleset (there is still no read-only CLI command)". The Firebase Rules API
+returns the released ruleset's full source; the `c75720a` deploy was
+verified by fetching it and diffing byte-for-byte against the repository.
+A version-history timestamp proves *a* deploy happened. A diff proves
+**which bytes** are enforcing. For an authorization layer, only the second
+is evidence. Commands in
+[DEPLOYMENT.md](DEPLOYMENT.md#reading-the-deployed-ruleset-the-verification-standard).
 
 Live-updated detail: [Bugs.md](Bugs.md#security). Full historical audit,
 findings, and the exact fix for each: [Archive/SECURITY_AUDIT.md](Archive/SECURITY_AUDIT.md).

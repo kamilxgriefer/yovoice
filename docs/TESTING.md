@@ -4,18 +4,18 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
-## Current counts (2026-08-16)
+## Current counts (2026-08-17)
 
 One table, so there is a single place to correct when these move. Every
 figure is a suite run, not an estimate; file counts are `find`.
 
 | Suite | Command | Count |
 |---|---|---|
-| Firestore rules | `npm --prefix firestore-tests test` | **301** checks |
+| Firestore rules | `npm --prefix firestore-tests test` | **318** checks |
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **46** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
 | Cloud Functions | `npm --prefix functions test` | **510** tests across **82** suites (45 `*.test.js` files) |
-| Flutter | `flutter test` | **438** tests across **52** files |
+| Flutter | `flutter test` | **521** tests across **55** files |
 
 > **Correction, 2026-08-16.** These numbers were wrong in several docs for
 > most of a week — TESTING.md claimed 268 rules checks and 43 Storage
@@ -26,11 +26,18 @@ figure is a suite run, not an estimate; file counts are `find`.
 > session and no doc followed it. If you change a suite, change this table
 > in the same commit.
 
+> **Movement, 2026-08-17.** Rules 301 → **318** (`c75720a`, the
+> account-status gating; the suite ran 310 passed / 8 failed against the
+> live ruleset before the fix). Flutter 438/52 → 486/54 (`6ef4380`) →
+> **521/55** (`cefa81a`), all from the Voice Moment recording work.
+> Storage, family-media and Cloud Functions are unchanged — no
+> `storage.rules` or `functions/` change landed in either round.
+
 ## Firestore rules — the most mature coverage in the project
 
 `firestore-tests/` — a standalone Node project running regression and
 attack-scenario checks against `firestore.rules` via
-`@firebase/rules-unit-testing` and the Firestore emulator — **301 checks
+`@firebase/rules-unit-testing` and the Firestore emulator — **318 checks
 passing** — plus `storage.test.js`, the same treatment for `storage.rules`
 against the Storage emulator (46 checks: path ownership, size caps,
 content-type allowlists, read gating, default deny), plus 11 combined
@@ -74,7 +81,7 @@ of the 40 checks exercised that path
 Any rule touching a collection that's ever queried via `collectionGroup()`
 needs a real `collectionGroup()` check, not just a direct-path one.
 
-The current 301-case rules suite also pins the Premium boundary introduced in
+The current 318-case rules suite also pins the Premium boundary introduced in
 ADR-053: a normal full profile bootstrap and a partial presence-first create
 are allowed, forged Creator/Premium/staff first documents are denied, and an
 active subscription with a disabled Creator or Clubs feature flag cannot use
@@ -133,6 +140,24 @@ Exact public-profile, presence and follow-edge schemas fail closed on extra
 fields, while friendship guards and private quota documents are invisible and
 immutable to all clients.
 
+### What the 2026-08-17 account-status pass added (`c75720a`)
+
+Seventeen checks, and the suite ran **310 passed / 8 failed** against the
+then-live ruleset before the fix — the failures are the evidence, not the
+fix's own green run. They cover a banned or disabled host attempting a room
+metadata edit and a voice start, an inactive account attempting host-
+admitted participation, `roomMembers` create, and a message reaction
+update.
+
+The `roomMembers` create case is the one worth copying. It was already
+gated — on `isRestrictedAccount()`, which reads `banned` only and returns
+**false when the account document does not exist**, so a disabled account
+passed a check that read as though it covered account status. A test that
+only exercises a *banned* account passes against that rule. **When a
+status helper has more than one failing state, every state needs its own
+case**; otherwise the suite proves the helper is called, not that it is
+right.
+
 **Always run against a freshly-started emulator.** A long-running emulator
 can accumulate state between runs that makes a check pass or fail for the
 wrong reason.
@@ -165,7 +190,7 @@ absolute count over a collection your file does not exclusively own.
 
 ## Dart tests — real, but narrow
 
-`test/` — **438 tests across 52 files**, green in local verification,
+`test/` — **521 tests across 55 files**, green in local verification,
 grown mostly
 out of real bugs rather than an even coverage discipline. The
 pattern throughout: fake the Firebase backends
@@ -212,11 +237,25 @@ pattern throughout: fake the Firebase backends
   snapshot, historical email snapshots are ignored, and follow identity is
   resolved from current public projections rather than stale edge fields.
 
+- **`voice_moment_recording_seam_test.dart`**,
+  **`record_voice_moment_screen_test.dart`** and
+  **`record_voice_moment_accessibility_test.dart`** (2026-08-17) — the
+  recording platform seam driven through `VoiceRecorderBackend` and
+  `AudioCapture` test doubles rather than the plugin, which is the only
+  way recording hardware is reachable from a widget test. They pin the
+  MIME negotiation rule (`audio/mp4;codecs=mp4a` unsupported /
+  `audio/mp4;codecs=mp4a.40.2` supported, codec parameter normalized away
+  before the allowlist comparison), each `MicrophoneOutcome` mapping to its
+  own copy, the timer never rendering `0:60`, and the amplitude stream
+  reaching the waveform. **What they cannot prove**: that a real browser
+  refuses in the way the mapping expects, or that a real microphone
+  produces bytes Storage accepts.
+
 **What this means in practice**: coverage is regression-driven — deep
 where something once broke (profile media, notifications, navigation,
-error copy), absent where nothing has broken yet (rooms, clubs,
-moments services). `test/widget_test.dart` is still the generated
-boilerplate and provides nothing.
+error copy, moment recording), absent where nothing has broken yet (rooms,
+clubs, moment feeds and services). `test/widget_test.dart` is still the
+generated boilerplate and provides nothing.
 
 Run with:
 
@@ -265,6 +304,15 @@ Worth naming plainly rather than leaving implicit:
 - Crash visibility on web: Crashlytics (added 2026-08-08) covers iOS and
   Android only — the Flutter web build still has no crash/error
   reporting channel beyond the browser console.
+- **Real browsers and real microphones.** `flutter test` runs on the VM, so
+  nothing in the suite executes `dart:js_interop`, `MediaRecorder`,
+  `getUserMedia` or a `DOMException`. The web recording path is verified by
+  seam tests plus a manual Chromium 148 check of the MIME negotiation;
+  Safari, Firefox, an actual permission refusal, an unplugged or busy
+  input device, and an end-to-end publish into production Storage and
+  Firestore are all **UNVERIFIED**. No screen reader has been run against
+  any screen in this project, on any platform; keyboard behavior is
+  widget-tested only.
 - **No test proves anything about what is deployed.** Every suite above
   runs against an emulator or a fake. A green run is evidence about the
   *repository*, never about production. On 2026-08-16 the deployed
