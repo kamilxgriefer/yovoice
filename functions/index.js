@@ -331,6 +331,16 @@ exports.getStaffOverview = getStaffOverview;
 
 /*
 |--------------------------------------------------------------------------
+| Public statistics (server-owned publicStats/live — see stats/public_stats.js)
+|--------------------------------------------------------------------------
+*/
+
+const { publishPublicStatsSchedule } = require("./stats/public_stats");
+
+exports.publishPublicStatsSchedule = publishPublicStatsSchedule;
+
+/*
+|--------------------------------------------------------------------------
 | Premium
 |--------------------------------------------------------------------------
 */
