@@ -45,7 +45,9 @@ Functions. Domain layout:
 ```
 yovoice.app            → Vercel (yovoice-website) — public marketing site
 auth.yovoice.app        → Firebase Hosting — shared Auth domain
-app.yovoice.app          → Firebase Hosting — the Flutter web build
+app.yovoice.app          → Firebase Hosting — the Flutter web build; LIVE
+                          since 2026-08-16 (CNAME resolves to
+                          yovoice-ec54a.web.app, HTTPS 200)
 ```
 
 This split — two independent deployables sharing one backend — is itself
@@ -272,27 +274,69 @@ project at exactly two points:
    either side — Firebase Auth sessions issued under that domain are valid
    for both.
 
-Anything the website needs to *show* — a user's profile, their rooms,
-their settings — it queries directly from Firestore itself, subject to
-the exact same Security Rules as the Flutter app (rules don't know or
-care which client is asking). This means a Firestore schema change is a
-**two-codebase change** in practice, even though only one of those
-codebases lives in this repo — see
+Both clients read Firestore directly under the same Security Rules —
+rules don't know or care which client is asking. This means a Firestore
+schema change is a **two-codebase change** in practice, even though only
+one of those codebases lives in this repo — see
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project) for
 the tradeoff this represents and `yovoice-website`'s own docs for its
 internals.
 
+> **CORRECTION, 2026-08-16 — read this before writing website code that
+> touches user identity.** Until this date, this section told the website
+> it could query "a user's profile, their rooms, their settings" directly
+> from Firestore under the same rules. **That is no longer true for user
+> identity, and any website code still written against it is broken in
+> production right now.** The ADR-054 privacy rules were deployed to
+> production on 2026-08-16: `users/{uid}` is now **owner-`get` only and
+> not listable by anyone**, including moderator and super-admin client
+> sessions. A website query against `users` — by uid, by username, by
+> email, or a `list` of any kind — fails closed.
+
+What the website must use instead, all of it live in production as of
+2026-08-16:
+
+| Need | Path |
+|---|---|
+| Another account's public identity | `get publicProfiles/{uid}` — known id only, never `list` |
+| Online / last-seen | `get socialPresence/{uid}` — self, or both server-owned `friendshipGuards` must exist |
+| Finding a person by name/username | the `searchPublicProfiles` callable — bounded prefixes, per-uid quota |
+| Finding a person by email | staff-only, through the protected owner directory callable |
+| The signed-in account's own record | `get users/{uid}` for that same uid — still allowed |
+
+`publicProfiles` is server-owned: no client of either codebase can write
+it. Full model in [SECURITY.md](SECURITY.md#private-account-records-and-public-profiles),
+schema in [Firebase.md](Firebase.md#firestore-schema), decision in
+[ADR-054](Decisions.md#adr-054-private-account-records-are-split-from-exact-server-owned-public-profiles),
+executed cutover in [ADR-055](Decisions.md#adr-055-the-2026-08-16-production-cutover--order-the-deploy-by-what-fails-closed-and-verify-by-fingerprinting-served-bytes).
+
+**Known live gap the website will hit**: the projection is written by a
+trigger on `users/{uid}`, so accounts that have not been written since the
+cutover have no `publicProfiles` document and are invisible. Production
+held **33** `users` documents and **1** `publicProfiles` document when
+counted in the Firebase console on 2026-08-16. Design website surfaces to
+render a missing projection as "not available" rather than assuming a
+document exists — see [Bugs.md](Bugs.md#data-integrity).
+
 ## Deployment overview
 
-Summary only — full detail, including the CI workflow's exact steps and a
-non-obvious `npm run deploy` gotcha inside `functions/`, is in
+Summary only — full detail, including the CI workflow's exact steps, is in
 [DEPLOYMENT.md](DEPLOYMENT.md).
 
-- **This repo's Flutter web build** deploys automatically to Firebase
-  Hosting on every push to `main`, via GitHub Actions — and only after
-  `flutter analyze` passes in that same workflow run.
-- **Firestore rules/indexes and Cloud Functions** deploy manually, on
-  purpose — see [DEPLOYMENT.md](DEPLOYMENT.md#why-rulesfunctions-are-not-in-ci)
+- **This repo's Flutter web build** is *verified* automatically on every
+  push to `main` (analyze, Flutter tests, all three rules suites, the
+  Functions suite, then the release build) but **is not published by that
+  push**. Releasing to Hosting is a manual `workflow_dispatch` with
+  `deploy_hosting: true`.
+  **CORRECTION, 2026-08-16:** this section previously said the web build
+  "deploys automatically to Firebase Hosting on every push to `main`".
+  That stopped being true in `409c7ee`, which split verification from
+  release. The old wording is what let production sit on commit `9fdd8a9`
+  while `main` moved on — see
+  [ADR-055](Decisions.md#adr-055-the-2026-08-16-production-cutover--order-the-deploy-by-what-fails-closed-and-verify-by-fingerprinting-served-bytes).
+- **Firestore rules/indexes, Storage rules and Cloud Functions** deploy
+  manually, on purpose — see
+  [DEPLOYMENT.md](DEPLOYMENT.md#why-rulesfunctions-are-tested-but-not-auto-deployed)
   for why that's a deliberate choice, not a gap.
 - **`yovoice-website`** deploys automatically to Vercel on push to `main`
   in that separate repo.

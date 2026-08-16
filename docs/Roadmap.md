@@ -16,6 +16,82 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Production cutover — everything below this line is now LIVE**
+  (2026-08-16, `952d8e4`): Cloud Functions 51 → **111** deployed, Firestore
+  indexes 14 → **15** composites and 1 → **3** `fieldOverrides`,
+  `storage.rules` deployed, `firestore.rules` deployed twice (20:40 and
+  21:06), and the Flutter web client released to `app.yovoice.app` —
+  verified by fetching `main.dart.js` (5,139,256 bytes, containing
+  `publicProfiles`, `searchPublicProfiles`, `selectMyAchievementTitle`),
+  not by trusting deploy output. Production had been serving commit
+  `9fdd8a9`. The index deploy fixed a silent live defect: the scheduled
+  `expirePremiumIdentity` had been failing on a missing composite index, so
+  **Premium never expired for anyone**. Ordering lessons — deploy by what
+  fails closed; a deployed function nothing calls is inert and looks
+  identical to a working one — in
+  [ADR-055](Decisions.md#adr-055-the-2026-08-16-production-cutover--order-the-deploy-by-what-fails-closed-and-verify-by-fingerprinting-served-bytes).
+  The cutover is **complete, 5/5 steps**: the projection backfill applied
+  28 writes and a verification re-run planned zero, and the legacy identity
+  scrub cleared 21 documents across four phases with zero conflicts. Two
+  numbers worth carrying forward: the apparent "32 accounts missing a
+  profile" was really 14, because **18 of the 33 `users` documents are Auth
+  orphans**; and the scrub ran *after* the rules, which was the wrong order
+  and briefly broke follower lists outright rather than merely leaving
+  stale data. Both in [Bugs.md](Bugs.md#data-integrity).
+
+- Private account records split from server-owned public profiles
+  (2026-08-16, ADR-054 — the largest change in the repo's history, and
+  missing from this list until 2026-08-16): `users/{uid}` became private
+  account state, readable only by its owner and listable by nobody,
+  including moderator and super-admin client sessions. Public identity
+  moved into two exact, server-owned, client-unwritable projections —
+  `publicProfiles/{uid}` and `socialPresence/{uid}` — written by the
+  retryable `onUserPrivacySourceChanged` trigger, with `onAuthUserDeleted`
+  retiring them. People search became the bounded `searchPublicProfiles`
+  callable (verified accounts only, prefix-limited, blocks filtered both
+  directions, five-field response, per-uid transactional quota because App
+  Check is still off). Friendship authority became a pair of server-owned
+  `friendshipGuards`; client-writable friend mirrors can no longer mint
+  one. New requests and conversations carry no email snapshot. **Note for
+  the `yovoice-website` repo**: this repo's Architecture.md told it to
+  query user profiles directly from Firestore until 2026-08-16. It cannot.
+  See [Architecture.md](Architecture.md#website-integration).
+  [ADR-054](Decisions.md#adr-054-private-account-records-are-split-from-exact-server-owned-public-profiles).
+
+- Server-authoritative DM / Voice Moment / achievement actions
+  (2026-08-16, `c1d6cd9` — also missing from this list until 2026-08-16):
+  the Stage B integrity set, exported via
+  `Object.assign(exports, createStageBFunctions())` and deployed in the
+  same cutover. Moves DM, moment and achievement mutations off direct
+  client writes and onto server-authoritative paths.
+
+- Firestore and Storage rules hardening — seven defects, all live in
+  production when found (2026-08-16, `56e7ea7` → `2fc05e5` → `952d8e4`):
+  every club promotion and demotion was denied; a private Community room
+  became unreadable to its own members and one such room emptied the whole
+  Communities list; club avatar/banner uploads were denied; banned accounts
+  gained private-room access; role attribution was forgeable because
+  `diff().affectedKeys()` reports only *value* changes; a host could
+  repoint their membership row at a victim and permanently empty that
+  victim's Communities tab remotely; and `2fc05e5`'s own eviction path
+  created a trap in which a host — or ordinary counter drift — made rooms
+  nobody could leave. That last one was fixed by **removing rules-level
+  eviction entirely** rather than guarding it
+  ([ADR-056](Decisions.md#adr-056-a-moderation-action-belongs-in-a-callable-that-completes-the-whole-removal-not-in-a-rule-that-deletes-one-row)).
+  Rules suite 268 → **301**, Storage 43 → **46**, family-media 11.
+  ADR-005's claim that a bad `collectionGroup` top-level rule fails closed
+  was **disproved by experiment and corrected** in `794454b` — it fails
+  OPEN, returning every document in the collection group across the whole
+  database.
+
+- Public-stats publisher, held back deliberately (2026-08-16, `cb4651a`):
+  `publishPublicStatsSchedule` is committed and **not deployed**, behind
+  three stated preconditions. Functions suite 487 → **510** across 82
+  suites. Also on this date: a manual dry-run-by-default public-profile
+  backfill workflow (`4f9ad47`, not yet run) and a CI fix for a
+  concurrency-sensitive absolute assertion that had turned three
+  consecutive pushes red (`38b29f7`).
+
 - Compact Profile journey + capability-specific Premium boundaries
   (2026-08-16): replaced the four desktop-stretched journey panels with one
   intrinsic-height list that keeps the same real Communities, Messages, Voice
@@ -31,11 +107,16 @@ someone decide what to pick up next.
   pass closed the
   `users/{uid}` first-create loophole that could seed Creator, Premium or staff
   fields before update rules applied, plus the Club-invite path that let an
-  invitee create an owner/co-owner/admin membership. Verified with 396/396
-  Flutter tests across 41 files and 225/225 Firestore emulator cases. **The new Firestore
-  rules still require a manual deploy.** Store verification adapters remain
+  invitee create an owner/co-owner/admin membership. Verified at the time
+  with 396/396 Flutter tests across 41 files and 225/225 Firestore emulator
+  cases; current counts are 438 across 52 files and 301 — see
+  [TESTING.md](TESTING.md#current-counts-2026-08-16). **These rules were
+  DEPLOYED on 2026-08-16.** This entry read "The new Firestore rules still
+  require a manual deploy" until then. Store verification adapters remain
   unconfigured, so `adminSetPremiumEntitlements` is still the only working
-  grant path. See
+  grant path — and note that Premium expiry had never once run in
+  production until this date's index deploy (see
+  [Bugs.md](Bugs.md#infrastructure)). See
   [ADR-053](Decisions.md#adr-053-paid-capabilities-come-only-from-the-trusted-entitlement-and-every-entry-boundary-fails-closed).
 
 - One real startup transition instead of two timed loaders (2026-08-16): the
@@ -164,9 +245,11 @@ someone decide what to pick up next.
   that made a filtered page look like a filtered collection. 224 Flutter
   tests, 170 rules tests, 54 Functions tests and two emulator smoke
   tests pass; the populated detail and timeline were rendered and
-  inspected at 1440×820, 1440×620 and 1100×820. **Needs the ordered
-  deploy in
-  [DEPLOYMENT.md](DEPLOYMENT.md#undeployed-backend-as-of-2026-08-11--the-selective-manifest)**
+  inspected at 1440×820, 1440×620 and 1100×820. **Deployed 2026-08-16** —
+  this entry read "Needs the ordered deploy in DEPLOYMENT.md" until then;
+  `moderateReport`, `listReportAuditTrail` and the `reports` indexes are
+  all live, per
+  [DEPLOYMENT.md](DEPLOYMENT.md#production-state-as-of-2026-08-16-post-cutover)
   ([ADR-040](Decisions.md#adr-040-a-reports-audit-trail-is-served-by-a-scoped-callable-not-by-the-admin-audit-browser-queue-filters-are-server-side-clauses)).
 
 - Staff Moderation Center (2026-08-11): desktop-only report triage,
@@ -420,34 +503,102 @@ someone decide what to pick up next.
   flags a new raw `Color(0xFF...)` literal outside `lib/core/theme/`, so
   the migration doesn't quietly regress.
 
-### `app.yovoice.app` DNS
+### `app.yovoice.app` — DNS DONE, one website-side step left
 
-- **Status**: In progress — blocked on an external dependency, everything
-  on this project's side is ready.
-- **Description**: Firebase Hosting has `app.yovoice.app` configured as a
-  custom domain, waiting on one CNAME record
-  (`app.yovoice.app → yovoice-ec54a.web.app`) on Cloudflare, where
-  `yovoice.app`'s DNS is managed.
-- **Dependencies**: Cloudflare access — only the domain owner has it. Not
-  something engineering effort can unblock.
-- **Priority**: Medium — low effort once unblocked (see below), but it's
-  the last visible seam in the two-deployable architecture
-  ([ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project)),
-  and the website currently points at Firebase's default domain instead of
-  its real one.
-- **Future considerations**: Once the record is live and Firebase finishes
-  domain verification: flip `NEXT_PUBLIC_APP_URL`
+- **Status**: **The DNS block is gone.** Corrected 2026-08-16: this item,
+  [DEPLOYMENT.md](DEPLOYMENT.md#domains) and [Bugs.md](Bugs.md) all
+  described it as blocked on a Cloudflare CNAME only the domain owner
+  could add. The CNAME resolves to `yovoice-ec54a.web.app`, HTTPS returns
+  200, and the Flutter web client was fetched from that host and
+  fingerprinted (5,139,256 bytes). It is serving production traffic.
+- **Remaining work — UNVERIFIED, and in the other repo**: flip
+  `NEXT_PUBLIC_APP_URL`
   ([ADR-009](Decisions.md#adr-009-next_public_app_url-as-an-env-var-website-repo))
-  to `https://app.yovoice.app` in all three Vercel environments
+  to `https://app.yovoice.app` in **all three** Vercel environments
   (production/preview/development — easy to update one and forget the
-  others) and redeploy. Verify the redirect end-to-end afterward rather
-  than assuming the env var change alone is sufficient.
+  others), redeploy, then verify the redirect end-to-end rather than
+  assuming the env var change alone is sufficient. This could not be
+  checked from this repo; until someone confirms it, assume the website
+  still points at Firebase's default `web.app` domain.
+- **Dependencies**: Vercel dashboard access for the `yovoice-website`
+  project.
+- **Priority**: Medium — genuinely low effort now, and it closes the last
+  visible seam in the two-deployable architecture
+  ([ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project)).
 
 ---
 
 ## Planned / Backlog
 
 Ordered by rough priority — re-prioritize freely, this isn't a queue.
+
+### 0a. Run the public-profile backfill (32 accounts currently invisible)
+
+- **Status**: Blocked on credentials; the unblock is committed and unrun.
+- **Description**: After the ADR-054 cutover, production holds 33 `users`
+  documents and 1 `publicProfiles` document. `users` is owner-`get`-only
+  and non-listable, so the other 32 accounts cannot be seen by any other
+  user in either client. Each repairs itself when its owner next opens the
+  app (`onUserPrivacySourceChanged` fires on any `users/{uid}` write), so
+  this drains slowly and unevenly on its own.
+- **Dependencies**: Application Default Credentials, or the
+  `workflow_dispatch` runner path added in `4f9ad47`
+  (`.github/workflows/public-profile-backfill.yml`, dry-run by default,
+  using the existing `FIREBASE_SERVICE_ACCOUNT_YOVOICE_EC54A` secret).
+- **Priority**: **High.** It fails closed rather than leaking, but it is a
+  live product defect affecting almost every account.
+- **Future considerations**: Run dry-run first and read `nextCursor`;
+  apply the same page, then repeat with `--start-after CURSOR` until
+  `reachedEnd`. Attach a required reviewer to the `production` environment
+  before the first `apply` run.
+
+### 0b. Close the banned-host room-update branch
+
+- **Status**: Not started. Pre-existing, live in production.
+- **Description**: The room-update host branch selects on
+  `resource.data.hostId == request.auth.uid` with no account-status check,
+  so a banned or disabled host can still edit room metadata and start
+  voice. `isRoomMember()` and `isActiveClubRoomMember()` both gained
+  `isActiveAccount()` in `2fc05e5`; this branch was not touched, and the
+  same host-writes-anything property is what made the removed eviction
+  rule exploitable.
+- **Dependencies**: Emulator cases and a rules deploy — see
+  [SECURITY.md](SECURITY.md#still-open-pre-existing-live-in-production).
+- **Priority**: **High.** A suspension that does not stop a host is not a
+  suspension.
+
+### 0g. Host eviction as a callable (the rule is gone on purpose)
+
+- **Status**: Not started, and deliberately absent — see
+  [ADR-056](Decisions.md#adr-056-a-moderation-action-belongs-in-a-callable-that-completes-the-whole-removal-not-in-a-rule-that-deletes-one-row).
+- **Description**: There is no host-eviction path anywhere in the product.
+  The rules-level one was removed in `952d8e4` because deleting a roster
+  row is not a removal — the evicted account stayed connected to the live
+  audio, kept chat through `isRoomParticipant`, and could rejoin a public
+  room immediately. If the product wants eviction, it is a callable in the
+  shape of `removeRoomParticipantSelf` that completes the whole removal.
+  **Do not restore the rule.**
+- **Priority**: Medium — a product decision first, not an engineering one.
+  Nothing is broken today; a capability simply doesn't exist.
+
+### 0h. Wire the LiveKit webhook — `voiceMinutes` has no writer
+
+- **Status**: Not started. The code exists and is unreachable.
+- **Description**: `receiveLiveKitAchievementWebhook`
+  (`functions/achievements/livekit_http.js`) is never exported from
+  `functions/index.js`, so it has never been deployed. It is the sole
+  producer of `voiceSeconds`, from which `voiceMinutes` is derived —
+  meaning Creator Studio's "Voice time" tile and the entire voice
+  achievement category are permanently zero for every account, presented
+  as real measurements.
+- **Priority**: Medium-High. It also unblocks
+  `publishPublicStatsSchedule`, whose current data source
+  (`activeVoiceSessions.expiresAt`, a never-renewed token TTL) is known
+  wrong; LiveKit emits `participant_left` /
+  `participant_connection_aborted` even on a crash.
+- **Future considerations**: An HTTP webhook is a new public surface —
+  signature verification and App Check posture need deciding before it
+  ships.
 
 ### 0c. Username uniqueness is not enforced
 
@@ -469,13 +620,20 @@ Ordered by rough priority — re-prioritize freely, this isn't a queue.
 ### 0e. Premium billing adapters
 
 - **Status**: Entitlement architecture and the original Premium rules are
-  shipped (ADR-024). The 2026-08-16 capability-specific gates and first-create
-  hardening pass 225/225 Firestore emulator cases but are **not live until the
-  updated `firestore.rules` is manually deployed** (ADR-053). Real store
-  checkout is still not operational: `verifyPurchase` deliberately declines
-  because no App Store/Play verification adapter or IAP client is configured.
+  shipped (ADR-024). The 2026-08-16 capability-specific gates and
+  first-create hardening (ADR-053) are **deployed and live** as of
+  2026-08-16 — this item said "not live until the updated
+  `firestore.rules` is manually deployed" until then. The same cutover
+  deployed the `entitlements(isPremium, currentPeriodEnd)` composite index
+  that the scheduled `expirePremiumIdentity` sweep needs, so **Premium
+  expiry can run for the first time**; no successful run has been observed
+  in Console → Functions → Logs yet, so treat that as UNVERIFIED. Real
+  store checkout is still not operational: `verifyPurchase` deliberately
+  declines because no App Store/Play verification adapter or IAP client is
+  configured.
 - **Actions**:
-  1. Deploy the tested `firestore.rules` update.
+  1. ~~Deploy the tested `firestore.rules` update.~~ **DONE 2026-08-16.**
+     Instead, confirm one real `expirePremiumIdentity` run succeeds.
   2. Create store products `yovoice_premium_monthly` (€9.99) and
      `yovoice_premium_yearly` (€89.99) in App Store Connect + Play
      Console; add an IAP plugin client-side; implement the verification

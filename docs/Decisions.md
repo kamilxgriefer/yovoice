@@ -1300,6 +1300,12 @@ write allowlist with no gate. No billing/IAP code existed anywhere.
 - The original ADR-024 rules were emulator-tested and deployed on 2026-08-08.
   The capability-specific and first-create hardening in ADR-053 is covered by
   the expanded 225-case emulator suite but requires a new manual rules deploy.
+  *(Amended 2026-08-16: that deploy has happened — the ADR-053 rules are
+  live. The suite has since grown to 301 checks; 225 is kept as the
+  historical figure. Note also that the scheduled `expirePremiumIdentity`
+  sweep this ADR depends on had never once succeeded in production, for
+  want of a deployed composite index — see
+  [ADR-055](#adr-055-the-2026-08-16-production-cutover--order-the-deploy-by-what-fails-closed-and-verify-by-fingerprinting-served-bytes).)*
 - Store console setup (products `yovoice_premium_monthly`/`_yearly`),
   verification credentials, and an IAP client plugin remain manual.
 - EntitlementService caches one replayed stream per uid (the
@@ -3275,6 +3281,23 @@ exist.
   unconfigured. `verifyPurchase` therefore continues to decline; today only
   the guarded `adminSetPremiumEntitlements` path can create a working grant.
 
+### Amendment, 2026-08-16 — deployed, and one thing this ADR did not know
+
+The rules deploy this ADR required **has happened**; the restrictions are
+live. The 396/396 and 225/225 figures above are kept as the historical
+record of what this ADR shipped against — current counts are 438 Flutter
+tests across 52 files and 301 rules checks, tracked in
+[TESTING.md](TESTING.md#current-counts-2026-08-16).
+
+The unknown: the scheduled `expirePremiumIdentity` sweep this ADR relies
+on had **never once succeeded in production**. Its query needs a composite
+index on `entitlements(isPremium, currentPeriodEnd)` that was committed
+but not deployed, so every run threw `FAILED_PRECONDITION` and Premium
+never expired for anyone. The index was deployed 2026-08-16. A successful
+run has **not yet been observed in Console → Functions → Logs** — until it
+is, treat Premium expiry as fixed-in-principle rather than proven. See
+[ADR-055](#adr-055-the-2026-08-16-production-cutover--order-the-deploy-by-what-fails-closed-and-verify-by-fingerprinting-served-bytes).
+
 ## ADR-054: Private account records are split from exact server-owned public profiles
 
 **Status**: Accepted
@@ -3348,3 +3371,259 @@ case-sensitive throughout; no identity is trimmed, lowercased or truncated.
   suites cover exact projection, replay/idempotency, block filtering, quota
   concurrency/window reset and bounded backfill, and scoped Flutter privacy,
   staff and responsive tests pass. No deployment is performed by this change.
+
+### Amendment, 2026-08-16 — this decision is now live in production
+
+The line above, "No deployment is performed by this change," was accurate
+when written and is no longer the current state. The cutover was executed
+the same day: functions, client and rules are all deployed, in that order,
+and verified. The rules suite has since grown 265 → 301 and the figure
+above is left as the historical record of what this ADR shipped against.
+
+**Step 2 of the cutover, the projection backfill, did not run.** Production
+holds 33 `users` documents and 1 `publicProfiles` document, counted in the
+Firebase console after the rules deploy. The consequence bullet above —
+"A missing projection hides the account until the trigger/backfill repairs
+it" — is therefore not hypothetical: 32 accounts are currently invisible
+to every other user, each repairing itself the moment its owner next opens
+the app. Tracked in [Bugs.md](Bugs.md#data-integrity); unblock committed in
+`4f9ad47` and not yet run. Execution record:
+[ADR-055](#adr-055-the-2026-08-16-production-cutover--order-the-deploy-by-what-fails-closed-and-verify-by-fingerprinting-served-bytes).
+
+## ADR-055: The 2026-08-16 production cutover — order the deploy by what fails closed, and verify by fingerprinting served bytes
+
+**Status**: Accepted
+**Date**: 2026-08-16
+
+### Context
+
+Production had drifted a long way from `main`. The Hosting release served
+commit `9fdd8a9` while `main` had moved through ADR-051, ADR-052, ADR-053,
+ADR-054 and the server-authoritative Stage B work in `c1d6cd9`. Cloud
+Functions stood at 51 deployed against a repo that exports well over
+twice that. `firestore.indexes.json` held 14 composites and 1
+`fieldOverride`; production had the same, including one index that a
+deployed scheduled function had needed since it shipped.
+
+Two things caused the drift, and they are worth separating.
+
+The first is a change in this repo's own behaviour that no document
+recorded. Until `409c7ee`, pushing to `main` published Hosting, and every
+deployment document in this tree was written on that premise — the
+2026-08-11 manifest's central warning is literally "treat push to `main`
+as a Hosting deploy, and sequence the backend first." `409c7ee` split
+verification from release, making Hosting a manual `workflow_dispatch`.
+Nothing updated the docs, so the project kept operating on a model in
+which the client shipped itself, and it silently stopped doing so.
+
+The second is that "deployed" and "working" are different properties, and
+Firebase's tooling reports the first while everyone reads it as the
+second. `firebase deploy` printing success means an upload succeeded. The
+`expirePremiumIdentity` sweep had been deployed for as long as Premium had
+existed, appeared healthy in `functions:list`, and had never once
+succeeded: its query needs a composite index on
+`entitlements(isPremium, currentPeriodEnd)` that was committed but never
+deployed, so every run threw `FAILED_PRECONDITION` and **Premium never
+expired for any account**. The emulator does not require composite
+indexes, so 510 green Functions tests said nothing about it.
+
+### Decision
+
+- **Order a multi-target deploy by what fails closed.** Deploy the target
+  whose absence is a silent no-op before the target whose absence is a
+  denial: Cloud Functions and server-owned projections first, then
+  clients, then restrictive rules last. ADR-054's cutover order is the
+  worked example — rules that make `users/{uid}` owner-only must land
+  after the clients that stopped needing foreign reads, or every released
+  client breaks at once.
+- **Verify every production claim against production, by fingerprinting
+  the artifact.** Not the deploy log, not `git log`, not a green suite:
+  - Hosting — fetch `https://app.yovoice.app/main.dart.js` and grep it for
+    a symbol that exists only in the new build. This release: 5,139,256
+    bytes containing `publicProfiles`, `searchPublicProfiles` and
+    `selectMyAchievementTitle`.
+  - Functions — `firebase functions:list`, and count.
+  - Rules — Console → Firestore → Rules version history. There is still no
+    read-only CLI command for the deployed ruleset.
+  - Indexes — `firebase firestore:indexes`.
+- **A deployed function that nothing calls is not evidence of anything.**
+  For a scheduled or triggered function, the first real run in
+  Console → Functions → Logs is the evidence. Treat a new server-side
+  query as an index change until proven otherwise.
+- **When a document's premise changes, the document is part of the
+  change.** `409c7ee` altered how this repo ships and left five documents
+  asserting the opposite. Doc corrections belong in the commit that
+  invalidates them.
+
+### Reasoning
+
+Ordering by fail-closed direction is the only rule that survives the CI
+model changing underneath it. "Backend first, the client ships itself"
+encoded an assumption about the pipeline; "deploy what fails closed
+first" encodes a property of the artifacts themselves and stays true
+whether Hosting is automatic or manual.
+
+Fingerprinting is required because every cheaper signal has already lied
+here. A browser can serve a stale `main.dart.js` — this project's own
+CLAUDE.md warns about it. `functions:list` shows a broken scheduled
+function as present. A green emulator suite showed nothing about a missing
+production index for the entire lifetime of the Premium feature. The
+served bytes are the one artifact that cannot be stale relative to itself.
+
+The two failure directions are worth naming as a pair, because the project
+has now been bitten by each. Client-ahead-of-backend gives visibly broken
+features: a staff account opens Moderation and the call resolves to
+nothing. Backend-ahead-of-client gives *invisible* dead code: ~60
+functions deployed, healthy, and never invoked. The second is worse to
+diagnose precisely because nothing looks wrong.
+
+### Consequences
+
+- Production as of 2026-08-16: 111 Cloud Functions (from 51), 15
+  composite indexes and 3 `fieldOverrides` (from 14 and 1), `storage.rules`
+  deployed, `firestore.rules` deployed twice (20:40 by the operator, 21:06
+  covering `952d8e4`), and the Flutter web client live and fingerprinted at
+  `app.yovoice.app`.
+- Premium expiry works for the first time. Any account whose
+  `currentPeriodEnd` has passed will be expired by the next scheduled
+  sweep. **UNVERIFIED**: nobody has yet watched a real run succeed in
+  Console → Functions → Logs. Do that before calling Premium expiry
+  proven.
+- The ADR-054 backfill and scrub both ran the same day, completing the
+  cutover 5/5: 28 projection writes (14 accounts), then 21 documents
+  scrubbed across four phases with zero conflicts, each verified by a
+  re-run that planned nothing further.
+- **The ordering thesis of this ADR was proved by violating it.** The
+  scrub ran after the rules, and the new rules require a follow edge to
+  carry exactly `['uid','followedAt']`. Firestore evaluates list rules per
+  document and denies the whole query if one fails, so a single legacy
+  five-key edge emptied a user's entire followers/following list. A
+  migration step that looks like data hygiene becomes an outage the moment
+  rules move ahead of it — "order by what fails closed" has to include the
+  data steps, not just the deploy targets.
+- Two counting lessons. The apparent gap of "32 of 33 accounts missing a
+  projection" was really **14**: 18 of the `users` documents are Auth
+  orphans that correctly get none. Comparing the sizes of two collections
+  is not a measurement when one is conditionally derived. And a read-only
+  sweep of `rooms` found 28 rooms whose `memberCount` disagrees with their
+  true row count but **zero trapped** by the counter defect — 24 of them
+  carry no `memberCount` field at all, which is exactly the legacy shape
+  that would have trapped members had any of them had one.
+- `4f9ad47`'s `workflow_dispatch` runner path was dispatched and **failed
+  with `7 PERMISSION_DENIED`** — the Hosting service-account secret has no
+  Firestore access. It was deliberately not granted any: that secret would
+  then reach all production data for anyone with repository write access.
+  The backfill ran from the operator's local ADC instead, and the workflow
+  stays in the repo as a documented, currently non-functional path.
+- `publishPublicStatsSchedule` (`cb4651a`) is committed and deliberately
+  undeployed behind three preconditions, and
+  `receiveLiveKitAchievementWebhook` is unexported. Neither should be
+  swept into the next blanket `--only functions` deploy without reading
+  [DEPLOYMENT.md](DEPLOYMENT.md#deliberately-held-back-publishpublicstatsschedule).
+- `npm run deploy` inside `functions/` is a full `--only functions` deploy
+  with no `--project` pin, and now deploys 111 functions. PROJECT_STRUCTURE.md
+  described it as a single-function convenience script until this date.
+- **UNVERIFIED**: `NEXT_PUBLIC_APP_URL` in the website repo's three Vercel
+  environments. `app.yovoice.app` resolves and serves, but whether the
+  website points at it could not be checked from this repo.
+
+## ADR-056: A moderation action belongs in a callable that completes the whole removal, not in a rule that deletes one row
+
+**Status**: Accepted
+**Date**: 2026-08-16
+
+### Context
+
+`2fc05e5` closed a real gap: `roomMembers` had no delete path at all, so a
+host who privatised a room could not remove anyone and no member could
+leave. It added self-leave and host-eviction, each requiring the room's
+`memberCount` to decrement in the same commit — the counter transition
+being the mechanism that bound the two writes together.
+
+That gating choice was wrong, and it shipped to production.
+
+Hosts can write `rooms/{roomId}.memberCount` directly. So a host could
+drive the counter to zero in three plain writes while membership rows
+remained, and from then on **nobody could leave and nobody could be
+removed** — the decrement the delete required was no longer possible. A
+banned host could do it too, because the room-update host branch selects
+on `resource.data.hostId == request.auth.uid` and checks no account
+status.
+
+It also fired with no attacker at all. Any Community room whose stored
+counter had drifted below its true row count was silently un-leavable, and
+legacy rooms carrying no `memberCount` field were the clearest case.
+
+Underneath the counter bug was a design error. Deleting a roster row is
+not a removal. The evicted account stayed connected to the live audio,
+kept chat through `isRoomParticipant`, and could rejoin a public room
+immediately. Rules can authorize a write; they cannot disconnect a
+participant, revoke a token, or coordinate with LiveKit.
+
+### Decision
+
+- **Remove the rules-level host-eviction path entirely rather than guard
+  it.** Not narrow it, not re-gate it on something the host cannot write —
+  delete it. No client ever called it, so removing it breaks nothing.
+- **Room removal is a callable.** `removeRoomParticipantSelf` already does
+  the whole job. If the product wants host-initiated eviction, it gets its
+  own callable that completes every part of the removal, in the shape of
+  the existing moderation callables.
+- **Self-leave stays**, because it binds correctly: it checks
+  `!existsAfter` on the caller's *own* row rather than on a counter anyone
+  else can move. Its transition now tolerates a room with no `memberCount`
+  field instead of erroring, and carries the same `status` /
+  `deletionInProgress` guards as the join transition — a member still
+  leaves a suspended room; a frozen room refuses the counter write rather
+  than trapping them.
+- **Accept that `memberCount` can overcount.** A client that deletes a row
+  without pairing the room write leaves the counter high. It can never
+  undercount below a real departure.
+
+### Reasoning
+
+The decisive property is which direction the error runs. An overcounting
+`memberCount` is a wrong number on a screen. An undercounting one was a
+trap: members locked into a room with no exit, remotely inducible by a
+host and reachable by ordinary drift. **A wrong number beats a trapped
+member.**
+
+Gating a delete on a counter the deleting party can also write is a
+starvation primitive by construction, and the general lesson is broader
+than this rule: if a guard depends on a value the caller controls, the
+caller can make the guard unsatisfiable. Prefer `existsAfter()` on the
+row being changed over any counter transition.
+
+Removing the path rather than repairing it also collapsed three separate
+review findings at once — the starvation primitive, a batch pairing that
+could not bind (twenty deletes behind one decrement), and a bypass of the
+staff moderation freeze. All three existed only because the rule existed.
+A capability nobody calls, that cannot complete the action it names, is
+not worth the rules surface it occupies.
+
+And a moderation action is judged by its effect, not its write. "Host
+removed a member" that leaves the member speaking in the room is a
+feature that lies about what it did — worse than not having it, because a
+moderator will believe it worked.
+
+### Consequences
+
+- **Host eviction does not exist anywhere in the product today.** This is
+  deliberate, not an oversight, and is recorded as such in
+  [Bugs.md](Bugs.md#moderation--safety). Building it means writing a
+  callable that removes the roster row, disconnects the participant from
+  live audio, and withdraws chat — not re-adding the rule.
+- `memberCount` is an upper bound, not an exact count. Anything reading it
+  should treat it that way; see [Firebase.md](Firebase.md#firestore-schema).
+- Rules suite 294 passed / 7 failed against the live ruleset → **301
+  passed / 0 failed**. Storage 46, family-media 11.
+- The `collectionGroup()` PROOF cases were hardened in the same commit:
+  the variant helper now asserts each snippet is present before
+  substituting, so a reformatted rule fails loudly instead of quietly
+  running a control that proves nothing. Test scaffolding that can degrade
+  into a no-op is a worse failure than a missing test, because it reports
+  green.
+- **Still open and pre-existing**: the room-update host branch has no
+  account-status check, so a banned host can edit room metadata and start
+  voice. Not introduced here and not fixed here; see
+  [SECURITY.md](SECURITY.md#still-open-pre-existing-live-in-production).

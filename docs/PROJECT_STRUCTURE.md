@@ -51,39 +51,66 @@ in [Flutter.md](Flutter.md) and
 
 ```
 functions/
-├── index.js          Exports every callable/trigger — the single file
-│                     Firebase Functions actually deploys from
+├── index.js           Exports every callable/trigger — the single file
+│                      Firebase Functions actually deploys from
+├── achievements/      Achievement triggers, engine, title selection
 ├── admin/             Role/room/club moderation, audit log
-├── friends/           Mutual-friends, friend-suggestion logic
+├── badges/            Public badge projection + derivation
 ├── clubs/             Self-service ownership transfer
+├── friends/           Mutual-friends, friend-suggestion logic
+├── integrity/         Stage A/B server-authoritative DM/moment actions
 ├── livekit/           Token minting (the one path with real secrets)
-├── notifications/      The Firestore-trigger → FCM push pipeline
+├── media/, messaging/, moments/, rooms/, profile/, staff/
+├── moderation/        Report triage, audit trail, Global Chat moderation
+├── notifications/     The Firestore-trigger → FCM push pipeline
+├── premium/           Entitlements, purchase verification, expiry sweep
+├── stats/             Scheduled public-stats publisher (NOT deployed)
+├── scripts/           Operator migrations (backfill, identity scrub)
+├── test/              45 `*.test.js` files — see TESTING.md
 ├── utils/             Shared helpers (auth guards, Firestore access)
-└── package.json        Node dependencies — see DEPENDENCIES.md
+└── package.json       Node dependencies — see DEPENDENCIES.md
 ```
 
-Full function-by-function detail in [Backend.md](Backend.md). One thing
-worth knowing before reaching for it: `functions/package.json`'s `deploy`
-script (`npm run deploy`) only deploys **one** function
-(`createLiveKitToken`) — a convenience script for the function changed
-most often during voice work, not a full-deploy shortcut. See
-[DEPLOYMENT.md](DEPLOYMENT.md#deploying-functions) before assuming
-`npm run deploy` inside `functions/` deploys everything.
+Full function-by-function detail in [Backend.md](Backend.md).
+
+> **CORRECTION, 2026-08-16.** This section used to say that
+> `functions/package.json`'s `deploy` script "only deploys **one**
+> function (`createLiveKitToken`) … not a full-deploy shortcut." That was
+> **backwards**, and it read as a safety reassurance while describing the
+> opposite of what the script does. The script is, and was:
+>
+> ```json
+> "deploy": "firebase deploy --only functions"
+> ```
+>
+> `npm run deploy` inside `functions/` deploys **every** function — 111 of
+> them in production as of 2026-08-16 — against whatever project
+> `firebase use` currently points at, with no `--project` pin. Treat it as
+> the blast-radius-maximum command it is: run `firebase use` first, or
+> prefer the explicitly pinned form in
+> [DEPLOYMENT.md](DEPLOYMENT.md#cloud-functions-manual). To deploy one
+> function, name it: `firebase deploy --only functions:createLiveKitToken
+> --project yovoice-ec54a`.
 
 ## `firestore-tests/` — Firestore rules test suite
 
 A standalone Node project (its own `package.json`, `node_modules/`) that
-runs regression and attack-scenario checks against `firestore.rules` via
-the Firestore emulator. Not part of the Flutter app's dependency tree at
-all — see [TESTING.md](TESTING.md) and
+runs regression and attack-scenario checks against `firestore.rules` and
+`storage.rules` via the Firestore and Storage emulators — three suites,
+301 + 46 + 11 checks as of 2026-08-16. Not part of the Flutter app's
+dependency tree at all — see [TESTING.md](TESTING.md) and
 [`firestore-tests/README.md`](../firestore-tests/README.md) for the actual
 workflow.
 
 ## `test/` — Dart tests
 
 Standard Flutter test location (`flutter test` looks here by default).
-Currently two files with very different maturity — see
-[TESTING.md](TESTING.md) for what's actually covered.
+**52** `*_test.dart` files carrying 438 tests as of 2026-08-16 (counted
+with `find test -name '*_test.dart'`; the test total is from the suite
+run). Coverage is regression-driven and uneven, not uniform — see
+[TESTING.md](TESTING.md) for what is actually covered and what is not.
+*(This section said "currently two files" until 2026-08-16; it had been
+stale for months.)*
 
 ## `docs/` — this documentation tree
 

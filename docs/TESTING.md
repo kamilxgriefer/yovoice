@@ -1,21 +1,41 @@
 # Testing
 
 An honest picture of what's actually verified in this project, and how —
-deliberately not aspirational. Three separate, unequal layers of coverage
+deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
+
+## Current counts (2026-08-16)
+
+One table, so there is a single place to correct when these move. Every
+figure is a suite run, not an estimate; file counts are `find`.
+
+| Suite | Command | Count |
+|---|---|---|
+| Firestore rules | `npm --prefix firestore-tests test` | **301** checks |
+| Storage rules | `npm --prefix firestore-tests run test:storage` | **46** checks |
+| Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
+| Cloud Functions | `npm --prefix functions test` | **510** tests across **82** suites (45 `*.test.js` files) |
+| Flutter | `flutter test` | **438** tests across **52** files |
+
+> **Correction, 2026-08-16.** These numbers were wrong in several docs for
+> most of a week — TESTING.md claimed 268 rules checks and 43 Storage
+> checks, Firebase.md claimed 265, Bugs.md and Roadmap.md claimed 225, and
+> Bugs.md additionally claimed Cloud Functions had *zero* automated
+> coverage while 510 tests were passing. The rules suite grew
+> 268 → 281 (`56e7ea7`) → 295 (`2fc05e5`) → 301 (`952d8e4`) across one
+> session and no doc followed it. If you change a suite, change this table
+> in the same commit.
 
 ## Firestore rules — the most mature coverage in the project
 
 `firestore-tests/` — a standalone Node project running regression and
 attack-scenario checks against `firestore.rules` via
-`@firebase/rules-unit-testing` and the Firestore emulator — **268 checks passing**
-— plus `storage.test.js`, the same treatment for `storage.rules` against the
-Storage emulator (43 checks: path ownership, size caps, content-type allowlists,
-read gating, default deny). Both suites also run in CI on every push to `main`
-and gate the Hosting deploy (see [DEPLOYMENT.md](DEPLOYMENT.md)). Full workflow
-in [`firestore-tests/README.md`](../firestore-tests/README.md) and
-[Firebase.md](Firebase.md#firestore-rules-testing); the short version:
-Hosting deploy (see [DEPLOYMENT.md](DEPLOYMENT.md)). Full workflow in
+`@firebase/rules-unit-testing` and the Firestore emulator — **301 checks
+passing** — plus `storage.test.js`, the same treatment for `storage.rules`
+against the Storage emulator (46 checks: path ownership, size caps,
+content-type allowlists, read gating, default deny), plus 11 combined
+family-media checks. All three run in CI on every push to `main` and gate
+the Hosting release (see [DEPLOYMENT.md](DEPLOYMENT.md)). Full workflow in
 [`firestore-tests/README.md`](../firestore-tests/README.md) and
 [Firebase.md](Firebase.md#firestore-rules-testing); the short version:
 
@@ -54,7 +74,7 @@ of the 40 checks exercised that path
 Any rule touching a collection that's ever queried via `collectionGroup()`
 needs a real `collectionGroup()` check, not just a direct-path one.
 
-The current 268-case rules suite also pins the Premium boundary introduced in
+The current 301-case rules suite also pins the Premium boundary introduced in
 ADR-053: a normal full profile bootstrap and a partial presence-first create
 are allowed, forged Creator/Premium/staff first documents are denied, and an
 active subscription with a disabled Creator or Clubs feature flag cannot use
@@ -66,8 +86,42 @@ Club invitation can create only a plain `member` with the exact production
 membership shape: attempts to self-assign owner/co-owner/admin or smuggle
 permission fields are rejected. The matching Club-counter update must be in
 the same batch as membership creation and invite deletion, can change no Club
-metadata, and increments both counters exactly once. Passing locally does not deploy the rule; the
-2026-08-16 `firestore.rules` update still needs a manual production deploy.
+metadata, and increments both counters exactly once. *(Until 2026-08-16 this
+paragraph ended "the 2026-08-16 `firestore.rules` update still needs a manual
+production deploy." That deploy has now happened — twice on 2026-08-16, at
+20:40 and 21:06, per Console → Firestore → Rules version history. Passing
+locally still does not deploy a rule.)*
+
+### What the 2026-08-16 hardening pass added (`56e7ea7` → `2fc05e5` → `952d8e4`)
+
+Each of these was a case that failed before its fix, on rules that were
+live in production:
+
+- Club manager role updates carry `role`, `roleUpdatedAt` and
+  `roleUpdatedBy`, so an allowlist of only `['role','updatedAt']` denied
+  **every** promotion and demotion.
+- `canAccessRoom()` had no `isRoomMember` branch: a Community room flipped
+  to private became unreadable to its own members, and one unreadable room
+  emptied the entire Communities list because `watchMyCommunities()`
+  hydrates every id in a single `Future.wait`.
+- `isRoomMember()` had no account-status check, so widening
+  `canAccessRoom()` handed private rooms to banned and disabled accounts.
+- Role attribution was forgeable by omitting the field or resending the
+  stored value — `diff().affectedKeys()` reports only fields whose *value*
+  changed, so a `hasAny()`-gated guard never fires on a resent value.
+  Attribution is now required unconditionally against the post-write
+  document.
+- `roomMembers` update had no field allowlist: a host could repoint their
+  own membership row at a victim's uid, permanently and remotely emptying
+  the victim's Communities tab with no action available to the victim.
+- The rules-level eviction path added in `2fc05e5` was removed entirely in
+  `952d8e4` — see
+  [ADR-056](Decisions.md#adr-056-a-moderation-action-belongs-in-a-callable-that-completes-the-whole-removal-not-in-a-rule-that-deletes-one-row).
+- The `collectionGroup()` PROOF cases are built by transforming the live
+  ruleset, and the variant helper now **asserts each snippet is present
+  before substituting** — so a reformatted rule fails loudly instead of
+  silently running a control that proves nothing. Test scaffolding that
+  can degrade into a no-op is worse than no test.
 
 ADR-054 adds the private-profile boundary cases: an account can read its own
 raw root, while ordinary users, moderators and super-admin clients cannot get
@@ -83,9 +137,36 @@ immutable to all clients.
 can accumulate state between runs that makes a check pass or fail for the
 wrong reason.
 
+## Cloud Functions — real coverage, unevenly distributed
+
+`functions/test/` — **510 tests across 82 suites in 45 files**, run with
+`node --test test/*.test.js` against the Auth + Firestore emulators, and
+gating the Hosting release in CI like the rules suites do. A separate
+`npm --prefix functions run test:smoke` drives three trigger smoke scripts
+against the Functions emulator.
+
+**A real trap this suite has already sprung, worth knowing before you add
+to it.** `node --test test/*.test.js` runs the files **concurrently
+against one shared emulator**. Any assertion on an *absolute* count over a
+collection that another file also writes is therefore load-bearing on
+interleaving: it passes locally and fails on the runner, or vice versa.
+`legacy_identity_scrub.test.js` asserted `scanned === 1` while
+`scrubIdentitySnapshots` scans the whole `conversations` collection and
+takes no uid or prefix scope, so it could not isolate itself the way its
+own `wipe()` isolates its fixtures. That turned CI red on three
+consecutive pushes — including a docs-only commit, which is what gave it
+away, since 509 of 510 passed every time. Fixed in `38b29f7` by measuring
+the **delta** around the test's own write, which keeps the assertion
+exactly as strong (one document scanned, one scrub planned, nothing
+written) while being independent of what else exists.
+
+The general rule: assert on a delta or on a scoped fixture, never on an
+absolute count over a collection your file does not exclusively own.
+
 ## Dart tests — real, but narrow
 
-`test/` — **full suite currently green in local verification**, grown mostly
+`test/` — **438 tests across 52 files**, green in local verification,
+grown mostly
 out of real bugs rather than an even coverage discipline. The
 pattern throughout: fake the Firebase backends
 (`firebase_auth_mocks` / `fake_cloud_firestore` /
@@ -184,7 +265,23 @@ Worth naming plainly rather than leaving implicit:
 - Crash visibility on web: Crashlytics (added 2026-08-08) covers iOS and
   Android only — the Flutter web build still has no crash/error
   reporting channel beyond the browser console.
-- Broad service coverage remains uneven despite the 41 regression files;
+- **No test proves anything about what is deployed.** Every suite above
+  runs against an emulator or a fake. A green run is evidence about the
+  *repository*, never about production. On 2026-08-16 the deployed
+  scheduled `expirePremiumIdentity` had been failing on a missing
+  composite index — Premium never expired for any account — while every
+  suite was green, because the emulator does not require composite
+  indexes. Production claims need production evidence: `firebase
+  functions:list`, the Console's rules version history, or fingerprinting
+  the served bytes (see
+  [ADR-055](Decisions.md#adr-055-the-2026-08-16-production-cutover--order-the-deploy-by-what-fails-closed-and-verify-by-fingerprinting-served-bytes)).
+- **`voiceMinutes` has no writer at all**, so nothing can test it
+  end-to-end. `receiveLiveKitAchievementWebhook` exists in
+  `functions/achievements/livekit_http.js` but is never exported from
+  `functions/index.js`, so the voice-achievement category and Creator
+  Studio's "Voice time" tile are permanently zero. See
+  [Bugs.md](Bugs.md#achievements).
+- Broad service coverage remains uneven despite the 52 regression files;
   rooms, live audio and multi-user club flows still rely heavily on manual
   checks.
 - Any cross-cutting integration flow (the join-room → LiveKit token flow

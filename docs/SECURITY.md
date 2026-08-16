@@ -81,6 +81,35 @@ production-shipped bug:
    a rule that only gets `getDoc()`-tested but is actually reached via
    `collectionGroup()` in the app is untested, no matter how green the
    suite looks.
+6. **`diff().affectedKeys()` reports only fields whose *value* changed —
+   it is not "fields present in the request."** So any guard gated on
+   `affectedKeys().hasAny([...])` is silently skippable two ways: omit the
+   field entirely, or resend the value already stored. This is how club
+   role attribution was forgeable until `2fc05e5` — a promotion could
+   carry a `roleUpdatedBy` naming someone else, or none at all, and the
+   attribution guard simply never fired. **Require attribution
+   unconditionally whenever the attributed thing changes, and check it
+   against the post-write document (`getAfter()`/`request.resource`), not
+   against the diff.** Discovered 2026-08-16.
+7. **Every membership-shaped write needs a field allowlist, including the
+   ones that look self-scoped.** `roomMembers` update had none, so a host
+   could repoint their own membership row at a victim's uid. The victim's
+   `collectionGroup` query then returned a row whose room they cannot
+   read, and `Future.wait` in `watchMyCommunities()` emptied their entire
+   Communities tab — permanently, remotely, and with no action available
+   to the victim. Writes are now limited to `displayName`, `photoUrl` and
+   `updatedAt`, with `userId`, `role` and `joinedAt` pinned. The
+   generalizable part: **a rule that lets a caller write an identity field
+   on a row that another query keys off is a way to corrupt someone
+   else's client, not just their data.** Fixed 2026-08-16 (`2fc05e5`).
+8. **A rule can delete a row; it cannot complete a moderation action.** A
+   rules-level "host evicts member" removed a roster row and nothing else
+   — the evicted account stayed connected to the live audio, kept chat
+   through `isRoomParticipant`, and could rejoin a public room
+   immediately. Worse, gating the delete on a counter the host can also
+   write created a starvation primitive. Removal in full belongs in a
+   callable. See
+   [ADR-056](Decisions.md#adr-056-a-moderation-action-belongs-in-a-callable-that-completes-the-whole-removal-not-in-a-rule-that-deletes-one-row).
 
 Full schema and the exact current rules structure: [Firebase.md](Firebase.md).
 
@@ -175,6 +204,38 @@ bounded, resumable, aggregate-only scrub removes historical request emails,
 empties conversation email snapshots and replaces follow edges with their
 exact schema. See
 [ADR-054](Decisions.md#adr-054-private-account-records-are-split-from-exact-server-owned-public-profiles).
+
+**Fully live as of 2026-08-16.** Rules, triggers, callables, client,
+projection backfill and identity scrub are all deployed and run — the
+sequence completed 5/5. The backfill created 14 projections (28 writes)
+and a verification re-run planned zero; the scrub cleared 21 documents
+across four phases with zero conflicts, likewise verified by a re-run.
+
+Two things from that run belong in a security document rather than only
+an operational one.
+
+**The scrub is a security step with an ordering constraint, not
+cleanup.** It ran after the rules deploy, which was the wrong way round.
+The new rules require a follow edge to carry exactly `['uid','followedAt']`,
+and Firestore evaluates list rules **per document**, denying the entire
+query if any single document fails. So one unscrubbed legacy edge emptied
+a user's whole followers/following list. Any future exact-schema rule has
+the same shape: the data must conform *before* the rule lands, or the
+rule is an outage rather than a boundary.
+
+**The CI credential boundary was deliberately not widened.** A GitHub
+Actions path for the backfill (`4f9ad47`) was dispatched and failed with
+`7 PERMISSION_DENIED` — the `FIREBASE_SERVICE_ACCOUNT_YOVOICE_EC54A`
+secret is scoped to Hosting. Granting it Firestore access would have
+meant anyone with repository write access could reach all production data
+through a secret that today reaches only Hosting. The backfill ran from
+operator-local Application Default Credentials instead. **Treat that
+workflow as present but non-functional**, and treat the temptation to
+"just add the role" as the security decision it is. Tracked in
+[Bugs.md](Bugs.md#data-integrity).
+
+This is a fail-closed gap, not a leak: an account with no projection is
+unreadable, not over-readable. It is still a real product defect.
 
 ## Global Chat (public write surface)
 
@@ -325,13 +386,56 @@ asserts the exact key set and that no email, phone, role or preference
 data appears. Recipients may still only change `isRead`/`readAt`, and
 `fcmTokens` remain owner-scoped.
 
+## Room and club membership authority (hardened 2026-08-16)
+
+`isRoomMember()` now requires `isActiveAccount()`, matching
+`isActiveClubRoomMember()`. Before `2fc05e5` it required only
+`isSignedIn()`, so widening `canAccessRoom()` to include members handed
+private rooms, their rosters and their participant lists to banned and
+disabled accounts. This also withdraws room chat and voice-start from
+suspended accounts, which is the point: **a suspension that stops at the
+Club lounge door but not the Community room door is not a suspension.**
+
+Club manager role updates are allowlisted to `role`, `roleUpdatedAt` and
+`roleUpdatedBy`, with `roleUpdatedBy` pinned to the acting uid and both
+timestamps pinned to `request.time`. Attribution is required
+unconditionally whenever `role` changes (principle 6 above). An unknown
+role string no longer falls through `clubRolePower`'s else branch.
+
+Room membership rows can be created and self-deleted, never
+host-deleted — see principle 8 and
+[ADR-056](Decisions.md#adr-056-a-moderation-action-belongs-in-a-callable-that-completes-the-whole-removal-not-in-a-rule-that-deletes-one-row).
+
+### Still open, pre-existing, live in production
+
+- **A banned host can still edit room metadata and start voice.** The
+  room-update host branch selects on
+  `resource.data.hostId == request.auth.uid` with **no account-status
+  check**, unlike `isRoomMember()` and `isActiveClubRoomMember()`. So the
+  2026-08-16 pass closed the member path against suspended accounts and
+  left the host path open. This predates that pass and was not introduced
+  by it; it is recorded here rather than quietly fixed because a rules
+  change needs its own emulator cases and its own deploy. Tracked in
+  [Bugs.md](Bugs.md#security).
+
 ## Current status
 
-**No known critical open vulnerabilities.** A full audit found 13 issues
-(3 critical, 3 high, 6 medium, 1 client/server contract bug); 12 are
-fixed, verified directly against current `firestore.rules`,
-`storage.rules`, and `functions/` — not assumed from the audit's own
-"fixed" claims. Only App Check enforcement remains open, deliberately.
+**One known open authorization gap** (the banned-host room-update branch
+directly above), plus App Check enforcement, which stays off
+deliberately. A full audit found 13 issues (3 critical, 3 high, 6 medium,
+1 client/server contract bug); 12 are fixed, verified directly against
+current `firestore.rules`, `storage.rules`, and `functions/` — not assumed
+from the audit's own "fixed" claims.
+
+**Deployment status, 2026-08-16**: the hardened `firestore.rules` and
+`storage.rules` are **live in production**. `firestore.rules` was deployed
+twice that day — 20:40 by the operator and 21:06 covering `952d8e4` — per
+Console → Firestore → Rules version history, which remains the only way to
+read the deployed ruleset (there is still no read-only CLI command).
+Until this date, both this file and [Bugs.md](Bugs.md) described these
+fixes as "FIXED IN SOURCE, PENDING RULES DEPLOY"; that is no longer true
+and those markers have been cleared.
+
 Live-updated detail: [Bugs.md](Bugs.md#security). Full historical audit,
 findings, and the exact fix for each: [Archive/SECURITY_AUDIT.md](Archive/SECURITY_AUDIT.md).
 
@@ -365,3 +469,22 @@ access to something another user controls:
       affected user (or an attacker impersonating them) could write? If
       so, that's a bug — move it to a custom claim or a
       Cloud-Function-computed value instead.
+- [ ] Does the rule check **account status** (`isActiveAccount()`), not
+      just signed-in-ness or ownership? A branch that selects on
+      `resource.data.hostId == request.auth.uid` and stops there grants a
+      banned account everything that ownership grants.
+- [ ] Is any guard gated on `affectedKeys().hasAny([...])`? If so it is
+      skippable by omission or by resending the stored value — see
+      principle 6.
+- [ ] Does every write path on the collection have a field allowlist,
+      including the ones that look self-scoped? Ask specifically whether
+      the caller can point an identity field at somebody else.
+- [ ] If the rule gates on a counter, can the caller also **write** that
+      counter? If yes, they can starve the gate. Prefer `existsAfter()` on
+      the row itself over a counter transition.
+- [ ] Does this write complete the whole action, or only part of it? If a
+      rule deletes a row while live audio, chat and rejoin remain
+      untouched, the action belongs in a callable (principle 8).
+- [ ] Does the new query need a composite index, and has that index been
+      **deployed** — not merely committed to `firestore.indexes.json`? The
+      emulator does not require them, so no suite will tell you.

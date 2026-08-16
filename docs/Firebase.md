@@ -79,6 +79,21 @@ Notable fields:
   is newly unlocked. Exists specifically so the Awards screen's "recent
   unlocks" feed is real data, not inferred — see
   [ADR-010](Decisions.md#adr-010-real-per-achievement-unlock-timestamps).
+- **`voiceMinutes`** on `users/{userId}` — **written by nothing.** It is
+  seeded to `0` by `ProfileService` and is only ever derived from
+  `voiceSeconds` inside `functions/achievements/model.js`, but the sole
+  producer of `voiceSeconds` is `receiveLiveKitAchievementWebhook` in
+  `functions/achievements/livekit_http.js`, which is **not exported from
+  `functions/index.js`** and therefore not deployed. Consequence:
+  Creator Studio's "Voice time" tile and the entire voice achievement
+  category are permanently zero for every account. Do not read this field
+  as a metric until the webhook is wired. See [Bugs.md](Bugs.md#achievements).
+- **`memberCount`** on `rooms/{roomId}` — may **overcount**, by design
+  since `952d8e4`. A client that deletes its `roomMembers` row without
+  pairing the room write leaves the counter high. It can never undercount
+  below a real departure, which is the property that matters: an
+  undercount was what trapped members in a room they could not leave. See
+  [ADR-056](Decisions.md#adr-056-a-moderation-action-belongs-in-a-callable-that-completes-the-whole-removal-not-in-a-rule-that-deletes-one-row).
 - **`experience`** on `rooms/{roomId}` — `'community'` or `'broadcast'`.
   Legacy documents may still contain `'podcast'`; the client maps that to
   `broadcast` for backward compatibility. **Do not remove that mapping**
@@ -119,6 +134,36 @@ principles behind rules like this — check a claim against a real
 document, never trust the request — are collected in
 [SECURITY.md](SECURITY.md#firestore-security-rules--design-principles).
 
+## Composite indexes
+
+`firestore.indexes.json` holds **15** composite indexes and **3**
+`fieldOverrides` as of 2026-08-16 (14 and 1 before that day's deploy).
+The file is deliberately kept a **superset** of production, so an index
+deploy can never be the thing that removes one.
+
+The `fieldOverrides` exist to enable `COLLECTION_GROUP` scope on
+`rooms.roomId`, `participants.userId` and `roomMembers.userId`.
+
+**One of these indexes fixed a live, silent production defect.** The
+scheduled `expirePremiumIdentity` sweep queries
+
+```
+entitlements where isPremium == true and currentPeriodEnd < now
+```
+
+(`functions/premium/entitlements.js:163`), which needs a composite index
+on `entitlements(isPremium ASC, currentPeriodEnd ASC)`. That index was in
+the repo but had never been deployed, so every scheduled run failed with
+`FAILED_PRECONDITION` and **Premium never expired for anyone**. Nothing
+surfaced it: the emulator does not require composite indexes, so the
+Functions suite was green throughout, and the failure lived only in
+Cloud Scheduler logs. Deployed 2026-08-16.
+
+The lesson generalizes: **a new server-side query is an index change until
+proven otherwise**, and the only place that proof exists is production.
+After deploying a scheduled function that queries, check Console →
+Functions → Logs for its first real run rather than assuming it works.
+
 ## Storage
 
 `storage.rules` — four upload paths, each size/content-type limited:
@@ -133,6 +178,17 @@ document, never trust the request — are collected in
 Uploads tied to content shown to other users require `email_verified`
 (profile photos are deliberately exempt — setting one during onboarding,
 before verification completes, is normal).
+
+**Club image names accept two shapes, and this matters** (fixed in
+`56e7ea7`, deployed 2026-08-16): `validClubImageUpload()` previously
+accepted only the bare `avatar`/`banner` object name, while the client
+that was already in production uploads `{kind}_{millis}.{ext}`. Every club
+avatar and banner upload was denied. Both shapes are now accepted, and the
+timestamped form is validated the way the profile path is, including
+MIME/extension agreement. The general lesson: a Storage rule that pins an
+exact object name is a contract with a *deployed* client, so verify it
+against what the shipped client actually writes, not against what the
+current source writes.
 
 ## Firebase App Check
 
@@ -159,13 +215,19 @@ cd firestore-tests && npm install && npm test
 ```
 
 Full details in [`firestore-tests/README.md`](../firestore-tests/README.md)
-and [TESTING.md](TESTING.md) — 265 checks, regression + attack-scenario
-coverage. Always run against a freshly-started emulator before trusting a
-"green" result; see
+and [TESTING.md](TESTING.md) — **301** checks as of 2026-08-16 (this file
+said 265 until then), plus 46 Storage and 11 family-media checks;
+regression + attack-scenario coverage. Always run against a
+freshly-started emulator before trusting a "green" result; see
 [ADR-007](Decisions.md#adr-007-firestore-rules-changes-are-always-emulator-tested-against-a-real-collectiongroup-query)
-for why that distinction matters.
+for why that distinction matters. And note what a green run does *not*
+prove: the emulator does not require composite indexes, so a query that
+passes here can still fail in production with `FAILED_PRECONDITION` —
+which is exactly how Premium expiry stayed broken (below).
 
 Deploying rules/indexes and Cloud Functions is manual, on purpose — see
 [DEPLOYMENT.md](DEPLOYMENT.md) for the full reasoning and every deploy
-command in one place, including a non-obvious gotcha in
-`functions/package.json`'s `deploy` script.
+command in one place. Note that `npm run deploy` inside `functions/` is a
+full `firebase deploy --only functions` against whatever project
+`firebase use` points at — it is not the single-function shortcut this doc
+tree described it as before 2026-08-16.

@@ -112,15 +112,51 @@ already been verified with `firebase use`.
 firebase deploy --only storage --project yovoice-ec54a
 ```
 
-## Private-profile projection cutover (strict order)
+## Private-profile projection cutover (strict order) — EXECUTED 2026-08-16
+
+> **Status, 2026-08-16: all five steps are complete and verified.** This
+> section previously ended "No command in this section was run as part of
+> implementing ADR-054"; that sentence is now false and has been replaced
+> with per-step status and per-step numbers. Keep the order below for any
+> future repeat — and read the ordering warning under step 3, which is the
+> sharpest lesson the cutover produced.
+
+### Prerequisite the next operator will hit: ADC needs `gcloud` *and* a quota project
+
+Steps 2 and 3 run `firebase-admin` scripts locally, which authenticate
+through Application Default Credentials. Two non-obvious things blocked
+this on 2026-08-16 and cost the cutover a day:
+
+1. **`gcloud` was never installed on this machine.** That is the entire
+   reason `gcloud auth application-default login` "did not work" — the
+   command did not exist. Install it first (Homebrew here), then run the
+   login and complete the browser consent as the operator.
+2. **`gcloud auth application-default set-quota-project yovoice-ec54a` is
+   required, not optional.** Both scripts join Firebase Auth, and
+   `identitytoolkit.googleapis.com` refuses user-ADC without a quota
+   project. Skipping this fails at the Auth join, not at Firestore, which
+   makes it look like a permissions problem with the wrong service.
+
+```bash
+brew install --cask google-cloud-sdk   # the cask actually used on 2026-08-16
+gcloud auth application-default login
+gcloud auth application-default set-quota-project yovoice-ec54a
+```
+
+These are **user credentials**, deliberately — see the CI note under step 2
+for why the repository's service-account secret was not used and must not
+be widened.
 
 The `users/{uid}` privacy boundary is not a rules-only deploy. Old clients read
 foreign root user documents, while new clients require server-owned
 `publicProfiles` and `socialPresence`. Use this order so no released client is
 pointed at an empty projection and no source change can race the backfill:
 
-1. Deploy the projection triggers, bounded search callable and all social-graph
-   functions whose safe profile summaries/no-email request shape changed:
+1. **DONE 2026-08-16.** Deploy the projection triggers, bounded search callable
+   and all social-graph functions whose safe profile summaries/no-email request
+   shape changed. In the event this was folded into a full
+   `--only functions` deploy that took the project from 51 to 111 functions;
+   the selective list below remains the right shape for a repeat:
 
    ```bash
    firebase deploy --only \
@@ -133,7 +169,43 @@ functions:setFollow,functions:setUserBlock \
 --project yovoice-ec54a
    ```
 
-2. Backfill in bounded pages. Dry-run is the default and performs zero writes.
+2. **DONE 2026-08-16.** Backfill the `publicProfiles` and `socialPresence`
+   projections. Measured, one page, `reachedEnd: true`:
+
+   | | dry run | apply | verification re-run |
+   |---|---|---|---|
+   | `scannedUsers` | 33 | 33 | 33 |
+   | `authOrphans` | 18 | 18 | 18 |
+   | `profileCreates` | 14 | 14 | **0** |
+   | `profileUnchanged` | 19 | 19 | **33** |
+   | `appliedWrites` | 0 | **28** | 0 |
+
+   **Correct the arithmetic before repeating this anywhere.** A console count
+   of 33 `users` against 1 `publicProfiles` looks like 32 missing projections.
+   It was 14. **18 of the 33 `users` documents are Auth orphans** — no
+   corresponding Firebase Auth account — so they correctly receive no
+   projection and never were part of the gap. Those orphans are a separate,
+   still-open housekeeping question (see
+   [Bugs.md](Bugs.md#data-integrity)); `onAuthUserDeleted` only covers
+   deletions occurring after it was deployed on 2026-08-16.
+
+   The verification re-run is the proof that matters: a second dry run
+   planned zero writes and reported all 33 unchanged, so the script is
+   idempotent against real production data, not just in the emulator.
+
+   `4f9ad47` added `.github/workflows/public-profile-backfill.yml` as a
+   credential-free path — `workflow_dispatch` only, `apply` defaulting to
+   false, same `production` environment as the Hosting deploy. **It was
+   dispatched and it failed with `7 PERMISSION_DENIED`**: the
+   `FIREBASE_SERVICE_ACCOUNT_YOVOICE_EC54A` secret is scoped to Hosting and
+   has no Firestore access. It was deliberately **not** granted any, because
+   that would let anyone with repository write access reach all production
+   data through a secret that today reaches only Hosting. The backfill ran
+   from the operator's local ADC instead. **Treat that workflow as present
+   but non-functional** until someone consciously decides to widen the
+   service account or provision a migration-only one.
+
+   Backfill in bounded pages. Dry-run is the default and performs zero writes.
    Record `nextCursor` from the JSON response; apply the same page, then repeat
    with `--start-after CURSOR` until `reachedEnd` is true. Each page is capped
    at 200 users/400 operations in memory and per write batch; each invocation
@@ -155,8 +227,30 @@ functions:setFollow,functions:setUserBlock \
    counted as `authOrphans` and its projections are removed in apply mode.
    Source deletions after step 1 are also cleaned by `onAuthUserDeleted`.
 
-3. Scrub stale identity snapshots in four independently resumable phases. Run
-   dry-run first, then `--apply`; repeat until `reachedEnd` is true. Output is
+3. **DONE 2026-08-16 — and this step is more urgent than "cleanup" implies.**
+   Measured, all four phases dry-run then `--apply`, `conflicts: 0`
+   throughout, `reachedEnd: true`: conversations 5/5, friendRequests 6/6,
+   following 5/5, followers 5/5 — **21 documents**. A verification re-run
+   reported `plannedScrubs: 0` in all four phases.
+
+   > **Ordering warning, learned the hard way.** This step was run *after*
+   > step 5, and that was a mistake with live consequences. The new rules
+   > require a follow edge to carry exactly `['uid','followedAt']`, and
+   > Firestore evaluates list rules **per document**, denying the entire
+   > query if any single document fails. So between the rules deploy and
+   > this scrub, one legacy five-key edge emptied a user's whole
+   > followers/following list. The scrub is not hygiene — while rules are
+   > ahead of it, it is an active outage. Run it before step 5, or accept
+   > that follower lists are broken in the window between.
+
+   No Firestore export was taken first. Stated plainly because it was a
+   judgement call: the `gcloud` CLI keeps a credential store separate from
+   ADC and was not logged in, and everything the scrub removes is a
+   denormalized duplicate whose authoritative copy is untouched — emails
+   live in `users` and Firebase Auth, and `displayName`/`photoUrl` on follow
+   edges now live in `publicProfiles`. For a larger dataset, take the export.
+
+   Run dry-run first, then `--apply`; repeat until `reachedEnd` is true. Output is
    aggregate-only, apply cursors stay in Admin-only `privateMigrationState`,
    and each invocation is bounded (500 documents by default, hard cap 5,000):
 
@@ -174,21 +268,36 @@ functions:setFollow,functions:setUserBlock \
    relationships stay fail-closed for presence until explicitly reconciled
    from trusted evidence or re-established through the normal request flow.
 
-4. Release Flutter/web clients that read `publicProfiles`, join the narrower
-   friend-only `socialPresence`, and call `searchPublicProfiles`. Verify profile,
-   friends, direct-message creation, search and staff-owner lookup against the
-   populated production projections. Allow the required native adoption window
-   before step 5; old native builds fail closed after the cutover.
+4. **DONE 2026-08-16, and fingerprinted.** Release Flutter/web clients that
+   read `publicProfiles`, join the narrower friend-only `socialPresence`, and
+   call `searchPublicProfiles`. Verify profile, friends, direct-message
+   creation, search and staff-owner lookup against the populated production
+   projections. Allow the required native adoption window before step 5; old
+   native builds fail closed after the cutover.
 
-5. Deploy Firestore rules last:
+   Verified by fetching the artifact, not by reading the deploy log:
+   `https://app.yovoice.app/main.dart.js` is 5,139,256 bytes and contains
+   `publicProfiles`, `searchPublicProfiles` and `selectMyAchievementTitle`.
+   Production had been serving commit `9fdd8a9` until this release.
+
+   **UNVERIFIED**: the native adoption window. No App Store or Play build
+   carrying the new client has been confirmed released, so any native install
+   predating this cutover fails closed on foreign-profile reads. Treat native
+   as un-migrated until someone checks.
+
+5. **DONE 2026-08-16.** Deploy Firestore rules last:
 
    ```bash
    firebase deploy --only firestore:rules --project yovoice-ec54a
    ```
 
+   Deployed twice that day — 20:40 by the operator and 21:06 covering the
+   `952d8e4` room-eviction removal — per Console → Firestore → Rules version
+   history.
+
 After step 5, only an account owner can get its own `users/{uid}` root and no
 client can list it; staff tools use protected callables. Do not reverse steps 1
-and 5. No command in this section was run as part of implementing ADR-054.
+and 5.
 
 ## `yovoice-website` (automatic, separate repo)
 
@@ -205,10 +314,25 @@ build/deploy specifics.
 ```
 yovoice.app            → Vercel (yovoice-website)
 auth.yovoice.app        → Firebase Hosting — shared Auth domain, live
-app.yovoice.app          → Firebase Hosting — configured, waiting on a
-                          Cloudflare DNS record only the domain owner can
-                          add — see Roadmap.md
+app.yovoice.app          → Firebase Hosting — LIVE as of 2026-08-16
 ```
+
+**CORRECTION, 2026-08-16.** This block, [Roadmap.md](Roadmap.md) and
+[Bugs.md](Bugs.md) all described `app.yovoice.app` as blocked on a
+Cloudflare DNS record only the domain owner could add. **It is no longer
+blocked.** The CNAME resolves to `yovoice-ec54a.web.app` and HTTPS returns
+200; the Flutter web client was fetched from it and fingerprinted on
+2026-08-16 (5,139,256 bytes).
+
+One step remains, and it is **UNVERIFIED** — it lives in the website repo
+and could not be checked from here: `NEXT_PUBLIC_APP_URL`
+([ADR-009](Decisions.md#adr-009-next_public_app_url-as-an-env-var-website-repo))
+must be flipped to `https://app.yovoice.app` in **all three** Vercel
+environments (production, preview, development — easy to update one and
+forget the others), then redeployed, then the redirect verified
+end-to-end rather than assumed from the env var change. Until someone
+confirms that, treat the website as still pointing at the default
+`web.app` domain.
 
 ## Global Chat
 
@@ -254,41 +378,104 @@ the Moderation entry once their ID token refreshes (sign out and in
 forces it), while a REVOKED moderator loses access on their next
 request, because the server record is checked too.
 
-## Undeployed backend as of 2026-08-11 — the selective manifest
+## Production state as of 2026-08-16 (post-cutover)
 
-Everything below was **read from the live project**, not inferred from
-filenames or from what the repo happens to contain:
+Everything in this section was **read from the live project**, not inferred
+from filenames or from what the repo happens to contain:
 
 ```bash
 firebase functions:list --project yovoice-ec54a
 firebase firestore:indexes --project yovoice-ec54a
 firebase hosting:channel:list --project yovoice-ec54a
+curl -s https://app.yovoice.app/main.dart.js | wc -c   # fingerprint the client
 ```
-
-### What production actually has right now
 
 | Target | State | Evidence |
 |---|---|---|
-| Hosting (Flutter web) | **Already carries Global Chat AND the Moderation Center** | `live` released 2026-08-11 22:16:50; the served `main.dart.js` contains `Claim and review`, `Reports appear as the community files them`, `moderateReport`, `globalChat` |
-| `onGlobalMessageModerated` | **Deployed** | in `functions:list`, v2, europe-west1, nodejs22 |
-| `moderateReport` | **Not deployed** | absent from `functions:list` |
-| `listReportAuditTrail` | **Not deployed** | new in this commit |
-| `setUserBan` | Deployed, but **source changed** (token revocation on ban) | in `functions:list`; source diff in `24353d4` |
-| `reports` + `adminAuditLogs` indexes | **None deployed** | `firestore.indexes` returns only `notifications` and `rooms` |
-| `firestore.rules` | **`24353d4`-era IS deployed; `1e76d36`+ is NOT** | read from Console → Firestore → Rules on 2026-08-12: `globalChat` and `reportLimits` present, `isActiveStaff` absent. There is still no read-only CLI command — the Console is the only way to check. |
+| Cloud Functions | **111 deployed** (was 51) | `firebase functions:list`. The ~60 new ones are the whole ADR-054 privacy layer (`onUserPrivacySourceChanged`, `searchPublicProfiles`, `onAuthUserDeleted`), every social-graph callable (`setFollow`, `sendFriendRequest`, `setUserBlock`, …), every `onAchievement*` trigger, the club and room self-service callables, and the entire Stage B set from `c1d6cd9`. `functions/index.js` names 87 exports directly and adds the rest via `Object.assign(exports, createStageBFunctions())` |
+| Firestore indexes | **15 composites, 3 fieldOverrides** (was 14 / 1) | `firebase firestore:indexes` |
+| `firestore.rules` | **Deployed twice on 2026-08-16** — 20:40 by the operator, 21:06 covering `952d8e4` | Console → Firestore → Rules version history. Still no read-only CLI command; the Console remains the only way to check |
+| `storage.rules` | **Deployed** | includes `validClubImageUpload()` accepting the timestamped `{kind}_{millis}.{ext}` names the shipped client actually writes |
+| Hosting (Flutter web) | **Deployed and fingerprinted** | `https://app.yovoice.app/main.dart.js` is 5,139,256 bytes and contains `publicProfiles`, `searchPublicProfiles`, `selectMyAchievementTitle`. Production previously served commit `9fdd8a9` |
+| `publishPublicStatsSchedule` | **Committed (`cb4651a`), deliberately NOT deployed** | absent from `functions:list`; three preconditions in that commit message |
+| `receiveLiveKitAchievementWebhook` | **Not deployed, and not deployable** | exists in `functions/achievements/livekit_http.js`, never exported from `functions/index.js` |
 
-Two consequences worth stating plainly, because they are live now:
+**The index deploy fixed a live defect.** `entitlements(isPremium,
+currentPeriodEnd)` backs the scheduled `expirePremiumIdentity` query at
+`functions/premium/entitlements.js:163`. It had never been deployed, so
+every run failed on the missing composite index and **Premium never
+expired for any account**. No suite could have caught it: the emulator
+does not require composite indexes.
 
-1. **Hosting is ahead of the backend.** Pushing to `main` auto-deploys
-   the web app (see the CI section above), so both milestones' *client*
-   code shipped the moment they were pushed, while their Functions,
-   indexes and rules did not. A staff account opening Moderation in
-   production today gets a queue query with no composite index and a
-   `moderateReport` call that resolves to nothing. Nothing is corrupted
-   — the actions simply fail — but the feature is not usable until the
-   deploys below run.
-2. **The next push does the same thing again.** Treat "push to `main`"
-   as a Hosting deploy, and sequence the backend first.
+### The ordering lesson, restated because it changed direction
+
+Until `409c7ee`, pushing to `main` published Hosting, so the *client* was
+always ahead of the backend and this document's standing advice was
+"sequence the backend first, the client ships itself." **That is no longer
+how this repo behaves.** Hosting is now a manual `workflow_dispatch`, and
+the failure it produced instead is the opposite one: `main` moved through
+ADR-051 → ADR-054 while production kept serving commit `9fdd8a9`, and
+~60 Cloud Functions sat deployed and *inert* because no client called
+them. A deployed function that nothing invokes looks identical, in every
+console, to a working one.
+
+Two rules that survive both directions:
+
+1. **Order by what fails closed.** Deploy the thing whose absence is a
+   silent no-op before the thing whose absence is a denial. Functions and
+   projections first, clients next, restrictive rules last.
+2. **Verify by fingerprinting the served bytes, never by trusting deploy
+   output.** `firebase deploy` reporting success means the upload
+   succeeded. Fetch the artifact and grep it for a symbol that only exists
+   in the new build — `curl -s https://app.yovoice.app/main.dart.js | grep
+   -c searchPublicProfiles`. Same for Functions: `functions:list` is the
+   evidence, not the deploy log.
+
+Full decision:
+[ADR-055](Decisions.md#adr-055-the-2026-08-16-production-cutover--order-the-deploy-by-what-fails-closed-and-verify-by-fingerprinting-served-bytes).
+
+### Deliberately held back: `publishPublicStatsSchedule`
+
+Committed in `cb4651a`, **not deployed**, and it should stay that way
+until three things are true. Do not sweep it into the next
+`--only functions` deploy without reading this:
+
+1. `publicStats/live` needs `allow read: if true; allow write: if false`.
+   That would be the project's **first publicly readable document** —
+   grepping `firestore.rules` for `if true` currently returns nothing — so
+   it needs its own ADR and its own emulator coverage first.
+2. The live count needs a `COLLECTION_GROUP` index on `rooms.expiresAt`,
+   or the first run throws `FAILED_PRECONDITION`. (Compare the
+   `expirePremiumIdentity` defect above — this is the same failure mode,
+   known in advance this time.)
+3. **The data source is known to be wrong.**
+   `activeVoiceSessions.expiresAt` is a token-issuance TTL, written once at
+   join and never renewed, and nothing removes a row when a client
+   crashes. Counting by freshness drops everyone who has been in a room
+   longer than five minutes — a full room reports zero — while counting
+   without it reports ghosts forever. What it would publish today is an
+   honest lower bound, not a measurement.
+
+The real fix is the same unexported webhook that would repair
+`voiceMinutes`: `receiveLiveKitAchievementWebhook` in
+`functions/achievements/livekit_http.js`, whose sessions are closed by
+LiveKit's own `participant_left` / `participant_connection_aborted`
+events, which the SFU emits on a crash.
+
+---
+
+## Historical: the 2026-08-11 selective manifest (SUPERSEDED)
+
+> **Superseded 2026-08-16.** Everything listed below is now deployed —
+> `moderateReport`, `listReportAuditTrail`, `setUserBan`, the three social
+> notification triggers, and all five `reports`/`adminAuditLogs` indexes.
+> The **inventory** is obsolete; the **ordering reasoning and the rollback
+> rules** below are still correct and still worth reading before any
+> multi-target deploy. Kept for that reason rather than deleted.
+>
+> Note also that the "Hosting is ahead of the backend / pushing to `main`
+> auto-deploys the web app" premise this section was written on stopped
+> being true in `409c7ee` — see the corrected ordering lesson above.
 
 ### Cloud Functions — the complete selective list
 

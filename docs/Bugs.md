@@ -7,10 +7,25 @@ about things that are broken, risky, or need verification.
 
 ## Security
 
-**Newly discovered authorization fixes are still pending production rules
-deployment.** They are described below; until that deploy, treat first-user-
-document creation and Club invitation acceptance as open production risks. For
-the full security model (not just this status snapshot), see
+**Rules status, 2026-08-16: the pending fixes are now DEPLOYED.** Every
+"FIXED IN SOURCE, PENDING RULES DEPLOY" marker in this file was cleared on
+this date. `firestore.rules` was deployed twice — 20:40 by the operator and
+21:06 covering `952d8e4` — and `storage.rules` was deployed the same day,
+per Console → Firestore → Rules version history. First-user-document
+creation and Club invitation acceptance are no longer open production
+risks.
+
+**One authorization gap remains open, pre-existing:** the room-update host
+branch selects on `resource.data.hostId == request.auth.uid` with no
+account-status check, so a **banned or disabled host can still edit room
+metadata and start voice**. Unlike `isRoomMember()` and
+`isActiveClubRoomMember()`, which both gained `isActiveAccount()` in
+`2fc05e5`, this branch was not touched. It predates the 2026-08-16
+hardening pass and was deliberately left for its own change, with its own
+emulator cases and its own deploy. See
+[SECURITY.md](SECURITY.md#still-open-pre-existing-live-in-production).
+
+For the full security model (not just this status snapshot), see
 [SECURITY.md](SECURITY.md). An earlier full audit
 ([Archive/SECURITY_AUDIT.md](Archive/SECURITY_AUDIT.md)) found 3 critical, 3
 high, and 6 medium-priority issues plus one client/server contract bug. Within
@@ -25,18 +40,17 @@ that audit's original 13 items, all are fixed except one:
   forgotten either. Tracked as a Roadmap item too:
   [Roadmap.md](Roadmap.md#2-firebase-app-check-enforcement).
 
-- **FIXED IN SOURCE, PENDING RULES DEPLOY — first `users/{uid}` create
+- **FIXED AND DEPLOYED 2026-08-16 — first `users/{uid}` create
   bypassed every protected-field update check.** The update rule prevented
   self-assigned Creator/Premium/staff state, but a document that did not exist
   yet could be created with arbitrary fields. The create rule now accepts only
   the non-privileged bootstrap/profile/presence field set, requires any `uid`
   to match the path and permits only `personal` as an initial `accountType`;
   legitimate partial presence-first documents still work. Forged Creator,
-  `premiumIdentity` and role creates are rejected in the emulator suite. The
-  new rule must be manually deployed before production receives this fix
+  `premiumIdentity` and role creates are rejected in the emulator suite.
   ([ADR-053](Decisions.md#adr-053-paid-capabilities-come-only-from-the-trusted-entitlement-and-every-entry-boundary-fails-closed)).
 
-- **FIXED IN SOURCE, PENDING RULES DEPLOY — a Club invitee could self-promote
+- **FIXED AND DEPLOYED 2026-08-16 — a Club invitee could self-promote
   while accepting an invitation.** The membership-create branch previously
   verified the pending invite but did not pin the new membership role or shape,
   allowing a modified client to join as owner/co-owner/admin and then inherit
@@ -49,6 +63,64 @@ that audit's original 13 items, all are fixed except one:
   privileged role, extra permission fields, repeated counter bumps and Club
   metadata mutation.
 
+### Found and fixed 2026-08-16 — all were live in production
+
+Each was proven by a case that failed first, and all are now deployed.
+
+- **FIXED (`56e7ea7`) — every club promotion and demotion was denied.**
+  `clubs/{clubId}/members` manager updates allowlisted only
+  `['role','updatedAt']`, while both the deployed client and this tree
+  write `role`, `roleUpdatedAt` and `roleUpdatedBy`. Club role management
+  was entirely non-functional. `clubRoleChangeFieldsAllowed()` widens the
+  field set without widening privilege: `roleUpdatedBy` is pinned to the
+  acting uid and both timestamps to `request.time`. Also closes an
+  unknown-role string falling through `clubRolePower`'s else branch.
+- **FIXED (`56e7ea7`) — a private Community room became unreadable to its
+  own members, and took the whole Communities list with it.**
+  `canAccessRoom()` had no `isRoomMember` branch. The blast radius came
+  from the client: `watchMyCommunities()` hydrates every id in a single
+  `Future.wait`, so **one** unreadable room emptied the entire list. Worth
+  remembering as a pattern — an unbounded `Future.wait` turns a
+  single-document permission error into a whole-screen outage.
+- **FIXED (`56e7ea7`) — club avatar and banner uploads were denied.**
+  `storage.rules` `validClubImageUpload()` accepted only the bare
+  `avatar`/`banner` object name; the deployed client uploads
+  `{kind}_{millis}.{ext}`. Both shapes are now accepted, with the
+  timestamped form validated like the profile path including
+  MIME/extension agreement.
+- **FIXED (`2fc05e5`) — banned and disabled accounts gained private-room
+  access.** `isRoomMember()` required only `isSignedIn()`, so widening
+  `canAccessRoom()` handed private rooms, their rosters and their
+  participant lists to suspended accounts. Now requires
+  `isActiveAccount()`, which also withdraws room chat and voice-start from
+  them.
+- **FIXED (`2fc05e5`) — club role attribution was forgeable.** Omit
+  `roleUpdatedBy`, or resend the value already stored, and the guard never
+  fired — because `diff().affectedKeys()` reports only fields whose
+  *value* changed and the guards were gated on `hasAny()`. Attribution is
+  now required unconditionally whenever `role` changes, checked against
+  the post-write document. This is now
+  [SECURITY.md principle 6](SECURITY.md#firestore-security-rules--design-principles).
+- **FIXED (`2fc05e5`) — a host could permanently and remotely empty a
+  victim's Communities tab.** `roomMembers` update had no field allowlist
+  on either branch, so a host could repoint their own membership row at a
+  victim's uid. The victim's `collectionGroup` query then returned a row
+  whose room they cannot read, and `Future.wait` in
+  `watchMyCommunities()` emptied their entire Communities tab — with **no
+  action available to the victim**. Writes are now limited to
+  `displayName`, `photoUrl` and `updatedAt`, with `userId`, `role` and
+  `joinedAt` pinned.
+- **FIXED (`952d8e4`) — a production trap: rooms nobody could leave.**
+  `2fc05e5` made `memberCount` the gate on removing a membership row while
+  leaving hosts able to write that counter, so a host — including a banned
+  one, since the room-update host branch checks no account status — could
+  starve it to zero in three plain writes and make membership unremovable
+  for everyone. It also fired **with no attacker at all**, on any room
+  whose counter had drifted below its true row count, legacy rooms
+  carrying no `memberCount` field being the clearest case. Fixed by
+  removing rules-level eviction entirely rather than guarding it. See
+  [ADR-056](Decisions.md#adr-056-a-moderation-action-belongs-in-a-callable-that-completes-the-whole-removal-not-in-a-rule-that-deletes-one-row).
+
 If you're about to change `firestore.rules`, `storage.rules`, or anything
 in `functions/`, read [SECURITY.md](SECURITY.md#firestore-security-rules--design-principles)'s
 design principles and checklist first — each one maps to a specific
@@ -58,15 +130,57 @@ permission flags).
 
 ## Data integrity
 
-- **FIXED IN SOURCE, PENDING RULES DEPLOY — the real Club creation batch was
+- **FIXED 2026-08-16 — accounts with no public profile were invisible to
+  everyone else.** After the ADR-054 rules cutover, `users` became
+  owner-`get` only and non-listable, so an account with no
+  `publicProfiles` projection could not be seen by any other user in
+  either client. The backfill closed it: 14 projections created, 28 writes
+  applied, and a verification re-run planned zero writes with all 33
+  accounts unchanged — idempotent against real production data.
+
+  **Worth remembering how the headline number was wrong.** A console count
+  of 33 `users` against 1 `publicProfiles` reads as 32 missing. The
+  backfill's own dry run showed the truth: **18 of the 33 are Auth
+  orphans**, which correctly get no projection. The real gap was 14.
+  Counting two collections against each other is not a measurement when one
+  of them is derived with conditions.
+
+- **OPEN — 18 `users` documents have no Firebase Auth account.** Surfaced
+  by the backfill's `authOrphans: 18` on 2026-08-16. Origin unknown; most
+  are likely deleted test accounts from before `onAuthUserDeleted` existed,
+  since that trigger only covers deletions occurring after it was deployed
+  the same day. They hold no projection and are invisible, so nothing is
+  user-facing — but they are stale personal data with no owner, which makes
+  this a retention question as much as a tidiness one. Decide deliberately
+  whether to delete them; do not fold it into an unrelated migration.
+
+- **FIXED 2026-08-16 — the ADR-054 legacy identity scrub has run.** All
+  four phases applied, `conflicts: 0`, 21 documents (conversations 5,
+  friendRequests 6, following 5, followers 5), verified by a re-run
+  planning zero further scrubs. Note it was run *after* the rules deploy,
+  which was the wrong order and briefly a live defect rather than
+  housekeeping — the new rules require follow edges to carry exactly
+  `['uid','followedAt']`, Firestore denies a list query if any single
+  document fails the rule, so one legacy five-key edge emptied a user's
+  entire followers/following list. See
+  [DEPLOYMENT.md](DEPLOYMENT.md#private-profile-projection-cutover-strict-order--executed-2026-08-16).
+
+- **FIXED AND DEPLOYED 2026-08-16 — the real Club creation batch was
   rejected even for an entitled owner.** `ClubService` atomically creates the
   Club, owner member, user's Club projection, three default channels and the
   lounge room. Owner-member/channel rules used pre-write `get()`, so they could
   not see the new Club root inside that same commit; the batch also included a
   dead root-user `clubCount` update outside the self-write allowlist. Those
   rules now use `getAfter()`, the unused counter write is removed, and the
-  current 225-case emulator suite exercises the full seven-document batch.
-  Production needs the updated `firestore.rules` deploy for this fix.
+  emulator suite exercises the full seven-document batch.
+
+- **KNOWN AND ACCEPTED — `rooms/{roomId}.memberCount` can overcount.** A
+  client that deletes its `roomMembers` row without pairing the room write
+  leaves the counter high. It can never undercount below a real departure,
+  which is the property that matters: an undercount was what trapped
+  members in rooms they could not leave. Treat the field as an upper
+  bound. Deliberate trade, `952d8e4`,
+  [ADR-056](Decisions.md#adr-056-a-moderation-action-belongs-in-a-callable-that-completes-the-whole-removal-not-in-a-rule-that-deletes-one-row).
 
 - **Possible orphaned `rooms/{roomId}/members` documents.** When that
   subcollection was renamed to `roomMembers` (see
@@ -121,7 +235,9 @@ permission flags).
   and reported nothing. They are now derived from their source documents
   by `onFriendRequestCreated`, `onFriendRequestResolved` and
   `onFollowerCreated` (ADR-041), which Cloud Functions retries.
-  **Needs the Functions deploy to take effect in production.**
+  **Deployed 2026-08-16** — all three appear in `firebase functions:list`.
+  *(This bullet read "Needs the Functions deploy to take effect in
+  production" until that date.)*
 - **FIXED — clients could forge these three notification types.** A
   client could write "X accepted your friend request" with no friendship
   existing; rules cannot check that. The three types were removed from
@@ -155,7 +271,35 @@ permission flags).
   the tracking failure so the source action could still succeed. The field is
   now allowed and emulator-covered; Awards also reconciles counters on open.
 
+- **OPEN — `voiceMinutes` is written by nothing, so the entire voice
+  achievement category and Creator Studio's "Voice time" tile are
+  permanently zero for every account.** Traced end to end on 2026-08-16:
+  `ProfileService` seeds the field to `0`;
+  `functions/achievements/model.js` only ever *derives* it from
+  `voiceSeconds`; and the sole producer of `voiceSeconds` is
+  `receiveLiveKitAchievementWebhook` in
+  `functions/achievements/livekit_http.js`, which is **never exported from
+  `functions/index.js`** and therefore has never been deployed. Nothing is
+  broken in the sense of erroring — the number is simply always zero, and
+  both surfaces present it as a real measurement. Wiring the webhook also
+  fixes the `publishPublicStatsSchedule` data-source problem, since
+  LiveKit emits `participant_left` / `participant_connection_aborted` even
+  on a crash. Until then, do not read `voiceMinutes` as a metric.
+
 ## Moderation & safety
+
+- **BY DESIGN, not a gap to fill by re-adding a rule — host eviction does
+  not exist anywhere in the product.** Removed deliberately in `952d8e4`.
+  A rules-level delete removed a roster row and nothing else: the evicted
+  account stayed connected to the live audio, kept chat through
+  `isRoomParticipant`, and could rejoin a public room immediately. It also
+  created a starvation primitive, because the delete was gated on a
+  counter the host could write. If the product wants eviction, it needs a
+  **callable** that completes the whole removal — roster row, live-audio
+  disconnect, chat withdrawal — in the shape of
+  `removeRoomParticipantSelf`. Do not restore the rule. Full reasoning:
+  [ADR-056](Decisions.md#adr-056-a-moderation-action-belongs-in-a-callable-that-completes-the-whole-removal-not-in-a-rule-that-deletes-one-row).
+
 
 - **FIXED — Staff Center user lookup could not find existing users.**
   `users.username` is stored AS TYPED (seeded verbatim from the display
@@ -180,18 +324,22 @@ permission flags).
   from the message-embedded `senderIsStaff` flag — badges resolve by
   sender uid from the projection.
 
-- **Production is running a client that is ahead of its backend.**
-  Pushing to `main` auto-deploys Hosting, so the Global Chat and
-  Moderation Center *clients* went live with commits `24353d4` and
-  `1e76d36` (live release 2026-08-11 22:16:50) while their Functions,
-  indexes and rules did not. Verified against the live project:
-  `moderateReport` and `listReportAuditTrail` are absent from
-  `firebase functions:list`, and `firebase firestore:indexes` returns no
-  `reports` index. A staff account opening Moderation in production
-  today gets a queue query with no index and a callable that resolves to
-  nothing — the actions fail, nothing is corrupted. Fixed by running the
-  ordered sequence in
-  [DEPLOYMENT.md](DEPLOYMENT.md#undeployed-backend-as-of-2026-08-11--the-selective-manifest).
+- **RESOLVED 2026-08-16, and the premise inverted.** This entry read
+  "Production is running a client that is ahead of its backend. Pushing to
+  `main` auto-deploys Hosting…" — describing the Global Chat and
+  Moderation Center clients shipping ahead of their Functions, indexes and
+  rules. `moderateReport`, `listReportAuditTrail` and the `reports` indexes
+  are all now deployed (`firebase functions:list`,
+  `firebase firestore:indexes`, 2026-08-16).
+
+  Two corrections worth keeping, because both were load-bearing beliefs:
+  **(1)** pushing to `main` has not auto-deployed Hosting since `409c7ee`
+  — releases are a manual `workflow_dispatch`. **(2)** The drift therefore
+  reversed direction: production sat on commit `9fdd8a9` while ~60 Cloud
+  Functions were deployed and *inert* because no client called them.
+  Backend-ahead-of-client is harder to spot than client-ahead-of-backend,
+  because nothing visibly fails. See
+  [ADR-055](Decisions.md#adr-055-the-2026-08-16-production-cutover--order-the-deploy-by-what-fails-closed-and-verify-by-fingerprinting-served-bytes).
 - **FIXED — the audit timeline's status arrow rendered as a tofu box.**
   `'open → resolved'` used U+2192, and Roboto — the font CanvasKit falls
   back to on web — has no glyph for it. Caught by actually looking at a
@@ -574,6 +722,22 @@ permission flags).
   trust in a red CI run: the likely culprit is the test's real-async
   Storage/Firestore fakes racing the shared-profile stream assertion.
 
+- **FIXED (2026-08-16, `38b29f7`) — CI was red on three consecutive
+  pushes, including a docs-only commit.** `legacy_identity_scrub.test.js`
+  asserted an absolute document count (`scanned === 1`) while
+  `scrubIdentitySnapshots` scans the whole `conversations` collection and
+  takes no uid or prefix scope, so it could not isolate itself the way its
+  own `wipe()` isolates its fixtures. `node --test test/*.test.js` runs
+  files **concurrently against one emulator**, so a conversation seeded by
+  any other file was counted here too, and the assertion held or broke
+  purely on interleaving — green locally, red on the runner. 509 of 510
+  passed every time, which is what gave it away. Fixed by measuring the
+  **delta** around this test's own write: exactly as strong an assertion
+  (one document scanned, one scrub planned, nothing written), independent
+  of what else exists. **Generalizable rule**: in the Functions suite,
+  never assert an absolute count over a collection your file does not
+  exclusively own.
+
 ## Code quality / consolidation
 
 - **`RoomScreen` (`lib/features/rooms/presentation/screens/room_screen.dart`,
@@ -610,13 +774,24 @@ permission flags).
   convention instead. Not a bug, but tracked as a migration in progress —
   see [UI.md](UI.md) and
   [Roadmap.md](Roadmap.md#app-wide-theme-migration).
-- **Cloud Functions still have zero automated test coverage.** The 225-case
-  emulator suite tests Firestore Security Rules; it does not execute the
-  JavaScript Functions implementation. Flutter has 41 regression files, but
-  broad cross-service integration and real store billing still have no
-  executable path. A green suite is strong evidence for the cases it names,
-  not blanket proof for every feature. See [TESTING.md](TESTING.md) for the
-  current scope.
+- **CORRECTED 2026-08-16 — this entry said "Cloud Functions still have
+  zero automated test coverage."** That was false, and had been for some
+  time: `functions/test/` holds **510 tests across 82 suites** in 45
+  files, running against the Auth + Firestore emulators and gating the
+  Hosting release in CI. Current counts live in one place now —
+  [TESTING.md](TESTING.md#current-counts-2026-08-16) — so this file should
+  reference them rather than restate them.
+
+  What remains true, and is the useful part of the original entry:
+  coverage is uneven, not absent. Many older functions have no focused
+  tests. **No suite anywhere proves anything about production** — they all
+  run against emulators or fakes, and the emulator does not require
+  composite indexes, which is precisely how a broken `expirePremiumIdentity`
+  survived 510 green tests for the entire life of the Premium feature.
+  Broad cross-service integration and real store billing still have no
+  executable path. A green suite is strong evidence for the cases it
+  names, not blanket proof for every feature — and never evidence about
+  what is deployed.
 
 ## Infrastructure
 
@@ -626,9 +801,43 @@ permission flags).
   deliberately declines rather than trusting the device. Only the guarded
   `adminSetPremiumEntitlements` callable can grant working Premium today. See
   [Roadmap.md](Roadmap.md#0e-premium-billing-adapters).
-- **`app.yovoice.app` DNS record not added yet** — blocks the website from
-  pointing at its final app URL. Needs Cloudflare access only the domain
-  owner has. See [Roadmap.md](Roadmap.md).
+- **RESOLVED 2026-08-16 — `app.yovoice.app` is LIVE.** This entry said
+  "DNS record not added yet … needs Cloudflare access only the domain
+  owner has" and had been stale. The CNAME resolves to
+  `yovoice-ec54a.web.app` and HTTPS returns 200; the Flutter web client
+  was fetched from that host and fingerprinted (5,139,256 bytes,
+  containing `publicProfiles`, `searchPublicProfiles`,
+  `selectMyAchievementTitle`).
+
+  **Remaining, and UNVERIFIED**: `NEXT_PUBLIC_APP_URL` must be flipped to
+  `https://app.yovoice.app` in all three of the website repo's Vercel
+  environments (production, preview, development) and the redirect
+  verified end-to-end. That lives in the other repo and could not be
+  checked from here — assume the website still points at the default
+  `web.app` domain until someone confirms otherwise.
+- **FIXED AND DEPLOYED 2026-08-16 — Premium never expired for anyone.**
+  The deployed scheduled `expirePremiumIdentity` sweep queries
+  `entitlements where isPremium == true and currentPeriodEnd < now`
+  (`functions/premium/entitlements.js:163`), which requires a composite
+  index on `entitlements(isPremium, currentPeriodEnd)`. The index was
+  committed but had never been deployed, so every run threw
+  `FAILED_PRECONDITION` and expired entitlements were never revoked. The
+  function looked healthy in `functions:list` and the Functions suite was
+  green throughout, because the emulator does not require composite
+  indexes — the failure existed only in the scheduler logs. Index deployed
+  2026-08-16. **UNVERIFIED**: no successful run has yet been observed in
+  Console → Functions → Logs; check that before calling Premium expiry
+  proven.
+- **OPEN, deliberate — `publishPublicStatsSchedule` is committed
+  (`cb4651a`) but NOT deployed.** Three preconditions first: `publicStats/live`
+  needs the project's first `allow read: if true` rule (with its own ADR and
+  emulator coverage), the live count needs a `COLLECTION_GROUP` index on
+  `rooms.expiresAt`, and the data source is known to be wrong —
+  `activeVoiceSessions.expiresAt` is a token-issuance TTL that is never
+  renewed and never cleaned up on a crash, so counting by freshness
+  reports zero for a full room while counting without it reports ghosts
+  forever. Do not sweep it into a blanket `--only functions` deploy. See
+  [DEPLOYMENT.md](DEPLOYMENT.md#deliberately-held-back-publishpublicstatsschedule).
 - **Fixed: `flutter build apk` failed outright** (missing core library
   desugaring for `flutter_local_notifications`, then a follow-on AAPT2
   drawable-resource error). See
