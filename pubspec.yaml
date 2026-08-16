@@ -22,8 +22,8 @@ dependencies:
   google_sign_in: ^7.1.1
 
   flutter_svg: ^2.2.0
-  flutter_riverpod: ^3.0.3
-  riverpod_annotation: ^3.0.3
+  flutter_riverpod: ^3.4.2
+  riverpod_annotation: ^4.0.6
 
   image_picker: ^1.2.0
   livekit_client: ^2.7.0
@@ -46,7 +46,7 @@ dev_dependencies:
 
   flutter_lints: ^6.0.0
   build_runner: ^2.7.0
-  riverpod_generator: ^3.0.3
+  riverpod_generator: ^4.0.8
   flutter_launcher_icons: ^0.14.4
   firebase_auth_mocks: ^0.15.2
   fake_cloud_firestore: ^4.2.0
