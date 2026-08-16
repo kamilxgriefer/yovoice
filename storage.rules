@@ -139,8 +139,27 @@ service firebase.storage {
             );
       }
 
+      // Two accepted object names, on purpose. The client build live in
+      // production uploads `{kind}_{millisecondsSinceEpoch}.{ext}`; the build
+      // in this tree uploads the deterministic `{kind}` so a retried creation
+      // overwrites instead of leaking an object per tap. A rules deploy
+      // precedes a client deploy, and both builds are in users' hands during
+      // the rollout, so accepting only one of the two names breaks Club
+      // avatar/banner uploads for real people either way.
+      //
+      // The timestamped form is validated exactly like the profile path it
+      // borrows its shape from: a fixed kind, a numeric suffix, an image
+      // extension, and a declared content type that agrees with that
+      // extension. The deterministic form carries no extension to agree
+      // with, so content type and byte bounds are its whole contract.
       function validClubImageUpload() {
-        return fileName in ['avatar', 'banner'] &&
+        return (
+              fileName in ['avatar', 'banner'] ||
+              (
+                fileName.matches('(avatar|banner)_[0-9]+[.](jpg|jpeg|png|webp)') &&
+                imageExtensionMatchesMime(fileName)
+              )
+            ) &&
             isValidImagePayload(8 * 1024 * 1024);
       }
 

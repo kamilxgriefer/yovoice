@@ -371,6 +371,80 @@ async function main() {
     ));
   });
 
+  // The client build live in production uploads Club media as
+  // `{kind}_{millisecondsSinceEpoch}.{ext}`; the build in this tree uploads
+  // the deterministic `{kind}`. The deploy sequence has a window where both
+  // are talking to the same ruleset, so both names have to be accepted —
+  // with the same name/MIME pairing the profile path already enforces.
+  await check("deployed client's timestamped Club media name is accepted", async () => {
+    await assertSucceeds(uploadBytes(
+      ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000000.jpg`),
+      smallImage, jpeg,
+    ));
+    await assertSucceeds(uploadBytes(
+      ref(alice, `clubs/${ALICE}/club-owned/banner_1755300000001.png`),
+      smallImage, png,
+    ));
+    await assertSucceeds(uploadBytes(
+      ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000002.webp`),
+      smallImage, webp,
+    ));
+    await assertSucceeds(uploadBytes(
+      ref(alice, `clubs/${ALICE}/club-owned/banner_1755300000003.jpeg`),
+      smallImage, jpeg,
+    ));
+  });
+  await check("deployed client's timestamped pre-root Club media is accepted", async () => {
+    const preRootTimestamped = `clubs/${ALICE}/new-club-2/banner_1755300000004.jpg`;
+    await assertSucceeds(uploadBytes(ref(alice, preRootTimestamped), smallImage, jpeg));
+    await assertSucceeds(deleteObject(ref(alice, preRootTimestamped)));
+  });
+  await check("timestamped Club media keeps every other Club guarantee", async () => {
+    // Not a Club manager.
+    await assertFails(uploadBytes(
+      ref(mallory, `clubs/${ALICE}/club-owned/avatar_1755300000005.jpg`),
+      smallImage, jpeg,
+    ));
+    // Extension must agree with the declared MIME, as on the profile path.
+    await assertFails(uploadBytes(
+      ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000006.jpg`),
+      smallImage, png,
+    ));
+    // Only avatar/banner, only image extensions, only a numeric suffix.
+    await assertFails(uploadBytes(
+      ref(alice, `clubs/${ALICE}/club-owned/logo_1755300000007.jpg`),
+      smallImage, jpeg,
+    ));
+    await assertFails(uploadBytes(
+      ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000008.svg`),
+      smallImage, jpeg,
+    ));
+    await assertFails(uploadBytes(
+      ref(alice, `clubs/${ALICE}/club-owned/avatar_notatimestamp.jpg`),
+      smallImage, jpeg,
+    ));
+    // The pattern must match the WHOLE name, not appear inside it —
+    // otherwise any prefix or suffix rides in on a legitimate-looking core.
+    await assertFails(uploadBytes(
+      ref(alice, `clubs/${ALICE}/club-owned/not-an-avatar_1755300000011.jpg`),
+      smallImage, jpeg,
+    ));
+    await assertFails(uploadBytes(
+      ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000012.jpg.html`),
+      smallImage, jpeg,
+    ));
+    // Size bounds are unchanged.
+    await assertFails(uploadBytes(
+      ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000009.jpg`),
+      tooSmallImage, jpeg,
+    ));
+    // A suspended Club still refuses media under either name.
+    await assertFails(uploadBytes(
+      ref(alice, `clubs/${ALICE}/suspended-club/avatar_1755300000010.jpg`),
+      smallImage, jpeg,
+    ));
+  });
+
   // --- Main Voice Moment: existing unpublished exact draft, create-only. ---
   const momentPath = `voice_moments/${ALICE}/${MOMENT}.m4a`;
   await check("verified active author can upload their exact unpublished draft", () =>

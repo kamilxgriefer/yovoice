@@ -323,6 +323,25 @@ service cloud.firestore {
           get(participantPath).data.get('admittedBy', '') == room.hostId;
     }
 
+    // A Community room's own members are the fourth way in, and they were
+    // missing. Membership is joined while a room is public, but the host can
+    // flip `visibility` to private afterwards through the ordinary metadata
+    // update — the member documents survive that flip, and without this
+    // branch every one of those members loses the room itself.
+    //
+    // That the omission was accidental rather than a boundary is settled by
+    // the rest of this ruleset: a roomMember may already read the room's chat
+    // (match /messages) and may already START ITS VOICE SESSION
+    // (roomVoiceStartAllowed via membersCanStartVoice) — a document nobody
+    // may read but a member may write is not a deliberate privacy design. It
+    // also breaks more than the one room: watchMyCommunities() hydrates every
+    // id its collectionGroup query returned with a rooms/{id} get inside a
+    // single Future.wait, so one unreadable room empties the whole list.
+    //
+    // This grants no new authority. roomMembers documents can only be created
+    // by the room's own host at creation time, or self-joined on a room that
+    // is public with approvalRequired false — so an outsider cannot mint the
+    // membership that would buy them the read.
     function canAccessRoom(roomId) {
       let room = get(
         /databases/$(database)/documents/rooms/$(roomId)
@@ -335,7 +354,10 @@ service cloud.firestore {
               room.get('clubId', '') is string &&
               room.get('clubId', '').size() > 0
                 ? isActiveClubRoomMember(roomId)
-                : isHostAdmittedRoomParticipant(roomId)
+                : (
+                    isHostAdmittedRoomParticipant(roomId) ||
+                    isRoomMember(roomId)
+                  )
             )
           );
     }
@@ -930,6 +952,40 @@ service cloud.firestore {
           get(guardPath).data.friendId == friendId &&
           get(guardPath).data.schemaVersion == 1 &&
           get(guardPath).data.establishedAt is timestamp;
+    }
+
+    // A manager's role change is ONE update carrying role + roleUpdatedAt +
+    // roleUpdatedBy — that is what ClubService.updateMemberRole() writes in
+    // the deployed client and in this tree's client alike. An allowlist that
+    // named only ['role','updatedAt'] denied every promotion and demotion in
+    // the product, so the field list has to match the real write.
+    //
+    // Widening the FIELD set is not widening PRIVILEGE, and this function is
+    // where that stays true: the two new fields are attribution, so each is
+    // pinned to a value the caller cannot choose — the acting uid and the
+    // server clock. A manager can change someone's role (the surrounding
+    // power checks decide whether), but cannot sign that change as another
+    // moderator or date it to a time that suits them. Each field is checked
+    // only when this write actually touches it, so a client that sends fewer
+    // fields is not forced to send more, and `updatedAt` stays accepted for
+    // the plain profile-sync path that shares this document.
+    function clubRoleChangeFieldsAllowed() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly([
+            'role', 'roleUpdatedAt', 'roleUpdatedBy', 'updatedAt'
+          ]) &&
+          (
+            !changed.hasAny(['roleUpdatedBy']) ||
+            request.resource.data.roleUpdatedBy == request.auth.uid
+          ) &&
+          (
+            !changed.hasAny(['roleUpdatedAt']) ||
+            request.resource.data.roleUpdatedAt == request.time
+          ) &&
+          (
+            !changed.hasAny(['updatedAt']) ||
+            request.resource.data.updatedAt == request.time
+          );
     }
 
     function clubRolePower(role) {
@@ -1715,10 +1771,12 @@ service cloud.firestore {
                 memberId != request.auth.uid &&
                 resource.data.role != 'owner' &&
                 request.resource.data.role != 'owner' &&
+                request.resource.data.role in [
+                  'coOwner', 'admin', 'moderator', 'member', 'guest'
+                ] &&
                 clubRolePower(clubRole(clubId)) > clubRolePower(resource.data.role) &&
                 clubRolePower(clubRole(clubId)) > clubRolePower(request.resource.data.role) &&
-                request.resource.data.diff(resource.data).affectedKeys()
-                  .hasOnly(['role', 'updatedAt'])
+                clubRoleChangeFieldsAllowed()
               )
             );
         allow delete: if false;
@@ -1993,20 +2051,30 @@ service cloud.firestore {
       }
 
       match /roomMembers/{memberId} {
-        // Named distinctly from clubs/{clubId}/members on purpose:
+        // Named distinctly from clubs/{clubId}/members on purpose (ADR-005):
         // watchMyCommunities() (room_service.dart) runs a
         // collectionGroup('roomMembers') query filtered to `userId == caller`.
-        // Firestore rejects a collectionGroup query outright unless EVERY
-        // match block sharing that collection name — anywhere in the whole
-        // ruleset — has a rule provable from the query's filter alone, with
-        // no exists()/get(). clubs/{clubId}/members legitimately needs
-        // exists() for its own (non-collectionGroup) roster-browsing reads,
-        // and combining it via `||` with a provable clause does NOT satisfy
-        // Firestore's provability check the way its docs suggest — verified
-        // against the emulator, not just assumed. Keeping room membership
-        // under its own collection name sidesteps that entirely: this rule
-        // needs no exists()/get(), so the collectionGroup query it powers
-        // stays valid regardless of what clubs/{clubId}/members does.
+        //
+        // What authorizes that query is the top-level
+        // `match /{path=**}/roomMembers/{memberId}` block at the head of this
+        // file, and only that block — re-verified against the emulator on
+        // 2026-08-16 by setting THIS nested rule to `if false` (the query
+        // still succeeded) and then the top-level one to `if false` (the
+        // query was rejected). A nested, parent-scoped match block does not
+        // take part in authorizing a collectionGroup query at all, so the
+        // get()-bearing clause below cannot endanger it. An earlier version
+        // of this comment claimed the opposite and has had reviewers filing
+        // defects against a rule that was never the problem.
+        //
+        // The constraint that does bind is on the TOP-LEVEL rule: it has to
+        // stay provable from the query's own filter, which is why it is kept
+        // to `resource.data.userId == request.auth.uid` and nothing broader
+        // (ADR-006). Keeping room membership under its own collection name is
+        // what lets that rule stay that narrow without having to serve
+        // clubs/{clubId}/members' roster browsing as well. Either rule
+        // changing needs a real collectionGroup() check, never a direct-path
+        // one — ADR-007, and the cases at the end of
+        // firestore-tests/rules.test.js.
         allow read: if resource.data.userId == request.auth.uid ||
             canAccessRoom(roomId);
         allow create: if isSignedIn() &&

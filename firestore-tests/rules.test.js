@@ -19,6 +19,7 @@ const {
   setDoc,
   updateDoc,
   writeBatch,
+  runTransaction,
   serverTimestamp,
   Timestamp,
   orderBy,
@@ -5669,6 +5670,436 @@ async function main() {
           { minuteCount: 0 },
         ),
       );
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // Deployed-client compatibility: the rules have to serve BOTH the client
+  // build that is live in production and the one in this tree, because the
+  // deploy sequence has a window where both talk to the same ruleset. Every
+  // case below is the exact operation shape one of those two clients issues
+  // (same fields, same batch/transaction grouping, same query), not a
+  // convenient approximation of it.
+  // ------------------------------------------------------------------
+
+  const clubManager = testEnv.authenticatedContext("cm-owner-uid", {
+    email_verified: true,
+  });
+  const clubAdmin = testEnv.authenticatedContext("cm-admin-uid", {
+    email_verified: true,
+  });
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await Promise.all([
+      setDoc(doc(db, "users/cm-owner-uid"), { displayName: "CM Owner", banned: false }),
+      setDoc(doc(db, "users/cm-admin-uid"), { displayName: "CM Admin", banned: false }),
+      setDoc(doc(db, "users/cm-member-uid"), { displayName: "CM Member", banned: false }),
+      setDoc(doc(db, "clubs/role-club"), {
+        ownerId: "cm-owner-uid",
+        status: "active",
+        name: "Role club",
+        memberCount: 3,
+      }),
+    ]);
+    await Promise.all([
+      setDoc(doc(db, "clubs/role-club/members/cm-owner-uid"), {
+        userId: "cm-owner-uid",
+        role: "owner",
+        displayName: "CM Owner",
+        joinedAt: Timestamp.fromMillis(1700000000000),
+        banned: false,
+      }),
+      setDoc(doc(db, "clubs/role-club/members/cm-admin-uid"), {
+        userId: "cm-admin-uid",
+        role: "admin",
+        displayName: "CM Admin",
+        joinedAt: Timestamp.fromMillis(1700000000000),
+        banned: false,
+      }),
+      setDoc(doc(db, "clubs/role-club/members/cm-member-uid"), {
+        userId: "cm-member-uid",
+        role: "member",
+        displayName: "CM Member",
+        joinedAt: Timestamp.fromMillis(1700000000000),
+        banned: false,
+      }),
+    ]);
+  });
+
+  // ClubService.updateMemberRole() writes role + roleUpdatedAt + roleUpdatedBy
+  // in ONE update, in both the deployed client and this tree's client. A
+  // field allowlist that names only `role` denies every promotion and every
+  // demotion in the product.
+  await check(
+    "regression: a Club owner promotes a member with the client's real " +
+      "role/roleUpdatedAt/roleUpdatedBy write",
+    async () => {
+      const db = clubManager.firestore();
+      await assertSucceeds(
+        updateDoc(doc(db, "clubs/role-club/members/cm-member-uid"), {
+          role: "moderator",
+          roleUpdatedAt: serverTimestamp(),
+          roleUpdatedBy: "cm-owner-uid",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "regression: a Club owner demotes an admin with the same three-field write",
+    async () => {
+      const db = clubManager.firestore();
+      await assertSucceeds(
+        updateDoc(doc(db, "clubs/role-club/members/cm-admin-uid"), {
+          role: "member",
+          roleUpdatedAt: serverTimestamp(),
+          roleUpdatedBy: "cm-owner-uid",
+        }),
+      );
+      // Put the admin back for the privilege cases below.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(
+          doc(ctx.firestore(), "clubs/role-club/members/cm-admin-uid"),
+          { role: "admin" },
+        );
+      });
+    },
+  );
+
+  await check(
+    "SECURITY: widening the role field set does not let a manager forge " +
+      "who performed the change",
+    async () => {
+      const db = clubManager.firestore();
+      await assertFails(
+        updateDoc(doc(db, "clubs/role-club/members/cm-member-uid"), {
+          role: "admin",
+          roleUpdatedAt: serverTimestamp(),
+          roleUpdatedBy: "cm-admin-uid",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a role change cannot backdate roleUpdatedAt to a client value",
+    async () => {
+      const db = clubManager.firestore();
+      await assertFails(
+        updateDoc(doc(db, "clubs/role-club/members/cm-member-uid"), {
+          role: "admin",
+          roleUpdatedAt: Timestamp.fromMillis(1600000000000),
+          roleUpdatedBy: "cm-owner-uid",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: the role write path still refuses self-promotion, owner " +
+      "assignment and climbing above the actor's own power",
+    async () => {
+      const owner = clubManager.firestore();
+      const admin = clubAdmin.firestore();
+      // An admin is not owner/coOwner, so the manager branch is closed to it.
+      await assertFails(
+        updateDoc(doc(admin, "clubs/role-club/members/cm-member-uid"), {
+          role: "admin",
+          roleUpdatedAt: serverTimestamp(),
+          roleUpdatedBy: "cm-admin-uid",
+        }),
+      );
+      // Self-promotion, through the widened field set.
+      await assertFails(
+        updateDoc(doc(admin, "clubs/role-club/members/cm-admin-uid"), {
+          role: "coOwner",
+          roleUpdatedAt: serverTimestamp(),
+          roleUpdatedBy: "cm-admin-uid",
+        }),
+      );
+      // Ownership never moves through this path.
+      await assertFails(
+        updateDoc(doc(owner, "clubs/role-club/members/cm-member-uid"), {
+          role: "owner",
+          roleUpdatedAt: serverTimestamp(),
+          roleUpdatedBy: "cm-owner-uid",
+        }),
+      );
+      // Permission smuggling alongside a legitimate role change.
+      await assertFails(
+        updateDoc(doc(owner, "clubs/role-club/members/cm-member-uid"), {
+          role: "moderator",
+          roleUpdatedAt: serverTimestamp(),
+          roleUpdatedBy: "cm-owner-uid",
+          banned: false,
+          permissions: ["manageClub"],
+        }),
+      );
+    },
+  );
+
+  // --- Private Community rooms and their own members ---
+  //
+  // A Community room is joined while it is public; the host can later flip
+  // `visibility` to private through the ordinary metadata update. The member
+  // documents survive that flip, and RoomService.watchMyCommunities() then
+  // hydrates EVERY room id the collectionGroup query returned with a
+  // rooms/{id} get(). One denial rejects the whole Future.wait, so a single
+  // unreadable room empties the entire Communities list.
+  const communityMember = testEnv.authenticatedContext("cr-member-uid", {
+    email_verified: true,
+  });
+  const communityStranger = testEnv.authenticatedContext("cr-stranger-uid", {
+    email_verified: true,
+  });
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await Promise.all([
+      setDoc(doc(db, "users/cr-member-uid"), { displayName: "CR Member", banned: false }),
+      setDoc(doc(db, "users/cr-stranger-uid"), { displayName: "CR Stranger", banned: false }),
+      setDoc(doc(db, "users/cr-host-uid"), { displayName: "CR Host", banned: false }),
+      setDoc(doc(db, "rooms/cr-public"), {
+        hostId: "cr-host-uid",
+        roomType: "community",
+        visibility: "public",
+        status: "active",
+        memberCount: 2,
+        participantCount: 0,
+        isLive: false,
+        approvalRequired: false,
+      }),
+      setDoc(doc(db, "rooms/cr-private"), {
+        hostId: "cr-host-uid",
+        roomType: "community",
+        visibility: "private",
+        status: "active",
+        memberCount: 2,
+        participantCount: 0,
+        isLive: false,
+        approvalRequired: false,
+        membersCanStartVoice: true,
+      }),
+    ]);
+    await Promise.all([
+      setDoc(doc(db, "rooms/cr-public/roomMembers/cr-member-uid"), {
+        userId: "cr-member-uid",
+        role: "member",
+        displayName: "CR Member",
+      }),
+      setDoc(doc(db, "rooms/cr-private/roomMembers/cr-member-uid"), {
+        userId: "cr-member-uid",
+        role: "member",
+        displayName: "CR Member",
+      }),
+      setDoc(doc(db, "rooms/cr-private/roomMembers/cr-host-uid"), {
+        userId: "cr-host-uid",
+        role: "owner",
+        displayName: "CR Host",
+      }),
+    ]);
+  });
+
+  await check(
+    "regression: a member of a private Community room can get the room document",
+    async () => {
+      const db = communityMember.firestore();
+      const snapshot = await assertSucceeds(getDoc(doc(db, "rooms/cr-private")));
+      if (!snapshot.exists()) throw new Error("expected the room document back");
+    },
+  );
+
+  await check(
+    "regression: watchMyCommunities() hydration — real collectionGroup query " +
+      "plus a get() for every room it returned, including a private one",
+    async () => {
+      const db = communityMember.firestore();
+      const snapshot = await assertSucceeds(
+        getDocs(
+          query(
+            collectionGroup(db, "roomMembers"),
+            where("userId", "==", "cr-member-uid"),
+          ),
+        ),
+      );
+      const roomIds = [
+        ...new Set(
+          snapshot.docs
+            .map((document) => document.ref.parent.parent &&
+              document.ref.parent.parent.id)
+            .filter(Boolean),
+        ),
+      ];
+      if (roomIds.length < 2) {
+        throw new Error(`expected 2 rooms from the query, got ${roomIds.length}`);
+      }
+      // Future.wait in room_service.dart: ONE denial rejects everything.
+      await assertSucceeds(
+        Promise.all(roomIds.map((id) => getDoc(doc(db, `rooms/${id}`)))),
+      );
+    },
+  );
+
+  await check(
+    "regression: a member can read the roster and start voice in their own " +
+      "private Community room",
+    async () => {
+      const db = communityMember.firestore();
+      await assertSucceeds(
+        getDocs(collection(db, "rooms/cr-private/roomMembers")),
+      );
+      await assertSucceeds(
+        updateDoc(doc(db, "rooms/cr-private"), {
+          isLive: true,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "rooms/cr-private"), {
+          isLive: false,
+        });
+      });
+    },
+  );
+
+  await check(
+    "SECURITY: a non-member still cannot get a private Community room, its " +
+      "roster or its participants",
+    async () => {
+      const db = communityStranger.firestore();
+      await assertFails(getDoc(doc(db, "rooms/cr-private")));
+      await assertFails(getDocs(collection(db, "rooms/cr-private/roomMembers")));
+      await assertFails(getDocs(collection(db, "rooms/cr-private/participants")));
+    },
+  );
+
+  await check(
+    "SECURITY: membership cannot be self-minted on a private Community room " +
+      "to buy read access",
+    async () => {
+      const db = communityStranger.firestore();
+      // Standalone forged membership.
+      await assertFails(
+        setDoc(doc(db, "rooms/cr-private/roomMembers/cr-stranger-uid"), {
+          userId: "cr-stranger-uid",
+          displayName: "CR Stranger",
+          role: "member",
+          joinedAt: serverTimestamp(),
+        }),
+      );
+      // The production joinCommunity() transaction shape (member document +
+      // memberCount increment together) must fail on a private room too.
+      await assertFails(
+        runTransaction(db, async (transaction) => {
+          transaction.set(
+            doc(db, "rooms/cr-private/roomMembers/cr-stranger-uid"),
+            {
+              userId: "cr-stranger-uid",
+              displayName: "CR Stranger",
+              photoUrl: null,
+              role: "member",
+              joinedAt: serverTimestamp(),
+            },
+          );
+          transaction.update(doc(db, "rooms/cr-private"), {
+            memberCount: 3,
+            updatedAt: serverTimestamp(),
+          });
+        }),
+      );
+      await assertFails(getDoc(doc(db, "rooms/cr-private")));
+    },
+  );
+
+  await check(
+    "regression: joinCommunity()'s transaction still works on a public " +
+      "Community room and grants that member the room read",
+    async () => {
+      const db = communityStranger.firestore();
+      await assertSucceeds(
+        runTransaction(db, async (transaction) => {
+          const snapshot = await transaction.get(doc(db, "rooms/cr-public"));
+          const count = snapshot.data().memberCount;
+          transaction.set(
+            doc(db, "rooms/cr-public/roomMembers/cr-stranger-uid"),
+            {
+              userId: "cr-stranger-uid",
+              displayName: "CR Stranger",
+              photoUrl: null,
+              role: "member",
+              joinedAt: serverTimestamp(),
+            },
+          );
+          transaction.update(doc(db, "rooms/cr-public"), {
+            memberCount: count + 1,
+            updatedAt: serverTimestamp(),
+          });
+        }),
+      );
+      await assertSucceeds(getDoc(doc(db, "rooms/cr-public")));
+    },
+  );
+
+  // --- collectionGroup provability, pinned rather than assumed ---
+  //
+  // ADR-007: the only thing that proves a collectionGroup() query works is a
+  // collectionGroup() query. These two pin the CURRENT top-level wildcard
+  // rules against the account-status gate they now carry: an active invitee
+  // gets their feed, a banned one does not — proven through the query path,
+  // not a direct get().
+  const bannedInvitee = testEnv.authenticatedContext("cg-banned-uid", {
+    email_verified: true,
+  });
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, "users/cg-banned-uid"), {
+      displayName: "Banned invitee",
+      banned: true,
+    });
+    await setDoc(doc(db, "clubs/cg-club2"), {
+      ownerId: "host-uid",
+      status: "active",
+    });
+    await setDoc(doc(db, "clubs/cg-club2/invites/cg-banned-uid"), {
+      inviteeId: "cg-banned-uid",
+      inviterId: "host-uid",
+      status: "pending",
+    });
+  });
+
+  await check(
+    "SECURITY: a banned account's watchMyClubInvites() collectionGroup " +
+      "query is denied, through the query path",
+    async () => {
+      const db = bannedInvitee.firestore();
+      await assertFails(
+        getDocs(
+          query(
+            collectionGroup(db, "invites"),
+            where("inviteeId", "==", "cg-banned-uid"),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "regression: a private Community room does not break the " +
+      "collectionGroup('roomMembers') query that lists it",
+    async () => {
+      const db = communityMember.firestore();
+      const snapshot = await assertSucceeds(
+        getDocs(
+          query(
+            collectionGroup(db, "roomMembers"),
+            where("userId", "==", "cr-member-uid"),
+          ),
+        ),
+      );
+      if (snapshot.size < 2) {
+        throw new Error(`expected 2 membership rows, got ${snapshot.size}`);
+      }
     },
   );
 
