@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -7,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 
 class MomentService {
   MomentService({
@@ -96,8 +96,14 @@ class MomentService {
     });
   }
 
+  /// Publishes a finished recording.
+  ///
+  /// [audio] is the platform seam: native passes a temporary file, web
+  /// passes the bytes the browser produced. Everything below — the draft
+  /// reservation, the object metadata the Storage rules check, the
+  /// finalize call, and the legacy fallback — is identical either way.
   Future<String> publishRecordedMoment({
-    required String localFilePath,
+    required RecordedAudio audio,
     required int durationSeconds,
     required String caption,
     String? replyToMomentId,
@@ -107,10 +113,11 @@ class MomentService {
       throw StateError('You must be signed in to publish a Voice Moment.');
     }
 
-    final file = File(localFilePath);
-    if (!await file.exists()) {
-      throw StateError('The recorded audio file could not be found.');
-    }
+    // The Storage rules fail an upload that violates these bounds, and a
+    // rejected upload leaves a draft that never finalizes. Refuse here,
+    // where the reason can still be explained.
+    final unusable = validateRecordedAudio(audio);
+    if (unusable != null) throw unusable;
 
     if (durationSeconds < 1 || durationSeconds > 60) {
       throw ArgumentError.value(
@@ -128,7 +135,7 @@ class MomentService {
       final identity = await _identity(user);
       return _publishVoiceReply(
         parentMomentId: replyToMomentId,
-        file: file,
+        audio: audio,
         durationSeconds: durationSeconds,
         caption: normalizedCaption,
         authorId: user.uid,
@@ -164,21 +171,19 @@ class MomentService {
       }
       final storageReference = _storage.ref(storagePath);
       try {
-        final snapshot = await storageReference.putFile(
-          file,
+        final objectGeneration = await audio.uploadTo(
+          storageReference,
           SettableMetadata(
-            contentType: 'audio/mp4',
+            contentType: audio.contentType,
             customMetadata: {'authorId': user.uid, 'momentId': momentId},
           ),
         );
-        final metadata = await snapshot.ref.getMetadata();
-        final objectGeneration = metadata.generation;
 
-        if (objectGeneration == null || objectGeneration.isEmpty) {
+        if (objectGeneration.isEmpty) {
           throw StateError('The upload did not return a valid generation.');
         }
 
-      final finalize = functions.httpsCallable('finalizeMomentDraft');
+        final finalize = functions.httpsCallable('finalizeMomentDraft');
         await finalize.call<Map<Object?, Object?>>({
           'momentId': momentId,
           'objectGeneration': objectGeneration,
@@ -198,7 +203,7 @@ class MomentService {
 
     return _publishRecordedMomentLegacy(
       user: user,
-      file: file,
+      audio: audio,
       durationSeconds: durationSeconds,
       caption: normalizedCaption,
     );
@@ -206,7 +211,7 @@ class MomentService {
 
   Future<String> _publishVoiceReply({
     required String parentMomentId,
-    required File file,
+    required RecordedAudio audio,
     required int durationSeconds,
     required String caption,
     required String authorId,
@@ -241,10 +246,10 @@ class MomentService {
       }
       final storageReference = _storage.ref(storagePath);
       try {
-        final snapshot = await storageReference.putFile(
-          file,
+        final objectGeneration = await audio.uploadTo(
+          storageReference,
           SettableMetadata(
-            contentType: 'audio/mp4',
+            contentType: audio.contentType,
             customMetadata: {
               'authorId': authorId,
               'momentId': parentMomentId,
@@ -252,14 +257,12 @@ class MomentService {
             },
           ),
         );
-        final metadata = await snapshot.ref.getMetadata();
-        final objectGeneration = metadata.generation;
 
-        if (objectGeneration == null || objectGeneration.isEmpty) {
+        if (objectGeneration.isEmpty) {
           throw StateError('The upload did not return a valid generation.');
         }
 
-      final finalize = functions.httpsCallable('finalizeVoiceCommentDraft');
+        final finalize = functions.httpsCallable('finalizeVoiceCommentDraft');
         await finalize.call<Map<Object?, Object?>>({
           'momentId': parentMomentId,
           'commentId': commentId,
@@ -280,7 +283,7 @@ class MomentService {
 
     return _publishVoiceReplyLegacy(
       parentMomentId: parentMomentId,
-      file: file,
+      audio: audio,
       durationSeconds: durationSeconds,
       caption: caption,
       authorId: authorId,
@@ -379,13 +382,13 @@ class MomentService {
 
   Future<String> _publishRecordedMomentLegacy({
     required User user,
-    required File file,
+    required RecordedAudio audio,
     required int durationSeconds,
     required String caption,
   }) async {
     final document = _moments.doc();
     final storageReference = _storage.ref(
-      'voice_moments/${user.uid}/${document.id}.m4a',
+      'voice_moments/${user.uid}/${document.id}.$kVoiceMomentFileExtension',
     );
 
     await document.set({
@@ -405,10 +408,10 @@ class MomentService {
     });
 
     try {
-      await storageReference.putFile(
-        file,
+      await audio.uploadTo(
+        storageReference,
         SettableMetadata(
-          contentType: 'audio/mp4',
+          contentType: audio.contentType,
           customMetadata: {'authorId': user.uid, 'momentId': document.id},
         ),
       );
@@ -431,7 +434,7 @@ class MomentService {
 
   Future<String> _publishVoiceReplyLegacy({
     required String parentMomentId,
-    required File file,
+    required RecordedAudio audio,
     required int durationSeconds,
     required String caption,
     required String authorId,
@@ -441,14 +444,15 @@ class MomentService {
     final parentReference = _moments.doc(parentMomentId);
     final commentReference = parentReference.collection('comments').doc();
     final storageReference = _storage.ref(
-      'voice_replies/$authorId/$parentMomentId/${commentReference.id}.m4a',
+      'voice_replies/$authorId/$parentMomentId/'
+      '${commentReference.id}.$kVoiceMomentFileExtension',
     );
 
     try {
-      await storageReference.putFile(
-        file,
+      await audio.uploadTo(
+        storageReference,
         SettableMetadata(
-          contentType: 'audio/mp4',
+          contentType: audio.contentType,
           customMetadata: {
             'authorId': authorId,
             'momentId': parentMomentId,
