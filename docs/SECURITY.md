@@ -62,6 +62,14 @@ production-shipped bug:
    [ADR-005](Decisions.md#adr-005-roomsroomidmembers-renamed-to-roommembers)
    and [ADR-006](Decisions.md#adr-006-top-level-collectiongroup-wildcard-rules-stay-read-only-and-narrow)
    for the incident this came from and how narrowly the fix was scoped.
+   **Getting the top-level rule wrong fails OPEN, not closed.** OR-ing any
+   caller-scoped clause (`|| exists(/databases/$(database)/documents/users/$(request.auth.uid))`)
+   into a top-level wildcard makes it a tautology for the query, and the
+   query then returns every document in that collection group across the
+   entire database rather than being rejected — verified on the emulator
+   2026-08-16. So the narrowness of those two wildcard rules is a live
+   containment boundary, not housekeeping. Never widen one to "let staff
+   read these too"; give staff a callable instead.
 4. **Two collections should never share a subcollection name unless
    they're actually related.** A coincidental name collision
    (`rooms/{id}/members` and `clubs/{id}/members`, unrelated in every way

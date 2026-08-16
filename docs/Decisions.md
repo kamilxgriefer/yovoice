@@ -303,14 +303,41 @@ subcollection name should be checked against this question before it's
 chosen: will this ever need a `collectionGroup()` query, and if so, could
 its name collide with an unrelated collection elsewhere in the schema?
 
-**Also learned, the hard way**: combining an `exists()`-based clause with
-a provable one via `||` does **not** satisfy Firestore's collection-group
-provability check, despite documentation seeming to suggest an OR'd
-provable clause should work — verified directly against the emulator. An
-earlier fix attempt for `watchMyCommunities()` relied on exactly that
-assumption and never actually worked, despite looking correct on
-inspection. Don't trust that pattern without an emulator test proving it
-(ADR-007).
+**Also learned, the hard way**: an earlier fix attempt for
+`watchMyCommunities()` never actually worked, despite looking correct on
+inspection. Don't trust a `collectionGroup()` rule without an emulator
+test that runs the real query (ADR-007).
+
+**Corrected 2026-08-16 — the original wording of this paragraph was wrong,
+and wrong in the dangerous direction.** It claimed that combining an
+`exists()`-based clause with a provable one via `||` does *not* satisfy
+Firestore's collection-group provability check. Three independent emulator
+runs this session (cloud-firestore-emulator v1.22.0) reproduce the
+opposite: the OR'd rule **is** accepted, and because the `exists()` clause
+is a constant with respect to the query, the rule becomes a tautology. The
+query then returns **every document in that collection group, across the
+whole database** — an unfiltered `collectionGroup('roomMembers')` came back
+with every row, and a query filtered to another user's uid returned that
+user's rows. So the failure mode is not "the query is rejected"; it is
+silent full-collection-group enumeration. Anyone who reads the old wording
+would believe such an edit fails closed. It fails open.
+
+Two consequences worth carrying forward. First, the narrowness of the
+top-level `match /{path=**}/...` rules is not a tidiness preference — it is
+the only thing standing between a filtered feed and a full dump of that
+collection group (ADR-006). Never OR anything caller-scoped into one.
+Second, and separately verified the same day: a **nested**, parent-scoped
+match block takes no part in authorizing a `collectionGroup()` query at
+all, even when it is unconditionally permissive. Only the top-level
+wildcard block authorizes those queries. This matches Firebase's own
+documented rule that rules for `/parent/{id}/coll/{doc}` do not apply to
+collection-group queries. The discriminating experiment is the one to
+repeat if this is ever questioned again: set the top-level rule to `if
+false` **while** the nested rule is `if true` — the query is still denied.
+Setting the nested rule to `if false` proves nothing, because Firestore
+unions `allow` rules and `false || provable` is allowed either way; that
+invalid experiment is what produced two spurious defect reports before
+being caught.
 
 ---
 
