@@ -2,8 +2,10 @@
 
 `CLAUDE.md` is the authoritative project policy. Every primary agent and
 subagent must read it before working, then follow the domain documents it
-routes to. The persistent specialist roster lives in `.codex/agents/` and is
-documented in `docs/AI_TEAM.md`.
+routes to. The persistent specialist roster lives in `.codex/agents/` (Codex,
+TOML) and `.claude/agents/` (Claude Code, Markdown with YAML frontmatter). Both
+hold the same 20 roles and must stay in sync; the roster is documented in
+`docs/AI_TEAM.md`.
 
 ## Assignment rules
 

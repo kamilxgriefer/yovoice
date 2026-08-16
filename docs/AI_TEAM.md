@@ -5,6 +5,25 @@ source of truth is `.codex/agents/*.toml`; Codex discovers those files whenever
 this trusted project is opened. `AGENTS.md` defines how the primary agent routes
 work and which independent reviews are mandatory.
 
+The same 20 roles exist for Claude Code as `.claude/agents/*.md` — one Markdown
+file per role, with YAML frontmatter (`name`, `description`, optional `tools`)
+and the role instructions as the body. The two rosters are mirrors of each
+other: same roles, same remits, same safety boundary. Keep them in sync — when a
+role's remit changes, update both files. Claude Code's `name` is a kebab-case
+slug (for example `senior-firebase-backend-engineer`), so it is the professional
+role name in lowercase with hyphens, except `Senior Product Designer UX UI` →
+`senior-product-designer-ux-ui` and `Localization Specialist` →
+`localization-specialist`. The four read-only reviewers that run under Codex's
+`sandbox_mode = "read-only"` are constrained in Claude Code by a restricted
+`tools` list and/or an explicit no-edit instruction instead.
+
+Claude Code discovers agents in `.claude/agents/` of the directory the session
+was opened in. Sessions opened at `~/Documents/GitHub` (the parent of `yovoice`,
+`yovoice-website` and `yovoice-marketing`) see the roster through the symlink
+`~/Documents/GitHub/.claude/agents` → `yovoice/.claude/agents`, so there is only
+one copy to maintain. A newly added or edited agent file is picked up by the
+next session, not the running one.
+
 ## Identity and badge convention
 
 Each role has a professional `name`, a narrow remit, and a unique visual badge

@@ -51,7 +51,12 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
-.claude/
+
+# Local Claude Code state stays local, but the persistent specialist roster in
+# .claude/agents/ is project configuration and is versioned like .codex/agents/
+# (see docs/AI_TEAM.md).
+.claude/*
+!.claude/agents/
 
 # Screenshots written by test/moderation_screenshot.dart (visual harness)
 test/.screenshots/
