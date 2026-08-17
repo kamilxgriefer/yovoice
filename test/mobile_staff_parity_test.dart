@@ -23,6 +23,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
+import 'package:yovoice/features/moderation/presentation/screens/moderation_center_screen.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_audit_service.dart';
@@ -578,6 +579,12 @@ void main() {
         await settle(tester);
         expect(find.byType(ChoiceChip), findsWidgets, reason: '$size');
         expect(find.byType(NavigationRail), findsNothing);
+        await tester.tap(find.widgetWithText(ChoiceChip, 'Moderation Center'));
+        await settle(tester);
+        expect(find.byType(ModerationCenterScreen), findsOneWidget);
+        expect(find.text('Open Moderation Center'), findsNothing);
+        expect(find.byType(Scaffold), findsOneWidget);
+        expect(find.byType(AppBar), findsOneWidget);
         expect(tester.takeException(), isNull, reason: '$size');
       }
     });
@@ -600,24 +607,25 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('the forged superAdmin sees only Reports, Rooms & Spaces '
-        'and Sanctions — no Users, no role management, no audit', (
-      tester,
-    ) async {
-      useSize(tester, const Size(390, 844));
-      await tester.pumpWidget(
-        MaterialApp(home: mobileScreen(caps: _forgedSuperAdminCaps)),
-      );
-      await settle(tester);
+    testWidgets(
+      'the forged superAdmin sees only Moderation Center, Rooms & Spaces '
+      'and Sanctions — no Users, no role management, no audit',
+      (tester) async {
+        useSize(tester, const Size(390, 844));
+        await tester.pumpWidget(
+          MaterialApp(home: mobileScreen(caps: _forgedSuperAdminCaps)),
+        );
+        await settle(tester);
 
-      expect(find.text('Reports'), findsWidgets);
-      expect(find.text('Rooms & Spaces'), findsWidgets);
-      expect(find.text('Sanctions'), findsWidgets);
-      expect(find.text('Users'), findsNothing);
-      expect(find.text('Overview'), findsNothing);
-      expect(find.text('Staff & Roles'), findsNothing);
-      expect(find.text('Audit Log'), findsNothing);
-    });
+        expect(find.text('Moderation Center'), findsWidgets);
+        expect(find.text('Rooms & Spaces'), findsWidgets);
+        expect(find.text('Sanctions'), findsWidgets);
+        expect(find.text('Users'), findsNothing);
+        expect(find.text('Overview'), findsNothing);
+        expect(find.text('Staff & Roles'), findsNothing);
+        expect(find.text('Audit Log'), findsNothing);
+      },
+    );
 
     testWidgets('mobile search renders result cards with badges, and the '
         'drawer confirms actions with a required reason', (tester) async {
@@ -628,7 +636,9 @@ void main() {
       );
       await settle(tester);
 
-      await tester.tap(find.text('Users').first);
+      final usersTab = find.widgetWithText(ChoiceChip, 'Users');
+      await tester.ensureVisible(usersTab);
+      await tester.tap(usersTab);
       await settle(tester);
       await tester.enterText(find.byType(TextField).first, 'sieeema');
       await tester.testTextInput.receiveAction(TextInputAction.search);

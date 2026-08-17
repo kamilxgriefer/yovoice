@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
+import 'package:yovoice/features/moderation/presentation/screens/moderation_center_screen.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_audit_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
@@ -20,7 +21,7 @@ import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 /// only when the SERVER-derived capability that backs it exists:
 ///
 ///   Overview, Users, Staff & Roles, Audit Log   owner
-///   Reports, Sanctions                          moderation tiers
+///   Moderation Center, Sanctions                moderation tiers
 ///   Rooms & Spaces                              room-moderation tiers
 ///
 /// Capabilities are re-verified ON MOUNT rather than trusted from
@@ -68,8 +69,8 @@ class StaffCenterScreen extends StatefulWidget {
 
 enum StaffSection {
   overview('Overview', Icons.space_dashboard_rounded),
+  moderation('Moderation Center', Icons.shield_rounded),
   users('Users', Icons.people_alt_rounded),
-  reports('Reports', Icons.flag_rounded),
   rooms('Rooms & Spaces', Icons.podcasts_rounded),
   sanctions('Sanctions', Icons.gavel_rounded),
   staffRoles('Staff & Roles', Icons.badge_rounded),
@@ -131,8 +132,8 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
   /// Which sections THIS account's server-derived capabilities back.
   List<StaffSection> _visibleSections(StaffCapabilities caps) => [
     if (caps.manageRoles) StaffSection.overview,
+    if (caps.handleAssignedReports) StaffSection.moderation,
     if (caps.manageRoles) StaffSection.users,
-    if (caps.handleAssignedReports) StaffSection.reports,
     if (caps.hasRoomModeration) StaffSection.rooms,
     if (caps.warnUsers || caps.suspendUsers) StaffSection.sanctions,
     if (caps.manageRoles) StaffSection.staffRoles,
@@ -407,7 +408,8 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
         return StaffOverviewSection(
           overviewService: widget.overviewService,
           onOpenUsers: _openUsers,
-          onOpenReports: () => setState(() => _section = StaffSection.reports),
+          onOpenReports: () =>
+              setState(() => _section = StaffSection.moderation),
           onOpenRooms: () => setState(() => _section = StaffSection.rooms),
           onOpenSanctions: () =>
               setState(() => _section = StaffSection.sanctions),
@@ -427,8 +429,25 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
           functions: widget.functions,
           firestore: widget.firestore,
         );
-      case StaffSection.reports:
-        return StaffReportsSection(moderationService: widget.moderationService);
+      case StaffSection.moderation:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const StaffSectionHeader(
+              title: 'Moderation Center',
+              subtitle:
+                  'Review, claim and resolve community reports without '
+                  'leaving Staff Center.',
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: ModerationCenterScreen(
+                embedded: true,
+                moderationService: widget.moderationService,
+              ),
+            ),
+          ],
+        );
       case StaffSection.rooms:
         return StaffRoomsSection(
           capabilities: capabilities,

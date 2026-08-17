@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
+import 'package:yovoice/features/moderation/presentation/screens/moderation_center_screen.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_audit_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
@@ -173,11 +174,8 @@ class _RecordingCallable implements HttpsCallable {
       throw Exception('rejected by the server');
     }
     return _FakeResult<T>(
-      {
-        'users': <Map<String, dynamic>>[],
-        'nextCursor': null,
-        'mode': 'name',
-      } as T,
+      {'users': <Map<String, dynamic>>[], 'nextCursor': null, 'mode': 'name'}
+          as T,
     );
   }
 
@@ -217,11 +215,13 @@ StaffCenterScreen screen({
     capabilityService: _FakeCapabilities(caps),
     directoryService:
         directory ??
-        _FakeDirectory((q, f) => const DirectorySearchPage(
-          users: [],
-          nextCursor: null,
-          mode: 'browse',
-        )),
+        _FakeDirectory(
+          (q, f) => const DirectorySearchPage(
+            users: [],
+            nextCursor: null,
+            mode: 'browse',
+          ),
+        ),
     overviewService: _FakeOverview(),
     auditService: _FakeAudit(),
     moderationService: ModerationService(firestore: db, auth: auth),
@@ -241,16 +241,17 @@ Future<void> settle(WidgetTester tester) async {
 
 void main() {
   group('capability gating', () {
-    testWidgets('the owner sees all seven sections in the rail',
-        (tester) async {
+    testWidgets('the owner sees all seven sections in the rail', (
+      tester,
+    ) async {
       useSize(tester, const Size(1440, 900));
       await tester.pumpWidget(host(screen()));
       await settle(tester);
 
       for (final label in [
         'Overview',
+        'Moderation Center',
         'Users',
-        'Reports',
         'Rooms & Spaces',
         'Sanctions',
         'Staff & Roles',
@@ -258,6 +259,7 @@ void main() {
       ]) {
         expect(find.text(label), findsWidgets, reason: label);
       }
+      expect(find.text('Reports'), findsNothing);
       expect(tester.takeException(), isNull);
     });
 
@@ -267,12 +269,40 @@ void main() {
       await tester.pumpWidget(host(screen(caps: _modCaps)));
       await settle(tester);
 
-      expect(find.text('Reports'), findsWidgets);
+      expect(find.text('Moderation Center'), findsWidgets);
       expect(find.text('Rooms & Spaces'), findsWidgets);
       expect(find.text('Sanctions'), findsWidgets);
       expect(find.text('Users'), findsNothing);
       expect(find.text('Overview'), findsNothing);
       expect(find.text('Audit Log'), findsNothing);
+    });
+
+    testWidgets('Moderation Center sits below Overview and opens inline', (
+      tester,
+    ) async {
+      useSize(tester, const Size(1440, 900));
+      await tester.pumpWidget(host(screen()));
+      await settle(tester);
+
+      final overview = find.text('Overview').first;
+      final moderation = find.text('Moderation Center').first;
+      final users = find.text('Users').first;
+      expect(
+        tester.getTopLeft(overview).dy,
+        lessThan(tester.getTopLeft(moderation).dy),
+      );
+      expect(
+        tester.getTopLeft(moderation).dy,
+        lessThan(tester.getTopLeft(users).dy),
+      );
+
+      await tester.tap(moderation);
+      await settle(tester);
+
+      expect(find.byType(ModerationCenterScreen), findsOneWidget);
+      expect(find.text('Open Moderation Center'), findsNothing);
+      expect(find.byType(Scaffold), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('an ordinary account is refused', (tester) async {
@@ -287,8 +317,9 @@ void main() {
   });
 
   group('overview', () {
-    testWidgets('shows the real server counts and opens filtered sections',
-        (tester) async {
+    testWidgets('shows the real server counts and opens filtered sections', (
+      tester,
+    ) async {
       useSize(tester, const Size(1440, 900));
       final directory = _FakeDirectory(
         (q, f) => const DirectorySearchPage(
@@ -351,8 +382,9 @@ void main() {
       expect(find.text('sieeema-uid'), findsOneWidget);
     });
 
-    testWidgets('typing debounces; two characters trigger the search',
-        (tester) async {
+    testWidgets('typing debounces; two characters trigger the search', (
+      tester,
+    ) async {
       useSize(tester, const Size(1440, 900));
       final directory = _FakeDirectory(
         (q, f) => DirectorySearchPage(
@@ -374,10 +406,7 @@ void main() {
         before,
         reason: 'one character must not query',
       );
-      expect(
-        find.textContaining('at least 2 characters'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('at least 2 characters'), findsOneWidget);
 
       await tester.enterText(find.byType(TextField).first, 'si');
       await tester.pump(const Duration(milliseconds: 100));
@@ -461,10 +490,7 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.search);
       await settle(tester);
 
-      expect(
-        find.textContaining('could not be reached'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('could not be reached'), findsOneWidget);
       expect(find.textContaining('No account matches'), findsNothing);
       expect(find.text('Retry'), findsOneWidget);
 
@@ -497,8 +523,9 @@ void main() {
       );
     });
 
-    testWidgets('pagination renders Load more only while a cursor exists',
-        (tester) async {
+    testWidgets('pagination renders Load more only while a cursor exists', (
+      tester,
+    ) async {
       useSize(tester, const Size(1440, 900));
       // Counts only the pager query itself — mount-time browses and
       // filter reloads must not consume the pages.
@@ -592,8 +619,9 @@ void main() {
       return functions;
     }
 
-    testWidgets('shows identity, authoritative status and owner actions',
-        (tester) async {
+    testWidgets('shows identity, authoritative status and owner actions', (
+      tester,
+    ) async {
       await openDrawer(tester);
 
       expect(find.text('User detail'), findsOneWidget);
@@ -627,8 +655,9 @@ void main() {
       await tester.tap(confirm);
       await settle(tester);
 
-      final assignCalls =
-          functions.calls.where((c) => c.$1 == 'assignUserRole').toList();
+      final assignCalls = functions.calls
+          .where((c) => c.$1 == 'assignUserRole')
+          .toList();
       expect(assignCalls, hasLength(1));
       expect(assignCalls.single.$2, {
         'uid': 'sieeema-uid',
@@ -638,8 +667,9 @@ void main() {
       });
     });
 
-    testWidgets('ban requires a reason and cannot double-submit',
-        (tester) async {
+    testWidgets('ban requires a reason and cannot double-submit', (
+      tester,
+    ) async {
       final functions = await openDrawer(tester);
       functions.callDelayMs = 300;
 
@@ -658,8 +688,9 @@ void main() {
       expect(tester.widget<OutlinedButton>(banButton).onPressed, isNull);
 
       await settle(tester);
-      final banCalls =
-          functions.calls.where((c) => c.$1 == 'setUserBan').toList();
+      final banCalls = functions.calls
+          .where((c) => c.$1 == 'setUserBan')
+          .toList();
       expect(banCalls, hasLength(1));
       expect(banCalls.single.$2['banned'], true);
       expect(banCalls.single.$2['reason'], 'abuse');
@@ -672,8 +703,9 @@ void main() {
   });
 
   group('layout', () {
-    testWidgets('1100px desktop keeps the rail without overflow',
-        (tester) async {
+    testWidgets('1100px desktop keeps the rail without overflow', (
+      tester,
+    ) async {
       useSize(tester, const Size(1100, 800));
       await tester.pumpWidget(host(screen()));
       await settle(tester);
@@ -681,8 +713,9 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('mobile width falls back to tabs without overflow',
-        (tester) async {
+    testWidgets('mobile width falls back to tabs without overflow', (
+      tester,
+    ) async {
       useSize(tester, const Size(390, 844));
       await tester.pumpWidget(host(screen()));
       await settle(tester);

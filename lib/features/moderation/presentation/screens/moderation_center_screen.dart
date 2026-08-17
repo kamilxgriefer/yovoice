@@ -32,11 +32,17 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 class ModerationCenterScreen extends StatefulWidget {
   const ModerationCenterScreen({
     this.isRootTab = false,
+    this.embedded = false,
     this.moderationService,
     super.key,
   });
 
   final bool isRootTab;
+
+  /// Renders only the moderation workspace, without a nested Scaffold or
+  /// navigation chrome. Staff Center uses this mode so Moderation behaves
+  /// like every other section in its rail and tab strip.
+  final bool embedded;
   final ModerationService? moderationService;
 
   @override
@@ -94,7 +100,7 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
   String get _roleLabel => switch (_role) {
     'moderator' => 'Moderator',
     'superModerator' => 'Super Moderator',
-    'admin' || 'superAdmin' => 'Admin',
+    'superAdmin' => 'Admin',
     _ => 'Staff',
   };
 
@@ -146,6 +152,61 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
     final inShellSlot =
         widget.isRootTab && MediaQuery.sizeOf(context).width >= 980;
 
+    final content = SafeArea(
+      child: switch (_isStaff) {
+        null => const Center(
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2.2),
+          ),
+        ),
+        false => const _AccessDenied(),
+        true => _ModerationWorkspace(
+          key: ValueKey('workspace-$_refreshTick'),
+          service: _service!,
+          role: _role,
+          roleLabel: _roleLabel,
+          showHeader: inShellSlot,
+          status: _status,
+          targetFilter: _targetFilter,
+          reasonFilter: _reasonFilter,
+          searchQuery: _searchQuery,
+          statusCounts: _statusCounts,
+          limit: _limit,
+          selectedId: _selectedId,
+          onStatus: (status) => setState(() {
+            _status = status;
+            _limit = ModerationService.pageSize;
+            _selectedId = null;
+          }),
+          // Narrowing changes which documents the query returns, so
+          // the page window resets — keeping it would claim to have
+          // paged through a set that was never queried.
+          onTargetFilter: (value) => setState(() {
+            _targetFilter = value;
+            _limit = ModerationService.pageSize;
+            _selectedId = null;
+          }),
+          onReasonFilter: (value) => setState(() {
+            _reasonFilter = value;
+            _limit = ModerationService.pageSize;
+            _selectedId = null;
+          }),
+          onSearch: (query) => setState(() => _searchQuery = query),
+          onRefresh: _refresh,
+          onSelect: (id) => setState(() => _selectedId = id),
+          onLoadMore: () =>
+              setState(() => _limit += ModerationService.pageSize),
+          onAccessExpired: _handleAccessExpired,
+        ),
+      },
+    );
+
+    if (widget.embedded) {
+      return Material(color: AppColors.background, child: content);
+    }
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: inShellSlot
@@ -193,56 +254,7 @@ class _ModerationCenterScreenState extends State<ModerationCenterScreen> {
                 ),
               ],
             ),
-      body: SafeArea(
-        child: switch (_isStaff) {
-          null => const Center(
-            child: SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2.2),
-            ),
-          ),
-          false => const _AccessDenied(),
-          true => _ModerationWorkspace(
-            key: ValueKey('workspace-$_refreshTick'),
-            service: _service!,
-            role: _role,
-            roleLabel: _roleLabel,
-            showHeader: inShellSlot,
-            status: _status,
-            targetFilter: _targetFilter,
-            reasonFilter: _reasonFilter,
-            searchQuery: _searchQuery,
-            statusCounts: _statusCounts,
-            limit: _limit,
-            selectedId: _selectedId,
-            onStatus: (status) => setState(() {
-              _status = status;
-              _limit = ModerationService.pageSize;
-              _selectedId = null;
-            }),
-            // Narrowing changes which documents the query returns, so
-            // the page window resets — keeping it would claim to have
-            // paged through a set that was never queried.
-            onTargetFilter: (value) => setState(() {
-              _targetFilter = value;
-              _limit = ModerationService.pageSize;
-              _selectedId = null;
-            }),
-            onReasonFilter: (value) => setState(() {
-              _reasonFilter = value;
-              _limit = ModerationService.pageSize;
-              _selectedId = null;
-            }),
-            onSearch: (query) => setState(() => _searchQuery = query),
-            onRefresh: _refresh,
-            onSelect: (id) => setState(() => _selectedId = id),
-            onLoadMore: () =>
-                setState(() => _limit += ModerationService.pageSize),
-            onAccessExpired: _handleAccessExpired,
-          ),
-        },
-      ),
+      body: content,
     );
   }
 }

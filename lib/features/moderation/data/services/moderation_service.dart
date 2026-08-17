@@ -116,7 +116,7 @@ class ModerationService {
     try {
       final token = await user.getIdTokenResult();
       final claim = token.claims?['role'];
-      const staff = ['moderator', 'admin', 'superAdmin'];
+      const staff = ['moderator', 'superModerator', 'superAdmin'];
       if (claim is! String || !staff.contains(claim)) return false;
 
       final profile = await _firestore.collection('users').doc(user.uid).get();

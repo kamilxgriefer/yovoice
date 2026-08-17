@@ -197,23 +197,45 @@ void main() {
       expect(find.text('moderator'), findsNothing);
     });
 
-    testWidgets('an admin gets the workspace', (tester) async {
+    testWidgets('a super moderator gets the embedded workspace', (
+      tester,
+    ) async {
       useDesktop(tester);
-      await seedAccount('admin-uid', role: 'admin');
+      await seedAccount('super-mod-uid', role: 'superModerator');
       await seedReport(id: 'r1');
 
       await tester.pumpWidget(
         host(
           ModerationCenterScreen(
-            moderationService: service('admin-uid', role: 'admin'),
+            embedded: true,
+            moderationService: service('super-mod-uid', role: 'superModerator'),
           ),
         ),
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Moderation'), findsOneWidget);
-      expect(find.text('Admin'), findsOneWidget);
-      expect(find.text('admin'), findsNothing);
+      expect(find.text('Moderation is staff only'), findsNothing);
+      expect(find.text('Harassment or bullying'), findsOneWidget);
+      expect(find.byType(Scaffold), findsNothing);
+      expect(find.byType(AppBar), findsNothing);
+    });
+
+    testWidgets('the legacy admin role is refused fail-closed', (tester) async {
+      useDesktop(tester);
+      await seedAccount('legacy-admin-uid', role: 'admin');
+      await seedReport(id: 'r1');
+
+      await tester.pumpWidget(
+        host(
+          ModerationCenterScreen(
+            moderationService: service('legacy-admin-uid', role: 'admin'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Moderation is staff only'), findsOneWidget);
+      expect(find.text('Harassment or bullying'), findsNothing);
     });
   });
 
