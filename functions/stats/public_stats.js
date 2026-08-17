@@ -1,51 +1,90 @@
-// Public statistics — the three real numbers the marketing site publishes.
+// Public statistics — the real numbers the marketing site publishes.
 //
 // One server-owned document, `publicStats/live`, written only from here
-// through the Admin SDK on a schedule. It would be the project's first
-// publicly readable document, so it deliberately carries nothing except the
-// aggregates and the time they were computed: no uids, no room ids, no
-// per-room breakdown, nothing that could be joined back to a person.
+// through the Admin SDK on a schedule. It is the project's only publicly
+// readable document (`match /publicStats/live` in firestore.rules, pinned id,
+// `allow get: if true`), so it deliberately carries nothing except aggregates
+// and the time they were computed: no uids, no room ids, no per-room
+// breakdown, nothing that could be joined back to a person.
 //
-// WHAT `peopleTalkingNow` ACTUALLY MEANS — read this before trusting it.
+// WHAT IS PUBLISHED, AND WHY EACH NAME IS THE NAME IT IS.
 //
-// The only server-authoritative voice source is `activeVoiceSessions`
-// (`allow read, write: if false`). It is written exclusively by
-// `recordAuthorizedVoiceSession` (../livekit/token.js) and removed only by a
-// server-mediated leave, room end or moderation action (../livekit/sessions.js,
-// ../rooms/participants.js, ../admin/rooms.js, ../staff/voice_enforcement.js).
-// NOTHING removes a row when a client crashes, drops its network or closes the
-// tab, and no scheduled sweep or TTL policy exists in this repository. An
-// unbounded count would therefore report people who left hours ago — the same
-// fiction this feature exists to replace.
+// Both figures are `count()` aggregates over a live collection. That makes
+// them CURRENT TOTALS, not lifetime creation counters, and both can go DOWN.
+// The field names say so, because the previous names did not: `accountsCreated`
+// and `roomsCreated` describe monotonic counters this function has never
+// computed and cannot compute from a collection whose documents are deleted.
+// A public number called "created" that shrinks is a quieter version of the
+// same lie as a hardcoded "2,481 people talking right now".
 //
-// Each row carries `expiresAt` = token issuance + VOICE_TOKEN_TTL_SECONDS. A
-// row whose `expiresAt` is still in the future is backed by voice authority
-// granted less than that TTL ago and not yet surrendered. That is the only
-// freshness bound this data supports, and it fails toward silence rather than
-// invention. Stated precisely, `peopleTalkingNow` is:
+//   activeAccounts — count() over `publicProfiles`, NOT over `users`.
 //
-//   the number of DISTINCT accounts that were granted voice authority within
-//   the last VOICE_TOKEN_TTL_SECONDS and have not since left,
+//     `users` is the wrong source and would overstate the product by roughly
+//     two to one. It is private account state, it retains rows for banned and
+//     disabled accounts, and on 2026-08-16 a production sweep found 18 of its
+//     33 documents were Auth orphans with no Firebase Auth account behind them
+//     at all (docs/Decisions.md, ADR-055). `publicProfiles/{uid}` is the exact
+//     server-owned projection maintained by `onUserPrivacySourceChanged`
+//     (../profile/public_profiles.js), which treats Firebase Auth as the
+//     existence authority and deletes the projection for a banned, disabled or
+//     deleted account. Counting it answers "how many accounts exist and are
+//     usable right now", which is the only account number this project can
+//     state truthfully.
 //
-// which is a LOWER BOUND on the true concurrent population, not an estimate of
-// it. The Flutter client mints exactly one token per join and never refreshes
-// it (`VoiceCallService.join` is the sole caller of `createLiveKitToken`, and
-// LiveKit's own reconnects reuse the original JWT), so a participant who stays
-// in a room longer than the TTL stops being counted. Closing that gap needs a
-// presence heartbeat — either a periodic client re-mint or the already-written
-// but currently unexported signed LiveKit webhook
-// (`receiveLiveKitAchievementWebhook`, ../achievements/livekit_http.js), whose
-// `participant_left` / `participant_connection_aborted` events are emitted by
-// the SFU on a crash and therefore describe real presence. Until one of those
-// lands, this number is honest but systematically low, and the presentation
-// layer must treat a small value as "not enough signal to show" rather than as
-// a measurement.
+//     Its error direction is deliberate: during the projection trigger's short
+//     consistency window a real account may not be counted yet, so the figure
+//     can lag LOW. It cannot lag high, because a projection cannot exist for an
+//     account Auth does not have.
 //
-// `accountsCreated` and `roomsCreated` are real `count()` aggregates over the
-// live `users` and `rooms` collections, following the Staff Center pattern in
-// ../staff/overview.js. They are CURRENT TOTALS, not monotonic lifetime
-// creation counters: deleting an account or a room lowers them. See the ADR
-// for why that is a product decision, not a bug in this function.
+//   existingRooms — count() over `rooms`.
+//
+//     Every room document that exists, live or ended, public or private. Rooms
+//     are genuinely hard-deleted, so this figure visibly shrinks; "existing" is
+//     chosen over "created" precisely so that is unsurprising rather than a
+//     bug report. It is not filtered to `isLive`, because nothing reliably
+//     clears `isLive` after a crash and a filtered figure would inherit that
+//     staleness while sounding more precise than it is.
+//
+// WHAT IS NOT PUBLISHED: `peopleTalkingNow`.
+//
+// There is no honest live-presence number to publish yet, so this document
+// carries no field for one. The reasoning, because the code for it is still
+// below and somebody will be tempted:
+//
+// The only server-authoritative voice source today is `activeVoiceSessions`
+// (`allow read, write: if false`), written by `recordAuthorizedVoiceSession`
+// (../livekit/token.js) and removed only by a server-mediated leave, room end
+// or moderation action. NOTHING removes a row when a client crashes, drops its
+// network or closes the tab. Each row carries `expiresAt` = token issuance +
+// VOICE_TOKEN_TTL_SECONDS, and the client mints exactly one token per join and
+// never refreshes it, so bounding by that expiry is the only freshness signal
+// the data supports — and it drops everyone who has been in a room longer than
+// five minutes. A busy room of twelve people an hour into a conversation
+// publishes ZERO. That is not a conservative lower bound, it is an error that
+// grows with the very thing being measured, and it is at its worst exactly
+// when the number would matter. Counting without the bound is worse: it
+// reports people who left hours ago, which is the fiction this feature exists
+// to delete.
+//
+// The replacement is not a refinement of the code below; it is a different
+// query over a different collection. `receiveLiveKitAchievementWebhook`
+// (../achievements/livekit_http.js, wired in fe82755) maintains
+// `achievementVoiceSessions`, whose rows are closed by LiveKit's own
+// `participant_left` / `participant_connection_aborted` / `room_finished`
+// events — real presence, including after a crash. A live count from that
+// source is `collection('achievementVoiceSessions').where('status','==','open')`
+// de-duplicated on `userId`: a top-level collection, served by the automatic
+// single-field index, needing no index deploy at all.
+//
+// So `peopleTalkingNow` is introduced ONCE, when it can be defined correctly,
+// rather than published now with one meaning and silently redefined later.
+// Until then the marketing site simply renders no live line — its LiveStats
+// component already treats a missing field as "do not show", so nothing there
+// has to change to accommodate the absence.
+//
+// The `activeVoiceSessions` scan is kept below, exported and tested, but is
+// deliberately NOT called by the publisher. READ THE WARNING ON
+// fetchFreshVoiceSessions BEFORE RECONNECTING IT.
 
 const { logger } = require("firebase-functions/v2");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
@@ -59,16 +98,27 @@ const REGION = "europe-west1";
 
 const PUBLIC_STATS_COLLECTION = "publicStats";
 const PUBLIC_STATS_DOCUMENT = "live";
-const PUBLIC_STATS_SCHEMA_VERSION = 1;
+// Version 2 is the first version ever published. Version 1 —
+// { peopleTalkingNow, accountsCreated, roomsCreated } — was committed in
+// cb4651a and deliberately never deployed, so no reader has ever seen it and
+// no compatibility path is owed to it. The bump exists so that document shape
+// and version number cannot be confused with each other later.
+const PUBLIC_STATS_SCHEMA_VERSION = 2;
+
+// The exact server-owned projection of accounts that currently exist and are
+// usable. See the header for why this is not `users`.
+const ACTIVE_ACCOUNTS_COLLECTION = "publicProfiles";
+const ROOMS_COLLECTION = "rooms";
 
 // The freshness bound IS the token TTL. Deriving it rather than restating it
 // means the two can never drift apart in a way that silently invents presence.
+// Unused by the publisher today; see the header.
 const LIVE_SESSION_FRESHNESS_SECONDS = VOICE_TOKEN_TTL_SECONDS;
 
-// A hard ceiling on documents read per run. Exceeding it means either genuine
-// scale this approach no longer fits, or a cleanup regression leaking rows;
-// both must fail loudly and keep the previous published values rather than
-// publish a silently truncated number or run up an unbounded read bill.
+// A hard ceiling on documents read per run of the dormant live-session scan.
+// Exceeding it means either genuine scale this approach no longer fits, or a
+// cleanup regression leaking rows; both must fail loudly rather than publish a
+// silently truncated number or run up an unbounded read bill.
 const MAX_LIVE_SESSION_SCAN = 2000;
 
 const SAFE_DOCUMENT_ID = /^[A-Za-z0-9_-]{1,128}$/u;
@@ -86,6 +136,8 @@ class PublicStatsError extends Error {
  * document is allowed to contribute a person — the same defensive shape
  * `deleteActiveVoiceSessionsForRoom` uses. Returns the owning uid, or null if
  * the document is not a canonical voice-session mirror.
+ *
+ * Part of the dormant live-presence path; see the header.
  */
 function canonicalSessionUser(document) {
   const segments = String(document?.ref?.path ?? "").split("/");
@@ -116,6 +168,8 @@ function canonicalSessionUser(document) {
  * two devices in the SAME room share one document id and already collapse.
  * De-duplication is on the owning uid, which is why this cannot be a `count()`
  * aggregate — an aggregate counts index entries, and index entries are sessions.
+ *
+ * Part of the dormant live-presence path; see the header.
  */
 function distinctLiveSpeakers(
   documents,
@@ -136,8 +190,30 @@ function distinctLiveSpeakers(
 }
 
 /**
- * Reads one document per fresh session row. Deliberately bounded at
- * `maxSessions + 1` so truncation is detectable rather than silent.
+ * DORMANT — NOT CALLED BY THE PUBLISHER, AND NOT SAFE TO CALL WITHOUT AN INDEX
+ * DEPLOY.
+ *
+ * Two independent reasons to read the header before wiring this back in:
+ *
+ * 1. The number it produces is wrong in the way described there — a busy room
+ *    reports zero. The fix is `achievementVoiceSessions`, not this.
+ * 2. `collectionGroup(...).where(...)` is NOT served by Firestore's automatic
+ *    single-field indexes: those are maintained at COLLECTION scope only. This
+ *    query needs a COLLECTION_GROUP single-field index on `rooms.expiresAt`,
+ *    declared as a `fieldOverrides` entry in firestore.indexes.json AND
+ *    deployed. Without it every scheduled run throws FAILED_PRECONDITION —
+ *    the same failure that silently stopped Premium from ever expiring
+ *    (docs/DEPLOYMENT.md). The emulator does not require indexes, so no test
+ *    in this repository will warn you.
+ *
+ *    That entry must ALSO re-declare the two COLLECTION-scope orders. A
+ *    `fieldOverrides` entry REPLACES automatic indexing for the field rather
+ *    than adding to it; the live project shows this plainly — the deployed
+ *    `rooms.roomId` override carries only its COLLECTION_GROUP index and the
+ *    automatic collection-scope ones are gone.
+ *
+ * Reads one document per fresh session row, bounded at `maxSessions + 1` so
+ * truncation is detectable rather than silent.
  */
 async function fetchFreshVoiceSessions({
   now = Date.now(),
@@ -154,8 +230,9 @@ async function fetchFreshVoiceSessions({
 
 /**
  * A real `count()` aggregate, billed per up-to-1000 index entries scanned
- * rather than per document. A missing or malformed count is an error, never a
- * zero — a zero here would be published as "no accounts exist".
+ * rather than per document, and needing no index of its own. A missing or
+ * malformed count is an error, never a zero — a zero here would be published
+ * as "no accounts exist".
  */
 async function countCollection(name, database = db) {
   const snapshot = await database.collection(name).count().get();
@@ -169,34 +246,26 @@ async function countCollection(name, database = db) {
 }
 
 /**
- * All three sources must succeed. A partial run would mix one fresh number with
- * one missing number, and a missing number written as zero would read as
- * "nobody is here" — a lie, and a worse one than the hardcoded value it
- * replaces. Every source is settled so a second rejection cannot escape as an
- * unhandled promise, then the first real failure is rethrown.
+ * Both sources must succeed. A partial run would mix one fresh number with one
+ * missing number, and a missing number written as zero would read as "nobody is
+ * here" — a lie, and a worse one than the hardcoded value it replaces. Every
+ * source is settled so a second rejection cannot escape as an unhandled
+ * promise, then the first real failure is rethrown.
  */
 async function computePublicStats({
-  now = Date.now(),
-  maxSessions = MAX_LIVE_SESSION_SCAN,
-  fetchSessions = fetchFreshVoiceSessions,
-  countAccounts = () => countCollection("users"),
-  countRooms = () => countCollection("rooms"),
+  countAccounts = () => countCollection(ACTIVE_ACCOUNTS_COLLECTION),
+  countRooms = () => countCollection(ROOMS_COLLECTION),
 } = {}) {
-  const outcomes = await Promise.allSettled([
-    fetchSessions({ now, maxSessions }),
-    countAccounts(),
-    countRooms(),
-  ]);
+  const outcomes = await Promise.allSettled([countAccounts(), countRooms()]);
   const failure = outcomes.find((outcome) => outcome.status === "rejected");
   if (failure) throw failure.reason;
 
-  const [sessions, accountsCreated, roomsCreated] = outcomes
+  const [activeAccounts, existingRooms] = outcomes
     .map((outcome) => outcome.value);
   return {
     schemaVersion: PUBLIC_STATS_SCHEMA_VERSION,
-    peopleTalkingNow: distinctLiveSpeakers(sessions, { maxSessions }),
-    accountsCreated,
-    roomsCreated,
+    activeAccounts,
+    existingRooms,
   };
 }
 
@@ -204,23 +273,18 @@ async function computePublicStats({
  * Computes first, writes once, and writes nothing at all if any source failed.
  * The previously published document therefore survives a failed run untouched,
  * and its `updatedAt` is what exposes the staleness to the website.
+ *
+ * `set` without merge is deliberate: the published document is exactly what
+ * this function computed, so a field removed here disappears from the world
+ * rather than lingering at its last value forever.
  */
 async function publishPublicStats({
-  now = Date.now(),
-  maxSessions = MAX_LIVE_SESSION_SCAN,
-  fetchSessions = fetchFreshVoiceSessions,
-  countAccounts = () => countCollection("users"),
-  countRooms = () => countCollection("rooms"),
+  countAccounts = () => countCollection(ACTIVE_ACCOUNTS_COLLECTION),
+  countRooms = () => countCollection(ROOMS_COLLECTION),
   writeStats = null,
   updatedAt = null,
 } = {}) {
-  const stats = await computePublicStats({
-    now,
-    maxSessions,
-    fetchSessions,
-    countAccounts,
-    countRooms,
-  });
+  const stats = await computePublicStats({ countAccounts, countRooms });
   const document = {
     ...stats,
     // Server commit time, not this instance's clock: `updatedAt` is the
@@ -236,10 +300,12 @@ async function publishPublicStats({
 }
 
 /**
- * Every 5 minutes, matching the freshness window the data itself supports.
- * A slower cadence could publish a figure whose entire evidence window has
- * already rolled over; a faster one multiplies the per-run read cost for a
- * number that cannot become more truthful than its 5-minute source.
+ * Every 5 minutes. The cadence is set by the CONSUMER, not by how fast the
+ * numbers move: the website discards this document as stale after 15 minutes
+ * and then renders nothing, so a 15-minute cadence would leave no margin and a
+ * single missed run would blank the line. Five minutes tolerates two
+ * consecutive failures before a visitor sees anything change, and two `count()`
+ * aggregates every five minutes is a few hundred reads a day.
  *
  * A thrown failure is the intended outcome of an unavailable source: it is
  * visible in Cloud Scheduler and leaves the last good document in place.
@@ -255,14 +321,14 @@ const publishPublicStatsSchedule = onSchedule(
   async () => {
     const stats = await publishPublicStats();
     logger.info("public stats published", {
-      peopleTalkingNow: stats.peopleTalkingNow,
-      accountsCreated: stats.accountsCreated,
-      roomsCreated: stats.roomsCreated,
+      activeAccounts: stats.activeAccounts,
+      existingRooms: stats.existingRooms,
     });
   },
 );
 
 module.exports = {
+  ACTIVE_ACCOUNTS_COLLECTION,
   LIVE_SESSION_FRESHNESS_SECONDS,
   MAX_LIVE_SESSION_SCAN,
   PUBLIC_STATS_COLLECTION,
@@ -270,6 +336,7 @@ module.exports = {
   PUBLIC_STATS_SCHEMA_VERSION,
   PublicStatsError,
   REGION,
+  ROOMS_COLLECTION,
   canonicalSessionUser,
   computePublicStats,
   countCollection,

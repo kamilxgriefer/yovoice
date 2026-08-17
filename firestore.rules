@@ -1136,6 +1136,51 @@ service cloud.firestore {
           role == 'member' ? 20 : 10;
     }
 
+    // THE ONLY DOCUMENT IN THIS DATABASE THAT A STRANGER CAN READ.
+    //
+    // `publicStats/live` is a server-owned aggregate written by
+    // publishPublicStatsSchedule (functions/stats/public_stats.js) through the
+    // Admin SDK, which bypasses security rules entirely. The `if false` writes
+    // below constrain every CLIENT; they are not a constraint on the writer.
+    //
+    // THE PINNED ID IS THE CONTAINMENT, AND THAT IS MEASURED, NOT ASSUMED.
+    // The proposal for this block was `match /publicStats/{statsId} { allow
+    // read: if true; }`. That variant was compiled and run against the
+    // emulator: an anonymous stranger's `getDocs(collection('publicStats'))`
+    // SUCCEEDS under it and returns every sibling document, not just this one.
+    // Pinning the id is what refuses that — the same variant with `allow read`
+    // but a pinned `live` still denies the list. Both runs are pinned as
+    // executable cases in firestore-tests/rules.test.js (ADR-007, ADR-060).
+    // Consequence: a future public statistic is a deliberate edit to this
+    // file, and `publicStats/anythingElse` matches no rule at all.
+    //
+    // `get` rather than `read` is therefore the narrower grant, not the
+    // mechanism: `read` is `get` + `list`, the only consumer (the marketing
+    // site's LiveStats component) reads this document by id, and nothing in
+    // the product ever needs to enumerate this collection. `allow list: if
+    // false` is likewise inert against the shipped pinned match — it earns its
+    // place by becoming load-bearing the moment somebody widens `live` to a
+    // wildcard, which is precisely the edit that would otherwise leak.
+    //
+    // The real boundary is NOT this rule, it is the payload. Everything the
+    // scheduled function writes here is world-readable, unauthenticated,
+    // forever. The document must therefore stay aggregate-only: integers and a
+    // server timestamp, with no uid, room id, display name or any other value
+    // that could be joined back to a person. Adding a field here is a
+    // publication decision; functions/test/public_stats.test.js pins the exact
+    // key set so one cannot be added by accident.
+    //
+    // Narrowing this further is possible only once Firebase App Check is
+    // enforced (ADR-004 keeps enforcement deliberately off). Until then an
+    // anonymous marketing-site visitor and an arbitrary script are the same
+    // caller, and any auth condition here would break the feature rather than
+    // protect it.
+    match /publicStats/live {
+      allow get: if true;
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
     // Public identity is an exact, server-owned projection. Ordinary clients
     // may fetch one known profile id, but may never enumerate the collection;
     // discovery goes through the bounded searchPublicProfiles callable, which

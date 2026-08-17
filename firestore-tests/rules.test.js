@@ -15,6 +15,7 @@ const {
   deleteField,
   collection,
   collectionGroup,
+  documentId,
   query,
   where,
   setDoc,
@@ -28,6 +29,21 @@ const {
 } = require("firebase/firestore");
 
 const RULES_PATH = path.resolve(__dirname, "../firestore.rules");
+
+// The emulator's default port is 8080 and firebase.json still declares it, but
+// a developer machine frequently already has something on it — including a
+// long-running emulator started for the app. Hardcoding the port made the
+// suite unrunnable in that situation, which is the wrong failure for the one
+// gate that stands between a rule change and production. Set
+// FIRESTORE_EMULATOR_PORT to match `emulators:start --only firestore
+// --project demo-yovoice` on any other port.
+const EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_ADDRESS ?? "127.0.0.1";
+const EMULATOR_PORT = Number(process.env.FIRESTORE_EMULATOR_PORT ?? 8080);
+if (!Number.isInteger(EMULATOR_PORT) || EMULATOR_PORT <= 0) {
+  throw new Error(
+    `FIRESTORE_EMULATOR_PORT is not a port: ${process.env.FIRESTORE_EMULATOR_PORT}`,
+  );
+}
 
 let passed = 0;
 let failed = 0;
@@ -49,8 +65,8 @@ async function main() {
     projectId: "demo-yovoice",
     firestore: {
       rules: fs.readFileSync(RULES_PATH, "utf8"),
-      host: "127.0.0.1",
-      port: 8080,
+      host: EMULATOR_HOST,
+      port: EMULATOR_PORT,
     },
   });
 
@@ -7888,6 +7904,305 @@ async function main() {
     },
   );
 
+  // --- publicStats/live: the project's first world-readable document ---
+  //
+  // Every other `allow` in this file ends at some account. This one does not,
+  // so the cases below are the entire boundary and they are written as if the
+  // reader were hostile, because the reader is the internet.
+  //
+  // Two things are proved separately and must stay separate. That a stranger
+  // can GET the one pinned document is the feature. That NOTHING else about
+  // the collection is reachable — no enumeration, no sibling, no subcollection,
+  // no write from any caller — is the containment. A suite that only checked
+  // the first would pass just as happily against `match /publicStats/{id}
+  // { allow read: if true; }`, which is a different and much worse rule.
+
+  const statsStranger = testEnv.unauthenticatedContext();
+
+  await check(
+    "PUBLIC STATS: an unauthenticated stranger gets publicStats/live even " +
+      "before it exists — the rule reads no document state, so a run before " +
+      "the scheduler's first publish is a miss, never a denial",
+    async () => {
+      const snapshot = await assertSucceeds(
+        getDoc(doc(statsStranger.firestore(), "publicStats/live")),
+      );
+      if (snapshot.exists()) {
+        throw new Error(
+          "publicStats/live was already seeded — this case must run first",
+        );
+      }
+    },
+  );
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await Promise.all([
+      // Exactly the shape functions/stats/public_stats.js publishes. Nothing
+      // here identifies anyone; that is the actual security control on this
+      // path, and it is asserted in functions/test/public_stats.test.js.
+      setDoc(doc(db, "publicStats/live"), {
+        schemaVersion: 2,
+        activeAccounts: 14,
+        existingRooms: 6,
+        updatedAt: Timestamp.now(),
+      }),
+      // A sibling, seeded deliberately. If the match statement is ever
+      // loosened to a wildcard, this document starts leaking and the case
+      // below turns red.
+      setDoc(doc(db, "publicStats/internal"), { secret: "not for the world" }),
+      setDoc(doc(db, "publicStats/live/history/entry"), { activeAccounts: 13 }),
+    ]);
+  });
+
+  await check(
+    "PUBLIC STATS: an unauthenticated stranger reads the published document",
+    async () => {
+      const snapshot = await assertSucceeds(
+        getDoc(doc(statsStranger.firestore(), "publicStats/live")),
+      );
+      if (snapshot.data()?.activeAccounts !== 14) {
+        throw new Error(
+          `expected the published aggregate, got ${JSON.stringify(snapshot.data())}`,
+        );
+      }
+    },
+  );
+
+  await check(
+    "PUBLIC STATS: a signed-in account reads it too — the grant is not " +
+      "accidentally scoped to anonymous callers",
+    async () => {
+      await assertSucceeds(getDoc(doc(host.firestore(), "publicStats/live")));
+    },
+  );
+
+  await check(
+    "SECURITY PUBLIC STATS: an unauthenticated stranger cannot create it",
+    async () => {
+      await assertFails(
+        setDoc(doc(statsStranger.firestore(), "publicStats/live"), {
+          schemaVersion: 2,
+          activeAccounts: 9_999_999,
+          existingRooms: 9_999_999,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PUBLIC STATS: a signed-in account cannot overwrite the " +
+      "published numbers",
+    async () => {
+      await assertFails(
+        setDoc(doc(attacker.firestore(), "publicStats/live"), {
+          schemaVersion: 2,
+          activeAccounts: 9_999_999,
+          existingRooms: 9_999_999,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PUBLIC STATS: a signed-in account cannot nudge one field",
+    async () => {
+      await assertFails(
+        updateDoc(doc(attacker.firestore(), "publicStats/live"), {
+          activeAccounts: 2_481,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PUBLIC STATS: nobody can delete the published document — a " +
+      "world-readable document is also a world-visible outage if a client " +
+      "can remove it",
+    async () => {
+      await assertFails(
+        deleteDoc(doc(statsStranger.firestore(), "publicStats/live")),
+      );
+      await assertFails(
+        deleteDoc(doc(attacker.firestore(), "publicStats/live")),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PUBLIC STATS: a signed-in account cannot LIST the collection — " +
+      "`read` would have granted this, `get` does not",
+    async () => {
+      await assertFails(
+        getDocs(collection(attacker.firestore(), "publicStats")),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PUBLIC STATS: an unauthenticated stranger cannot LIST the " +
+      "collection either",
+    async () => {
+      await assertFails(
+        getDocs(collection(statsStranger.firestore(), "publicStats")),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PUBLIC STATS: naming the readable document inside a QUERY is " +
+      "still a list and is still refused — the get grant cannot be reached " +
+      "through a filter",
+    async () => {
+      await assertFails(
+        getDocs(
+          query(
+            collection(statsStranger.firestore(), "publicStats"),
+            where(documentId(), "==", "live"),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PUBLIC STATS: publicStats/anythingElse is denied — the pinned " +
+      "document id is what stops a future sibling from being published by " +
+      "accident",
+    async () => {
+      await assertFails(
+        getDoc(doc(statsStranger.firestore(), "publicStats/internal")),
+      );
+      await assertFails(
+        getDoc(doc(attacker.firestore(), "publicStats/internal")),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PUBLIC STATS: the grant does not cascade to a subcollection " +
+      "under the published document",
+    async () => {
+      await assertFails(
+        getDoc(doc(statsStranger.firestore(), "publicStats/live/history/entry")),
+      );
+      await assertFails(
+        getDocs(
+          collection(statsStranger.firestore(), "publicStats/live/history"),
+        ),
+      );
+    },
+  );
+
+  // --- The publicStats discriminators, run rather than asserted ---
+  //
+  // The twelve cases above prove the shipped rule denies enumeration. They do
+  // NOT prove the denial is caused by the two choices made deliberately —
+  // `get` instead of `read`, and a pinned id instead of `{statsId}`. A suite
+  // can pass for the wrong reason (the emulator refusing something unrelated),
+  // and this project has been bitten by exactly that: see ADR-007 and the
+  // collectionGroup discriminator below. So the alternatives are compiled and
+  // RUN, and the leak they would have shipped is observed directly.
+
+  const PINNED_PUBLIC_STATS =
+    "    match /publicStats/live {\n" +
+    "      allow get: if true;\n" +
+    "      allow list: if false;\n" +
+    "      allow create, update, delete: if false;\n" +
+    "    }";
+
+  async function publicStatsUnderVariantRules(projectId, edits, run) {
+    const source = fs.readFileSync(RULES_PATH, "utf8");
+    let variant = source;
+    for (const [find, replaceWith] of edits) {
+      if (!variant.includes(find)) {
+        throw new Error(
+          `rule text drifted — variant snippet not found:\n${find}`,
+        );
+      }
+      variant = variant.replace(find, replaceWith);
+    }
+    if (variant === source) {
+      throw new Error(
+        "rule text drifted — the variant transform matched nothing",
+      );
+    }
+    const variantEnv = await initializeTestEnvironment({
+      projectId,
+      firestore: { rules: variant, host: EMULATOR_HOST, port: EMULATOR_PORT },
+    });
+    try {
+      await variantEnv.clearFirestore();
+      await variantEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await Promise.all([
+          setDoc(doc(db, "publicStats/live"), {
+            schemaVersion: 2,
+            activeAccounts: 14,
+            existingRooms: 6,
+            updatedAt: Timestamp.now(),
+          }),
+          setDoc(doc(db, "publicStats/internal"), {
+            secret: "not for the world",
+          }),
+        ]);
+      });
+      return await run(variantEnv.unauthenticatedContext().firestore());
+    } finally {
+      await variantEnv.cleanup();
+    }
+  }
+
+  await check(
+    "PROOF: `allow read` on a WILDCARD publicStats match hands the whole " +
+      "collection to an anonymous stranger, sibling documents included — " +
+      "which is the rule that was proposed, and the leak the pinned id stops",
+    async () => {
+      const snapshot = await assertSucceeds(
+        publicStatsUnderVariantRules(
+          "demo-yovoice-stats-a",
+          [[
+            PINNED_PUBLIC_STATS,
+            "    match /publicStats/{statsId} {\n" +
+              "      allow read: if true;\n" +
+              "      allow create, update, delete: if false;\n" +
+              "    }",
+          ]],
+          (db) => getDocs(collection(db, "publicStats")),
+        ),
+      );
+      const ids = snapshot.docs.map((document) => document.id).sort();
+      if (ids.length !== 2 || !ids.includes("internal")) {
+        throw new Error(
+          `expected the wildcard variant to leak both documents, got ${ids}`,
+        );
+      }
+    },
+  );
+
+  await check(
+    "PROOF: `allow read` on the PINNED id still refuses the list, so the " +
+      "pinned id — not the get/read choice — is what contains enumeration; " +
+      "`get` is the narrower grant kept because the product needs nothing more",
+    async () => {
+      await assertFails(
+        publicStatsUnderVariantRules(
+          "demo-yovoice-stats-b",
+          [[
+            PINNED_PUBLIC_STATS,
+            "    match /publicStats/live {\n" +
+              "      allow read: if true;\n" +
+              "      allow create, update, delete: if false;\n" +
+              "    }",
+          ]],
+          (db) => getDocs(collection(db, "publicStats")),
+        ),
+      );
+    },
+  );
+
   // --- The collectionGroup discriminator, run rather than asserted ---
   //
   // Setting the nested rule to `if false` proves nothing: Firestore unions
@@ -7922,7 +8237,7 @@ async function main() {
     }
     const variantEnv = await initializeTestEnvironment({
       projectId,
-      firestore: { rules: variant, host: "127.0.0.1", port: 8080 },
+      firestore: { rules: variant, host: EMULATOR_HOST, port: EMULATOR_PORT },
     });
     try {
       await variantEnv.clearFirestore();
