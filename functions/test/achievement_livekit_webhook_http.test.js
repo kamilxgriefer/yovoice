@@ -110,6 +110,13 @@ function recordingResponse() {
   return { recorded, response };
 }
 
+// LiveKit delivers an event within seconds of emitting it, so the receiving
+// clock tracks the event's own `created_at`. Each signed delivery below
+// advances this to the instant it claims to describe. The freshness window
+// itself — stale, future-dated and in-window — is exercised directly in
+// achievement_livekit_webhook_hardening.test.js.
+let currentNowMs = BASE_MS;
+
 function postRequest(body, authorization) {
   return {
     method: "POST",
@@ -154,6 +161,7 @@ function buildHarness({ hostId = HOST_UID, uid = UID } = {}) {
     apiKeyProvider: () => API_KEY,
     apiSecretProvider: () => API_SECRET,
     store,
+    now: () => currentNowMs,
   });
   return { memory, store, handler };
 }
@@ -165,6 +173,8 @@ async function deliver(handler, body, authorization) {
 }
 
 async function deliverSigned(handler, body, options = {}) {
+  const createdAt = JSON.parse(body)?.created_at;
+  if (Number.isFinite(createdAt)) currentNowMs = createdAt * 1000;
   return deliver(handler, body, await signedAuthorization(body, options));
 }
 
@@ -234,6 +244,7 @@ describe("LiveKit achievement webhook — rejection before any Firestore work", 
         apiKeyProvider: () => API_KEY,
         apiSecretProvider: () => API_SECRET,
         store: counting.store,
+        now: () => currentNowMs,
       }),
     };
   }
@@ -621,6 +632,7 @@ describe("LiveKit achievement webhook — bounds", () => {
         db: memory,
         maximumSessionSeconds: 120,
       }),
+      now: () => currentNowMs,
     });
 
     await deliverSigned(handler, participantBody("participant_joined", BASE_SECONDS));

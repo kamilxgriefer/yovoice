@@ -11,6 +11,13 @@ const DEFAULT_MAX_SESSION_SECONDS = 24 * 60 * 60;
 const MAX_VOICE_DAY_BUCKETS = 2;
 const MAX_VOICE_INTERVALS_PER_DAY = 256;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+// A signed token with no `exp` verifies forever, and the receiver's
+// `clockTolerance` is skew tolerance for `exp`/`nbf`, not a maximum age. This
+// is therefore the only bound on how old a captured delivery may be. Replay is
+// already a no-op against the interval-union ledger; what this buys is that
+// replay is not FREE, so the state-machine paths behind it cannot be driven
+// cheaply. Symmetric, so a future-dated event is refused too.
+const MAX_WEBHOOK_EVENT_AGE_MS = 10 * 60 * 1000;
 
 class VoiceWebhookValidationError extends Error {
   constructor(message) {
@@ -85,6 +92,8 @@ async function receiveSignedLiveKitWebhook({
   authorization,
   clockTolerance = "30s",
   receiver = null,
+  now = () => Date.now(),
+  maximumEventAgeMs = MAX_WEBHOOK_EVENT_AGE_MS,
 }) {
   if (!nonEmpty(apiKey, 500) || !nonEmpty(apiSecret, 1000)) {
     throw new VoiceWebhookValidationError("LiveKit webhook secrets are required.");
@@ -101,8 +110,35 @@ async function receiveSignedLiveKitWebhook({
   const verifier = receiver ?? new WebhookReceiver(apiKey, apiSecret);
   // skipAuth is deliberately false. Token issuance, client telemetry and parsed
   // JSON objects are never accepted as evidence of connected voice time.
+  //
+  // Two precise notes about what this verification does and does not do, so
+  // the next reader does not credit it with more than it performs:
+  //
+  //  - The JWT SIGNATURE comparison is constant-time (jose's HS* path uses
+  //    crypto.timingSafeEqual). The `sha256` body-digest claim is then checked
+  //    with an ordinary `!==` string compare, NOT a timing-safe one. That is
+  //    not exploitable — the claim is already authenticated by the signature,
+  //    and an attacker who could forge it would not need the timing — but the
+  //    two comparisons are not the same and should not be described as one.
+  //  - The receiver does NOT pin `algorithms`, so HS384 and HS512 are accepted
+  //    alongside HS256. Also not exploitable: every HS* variant requires this
+  //    same secret, and an asymmetric `alg` cannot be substituted because jose
+  //    rejects a non-HMAC algorithm for a symmetric key. If a verifier is ever
+  //    constructed here directly rather than by the SDK, pin ['HS256'].
   const event = await verifier.receive(body, authorization, false, clockTolerance);
-  return normalizeLiveKitWebhookEvent(event);
+  const normalized = normalizeLiveKitWebhookEvent(event);
+  // The receiver verifies the signature but NOT the age of what was signed:
+  // an authentic token carrying no `exp` claim stays valid indefinitely, and
+  // the `sha256` claim binds the body to the token, not the token to a moment.
+  // The event's own `created_at` is inside the signed body, so it cannot be
+  // moved without invalidating the signature — which makes it the one
+  // trustworthy clock available here.
+  if (normalized && Math.abs(now() - normalized.createdAtMs) > maximumEventAgeMs) {
+    throw new VoiceWebhookValidationError(
+      "The LiveKit webhook event is outside its freshness window.",
+    );
+  }
+  return normalized;
 }
 
 function voiceSessionFromJoin(webhook, canonicalRoom) {
@@ -240,15 +276,26 @@ function mergeBillableInterval(existingIntervals, addedInterval) {
     (left, right) => left.startMs - right.startMs || left.endMs - right.endMs,
   ));
   if (nextUnion.length > MAX_VOICE_INTERVALS_PER_DAY) {
-    throw new VoiceWebhookValidationError(
-      "The daily voice interval ledger exceeds its safe bound.",
-    );
+    // SATURATION, NOT REFUSAL. This bound used to throw, which propagated out
+    // as a permanent 400 and left the session document open forever — so past
+    // 256 disjoint intervals in a UTC day, every further close was refused and
+    // its credit lost. 256 reconnects in 24 hours is one every 5.6 minutes,
+    // which an ordinary phone on a bad network reaches without trying, so the
+    // bound was hurting exactly the users it was not aimed at. It also bounded
+    // no abuse: a farmer stays connected rather than reconnecting.
+    //
+    // The ledger is what saturates; the state machine must not. The previous
+    // union is returned unchanged so the day's stored intervals stay canonical
+    // and bounded, zero seconds are credited, and the caller still closes the
+    // session normally.
+    return { intervals: previousUnion, addedSeconds: 0, saturated: true };
   }
   const previousSeconds = Math.floor(coveredMilliseconds(previousUnion) / 1000);
   const nextSeconds = Math.floor(coveredMilliseconds(nextUnion) / 1000);
   return {
     intervals: nextUnion,
     addedSeconds: Math.max(nextSeconds - previousSeconds, 0),
+    saturated: false,
   };
 }
 
@@ -326,14 +373,17 @@ function planVoiceSessionCredit({
   const nextHostDays = { ...hostIntervalsByDay };
   let voiceSecondsAdded = 0;
   let hostSecondsAdded = 0;
+  let saturated = false;
   for (const part of parts) {
     const voice = mergeBillableInterval(nextVoiceDays[part.day], part);
     nextVoiceDays[part.day] = voice.intervals;
     voiceSecondsAdded += voice.addedSeconds;
+    if (voice.saturated) saturated = true;
     if (session.isHost === true) {
       const host = mergeBillableInterval(nextHostDays[part.day], part);
       nextHostDays[part.day] = host.intervals;
       hostSecondsAdded += host.addedSeconds;
+      if (host.saturated) saturated = true;
     }
   }
   return {
@@ -342,6 +392,7 @@ function planVoiceSessionCredit({
     hostIntervalsByDay: nextHostDays,
     voiceSecondsAdded,
     hostSecondsAdded,
+    saturated,
   };
 }
 
@@ -379,6 +430,7 @@ module.exports = {
   DEFAULT_MAX_SESSION_SECONDS,
   MAX_VOICE_DAY_BUCKETS,
   MAX_VOICE_INTERVALS_PER_DAY,
+  MAX_WEBHOOK_EVENT_AGE_MS,
   SUPPORTED_VOICE_EVENTS,
   VoiceWebhookValidationError,
   closeVoiceSession,

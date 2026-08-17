@@ -39,6 +39,56 @@ describe("auth-bound achievement title callable", () => {
     );
   });
 
+  // The client has always sent `titleId` PLUS `requestId`, and this handler
+  // accepted the single key `titleId` and nothing else — so every real call
+  // failed `invalid-argument`, which the client does not treat as a fallback
+  // condition and therefore rethrows. Server-side title selection was dead in
+  // production until `requestId` was accepted here.
+  test("accepts the requestId the client actually sends", async () => {
+    const repository = new InMemoryAchievementRepository();
+    repository.seedUser("user-1", {});
+    repository.seedProgress("user-1", {
+      verifiedUnlockedTitleIds: ["messages_1"],
+      verifiedUnlockedTitleTimestamps: { messages_1: NOW },
+    });
+    const result = await handlerFor(repository)({
+      auth: { uid: "user-1" },
+      data: { titleId: "messages_1", requestId: "abcd1234efgh" },
+    });
+    assert.equal(result.selectedTitleId, "messages_1");
+  });
+
+  test("requestId stays optional and every other key is still refused", async () => {
+    const repository = new InMemoryAchievementRepository();
+    repository.seedUser("user-1", {});
+    repository.seedProgress("user-1", {
+      verifiedUnlockedTitleIds: ["messages_1"],
+      verifiedUnlockedTitleTimestamps: { messages_1: NOW },
+    });
+    const handler = handlerFor(repository);
+
+    const withoutRequestId = await handler({
+      auth: { uid: "user-1" },
+      data: { titleId: "messages_1" },
+    });
+    assert.equal(withoutRequestId.selectedTitleId, "messages_1");
+
+    for (const data of [
+      { titleId: "messages_1", uid: "victim" },
+      { titleId: "messages_1", requestId: "ok-value", beneficiaryId: "victim" },
+      { requestId: "ok-value" },
+      { titleId: "messages_1", requestId: "" },
+      { titleId: "messages_1", requestId: 12345 },
+      { titleId: "messages_1", requestId: "x".repeat(65) },
+    ]) {
+      await assert.rejects(
+        handler({ auth: { uid: "user-1" }, data }),
+        (error) => error.code === "invalid-argument",
+        `expected ${JSON.stringify(data)} to be refused`,
+      );
+    }
+  });
+
   test("forged legacy titles confer no selection right", async () => {
     const repository = new InMemoryAchievementRepository();
     repository.seedUser("user-1", {

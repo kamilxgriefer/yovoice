@@ -6,6 +6,7 @@ const { onRequest } = require("firebase-functions/v2/https");
 
 const { isValidOpaqueUid } = require("./identity");
 const {
+  AchievementOutboxValidationError,
   buildAchievementOutboxRecord,
   normalizeAchievementOutboxRecord,
 } = require("./runtime");
@@ -51,6 +52,25 @@ class VoiceAchievementStoreError extends Error {
 
 function safeSegment(value) {
   return typeof value === "string" && SAFE_SEGMENT.test(value) ? value : null;
+}
+
+/**
+ * Distinguishes "this delivery will never succeed" from "try again later".
+ *
+ * The distinction is load-bearing twice over. At the HTTP edge a permanent
+ * failure must not be answered 503, or LiveKit retries a hopeless delivery
+ * until its budget is exhausted. Inside `closeRoom` it decides whether one
+ * session's failure may be skipped past — a deterministic failure will fail
+ * identically on every retry, so skipping it is the only way the other
+ * participants in the room ever get credited, whereas a transient failure
+ * genuinely deserves the whole request to be retried.
+ */
+function isPermanentFailure(error) {
+  return error instanceof VoiceAchievementStoreError ||
+    error instanceof VoiceWebhookValidationError ||
+    error instanceof AchievementOutboxValidationError ||
+    error instanceof RangeError ||
+    error instanceof TypeError;
 }
 
 function timestampDate(value) {
@@ -367,6 +387,9 @@ class FirestoreVoiceAchievementStore {
       closeEventId: closeWebhook.eventId,
       endedAtMs: plan.interval.endMs,
       capped: plan.interval.capped,
+      // The day's ledger was already full, so this session earned nothing.
+      // It still closes — the alternative was a permanently open document.
+      saturated: plan.saturated === true,
       creditedVoiceSeconds: plan.voiceSecondsAdded,
       creditedHostSeconds: plan.hostSecondsAdded,
       outboxIds: outboxRecords.map((record) => record.eventId),
@@ -375,7 +398,7 @@ class FirestoreVoiceAchievementStore {
       expiresAt: new Date(createdAt.getTime() + SESSION_RETENTION_MS),
     });
     return {
-      outcome: "closed",
+      outcome: plan.saturated === true ? "closed:ledger-saturated" : "closed",
       sessionId: reference.id,
       voiceSecondsAdded: plan.voiceSecondsAdded,
       hostSecondsAdded: plan.hostSecondsAdded,
@@ -516,12 +539,42 @@ class FirestoreVoiceAchievementStore {
         }
         throw new VoiceAchievementStoreError("Stored voice session is malformed.");
       }
+      // A close for a room or an account this project has never heard of must
+      // not mint a permanent document. Before this check, `recordJoin`
+      // re-derived everything through `_canonicalJoin` while this path took
+      // roomId, roomSid, participantSid and userId verbatim from the event and
+      // wrote them — so any join that failed validation for any reason still
+      // got its close, and that close became an orphan row that nothing ever
+      // collects.
+      //
+      // Deliberately an EXISTENCE check and nothing more. By the time a close
+      // arrives the room has usually ended and the participant row is gone, so
+      // requiring `status`/`isLive`/membership here — the way the join path
+      // rightly does — would reject the ordinary case. Two documents, one
+      // round trip: this path must not become as expensive as the join path.
+      const closeRoomId = safeSegment(close.roomName);
+      if (!closeRoomId) return { outcome: "skipped:unknown-session", sessionId };
+      const [roomSnapshot, profileSnapshot] =
+        typeof transaction.getAll === "function"
+          ? await transaction.getAll(
+              database.collection("rooms").doc(closeRoomId),
+              database.collection("users").doc(close.participantIdentity),
+            )
+          : await Promise.all([
+              transaction.get(database.collection("rooms").doc(closeRoomId)),
+              transaction.get(
+                database.collection("users").doc(close.participantIdentity),
+              ),
+            ]);
+      if (!snapshotData(roomSnapshot) || !snapshotData(profileSnapshot)) {
+        return { outcome: "skipped:unknown-session", sessionId };
+      }
       const createdAt = new Date(close.createdAtMs);
       transaction.create(reference, {
         schemaVersion: VOICE_SESSION_SCHEMA_VERSION,
         sessionId,
         status: "awaitingJoin",
-        roomId: close.roomName,
+        roomId: closeRoomId,
         roomSid: close.roomSid,
         participantSid: close.participantSid,
         userId: close.participantIdentity,
@@ -549,16 +602,38 @@ class FirestoreVoiceAchievementStore {
         "Room finish exceeds the bounded session reconciliation limit.",
       );
     }
+    // PER-SESSION ISOLATION. This loop used to let the first failing session
+    // propagate out, which became a 400 — so every co-participant ordered
+    // after it in `__name__` was never reached, was never credited, and was
+    // left with an open session document, while the 400 told LiveKit not to
+    // retry. One account's private ledger state must never decide whether a
+    // different account gets credited for talking, however narrow the victim
+    // set is. Deterministic failures are therefore skipped and counted;
+    // transient ones still abort so the whole delivery is retried, which is
+    // safe because closed sessions are skipped on re-entry and each retry
+    // makes monotone progress.
     const results = [];
+    const failures = [];
     for (const document of snapshot.docs) {
       const raw = document.data() ?? {};
       if (raw.roomId !== webhook.roomName || raw.roomSid !== webhook.roomSid) {
-        throw new VoiceAchievementStoreError("Room finish session is not canonical.");
+        failures.push("not-canonical");
+        continue;
       }
       if (raw.status !== "open") continue;
-      results.push(await this._closeKnownSession(document.ref, webhook));
+      try {
+        results.push(await this._closeKnownSession(document.ref, webhook));
+      } catch (error) {
+        if (!isPermanentFailure(error)) throw error;
+        failures.push(error.name);
+      }
     }
-    return { outcome: "room-closed", sessionCount: results.length, results };
+    return {
+      outcome: failures.length > 0 ? "room-closed:partial" : "room-closed",
+      sessionCount: results.length,
+      failureCount: failures.length,
+      results,
+    };
   }
 
   async handle(webhook) {
@@ -588,6 +663,7 @@ function createLiveKitAchievementWebhookHandler({
   apiSecretProvider,
   receiver = null,
   store = new FirestoreVoiceAchievementStore(),
+  now = () => Date.now(),
 } = {}) {
   if (typeof apiKeyProvider !== "function" ||
       typeof apiSecretProvider !== "function" ||
@@ -615,6 +691,7 @@ function createLiveKitAchievementWebhookHandler({
         rawBody: request.rawBody,
         authorization: authorizationHeader(request),
         receiver,
+        now,
       });
     } catch (error) {
       if (error instanceof VoiceWebhookValidationError) {
@@ -642,21 +719,27 @@ function createLiveKitAchievementWebhookHandler({
       });
       response.status(202).json({ accepted: true, outcome: result.outcome });
     } catch (error) {
-      if (error instanceof VoiceAchievementStoreError ||
-          error instanceof VoiceWebhookValidationError) {
-        // Both classes carry static, non-interpolated messages by
-        // construction, so the message names the failed invariant without
-        // naming the account or room it failed for.
+      // Permanent means permanent: a RangeError from a counter overflow, a
+      // TypeError from a malformed effect and a poisoned outbox record all
+      // fail identically on every retry, so answering 503 would only spend
+      // LiveKit's retry budget on a delivery that can never succeed. Only
+      // genuinely transient faults — Firestore UNAVAILABLE, ABORTED, deadline
+      // — are worth retrying.
+      if (isPermanentFailure(error)) {
+        // The two voice error classes carry static, non-interpolated messages
+        // by construction. The others may not, so only their class is logged:
+        // a Firestore or engine message can quote a document path, and those
+        // paths contain uids.
+        const staticReason = error instanceof VoiceAchievementStoreError ||
+          error instanceof VoiceWebhookValidationError;
         logger.warn("livekit achievement webhook rejected a signed event", {
           eventType: webhook.type,
-          reason: error.message,
+          errorName: error?.name ?? null,
+          reason: staticReason ? error.message : null,
         });
         response.status(400).json({ accepted: false, error: "invalid-source" });
         return;
       }
-      // A transient persistence failure must remain retryable for LiveKit.
-      // Only the error's class and code are logged — a Firestore error message
-      // can quote a document path, and those paths contain uids.
       logger.error("livekit achievement webhook could not persist", {
         eventType: webhook.type,
         errorName: error?.name ?? null,

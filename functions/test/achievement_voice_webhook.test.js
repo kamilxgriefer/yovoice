@@ -67,6 +67,9 @@ describe("signed LiveKit achievement adapter", () => {
       apiSecret: API_SECRET,
       rawBody: Buffer.from(body),
       authorization: await authorizationFor(body),
+      // The fixture is a fixed instant, so the freshness window is evaluated
+      // against that instant rather than against wall-clock test-run time.
+      now: () => JOINED_MS,
     });
     assert.deepEqual(event, {
       type: "participant_joined",
@@ -273,13 +276,21 @@ describe("signed LiveKit achievement adapter", () => {
         endMs: index * 2000 + 1000,
       }),
     );
-    assert.throws(
-      () => mergeBillableInterval(fullLedger, {
-        startMs: MAX_VOICE_INTERVALS_PER_DAY * 2000,
-        endMs: MAX_VOICE_INTERVALS_PER_DAY * 2000 + 1000,
-      }),
-      /safe bound/u,
-    );
+    // Growth past the bound SATURATES rather than throwing: the ledger stops
+    // accepting new intervals, but the session must still be closeable. When
+    // this threw, every close past the 256th disjoint interval in a UTC day
+    // was refused with a non-retryable 400 and left its session open forever.
+    const saturated = mergeBillableInterval(fullLedger, {
+      startMs: MAX_VOICE_INTERVALS_PER_DAY * 2000,
+      endMs: MAX_VOICE_INTERVALS_PER_DAY * 2000 + 1000,
+    });
+    assert.equal(saturated.saturated, true);
+    assert.equal(saturated.addedSeconds, 0);
+    assert.equal(saturated.intervals.length, MAX_VOICE_INTERVALS_PER_DAY);
+
+    // Already-corrupt storage past the bound is still a loud failure: that is
+    // stored-state corruption, not ordinary growth, and it is unreachable now
+    // that growth saturates at the bound.
     assert.throws(
       () => mergeBillableInterval([...fullLedger, {
         startMs: MAX_VOICE_INTERVALS_PER_DAY * 2000,
