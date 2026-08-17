@@ -16,6 +16,20 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Private photo/voice DMs and reliable Safari Voice Moment uploads**
+  (2026-08-17, this revision — NOT YET DEPLOYED): the two chat attachment
+  actions were placeholders; they now use server-reserved immutable private
+  Storage objects and canonical message finalization. Voice Moment web upload
+  preserves the native `MediaRecorder` Blob instead of round-tripping it
+  through Dart bytes. Both flows reuse reservation/request/generation state
+  after ambiguous network failures. A release review additionally fixed
+  pause/resume, recycled media state and an Admin SDK bootstrap that guessed
+  the wrong bucket suffix. See ADR-063. Physical iPhone Safari and native
+  device verification remain post-deploy checks, not claims made by the
+  automated suite. Release gates: Flutter **591/591**, Firestore rules
+  **351/351**, Storage rules **53/53**, Family media **11/11**, Cloud Functions
+  **572/572**, `flutter analyze` clean and the release web build successful.
+
 - **A `not-found` refusal was read as an undeployed callable, disabling
   every messaging guard and writing conversation roots the backend can
   never touch again** (2026-08-17, UNCOMMITTED — in the working tree,
@@ -749,20 +763,13 @@ different and much smaller problem.
 - **Future considerations**: Whatever container is added has to be
   playable everywhere the feed renders, not just recordable in Firefox.
 
-### 0j. Decide the fate of `_publishRecordedMomentLegacy`
+### 0j. ~~Decide the fate of `_publishRecordedMomentLegacy`~~ DONE
 
-- **Status**: Not started. Latent, not live — Stage B is deployed, so
-  nothing reaches this path today.
-- **Description**: `_publishRecordedMomentLegacy` writes a **14-key**
-  moment document while `validateMoment()` requires exactly **20** and
-  fails `data-loss` on a mismatch. Any moment created through that
-  fallback would break every later callable operating on it.
-- **Dependencies**: None technical. This needs a deliberate decision:
-  delete the fallback, or make it write the canonical 20-key shape. Do not
-  leave it as a third option.
-- **Priority**: Medium. Zero user impact today and unbounded impact if the
-  fallback ever becomes reachable again — which is exactly the shape of
-  defect this project has shipped before.
+Closed 2026-08-17 in the same working tree as ADR-063. The only accepted
+absence signal remains explicit `unimplemented`; `not-found` fails closed.
+If that compatibility path is deliberately reached, it now writes the exact
+canonical 20-field document shape expected by `validateMoment()`, with a
+regression test pinning the contract.
 
 ### 0k. Gate the last two writes behind `canAccessRoom()`
 

@@ -1275,7 +1275,8 @@ function createMomentIntegrityService({
     const outbox = await outboxRef.get();
     if (!outbox.exists) return { outboxId, skipped: true };
     const data = outbox.data() ?? {};
-    if (!["voiceMoment", "voiceMomentComment", "voiceMomentCommentReservation"]
+    if (!["voiceMoment", "voiceMomentComment", "voiceMomentCommentReservation",
+      "directMessageAttachment", "directMessageAttachmentReservation"]
         .includes(data.kind) ||
         !Array.isArray(data.objectPaths) ||
         data.objectPaths.some((path) => typeof path !== "string")) {
@@ -1305,7 +1306,7 @@ function createMomentIntegrityService({
         rootParts[1],
         rootParts[3],
       );
-    } else {
+    } else if (data.kind === "voiceMomentCommentReservation") {
       if (rootParts.length !== 2 ||
           rootParts[0] !== "voiceMomentUploadReservations" ||
           !/^[A-Za-z0-9]{20}$/u.test(rootParts[1])) {
@@ -1320,6 +1321,31 @@ function createMomentIntegrityService({
         reservationMomentId,
         rootParts[1],
       );
+    } else {
+      const isReservation = data.kind === "directMessageAttachmentReservation";
+      if (isReservation) {
+        if (rootParts.length !== 2 ||
+            rootParts[0] !== "directMessageUploadReservations" ||
+            !/^m_[a-f0-9]{40}$/u.test(rootParts[1])) {
+          fail("data-loss", "The direct reservation cleanup root is malformed.");
+        }
+      } else if (rootParts.length !== 4 || rootParts[0] !== "conversations" ||
+          rootParts[2] !== "messages" || !SAFE_ID.test(rootParts[1]) ||
+          !/^m_[a-f0-9]{40}$/u.test(rootParts[3])) {
+        fail("data-loss", "The direct attachment cleanup root is malformed.");
+      }
+      const path = data.objectPaths[0];
+      const segments = typeof path === "string" ? path.split("/") : [];
+      const messageId = isReservation ? rootParts[1] : rootParts[3];
+      const conversationId = isReservation ? segments[2] : rootParts[1];
+      if (segments.length !== 4 || segments[0] !== "message_attachments" ||
+          segments[1] !== data.requestedBy || segments[2] !== conversationId ||
+          !SAFE_ID.test(conversationId) ||
+          !new RegExp(`^${messageId}[.](jpg|png|webp|m4a)$`, "u")
+            .test(segments[3])) {
+        fail("data-loss", "The direct attachment cleanup path is malformed.");
+      }
+      expectedObjectPath = path;
     }
     if (data.objectPaths.length !== 1 ||
         data.objectPaths[0] !== expectedObjectPath) {
@@ -1617,6 +1643,12 @@ function createMomentIntegrityService({
 function createBucketStorageAdapter(bucket) {
   if (!bucket?.file) throw new TypeError("A Storage bucket is required.");
   return {
+    getObjectReference(path) {
+      if (typeof bucket.name !== "string" || !bucket.name) {
+        fail("failed-precondition", "The Storage bucket name is unavailable.");
+      }
+      return `gs://${bucket.name}/${path}`;
+    },
     async getMetadata(path) {
       const [metadata] = await bucket.file(path).getMetadata();
       return metadata;

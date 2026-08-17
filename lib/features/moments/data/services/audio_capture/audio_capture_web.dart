@@ -1,6 +1,5 @@
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
-import 'dart:typed_data';
 
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:web/web.dart' as web;
@@ -183,47 +182,43 @@ class WebAudioCapture implements AudioCapture {
       );
     }
 
-    final Uint8List bytes;
-    try {
-      final buffer = await blob.arrayBuffer().toDart;
-      bytes = buffer.toDart.asUint8List();
-    } catch (error) {
-      throw VoiceRecordingException(
-        VoiceRecordingProblem.recordingUnusable,
-        'The finished recording could not be read back from the browser.',
-        action: 'Record again.',
-        cause: error,
-      );
-    } finally {
-      // The bytes are in Dart's heap now; holding the object URL would leak
-      // the blob for the lifetime of the document.
-      web.URL.revokeObjectURL(stopResult);
-    }
-
-    return BytesRecordedAudio(bytes, normalizeAudioContentType(blobType));
+    // Keep the browser's native Blob all the way to Firebase Storage. The
+    // previous Blob -> ArrayBuffer -> Dart Uint8List -> JS Uint8Array round
+    // trip was the only untested production seam and real mobile-web uploads
+    // stopped before finalizeMomentDraft. `putBlob` avoids that conversion,
+    // preserves the exact bytes MediaRecorder produced and is resumable by
+    // the Firebase Web SDK.
+    web.URL.revokeObjectURL(stopResult);
+    return BlobRecordedAudio(blob, normalizeAudioContentType(blobType));
   }
 }
 
-/// A recording held in memory, uploaded with `putData`.
-class BytesRecordedAudio extends RecordedAudio {
-  BytesRecordedAudio(this.bytes, this.contentType);
+/// A recording held as the browser-native Blob MediaRecorder produced.
+class BlobRecordedAudio extends RecordedAudio {
+  BlobRecordedAudio(this.blob, this.contentType);
 
-  final Uint8List bytes;
+  final web.Blob blob;
 
   @override
   final String contentType;
 
   @override
-  int get byteLength => bytes.lengthInBytes;
+  int get byteLength => blob.size;
 
   @override
   Future<String> uploadTo(
     Reference reference,
     SettableMetadata metadata,
   ) async {
-    final snapshot = await reference.putData(bytes, metadata);
-    final stored = await snapshot.ref.getMetadata();
-    return stored.generation ?? '';
+    final snapshot = await reference.putBlob(blob, metadata);
+    final snapshotGeneration = snapshot.metadata?.generation?.trim();
+    if (snapshotGeneration != null && snapshotGeneration.isNotEmpty) {
+      return snapshotGeneration;
+    }
+    // TaskSnapshotWeb maps the JS UploadTaskSnapshot metadata (including its
+    // generation) into FullMetadata. Keep this defensive read for alternate
+    // implementations and old emulators that omit it from the snapshot.
+    return (await snapshot.ref.getMetadata()).generation ?? '';
   }
 
   @override

@@ -1,5 +1,7 @@
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:flutter_test/flutter_test.dart';
@@ -131,7 +133,10 @@ void main() {
         validateRecordedAudio(FakeRecordedAudio(byteLength: 1023))?.problem,
         VoiceRecordingProblem.recordingUnusable,
       );
-      expect(validateRecordedAudio(FakeRecordedAudio(byteLength: 1024)), isNull);
+      expect(
+        validateRecordedAudio(FakeRecordedAudio(byteLength: 1024)),
+        isNull,
+      );
       expect(
         validateRecordedAudio(
           FakeRecordedAudio(byteLength: 12 * 1024 * 1024 + 1),
@@ -180,27 +185,29 @@ void main() {
       expect(capture.probeCalls, 1);
     });
 
-    test('a refused microphone is microphoneBlocked, not a generic failure',
-        () async {
-      final recorder = VoiceMomentRecorder(
-        backend: FakeRecorderBackend()..permission = false,
-        capture: FakeAudioCapture(),
-      );
+    test(
+      'a refused microphone is microphoneBlocked, not a generic failure',
+      () async {
+        final recorder = VoiceMomentRecorder(
+          backend: FakeRecorderBackend()..permission = false,
+          capture: FakeAudioCapture(),
+        );
 
-      await expectLater(
-        recorder.start(),
-        throwsA(
-          isA<VoiceRecordingException>()
-              .having(
-                (e) => e.problem,
-                'problem',
-                VoiceRecordingProblem.microphoneBlocked,
-              )
-              .having((e) => e.message, 'message', contains('blocked'))
-              .having((e) => e.action, 'action', contains('Allow')),
-        ),
-      );
-    });
+        await expectLater(
+          recorder.start(),
+          throwsA(
+            isA<VoiceRecordingException>()
+                .having(
+                  (e) => e.problem,
+                  'problem',
+                  VoiceRecordingProblem.microphoneBlocked,
+                )
+                .having((e) => e.message, 'message', contains('blocked'))
+                .having((e) => e.action, 'action', contains('Allow')),
+          ),
+        );
+      },
+    );
 
     test(
       'a MissingPluginException preparing storage is named, not swallowed',
@@ -252,19 +259,21 @@ void main() {
       expect(recorder.isRecording, false);
     });
 
-    test('a missing recorder plugin degrades to an honest unsupported state',
-        () async {
-      final recorder = VoiceMomentRecorder(
-        backend: FakeRecorderBackend(),
-        capture: FakeAudioCapture()
-          ..probeError = MissingPluginException('no recorder'),
-      );
+    test(
+      'a missing recorder plugin degrades to an honest unsupported state',
+      () async {
+        final recorder = VoiceMomentRecorder(
+          backend: FakeRecorderBackend(),
+          capture: FakeAudioCapture()
+            ..probeError = MissingPluginException('no recorder'),
+        );
 
-      final support = await recorder.checkSupport();
-      expect(support.isSupported, false);
-      expect(support.reason, isNot(contains('Coming soon')));
-      expect(support.reason, contains('not available'));
-    });
+        final support = await recorder.checkSupport();
+        expect(support.isSupported, false);
+        expect(support.reason, isNot(contains('Coming soon')));
+        expect(support.reason, contains('not available'));
+      },
+    );
 
     test('a normal capture yields uploadable audio', () async {
       final audio = FakeRecordedAudio();
@@ -378,50 +387,570 @@ void main() {
       expect(metadata.customMetadata, {'authorId': uid, 'momentId': momentId});
     });
 
-    test('refuses an unpublishable recording before uploading anything',
-        () async {
-      // Uploading it would be rejected by the rules, leaving a reserved
-      // draft that can never finalize.
-      final audio = FakeRecordedAudio(contentType: 'audio/webm');
+    test(
+      'refuses an unpublishable recording before uploading anything',
+      () async {
+        // Uploading it would be rejected by the rules, leaving a reserved
+        // draft that can never finalize.
+        final audio = FakeRecordedAudio(contentType: 'audio/webm');
 
-      await expectLater(
-        service.publishRecordedMoment(
+        await expectLater(
+          service.publishRecordedMoment(
+            audio: audio,
+            durationSeconds: 7,
+            caption: 'Hello',
+          ),
+          throwsA(isA<VoiceRecordingException>()),
+        );
+        expect(audio.uploadCalls, 0);
+      },
+    );
+
+    test(
+      'a voice reply carries the third metadata key its rule requires',
+      () async {
+        await firestore.collection('voiceMoments').doc('parent-moment').set({
+          'authorId': 'someone-else',
+          'isPublished': true,
+        });
+        final audio = FakeRecordedAudio();
+
+        final commentId = await service.publishRecordedMoment(
           audio: audio,
-          durationSeconds: 7,
-          caption: 'Hello',
-        ),
-        throwsA(isA<VoiceRecordingException>()),
-      );
-      expect(audio.uploadCalls, 0);
-    });
+          durationSeconds: 5,
+          caption: 'Replying',
+          replyToMomentId: 'parent-moment',
+        );
 
-    test('a voice reply carries the third metadata key its rule requires',
-        () async {
-      await firestore.collection('voiceMoments').doc('parent-moment').set({
-        'authorId': 'someone-else',
-        'isPublished': true,
-      });
-      final audio = FakeRecordedAudio();
-
-      final commentId = await service.publishRecordedMoment(
-        audio: audio,
-        durationSeconds: 5,
-        caption: 'Replying',
-        replyToMomentId: 'parent-moment',
-      );
-
-      // storage.rules /voice_replies/{userId}/{momentId}/{fileName}
-      expect(
-        audio.uploadedPath,
-        'voice_replies/$uid/parent-moment/$commentId'
-        '.$kVoiceMomentFileExtension',
-      );
-      expect(audio.uploadedMetadata!.customMetadata, {
-        'authorId': uid,
-        'momentId': 'parent-moment',
-        'commentId': commentId,
-      });
-      expect(audio.uploadedMetadata!.contentType, 'audio/mp4');
-    });
+        // storage.rules /voice_replies/{userId}/{momentId}/{fileName}
+        expect(
+          audio.uploadedPath,
+          'voice_replies/$uid/parent-moment/$commentId'
+          '.$kVoiceMomentFileExtension',
+        );
+        expect(audio.uploadedMetadata!.customMetadata, {
+          'authorId': uid,
+          'momentId': 'parent-moment',
+          'commentId': commentId,
+        });
+        expect(audio.uploadedMetadata!.contentType, 'audio/mp4');
+      },
+    );
   });
+
+  group('MomentService server-authoritative publish retry', () {
+    late FakeFirebaseFirestore firestore;
+    late MockFirebaseAuth auth;
+    late MockFirebaseStorage storage;
+
+    const uid = 'mobile-web-author';
+    const momentId = '0123456789abcdefabcd';
+    const storagePath = 'voice_moments/$uid/$momentId.m4a';
+
+    setUp(() async {
+      firestore = FakeFirebaseFirestore();
+      auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: uid, email: 'mobile-web@yovoice.app'),
+      );
+      storage = MockFirebaseStorage();
+      await firestore.collection('users').doc(uid).set({
+        'displayName': 'Mobile Web Author',
+        'photoUrl': null,
+      });
+    });
+
+    MomentService serviceWith(_MomentPublishFunctions functions) =>
+        MomentService(
+          firestore: firestore,
+          auth: auth,
+          storage: storage,
+          functions: functions,
+        );
+
+    test('publishes a one-second mobile-web recording', () async {
+      final functions = _MomentPublishFunctions(
+        momentId: momentId,
+        storagePath: storagePath,
+      );
+      final audio = FakeRecordedAudio(byteLength: 1024);
+
+      final publishedId = await serviceWith(functions).publishRecordedMoment(
+        audio: audio,
+        durationSeconds: 1,
+        caption: 'One second',
+      );
+
+      expect(publishedId, momentId);
+      expect(audio.uploadCalls, 1);
+      expect(audio.uploadedPath, storagePath);
+      expect(audio.uploadedMetadata?.contentType, 'audio/mp4');
+      expect(audio.uploadedMetadata?.customMetadata, {
+        'authorId': uid,
+        'momentId': momentId,
+      });
+      expect(functions.reservePayloads, hasLength(1));
+      expect(functions.reservePayloads.single['durationSeconds'], 1);
+      expect(functions.finalizePayloads, hasLength(1));
+      expect(
+        functions.finalizePayloads.single['objectGeneration'],
+        '1700000000000001',
+      );
+      expect(
+        functions.finalizePayloads.single['requestId'],
+        functions.reservePayloads.single['requestId'],
+      );
+    });
+
+    test(
+      'retry after a lost finalize response reuses upload and reservation',
+      () async {
+        final functions = _MomentPublishFunctions(
+          momentId: momentId,
+          storagePath: storagePath,
+          failFinalizeOnce: true,
+        );
+        final service = serviceWith(functions);
+        final audio = FakeRecordedAudio();
+
+        await expectLater(
+          service.publishRecordedMoment(
+            audio: audio,
+            durationSeconds: 1,
+            caption: 'Retry me',
+          ),
+          throwsA(
+            isA<FirebaseFunctionsException>().having(
+              (error) => error.code,
+              'code',
+              'unavailable',
+            ),
+          ),
+        );
+
+        // A finalized upload is immutable and may already exist even when the
+        // callable response is lost. The previous implementation deleted it
+        // here, making an otherwise safe finalize retry impossible.
+        final committed = await storage.ref(storagePath).getMetadata();
+        expect(committed.contentType, 'audio/mp4');
+
+        expect(
+          await service.publishRecordedMoment(
+            audio: audio,
+            durationSeconds: 1,
+            caption: 'Retry me',
+          ),
+          momentId,
+        );
+
+        expect(audio.uploadCalls, 1);
+        expect(functions.reservePayloads, hasLength(1));
+        expect(functions.finalizePayloads, hasLength(2));
+        expect(functions.finalizePayloads[1], functions.finalizePayloads[0]);
+        expect(
+          functions.finalizePayloads[0]['requestId'],
+          functions.reservePayloads.single['requestId'],
+        );
+      },
+    );
+
+    test(
+      'retry cannot silently publish a draft with changed user-visible input',
+      () async {
+        final functions = _MomentPublishFunctions(
+          momentId: momentId,
+          storagePath: storagePath,
+          failFinalizeOnce: true,
+        );
+        final service = serviceWith(functions);
+        final audio = FakeRecordedAudio();
+
+        await expectLater(
+          service.publishRecordedMoment(
+            audio: audio,
+            durationSeconds: 1,
+            caption: 'Original caption',
+          ),
+          throwsA(isA<FirebaseFunctionsException>()),
+        );
+
+        for (final changedInput
+            in <({String caption, int duration, String? reply})>[
+              (caption: 'Changed caption', duration: 1, reply: null),
+              (caption: 'Original caption', duration: 2, reply: null),
+              (
+                caption: 'Original caption',
+                duration: 1,
+                reply: 'parent-moment',
+              ),
+            ]) {
+          await expectLater(
+            service.publishRecordedMoment(
+              audio: audio,
+              durationSeconds: changedInput.duration,
+              caption: changedInput.caption,
+              replyToMomentId: changedInput.reply,
+            ),
+            throwsA(
+              isA<StateError>().having(
+                (error) => error.message,
+                'message',
+                allOf(
+                  contains('Restore the original details'),
+                  contains('record again'),
+                ),
+              ),
+            ),
+          );
+        }
+
+        // Refused retries neither reserve nor upload/finalize a second object.
+        expect(functions.reservePayloads, hasLength(1));
+        expect(functions.finalizePayloads, hasLength(1));
+        expect(audio.uploadCalls, 1);
+        expect(await storage.ref(storagePath).getMetadata(), isNotNull);
+
+        // Returning to the exact pinned input safely resumes finalization.
+        expect(
+          await service.publishRecordedMoment(
+            audio: audio,
+            durationSeconds: 1,
+            caption: '  Original caption  ',
+            replyToMomentId: '   ',
+          ),
+          momentId,
+        );
+        expect(functions.reservePayloads, hasLength(1));
+        expect(functions.finalizePayloads, hasLength(2));
+        expect(audio.uploadCalls, 1);
+      },
+    );
+
+    test(
+      'reserve transport retry keeps request id and does not upload early',
+      () async {
+        final functions = _MomentPublishFunctions(
+          momentId: momentId,
+          storagePath: storagePath,
+          failReserveOnce: true,
+        );
+        final service = serviceWith(functions);
+        final audio = FakeRecordedAudio();
+
+        await expectLater(
+          service.publishRecordedMoment(
+            audio: audio,
+            durationSeconds: 1,
+            caption: 'Retry reservation',
+          ),
+          throwsA(isA<FirebaseFunctionsException>()),
+        );
+        expect(audio.uploadCalls, 0);
+
+        expect(
+          await service.publishRecordedMoment(
+            audio: audio,
+            durationSeconds: 1,
+            caption: 'Retry reservation',
+          ),
+          momentId,
+        );
+        expect(functions.reservePayloads, hasLength(2));
+        expect(
+          functions.reservePayloads[1]['requestId'],
+          functions.reservePayloads[0]['requestId'],
+        );
+        expect(audio.uploadCalls, 1);
+        expect(functions.finalizePayloads, hasLength(1));
+      },
+    );
+
+    test(
+      'an upload committed before a lost response is finalized, not redone',
+      () async {
+        final functions = _MomentPublishFunctions(
+          momentId: momentId,
+          storagePath: storagePath,
+        );
+        final ambiguousStorage = _AmbiguousCommitStorage(
+          path: storagePath,
+          generation: 'ambiguous-generation-1',
+        );
+        final service = MomentService(
+          firestore: firestore,
+          auth: auth,
+          storage: ambiguousStorage,
+          functions: functions,
+        );
+        final audio = _AmbiguousCommitAudio();
+
+        expect(
+          await service.publishRecordedMoment(
+            audio: audio,
+            durationSeconds: 1,
+            caption: 'Committed before disconnect',
+          ),
+          momentId,
+        );
+
+        expect(audio.uploadCalls, 1);
+        expect(ambiguousStorage.reference.metadataReads, 1);
+        expect(functions.reservePayloads, hasLength(1));
+        expect(functions.finalizePayloads, hasLength(1));
+        expect(
+          functions.finalizePayloads.single['objectGeneration'],
+          'ambiguous-generation-1',
+        );
+      },
+    );
+
+    test(
+      'a deployed callable not-found refusal never writes a legacy moment',
+      () async {
+        final functions = _MomentPublishFunctions(
+          momentId: momentId,
+          storagePath: storagePath,
+          reserveErrorCode: 'not-found',
+        );
+        final audio = FakeRecordedAudio();
+
+        await expectLater(
+          serviceWith(functions).publishRecordedMoment(
+            audio: audio,
+            durationSeconds: 1,
+            caption: 'Must stay server-authoritative',
+          ),
+          throwsA(
+            isA<FirebaseFunctionsException>().having(
+              (error) => error.code,
+              'code',
+              'not-found',
+            ),
+          ),
+        );
+
+        expect(audio.uploadCalls, 0);
+        expect(
+          (await firestore.collection('voiceMoments').get()).docs,
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'explicit unimplemented fallback writes the canonical 20-field shape',
+      () async {
+        final functions = _MomentPublishFunctions(
+          momentId: momentId,
+          storagePath: storagePath,
+          reserveErrorCode: 'unimplemented',
+        );
+
+        final fallbackId = await serviceWith(functions).publishRecordedMoment(
+          audio: FakeRecordedAudio(),
+          durationSeconds: 1,
+          caption: 'Legacy deployment only',
+        );
+        final document = await firestore
+            .collection('voiceMoments')
+            .doc(fallbackId)
+            .get();
+        final data = document.data()!;
+
+        expect(data.keys.toSet(), {
+          'schemaVersion',
+          'authorId',
+          'authorName',
+          'authorPhotoUrl',
+          'caption',
+          'audioUrl',
+          'storagePath',
+          'mediaGeneration',
+          'mediaSize',
+          'mediaContentType',
+          'durationSeconds',
+          'createdAt',
+          'publishedAt',
+          'isPublished',
+          'isDeleted',
+          'status',
+          'likeCount',
+          'commentCount',
+          'replyToMomentId',
+          'updatedAt',
+        });
+        expect(data['durationSeconds'], 1);
+        expect(data['isPublished'], true);
+        expect(data['status'], 'published');
+        expect(data['mediaGeneration'], '1700000000000001');
+      },
+    );
+  });
+}
+
+class _MomentPublishFunctions implements FirebaseFunctions {
+  _MomentPublishFunctions({
+    required this.momentId,
+    required this.storagePath,
+    this.failReserveOnce = false,
+    this.failFinalizeOnce = false,
+    this.reserveErrorCode,
+  });
+
+  final String momentId;
+  final String storagePath;
+  final bool failReserveOnce;
+  final bool failFinalizeOnce;
+  final String? reserveErrorCode;
+
+  final List<Map<String, dynamic>> reservePayloads = <Map<String, dynamic>>[];
+  final List<Map<String, dynamic>> finalizePayloads = <Map<String, dynamic>>[];
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _MomentCallable((parameters) => _call(name, parameters));
+
+  Future<Object?> _call(String name, Object? parameters) async {
+    final payload = Map<String, dynamic>.from(parameters as Map);
+    if (name == 'reserveMomentDraft') {
+      reservePayloads.add(payload);
+      if (reserveErrorCode != null) {
+        throw FirebaseFunctionsException(
+          code: reserveErrorCode!,
+          message: 'Configured reserve refusal.',
+        );
+      }
+      if (failReserveOnce && reservePayloads.length == 1) {
+        throw FirebaseFunctionsException(
+          code: 'unavailable',
+          message: 'The response was lost.',
+        );
+      }
+      return <String, Object?>{
+        'momentId': momentId,
+        'storagePath': storagePath,
+      };
+    }
+    if (name == 'finalizeMomentDraft') {
+      finalizePayloads.add(payload);
+      if (failFinalizeOnce && finalizePayloads.length == 1) {
+        throw FirebaseFunctionsException(
+          code: 'unavailable',
+          message: 'The response was lost.',
+        );
+      }
+      return <String, Object?>{'published': true};
+    }
+    throw FirebaseFunctionsException(
+      code: 'not-found',
+      message: 'Unexpected callable $name.',
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _MomentCallable implements HttpsCallable {
+  _MomentCallable(this.handler);
+
+  final Future<Object?> Function(Object? parameters) handler;
+
+  @override
+  Future<HttpsCallableResult<T>> call<T>([Object? parameters]) async {
+    final result = await handler(parameters);
+    return _MomentCallableResult<T>(result as T);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _MomentCallableResult<T> implements HttpsCallableResult<T> {
+  _MomentCallableResult(this.data);
+
+  @override
+  final T data;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _AmbiguousCommitStorage implements FirebaseStorage {
+  _AmbiguousCommitStorage({required String path, required String generation})
+    : reference = _AmbiguousCommitReference(path, generation);
+
+  final _AmbiguousCommitReference reference;
+
+  @override
+  Reference ref([String? path]) {
+    if (path != reference.fullPath) {
+      throw StateError('Unexpected Storage path: $path');
+    }
+    return reference;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _AmbiguousCommitReference implements Reference {
+  _AmbiguousCommitReference(this.fullPath, this.generation);
+
+  @override
+  final String fullPath;
+  final String generation;
+  bool committed = false;
+  int metadataReads = 0;
+
+  void commit() => committed = true;
+
+  @override
+  Future<FullMetadata> getMetadata() async {
+    metadataReads += 1;
+    if (!committed) {
+      throw FirebaseException(
+        plugin: 'firebase_storage',
+        code: 'object-not-found',
+      );
+    }
+    return FullMetadata({
+      'bucket': 'test-bucket',
+      'fullPath': fullPath,
+      'name': fullPath.split('/').last,
+      'generation': generation,
+      'size': 4096,
+      'contentType': 'audio/mp4',
+    });
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _AmbiguousCommitAudio extends RecordedAudio {
+  int uploadCalls = 0;
+
+  @override
+  int get byteLength => 4096;
+
+  @override
+  String get contentType => 'audio/mp4';
+
+  @override
+  Future<String> uploadTo(
+    Reference reference,
+    SettableMetadata metadata,
+  ) async {
+    uploadCalls += 1;
+    (reference as _AmbiguousCommitReference).commit();
+    throw FirebaseException(
+      plugin: 'firebase_storage',
+      code: 'retry-limit-exceeded',
+      message: 'The object committed but the response was lost.',
+    );
+  }
+
+  @override
+  Future<void> discard() async {}
 }

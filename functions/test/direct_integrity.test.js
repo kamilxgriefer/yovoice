@@ -84,6 +84,8 @@ async function reset() {
     }
   }
   await Promise.all([
+    deleteQuery(db.collection("contentCleanupOutbox")),
+    deleteQuery(db.collection("contentCleanupQuarantine")),
     ...USERS.map((uid) => db.doc(`users/${uid}`).delete()),
     ...USERS.map((uid) => db.doc(`publicProfiles/${uid}`).delete()),
     ...USERS.map((uid) => db.doc(`restrictions/${uid}`).delete()),
@@ -102,6 +104,8 @@ async function reset() {
       deleteQuery(db.collection("integrityOperationLedgers").where("ownerId", "==", uid)),
       deleteQuery(db.collection("privateRateLimits").where("ownerId", "==", uid)),
       deleteQuery(db.collection("directReactionEvents").where("actorId", "==", uid)),
+      deleteQuery(db.collection("directMessageUploadReservations").where("ownerId", "==", uid)),
+      deleteQuery(db.collection("integrityPreflightLedgers").where("ownerId", "==", uid)),
     ]);
   }
   for (let index = 0; index < USERS.length; index += 1) {
@@ -344,6 +348,151 @@ test("different send request ids serialize counters under concurrency", async ()
   assert.equal(messages.size, 8);
   assert.equal(conversation.data().unreadCounts[B], 8);
   assert.equal(conversation.data().unreadCounts[A], 0);
+});
+
+test("private image attachments are reserved, storage-bound and finalized once", async () => {
+  const metadata = new Map();
+  const storage = {
+    async getMetadata(path) {
+      const value = metadata.get(path);
+      if (!value) throw Object.assign(new Error("missing"), { code: "not-found" });
+      return value;
+    },
+    getObjectReference(path) {
+      return `gs://yovoice-test.appspot.com/${path}`;
+    },
+  };
+  const service = directService({}, { storage });
+  const { conversationId } = await open(service);
+  const reserved = await service.reserveDirectMessageAttachment(request(A, {
+    conversationId,
+    type: "image",
+    contentType: "image/jpeg",
+    requestId: "media-reserve-1",
+  }));
+  assert.match(reserved.messageId, /^m_[a-f0-9]{40}$/u);
+  assert.equal(reserved.type, "image");
+  assert.equal((await db.doc(
+    `directMessageUploadReservations/${reserved.messageId}`,
+  ).get()).data().ownerId, A);
+
+  metadata.set(reserved.storagePath, {
+    size: "2048",
+    contentType: "image/jpeg",
+    generation: "17",
+    metadata: {
+      yovoiceConversationId: conversationId,
+      yovoiceMessageId: reserved.messageId,
+      yovoiceMessagePath:
+        `conversations/${conversationId}/messages/${reserved.messageId}`,
+      yovoiceMediaType: "image",
+      yovoiceOwnerUid: "victim-forgery",
+    },
+  });
+  await assert.rejects(
+    service.finalizeDirectMessageAttachment(request(A, {
+      conversationId,
+      messageId: reserved.messageId,
+      objectGeneration: "17",
+      requestId: "media-finalize-bad",
+    })),
+    (error) => error.code === "failed-precondition",
+  );
+
+  metadata.get(reserved.storagePath).metadata.yovoiceOwnerUid = A;
+  const finalized = await service.finalizeDirectMessageAttachment(request(A, {
+    conversationId,
+    messageId: reserved.messageId,
+    objectGeneration: "17",
+    requestId: "media-finalize-good",
+  }));
+  assert.equal(finalized.created, true);
+  const message = await db.doc(
+    `conversations/${conversationId}/messages/${reserved.messageId}`,
+  ).get();
+  assert.equal(message.data().type, "image");
+  assert.equal(message.data().mediaUrl, `gs://yovoice-test.appspot.com/${reserved.storagePath}`);
+  assert.equal((await db.doc(
+    `directMessageUploadReservations/${reserved.messageId}`,
+  ).get()).exists, false);
+  assert.equal((await db.doc(`conversations/${conversationId}`).get())
+    .data().unreadCounts[B], 1);
+
+  const replay = await service.finalizeDirectMessageAttachment(request(A, {
+    conversationId,
+    messageId: reserved.messageId,
+    objectGeneration: "17",
+    requestId: "media-finalize-good",
+  }));
+  assert.deepEqual(replay, finalized);
+});
+
+test("attachment reservations reject forged media contracts and blocked peers", async () => {
+  const service = directService({}, {
+    storage: {
+      async getMetadata() { throw new Error("not reached"); },
+      getObjectReference(path) { return `gs://test/${path}`; },
+    },
+  });
+  const { conversationId } = await open(service);
+  await assert.rejects(
+    service.reserveDirectMessageAttachment(request(A, {
+      conversationId,
+      type: "image",
+      contentType: "text/html",
+      requestId: "media-bad-mime",
+    })),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    service.reserveDirectMessageAttachment(request(A, {
+      conversationId,
+      type: "image",
+      contentType: "image/png",
+      durationSeconds: 12,
+      requestId: "media-image-duration",
+    })),
+    (error) => error.code === "invalid-argument",
+  );
+  await db.doc(`users/${B}/blocked/${A}`).set({ userId: A });
+  await assert.rejects(
+    service.reserveDirectMessageAttachment(request(A, {
+      conversationId,
+      type: "voice",
+      contentType: "audio/mp4",
+      durationSeconds: 4,
+      requestId: "media-blocked",
+    })),
+    (error) => error.code === "failed-precondition",
+  );
+});
+
+test("expired direct upload reservations queue canonical orphan cleanup", async () => {
+  const service = directService({}, {
+    storage: {
+      async getMetadata() { throw new Error("not reached"); },
+      getObjectReference(path) { return `gs://test/${path}`; },
+    },
+  });
+  const { conversationId } = await open(service);
+  const reserved = await service.reserveDirectMessageAttachment(request(A, {
+    conversationId,
+    type: "voice",
+    contentType: "audio/mp4",
+    durationSeconds: 5,
+    requestId: "media-expiry-1",
+  }));
+  nowMs += 16 * 60_000;
+  const expired = await service.expireAbandonedAttachmentReservations();
+  assert.deepEqual(expired.expired, [reserved.messageId]);
+  assert.equal((await db.doc(
+    `directMessageUploadReservations/${reserved.messageId}`,
+  ).get()).exists, false);
+  const outboxes = await db.collection("contentCleanupOutbox")
+    .where("kind", "==", "directMessageAttachmentReservation")
+    .get();
+  assert.equal(outboxes.size, 1);
+  assert.deepEqual(outboxes.docs[0].data().objectPaths, [reserved.storagePath]);
 });
 
 test("reply linkage, author-only edits and one-way deletion are enforced", async () => {

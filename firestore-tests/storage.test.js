@@ -54,6 +54,12 @@ const DISABLED = "disabled-uid";
 const MOMENT = "AbCdEfGhIjKlMnOpQrSt";
 const PARENT = "ZyXwVuTsRqPoNmLkJiHg";
 const COMMENT = "0123456789AbCdEfGhIj";
+const DIRECT_CONVERSATION = "dm_storage_test";
+const DIRECT_IMAGE_MESSAGE = `m_${"a".repeat(40)}`;
+const DIRECT_CONTRACT_IMAGE = `m_${"d".repeat(40)}`;
+const DIRECT_VOICE_MESSAGE = `m_${"e".repeat(40)}`;
+const DIRECT_UNVERIFIED_MESSAGE = `m_${"f".repeat(40)}`;
+const DIRECT_EXPIRED_MESSAGE = `m_${"0".repeat(40)}`;
 
 function momentMetadata(authorId, momentId, extra = {}) {
   return {
@@ -66,6 +72,20 @@ function replyMetadata(authorId, momentId, commentId, extra = {}) {
   return {
     contentType: "audio/mp4",
     customMetadata: { authorId, momentId, commentId, ...extra },
+  };
+}
+
+function directMetadata(ownerId, conversationId, messageId, type, extra = {}) {
+  return {
+    contentType: type === "image" ? "image/jpeg" : "audio/mp4",
+    customMetadata: {
+      yovoiceConversationId: conversationId,
+      yovoiceMessageId: messageId,
+      yovoiceMessagePath: `conversations/${conversationId}/messages/${messageId}`,
+      yovoiceMediaType: type,
+      yovoiceOwnerUid: ownerId,
+      ...extra,
+    },
   };
 }
 
@@ -156,6 +176,85 @@ async function seed(testEnv) {
       authorId: BOB,
       isPublished: false,
     });
+    await setDoc(doc(db, `conversations/${DIRECT_CONVERSATION}`), {
+      schemaVersion: 2,
+      participantIds: [ALICE, BOB],
+    });
+    await setDoc(doc(db, `directMessageUploadReservations/${DIRECT_IMAGE_MESSAGE}`), {
+      schemaVersion: 1,
+      ownerId: ALICE,
+      conversationId: DIRECT_CONVERSATION,
+      messageId: DIRECT_IMAGE_MESSAGE,
+      recipientId: BOB,
+      type: "image",
+      contentType: "image/jpeg",
+      durationSeconds: null,
+      storagePath:
+        `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_IMAGE_MESSAGE}.jpg`,
+      status: "uploading",
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    });
+    await setDoc(doc(db, `directMessageUploadReservations/${DIRECT_CONTRACT_IMAGE}`), {
+      schemaVersion: 1,
+      ownerId: ALICE,
+      conversationId: DIRECT_CONVERSATION,
+      messageId: DIRECT_CONTRACT_IMAGE,
+      recipientId: BOB,
+      type: "image",
+      contentType: "image/jpeg",
+      durationSeconds: null,
+      storagePath:
+        `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_CONTRACT_IMAGE}.jpg`,
+      status: "uploading",
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    });
+    await setDoc(doc(db, `directMessageUploadReservations/${DIRECT_VOICE_MESSAGE}`), {
+      schemaVersion: 1,
+      ownerId: ALICE,
+      conversationId: DIRECT_CONVERSATION,
+      messageId: DIRECT_VOICE_MESSAGE,
+      recipientId: BOB,
+      type: "voice",
+      contentType: "audio/mp4",
+      durationSeconds: 7,
+      storagePath:
+        `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_VOICE_MESSAGE}.m4a`,
+      status: "uploading",
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    });
+    await setDoc(doc(db, `directMessageUploadReservations/${DIRECT_UNVERIFIED_MESSAGE}`), {
+      schemaVersion: 1,
+      ownerId: NEWBIE,
+      conversationId: DIRECT_CONVERSATION,
+      messageId: DIRECT_UNVERIFIED_MESSAGE,
+      recipientId: BOB,
+      type: "voice",
+      contentType: "audio/mp4",
+      durationSeconds: 7,
+      storagePath:
+        `message_attachments/${NEWBIE}/${DIRECT_CONVERSATION}/${DIRECT_UNVERIFIED_MESSAGE}.m4a`,
+      status: "uploading",
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    });
+    await setDoc(doc(db, `directMessageUploadReservations/${DIRECT_EXPIRED_MESSAGE}`), {
+      schemaVersion: 1,
+      ownerId: ALICE,
+      conversationId: DIRECT_CONVERSATION,
+      messageId: DIRECT_EXPIRED_MESSAGE,
+      recipientId: BOB,
+      type: "voice",
+      contentType: "audio/mp4",
+      durationSeconds: 7,
+      storagePath:
+        `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_EXPIRED_MESSAGE}.m4a`,
+      status: "uploading",
+      createdAt: new Date(Date.now() - 20 * 60 * 1000),
+      expiresAt: new Date(Date.now() - 10 * 60 * 1000),
+    });
   });
 }
 
@@ -187,6 +286,154 @@ async function main() {
   const banned = storageFor(BANNED);
   const disabled = storageFor(DISABLED);
   const anon = testEnv.unauthenticatedContext().storage();
+
+  // --- Direct messages: exact server reservation + participant-only reads. ---
+  const directImagePath =
+    `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_IMAGE_MESSAGE}.jpg`;
+  await check("reserved direct image uploads with exact identity", () =>
+    assertSucceeds(uploadBytes(
+      ref(alice, directImagePath),
+      smallImage,
+      directMetadata(ALICE, DIRECT_CONVERSATION, DIRECT_IMAGE_MESSAGE, "image"),
+    )),
+  );
+  await check("only conversation participants can read private attachments", async () => {
+    await assertSucceeds(getBytes(ref(alice, directImagePath)));
+    await assertSucceeds(getBytes(ref(bob, directImagePath)));
+    await assertFails(getBytes(ref(mallory, directImagePath)));
+    await assertFails(getBytes(ref(anon, directImagePath)));
+  });
+  await check("direct attachment objects are immutable to clients", async () => {
+    await assertFails(uploadBytes(
+      ref(alice, directImagePath),
+      smallImage,
+      directMetadata(ALICE, DIRECT_CONVERSATION, DIRECT_IMAGE_MESSAGE, "image"),
+    ));
+    await assertFails(deleteObject(ref(alice, directImagePath)));
+  });
+  await check("forged or missing direct reservations fail closed", async () => {
+    const forgedMessage = `m_${"b".repeat(40)}`;
+    await assertFails(uploadBytes(
+      ref(alice,
+        `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${forgedMessage}.jpg`),
+      smallImage,
+      directMetadata(ALICE, DIRECT_CONVERSATION, forgedMessage, "image"),
+    ));
+    const wrongPathMessage = `m_${"c".repeat(40)}`;
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(),
+        `directMessageUploadReservations/${wrongPathMessage}`), {
+        schemaVersion: 1,
+        ownerId: ALICE,
+        conversationId: DIRECT_CONVERSATION,
+        messageId: wrongPathMessage,
+        recipientId: BOB,
+        type: "image",
+        contentType: "image/jpeg",
+        durationSeconds: null,
+        storagePath: "message_attachments/forged/path.jpg",
+        status: "uploading",
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      });
+    });
+    await assertFails(uploadBytes(
+      ref(alice,
+        `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${wrongPathMessage}.jpg`),
+      smallImage,
+      directMetadata(ALICE, DIRECT_CONVERSATION, wrongPathMessage, "image"),
+    ));
+  });
+  await check("direct image MIME, extension and byte bounds cannot be spoofed", async () => {
+    const path =
+      `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_CONTRACT_IMAGE}.jpg`;
+    await assertFails(uploadBytes(
+      ref(alice, path),
+      smallImage,
+      {
+        ...directMetadata(
+          ALICE,
+          DIRECT_CONVERSATION,
+          DIRECT_CONTRACT_IMAGE,
+          "image",
+        ),
+        contentType: "image/png",
+      },
+    ));
+    await assertFails(uploadBytes(
+      ref(alice, path),
+      oversizeAudio,
+      directMetadata(
+        ALICE,
+        DIRECT_CONVERSATION,
+        DIRECT_CONTRACT_IMAGE,
+        "image",
+      ),
+    ));
+    await assertFails(uploadBytes(
+      ref(alice, path),
+      tooSmallImage,
+      directMetadata(
+        ALICE,
+        DIRECT_CONVERSATION,
+        DIRECT_CONTRACT_IMAGE,
+        "image",
+      ),
+    ));
+  });
+  await check("reserved direct voice media is private and enforces the 12 MB cap", async () => {
+    const path =
+      `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_VOICE_MESSAGE}.m4a`;
+    await assertFails(uploadBytes(
+      ref(alice, path),
+      oversizeAudio,
+      directMetadata(
+        ALICE,
+        DIRECT_CONVERSATION,
+        DIRECT_VOICE_MESSAGE,
+        "voice",
+      ),
+    ));
+    await assertSucceeds(uploadBytes(
+      ref(alice, path),
+      smallAudio,
+      directMetadata(
+        ALICE,
+        DIRECT_CONVERSATION,
+        DIRECT_VOICE_MESSAGE,
+        "voice",
+      ),
+    ));
+    await assertSucceeds(getBytes(ref(alice, path)));
+    await assertSucceeds(getBytes(ref(bob, path)));
+    await assertFails(getBytes(ref(mallory, path)));
+  });
+  await check("unverified and expired direct upload sessions fail closed", async () => {
+    const unverifiedPath =
+      `message_attachments/${NEWBIE}/${DIRECT_CONVERSATION}/${DIRECT_UNVERIFIED_MESSAGE}.m4a`;
+    await assertFails(uploadBytes(
+      ref(newbie, unverifiedPath),
+      smallAudio,
+      directMetadata(
+        NEWBIE,
+        DIRECT_CONVERSATION,
+        DIRECT_UNVERIFIED_MESSAGE,
+        "voice",
+      ),
+    ));
+    const expiredPath =
+      `message_attachments/${ALICE}/${DIRECT_CONVERSATION}/${DIRECT_EXPIRED_MESSAGE}.m4a`;
+    await assertFails(uploadBytes(
+      ref(alice, expiredPath),
+      smallAudio,
+      directMetadata(
+        ALICE,
+        DIRECT_CONVERSATION,
+        DIRECT_EXPIRED_MESSAGE,
+        "voice",
+      ),
+    ));
+  });
 
   // --- Profile: active owner, exact name/MIME, append-only. ---
   await check("active owner can create a JPEG profile image", () =>

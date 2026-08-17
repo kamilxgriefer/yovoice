@@ -67,6 +67,7 @@ function createStageBFunctions({
   });
   const maintenanceHandlers = createMaintenanceHandlers({
     db: resolvedRuntime.db,
+    direct: resolvedRuntime.direct,
     FieldPath: resolvedRuntime.FieldPath,
     moments: resolvedRuntime.moments,
     logger: log,
@@ -118,6 +119,11 @@ function createStageBFunctions({
     { ...scheduleBase, schedule: "every 10 minutes" },
     maintenanceHandlers.expireAbandonedVoiceCommentDrafts,
   );
+  exportsMap.expireAbandonedDirectMessageAttachmentsSchedule =
+    registrars.onSchedule(
+      { ...scheduleBase, schedule: "every 10 minutes" },
+      maintenanceHandlers.expireAbandonedDirectMessageAttachments,
+    );
 
   const eventBase = {
     region: REGION,

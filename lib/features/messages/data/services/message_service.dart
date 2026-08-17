@@ -3,11 +3,15 @@ import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 
@@ -18,6 +22,64 @@ class ChatPresence {
   final DateTime? lastSeen;
 }
 
+class _DirectAttachmentReservation {
+  const _DirectAttachmentReservation({
+    required this.conversationId,
+    required this.messageId,
+    required this.storagePath,
+    required this.type,
+  });
+
+  final String conversationId;
+  final String messageId;
+  final String storagePath;
+  final MessageType type;
+
+  factory _DirectAttachmentReservation.fromResponse(
+    Map<Object?, Object?> data,
+  ) {
+    final conversationId = data['conversationId'];
+    final messageId = data['messageId'];
+    final storagePath = data['storagePath'];
+    final typeValue = data['type'];
+    final type = MessageType.values.where((item) => item.name == typeValue);
+    if (conversationId is! String ||
+        conversationId.isEmpty ||
+        messageId is! String ||
+        messageId.isEmpty ||
+        storagePath is! String ||
+        storagePath.isEmpty ||
+        type.isEmpty ||
+        type.first == MessageType.text) {
+      throw StateError('Malformed attachment reservation from YO Voice.');
+    }
+    return _DirectAttachmentReservation(
+      conversationId: conversationId,
+      messageId: messageId,
+      storagePath: storagePath,
+      type: type.first,
+    );
+  }
+}
+
+class _PendingDirectAttachment {
+  _PendingDirectAttachment({
+    required this.type,
+    required this.contentType,
+    required this.durationSeconds,
+    required this.reserveRequestId,
+    required this.finalizeRequestId,
+  });
+
+  final MessageType type;
+  final String contentType;
+  final int? durationSeconds;
+  final String reserveRequestId;
+  final String finalizeRequestId;
+  _DirectAttachmentReservation? reservation;
+  String? generation;
+}
+
 class MessageService {
   MessageService({
     FirebaseFirestore? firestore,
@@ -26,15 +88,23 @@ class MessageService {
     // delivery is now derived by the backend from the committed message.
     NotificationService? notificationService,
     FirebaseFunctions? functions,
+    FirebaseStorage? storage,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _legacyNotificationService = notificationService,
-       _functionsOverride = functions;
+       _functionsOverride = functions,
+       _storageOverride = storage;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final NotificationService? _legacyNotificationService;
   final FirebaseFunctions? _functionsOverride;
+  final FirebaseStorage? _storageOverride;
+  final Map<String, _PendingDirectAttachment> _pendingImageAttachments = {};
+  final Expando<Map<String, _PendingDirectAttachment>>
+  _pendingVoiceAttachments = Expando('directVoiceAttachments');
+
+  FirebaseStorage get _storage => _storageOverride ?? FirebaseStorage.instance;
 
   FirebaseFunctions? get _functions {
     if (_functionsOverride != null) {
@@ -93,8 +163,7 @@ class MessageService {
     if (error is FirebaseException && error.code == 'no-app') {
       return true;
     }
-    return error is FirebaseFunctionsException &&
-        error.code == 'unimplemented';
+    return error is FirebaseFunctionsException && error.code == 'unimplemented';
   }
 
   bool get _preferLegacyBehaviour => _legacyNotificationService != null;
@@ -366,6 +435,318 @@ class MessageService {
     );
   }
 
+  /// Sends an image through the server-reserved private attachment flow.
+  ///
+  /// There is intentionally no client-direct fallback: only the backend may
+  /// bind an upload to a canonical conversation/message pair. The Storage
+  /// object is immutable and readable only by the two live participants.
+  Future<void> sendImageMessage({
+    required String conversationId,
+    required XFile image,
+  }) async {
+    final bytes = await image.readAsBytes();
+    if (bytes.lengthInBytes < 128 || bytes.lengthInBytes > 8 * 1024 * 1024) {
+      throw StateError('Choose a photo smaller than 8 MB.');
+    }
+    final contentType = _imageContentType(image);
+    final operationKey =
+        '$conversationId:$contentType:${sha256.convert(bytes)}';
+    final pending = _pendingImageAttachments.putIfAbsent(
+      operationKey,
+      () => _newPendingAttachment(
+        type: MessageType.image,
+        contentType: contentType,
+      ),
+    );
+    try {
+      final reservation = pending.reservation ??=
+          await _reserveDirectAttachment(
+            conversationId: conversationId,
+            type: pending.type,
+            contentType: pending.contentType,
+            durationSeconds: pending.durationSeconds,
+            requestId: pending.reserveRequestId,
+          );
+      final generation = pending.generation ??= await _uploadDirectAttachment(
+        reservation,
+        contentType: contentType,
+        upload: (reference, metadata) async {
+          final snapshot = await reference.putData(bytes, metadata);
+          final stored = await snapshot.ref.getMetadata();
+          return stored.generation ?? '';
+        },
+      );
+      await _finalizeDirectAttachment(
+        reservation,
+        generation,
+        requestId: pending.finalizeRequestId,
+      );
+      _pendingImageAttachments.remove(operationKey);
+    } catch (error) {
+      if (!_isAmbiguousAttachmentFailure(error)) {
+        _pendingImageAttachments.remove(operationKey);
+      }
+      rethrow;
+    }
+  }
+
+  /// Publishes an already-finished AAC/MP4 recording as a private voice DM.
+  /// The caller keeps ownership of [audio] so a failed finalize can be retried
+  /// without forcing the person to record again.
+  Future<void> sendVoiceMessage({
+    required String conversationId,
+    required RecordedAudio audio,
+    required int durationSeconds,
+  }) async {
+    final problem = validateRecordedAudio(audio);
+    if (problem != null) throw problem;
+    if (durationSeconds < 1 || durationSeconds > 60) {
+      throw StateError('Voice messages must be between 1 and 60 seconds.');
+    }
+    final contentType = normalizeAudioContentType(audio.contentType);
+    final operations =
+        _pendingVoiceAttachments[audio] ?? <String, _PendingDirectAttachment>{};
+    _pendingVoiceAttachments[audio] = operations;
+    final pending = operations.putIfAbsent(
+      conversationId,
+      () => _newPendingAttachment(
+        type: MessageType.voice,
+        contentType: contentType,
+        durationSeconds: durationSeconds,
+      ),
+    );
+    if (pending.contentType != contentType ||
+        pending.durationSeconds != durationSeconds) {
+      throw StateError(
+        'This recording already has a different pending send contract.',
+      );
+    }
+    try {
+      final reservation = pending.reservation ??=
+          await _reserveDirectAttachment(
+            conversationId: conversationId,
+            type: pending.type,
+            contentType: pending.contentType,
+            durationSeconds: pending.durationSeconds,
+            requestId: pending.reserveRequestId,
+          );
+      final generation = pending.generation ??= await _uploadDirectAttachment(
+        reservation,
+        contentType: contentType,
+        upload: audio.uploadTo,
+      );
+      await _finalizeDirectAttachment(
+        reservation,
+        generation,
+        requestId: pending.finalizeRequestId,
+      );
+      operations.remove(conversationId);
+    } catch (error) {
+      if (!_isAmbiguousAttachmentFailure(error)) {
+        operations.remove(conversationId);
+      }
+      rethrow;
+    }
+  }
+
+  _PendingDirectAttachment _newPendingAttachment({
+    required MessageType type,
+    required String contentType,
+    int? durationSeconds,
+  }) {
+    return _PendingDirectAttachment(
+      type: type,
+      contentType: contentType,
+      durationSeconds: durationSeconds,
+      reserveRequestId: _newRequestId(),
+      finalizeRequestId: _newRequestId(),
+    );
+  }
+
+  bool _isAmbiguousAttachmentFailure(Object error) {
+    if (error is FirebaseFunctionsException) {
+      return const {
+        'unavailable',
+        'deadline-exceeded',
+        'aborted',
+      }.contains(error.code);
+    }
+    if (error is FirebaseException) {
+      return const {
+        'unknown',
+        'retry-limit-exceeded',
+        'unavailable',
+        'deadline-exceeded',
+        'network-request-failed',
+      }.contains(error.code);
+    }
+    return false;
+  }
+
+  String _imageContentType(XFile image) {
+    final declared = image.mimeType?.split(';').first.trim().toLowerCase();
+    if (declared == 'image/jpeg' ||
+        declared == 'image/png' ||
+        declared == 'image/webp') {
+      return declared!;
+    }
+    final lower = image.name.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+    throw StateError('Choose a JPG, PNG, or WebP photo.');
+  }
+
+  Future<_DirectAttachmentReservation> _reserveDirectAttachment({
+    required String conversationId,
+    required MessageType type,
+    required String contentType,
+    int? durationSeconds,
+    required String requestId,
+  }) async {
+    final functions = _functions;
+    if (functions == null) {
+      throw StateError('Private media sharing needs a connection to YO Voice.');
+    }
+    final response = await functions
+        .httpsCallable('reserveDirectMessageAttachment')
+        .call<Map<Object?, Object?>>({
+          'conversationId': conversationId,
+          'type': type.name,
+          'contentType': contentType,
+          'durationSeconds': durationSeconds,
+          'requestId': requestId,
+        });
+    return _DirectAttachmentReservation.fromResponse(response.data);
+  }
+
+  SettableMetadata _attachmentMetadata(
+    _DirectAttachmentReservation reservation, {
+    required String contentType,
+  }) {
+    return SettableMetadata(
+      contentType: contentType,
+      customMetadata: _attachmentCustomMetadata(reservation),
+    );
+  }
+
+  /// Uploads to one immutable server reservation even when the Storage SDK
+  /// loses the response after committing the object. A retry never reserves a
+  /// second path: first it asks Storage whether the exact object/metadata is
+  /// already present, then it retries the same upload target. This avoids both
+  /// duplicate messages and abandoned objects on ambiguous network failures.
+  Future<String> _uploadDirectAttachment(
+    _DirectAttachmentReservation reservation, {
+    required String contentType,
+    required Future<String> Function(
+      Reference reference,
+      SettableMetadata metadata,
+    )
+    upload,
+  }) async {
+    final reference = _storage.ref(reservation.storagePath);
+    final metadata = _attachmentMetadata(reservation, contentType: contentType);
+    Object? lastError;
+
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final generation = await upload(reference, metadata);
+        if (generation.isEmpty) {
+          throw StateError('The uploaded attachment could not be verified.');
+        }
+        return generation;
+      } catch (error) {
+        lastError = error;
+        try {
+          return await _committedAttachmentGeneration(
+            reference,
+            reservation,
+            contentType: contentType,
+          );
+        } catch (_) {
+          if (attempt == 2) throw error;
+          await Future<void>.delayed(
+            Duration(milliseconds: 250 * (attempt + 1)),
+          );
+        }
+      }
+    }
+
+    throw lastError ?? StateError('The attachment could not be uploaded.');
+  }
+
+  Future<String> _committedAttachmentGeneration(
+    Reference reference,
+    _DirectAttachmentReservation reservation, {
+    required String contentType,
+  }) async {
+    final stored = await reference.getMetadata();
+    final expected = _attachmentCustomMetadata(reservation);
+    final actual = stored.customMetadata ?? const <String, String>{};
+    final exactMetadata =
+        actual.length == expected.length &&
+        expected.entries.every((entry) => actual[entry.key] == entry.value);
+    final generation = stored.generation;
+
+    if (stored.contentType != contentType ||
+        !exactMetadata ||
+        generation == null ||
+        generation.isEmpty) {
+      throw StateError('The stored attachment identity could not be verified.');
+    }
+    return generation;
+  }
+
+  Map<String, String> _attachmentCustomMetadata(
+    _DirectAttachmentReservation reservation,
+  ) {
+    return {
+      'yovoiceConversationId': reservation.conversationId,
+      'yovoiceMessageId': reservation.messageId,
+      'yovoiceMessagePath':
+          'conversations/${reservation.conversationId}/messages/${reservation.messageId}',
+      'yovoiceMediaType': reservation.type.name,
+      'yovoiceOwnerUid': _currentUserId,
+    };
+  }
+
+  Future<void> _finalizeDirectAttachment(
+    _DirectAttachmentReservation reservation,
+    String generation, {
+    required String requestId,
+  }) async {
+    final functions = _functions;
+    if (functions == null) {
+      throw StateError('Private media sharing needs a connection to YO Voice.');
+    }
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await functions.httpsCallable('finalizeDirectMessageAttachment').call({
+          'conversationId': reservation.conversationId,
+          'messageId': reservation.messageId,
+          'objectGeneration': generation,
+          'requestId': requestId,
+        });
+        return;
+      } catch (error) {
+        lastError = error;
+        final retryable =
+            error is FirebaseFunctionsException &&
+            const {
+              'unavailable',
+              'deadline-exceeded',
+              'aborted',
+            }.contains(error.code);
+        if (!retryable || attempt == 2) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 250 * (attempt + 1)));
+      }
+    }
+    throw lastError ?? StateError('The attachment could not be published.');
+  }
+
   /// The client-side send, used when `sendDirectMessage` is unavailable
   /// (no Firebase app, or the callable is not deployed) and by the
   /// previews/tests that inject a [NotificationService].
@@ -387,12 +768,13 @@ class MessageService {
     final legacyNotifications = _legacyNotificationService;
     bool suppressBell = false;
     if (legacyNotifications != null) {
-      suppressBell = (await _users
-              .doc(recipientId)
-              .collection('friends')
-              .doc(senderId)
-              .get())
-          .exists;
+      suppressBell =
+          (await _users
+                  .doc(recipientId)
+                  .collection('friends')
+                  .doc(senderId)
+                  .get())
+              .exists;
     }
 
     final conversation = _conversations.doc(conversationId);

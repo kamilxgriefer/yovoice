@@ -2,12 +2,15 @@ import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
+import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -61,6 +64,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _typingTimer;
   Message? _replyTo;
   bool _sending = false;
+  bool _sendingMedia = false;
   bool _isMuted = false;
 
   /// Typing presence is pushed on every keystroke, so a broken backend
@@ -382,9 +386,56 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _showAttachmentNotice(String feature) {
-    _showMessage(
-      '$feature is prepared in the interface. Firebase Storage upload is the next integration step.',
+  Future<void> _pickPhoto() async {
+    if (_sendingMedia) return;
+    final image = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 2048,
+      maxHeight: 2048,
+      imageQuality: 88,
+    );
+    if (image == null || !mounted) return;
+    setState(() => _sendingMedia = true);
+    try {
+      await _service.sendImageMessage(
+        conversationId: widget.conversationId,
+        image: image,
+      );
+    } catch (error) {
+      if (mounted) {
+        _showMessage(
+          error is VoiceRecordingException
+              ? [error.message, error.action].whereType<String>().join(' ')
+              : intentionalOrFriendly(
+                  error,
+                  fallback: 'Your photo could not be sent. Try again.',
+                ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sendingMedia = false);
+    }
+  }
+
+  Future<void> _recordVoiceMessage() async {
+    if (_sendingMedia) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 520,
+      ),
+      builder: (_) => _VoiceMessageRecorderSheet(
+        onSend: (audio, durationSeconds) async {
+          await _service.sendVoiceMessage(
+            conversationId: widget.conversationId,
+            audio: audio,
+            durationSeconds: durationSeconds,
+          );
+        },
+      ),
     );
   }
 
@@ -491,6 +542,7 @@ class _ChatScreenState extends State<ChatScreen> {
                               !_sameDay(message.sentAt, nextMessage.sentAt);
 
                           return Column(
+                            key: ValueKey(message.id),
                             children: [
                               if (showDate) _DateDivider(date: message.sentAt),
                               MessageBubble(
@@ -526,9 +578,10 @@ class _ChatScreenState extends State<ChatScreen> {
                   controller: _controller,
                   focusNode: _focusNode,
                   sending: _sending,
+                  sendingMedia: _sendingMedia,
                   onSend: _send,
-                  onPhoto: () => _showAttachmentNotice('Photo sharing'),
-                  onVoice: () => _showAttachmentNotice('Voice messages'),
+                  onPhoto: _pickPhoto,
+                  onVoice: _recordVoiceMessage,
                 ),
               ],
             ),
@@ -979,6 +1032,7 @@ class _Composer extends StatelessWidget {
     required this.controller,
     required this.focusNode,
     required this.sending,
+    required this.sendingMedia,
     required this.onSend,
     required this.onPhoto,
     required this.onVoice,
@@ -987,6 +1041,7 @@ class _Composer extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool sending;
+  final bool sendingMedia;
   final VoidCallback onSend;
   final VoidCallback onPhoto;
   final VoidCallback onVoice;
@@ -1008,13 +1063,22 @@ class _Composer extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           IconButton(
-            onPressed: onPhoto,
-            tooltip: 'Add photo',
+            onPressed: sendingMedia ? null : onPhoto,
+            tooltip: sendingMedia ? 'Sending attachment' : 'Add photo',
             style: IconButton.styleFrom(
               backgroundColor: _ChatScreenState._surface2,
               foregroundColor: Colors.white,
             ),
-            icon: const Icon(Icons.camera_alt_outlined),
+            icon: sendingMedia
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.camera_alt_outlined),
           ),
           const SizedBox(width: 7),
           Expanded(
@@ -1072,7 +1136,7 @@ class _Composer extends StatelessWidget {
                               )
                             : IconButton(
                                 key: const ValueKey('voice'),
-                                onPressed: onVoice,
+                                onPressed: sendingMedia ? null : onVoice,
                                 tooltip: 'Record voice message',
                                 icon: const Icon(
                                   Icons.mic_none_rounded,
@@ -1087,6 +1151,243 @@ class _Composer extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _VoiceMessageRecorderSheet extends StatefulWidget {
+  const _VoiceMessageRecorderSheet({required this.onSend});
+
+  final Future<void> Function(RecordedAudio audio, int durationSeconds) onSend;
+
+  @override
+  State<_VoiceMessageRecorderSheet> createState() =>
+      _VoiceMessageRecorderSheetState();
+}
+
+class _VoiceMessageRecorderSheetState
+    extends State<_VoiceMessageRecorderSheet> {
+  final VoiceMomentRecorder _recorder = VoiceMomentRecorder();
+  Timer? _timer;
+  RecordedAudio? _audio;
+  int _durationSeconds = 0;
+  bool _recording = false;
+  bool _publishing = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    unawaited(_recorder.dispose());
+    unawaited(_audio?.discard());
+    super.dispose();
+  }
+
+  Future<void> _toggleRecording() async {
+    if (_publishing) return;
+    if (_recording) {
+      await _finishRecording();
+      return;
+    }
+    final previous = _audio;
+    _audio = null;
+    if (previous != null) await previous.discard();
+    try {
+      await _recorder.start();
+      if (!mounted) return;
+      setState(() {
+        _recording = true;
+        _durationSeconds = 0;
+        _error = null;
+      });
+      _timer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+        if (!mounted) return;
+        final elapsed = _recorder.elapsed.inSeconds.clamp(0, 60);
+        setState(() => _durationSeconds = elapsed);
+        if (_recorder.elapsed >= const Duration(seconds: 60)) {
+          unawaited(_finishRecording());
+        }
+      });
+    } on VoiceRecordingException catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = [error.message, error.action].whereType<String>().join(' ');
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = 'Recording could not be started. Try again.');
+      }
+    }
+  }
+
+  Future<void> _finishRecording() async {
+    if (!_recording) return;
+    _timer?.cancel();
+    _durationSeconds = _recorder.durationSeconds;
+    try {
+      final audio = await _recorder.stop();
+      if (!mounted) {
+        await audio.discard();
+        return;
+      }
+      setState(() {
+        _recording = false;
+        _audio = audio;
+        _error = null;
+      });
+    } on VoiceRecordingException catch (error) {
+      if (mounted) {
+        setState(() {
+          _recording = false;
+          _error = [error.message, error.action].whereType<String>().join(' ');
+        });
+      }
+    }
+  }
+
+  Future<void> _send() async {
+    final audio = _audio;
+    if (audio == null || _publishing) return;
+    setState(() {
+      _publishing = true;
+      _error = null;
+    });
+    try {
+      await widget.onSend(audio, _durationSeconds);
+      _audio = null;
+      await audio.discard();
+      if (mounted) Navigator.pop(context);
+    } on VoiceRecordingException catch (error) {
+      if (mounted) {
+        setState(() {
+          _publishing = false;
+          _error = [error.message, error.action].whereType<String>().join(' ');
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _publishing = false;
+          _error = intentionalOrFriendly(
+            error,
+            fallback: 'Your voice message could not be sent. Try again.',
+          );
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasTake = _audio != null;
+    return Semantics(
+      namesRoute: true,
+      label: 'Voice message recorder',
+      child: Container(
+        padding: EdgeInsets.fromLTRB(
+          22,
+          14,
+          22,
+          22 + MediaQuery.paddingOf(context).bottom,
+        ),
+        decoration: const BoxDecoration(
+          color: _ChatScreenState._surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          border: Border(top: BorderSide(color: _ChatScreenState._border)),
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 44,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                _recording
+                    ? 'Recording voice message…'
+                    : hasTake
+                    ? 'Voice message ready'
+                    : 'Record a voice message',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 21,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '${_durationSeconds ~/ 60}:${(_durationSeconds % 60).toString().padLeft(2, '0')} / 1:00',
+                style: const TextStyle(
+                  color: _ChatScreenState._muted,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 14),
+                Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    _error!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Color(0xFFFF809D)),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 22),
+              Semantics(
+                button: true,
+                label: _recording
+                    ? 'Stop recording'
+                    : hasTake
+                    ? 'Record again'
+                    : 'Start recording',
+                child: IconButton.filled(
+                  onPressed: _publishing ? null : _toggleRecording,
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size.square(72),
+                    backgroundColor: _recording
+                        ? const Color(0xFFFF4F78)
+                        : _ChatScreenState._primary,
+                  ),
+                  icon: Icon(
+                    _recording ? Icons.stop_rounded : Icons.mic_rounded,
+                    size: 34,
+                  ),
+                ),
+              ),
+              if (hasTake) ...[
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _publishing ? null : _send,
+                    icon: _publishing
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.send_rounded),
+                    label: Text(
+                      _publishing ? 'Sending…' : 'Send voice message',
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }

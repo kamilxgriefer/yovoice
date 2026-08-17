@@ -174,6 +174,7 @@ Functions → Logs for its first real run rather than assuming it works.
 | `room_images/{roomId}/{uid}_{ts}.ext` | Room cover images | Public |
 | `clubs/{userId}/{clubId}/{kind}_{ts}.ext` | Club images | Public |
 | `voice_moments/{userId}/{fileName}`, `voice_replies/{userId}/{momentId}/{fileName}` | Voice Moment audio | Signed-in only |
+| `message_attachments/{ownerId}/{conversationId}/{messageId}.{ext}` | Private DM photos and voice messages | Active conversation participants only |
 
 Uploads tied to content shown to other users require `email_verified`
 (profile photos are deliberately exempt — setting one during onboarding,
@@ -189,6 +190,16 @@ MIME/extension agreement. The general lesson: a Storage rule that pins an
 exact object name is a contract with a *deployed* client, so verify it
 against what the shipped client actually writes, not against what the
 current source writes.
+
+Direct-message attachments use a stricter contract than the older media
+paths. A server-owned `directMessageUploadReservations/{messageId}` document
+pins owner, conversation, message id, path, media kind, MIME, duration and a
+15-minute expiry. Storage creation requires that exact live reservation and
+exact custom metadata; objects are immutable to clients. Finalization checks
+the actual generation and writes only a private `gs://` reference into the
+canonical message. Reads require an active authenticated participant in the
+same schema-v2 conversation. Backend cleanup uses the canonical bucket from
+Firebase configuration rather than synthesizing a suffix from `GCLOUD_PROJECT`.
 
 ## Firebase App Check
 

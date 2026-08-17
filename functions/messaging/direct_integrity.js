@@ -21,6 +21,7 @@ const {
   requireExactInput,
   requireId,
   requireRequestId,
+  requireSafeInteger,
   requireUid,
   timestampMillis,
   transactionGetAll,
@@ -29,12 +30,27 @@ const {
 const DEFAULT_LIMITS = Object.freeze({
   open: { maxEvents: 12, windowMs: 60_000 },
   send: { maxEvents: 30, windowMs: 60_000 },
+  uploadReserve: { maxEvents: 12, windowMs: 10 * 60_000 },
+  finalize: { maxEvents: 20, windowMs: 10 * 60_000 },
   edit: { maxEvents: 20, windowMs: 60_000 },
   delete: { maxEvents: 20, windowMs: 60_000 },
   preference: { maxEvents: 60, windowMs: 60_000 },
   reaction: { maxEvents: 60, windowMs: 60_000 },
   read: { maxEvents: 120, windowMs: 60_000 },
   typing: { maxEvents: 120, windowMs: 60_000 },
+});
+const DIRECT_UPLOAD_TTL_MS = 15 * 60_000;
+const DIRECT_MEDIA_TYPES = Object.freeze({
+  image: Object.freeze({
+    contentTypes: Object.freeze(["image/jpeg", "image/png", "image/webp"]),
+    maxBytes: 8 * 1024 * 1024,
+    minBytes: 128,
+  }),
+  voice: Object.freeze({
+    contentTypes: Object.freeze(["audio/mp4", "audio/m4a", "audio/x-m4a"]),
+    maxBytes: 12 * 1024 * 1024,
+    minBytes: 1024,
+  }),
 });
 const ALLOWED_DIRECT_REACTIONS = Object.freeze([
   "❤️",
@@ -52,6 +68,80 @@ function canonicalConversationId(firstId, secondId) {
 
 function canonicalPairKey(firstId, secondId) {
   return digest("direct-pair", canonicalPair(firstId, secondId));
+}
+
+function directMediaMessageId(uid, conversationId, requestId) {
+  return `m_${digest(
+    "direct-media",
+    conversationId,
+    uid,
+    requestId,
+  ).slice(0, 40)}`;
+}
+
+function extensionForDirectMedia(type, contentType) {
+  if (type === "voice") return "m4a";
+  return contentType === "image/png"
+    ? "png"
+    : contentType === "image/webp" ? "webp" : "jpg";
+}
+
+function directMediaStoragePath(uid, conversationId, messageId, type, contentType) {
+  return `message_attachments/${uid}/${conversationId}/${messageId}.${
+    extensionForDirectMedia(type, contentType)
+  }`;
+}
+
+function directMediaPathFromReference(reference, uid, conversationId, messageId) {
+  if (typeof reference !== "string" || !reference.startsWith("gs://")) return null;
+  const firstPathSlash = reference.indexOf("/", 5);
+  if (firstPathSlash < 0) return null;
+  const path = reference.slice(firstPathSlash + 1);
+  const expected = `message_attachments/${uid}/${conversationId}/${messageId}.`;
+  if (!path.startsWith(expected) ||
+      !/\.(jpg|png|webp|m4a)$/u.test(path) ||
+      path.slice(expected.length).includes("/")) {
+    return null;
+  }
+  return path;
+}
+
+function customMetadataOf(metadata) {
+  const custom = metadata?.metadata ?? metadata?.customMetadata ?? {};
+  return isPlainObject(custom) ? custom : {};
+}
+
+function validateStoredDirectMedia(metadata, reservation, requestedGeneration) {
+  const config = DIRECT_MEDIA_TYPES[reservation.type];
+  if (!config || !metadata || typeof metadata !== "object") {
+    fail("failed-precondition", "The uploaded attachment is missing.");
+  }
+  const size = Number(metadata.size);
+  if (!Number.isSafeInteger(size) || size < config.minBytes ||
+      size > config.maxBytes ||
+      !config.contentTypes.includes(metadata.contentType) ||
+      metadata.contentType !== reservation.contentType) {
+    fail("failed-precondition", "The uploaded attachment payload is invalid.");
+  }
+  const generation = String(metadata.generation ?? "");
+  if (!generation || generation !== String(requestedGeneration)) {
+    fail("failed-precondition", "The uploaded object generation does not match.");
+  }
+  const expected = {
+    yovoiceConversationId: reservation.conversationId,
+    yovoiceMessageId: reservation.messageId,
+    yovoiceMessagePath:
+      `conversations/${reservation.conversationId}/messages/${reservation.messageId}`,
+    yovoiceMediaType: reservation.type,
+    yovoiceOwnerUid: reservation.ownerId,
+  };
+  const custom = customMetadataOf(metadata);
+  const allowed = new Set([...Object.keys(expected), "firebaseStorageDownloadTokens"]);
+  if (Object.keys(custom).some((key) => !allowed.has(key)) ||
+      Object.entries(expected).some(([key, value]) => custom[key] !== value)) {
+    fail("failed-precondition", "The uploaded attachment identity is invalid.");
+  }
+  return { contentType: metadata.contentType, generation, size };
 }
 
 function isPlainObject(value) {
@@ -261,6 +351,15 @@ function validateMessage(snapshot, conversationId) {
           data.durationSeconds < 1 || data.durationSeconds > 300)) ||
       (data.type === "text" &&
         (data.mediaUrl !== null || data.durationSeconds !== null)) ||
+      (data.type === "image" &&
+        (data.content !== "" || typeof data.mediaUrl !== "string" ||
+          !/^(gs:\/\/|https:\/\/)/u.test(data.mediaUrl) ||
+          data.durationSeconds !== null)) ||
+      (data.type === "voice" &&
+        (data.content !== "" || typeof data.mediaUrl !== "string" ||
+          !/^(gs:\/\/|https:\/\/)/u.test(data.mediaUrl) ||
+          !Number.isSafeInteger(data.durationSeconds) ||
+          data.durationSeconds < 1 || data.durationSeconds > 60)) ||
       (data.isDeleted &&
         (data.content !== "" || data.mediaUrl !== null ||
           data.durationSeconds !== null || Object.keys(data.reactions).length !== 0))) {
@@ -289,6 +388,7 @@ function setMembership(list, uid, enabled) {
 function createDirectMessagingService({
   db,
   Timestamp,
+  storage = null,
   clock = () => Date.now(),
   readPageSize = 100,
   limits = DEFAULT_LIMITS,
@@ -326,6 +426,44 @@ function createDirectMessagingService({
       uid,
       ...timing,
       ...config,
+    });
+  }
+
+  async function beginStoragePreflight({ identity, kind, uid, requestId, timing }) {
+    return db.runTransaction(async (transaction) => {
+      const ledgerRef = ledgerReference(identity);
+      const preflightRef = db.doc(`integrityPreflightLedgers/${identity.id}`);
+      const rateRef = limitReference("finalize", uid);
+      const [ledger, preflight, rate] = await transactionGetAll(
+        transaction,
+        ledgerRef,
+        preflightRef,
+        rateRef,
+      );
+      const replay = assertLedgerReplay(ledger, {
+        kind,
+        uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return { replay };
+      if (preflight.exists) {
+        const existing = preflight.data() ?? {};
+        if (existing.kind !== kind || existing.ownerId !== uid ||
+            existing.inputHash !== identity.inputHash) {
+          fail("already-exists", "requestId was reused for another upload.");
+        }
+        return { replay: null };
+      }
+      consume(transaction, rate, rateRef, "finalize", uid, timing);
+      transaction.create(preflightRef, {
+        schemaVersion: 1,
+        kind,
+        ownerId: uid,
+        requestId,
+        inputHash: identity.inputHash,
+        createdAt: timing.now,
+      });
+      return { replay: null };
     });
   }
 
@@ -620,6 +758,318 @@ function createDirectMessagingService({
     });
   }
 
+  async function reserveDirectMessageAttachment(request) {
+    const auth = requireActor(request);
+    const data = requireExactInput(
+      request.data,
+      ["contentType", "conversationId", "durationSeconds", "requestId", "type"],
+      ["contentType", "conversationId", "requestId", "type"],
+    );
+    const conversationId = requireId(data.conversationId, "conversationId");
+    const requestId = requireRequestId(data.requestId);
+    const type = String(data.type ?? "");
+    const config = DIRECT_MEDIA_TYPES[type];
+    if (!config) fail("invalid-argument", "type must be image or voice.");
+    const contentType = String(data.contentType ?? "").toLowerCase();
+    if (!config.contentTypes.includes(contentType)) {
+      fail("invalid-argument", "contentType is not supported for this attachment.");
+    }
+    const durationSeconds = type === "voice"
+      ? requireSafeInteger(data.durationSeconds, "durationSeconds", { min: 1, max: 60 })
+      : null;
+    if (type === "image" && data.durationSeconds !== undefined &&
+        data.durationSeconds !== null) {
+      fail("invalid-argument", "Images cannot carry a duration.");
+    }
+    const messageId = directMediaMessageId(auth.uid, conversationId, requestId);
+    const storagePath = directMediaStoragePath(
+      auth.uid,
+      conversationId,
+      messageId,
+      type,
+      contentType,
+    );
+    const input = { contentType, conversationId, durationSeconds, type };
+    const identity = operationIdentity(
+      "direct.attachment.reserve",
+      auth.uid,
+      requestId,
+      input,
+    );
+    const timing = time();
+
+    return db.runTransaction(async (transaction) => {
+      const ledgerRef = ledgerReference(identity);
+      const rateRef = limitReference("uploadReserve", auth.uid);
+      const conversationRef = db.doc(`conversations/${conversationId}`);
+      const reservationRef = db.doc(`directMessageUploadReservations/${messageId}`);
+      const [ledger, rate, conversation, existing] = await transactionGetAll(
+        transaction,
+        ledgerRef,
+        rateRef,
+        conversationRef,
+        reservationRef,
+      );
+      const replay = assertLedgerReplay(ledger, {
+        kind: "direct.attachment.reserve",
+        uid: auth.uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return replay;
+      const preliminary = conversationParticipants(conversation, auth.uid);
+      const recipientId = preliminary.participants.find((uid) => uid !== auth.uid);
+      const related = await transactionGetAll(
+        transaction,
+        db.doc(`users/${auth.uid}`),
+        db.doc(`users/${recipientId}`),
+        db.doc(`restrictions/${auth.uid}`),
+        db.doc(`restrictions/${recipientId}`),
+        db.doc(`users/${auth.uid}/blocked/${recipientId}`),
+        db.doc(`users/${recipientId}/blocked/${auth.uid}`),
+        db.doc(`directConversationPairs/${canonicalPairKey(
+          ...preliminary.participants,
+        )}`),
+      );
+      validateConversation(conversation, conversationId, auth.uid, related[6]);
+      activeProfile(related[0], "Your");
+      activeProfile(related[1], "The recipient");
+      assertNotRestricted(related[2], "Your", timing.nowMs);
+      assertNotRestricted(related[3], "The recipient", timing.nowMs);
+      assertNotBlocked(related[4], related[5]);
+      consume(transaction, rate, rateRef, "uploadReserve", auth.uid, timing);
+      if (existing.exists) {
+        fail("data-loss", "An attachment reservation exists without its ledger.");
+      }
+      const expiresAt = Timestamp.fromMillis(timing.nowMs + DIRECT_UPLOAD_TTL_MS);
+      transaction.create(reservationRef, {
+        schemaVersion: 1,
+        ownerId: auth.uid,
+        conversationId,
+        messageId,
+        recipientId,
+        type,
+        contentType,
+        durationSeconds,
+        storagePath,
+        status: "uploading",
+        createdAt: timing.now,
+        expiresAt,
+      });
+      const result = {
+        conversationId,
+        messageId,
+        storagePath,
+        type,
+        expiresAtMillis: timing.nowMs + DIRECT_UPLOAD_TTL_MS,
+        maxBytes: config.maxBytes,
+        created: true,
+      };
+      transaction.create(ledgerRef, ledgerData({
+        kind: "direct.attachment.reserve",
+        uid: auth.uid,
+        requestId,
+        inputHash: identity.inputHash,
+        result,
+        now: timing.now,
+      }));
+      return result;
+    });
+  }
+
+  async function finalizeDirectMessageAttachment(request) {
+    const auth = requireActor(request);
+    const data = requireExactInput(
+      request.data,
+      ["conversationId", "messageId", "objectGeneration", "requestId"],
+      ["conversationId", "messageId", "objectGeneration", "requestId"],
+    );
+    const conversationId = requireId(data.conversationId, "conversationId");
+    const messageId = requireId(data.messageId, "messageId");
+    const requestId = requireRequestId(data.requestId);
+    const objectGeneration = String(data.objectGeneration ?? "");
+    if (!/^[0-9]{1,30}$/u.test(objectGeneration)) {
+      fail("invalid-argument", "objectGeneration is invalid.");
+    }
+    const input = { conversationId, messageId, objectGeneration };
+    const identity = operationIdentity(
+      "direct.attachment.finalize",
+      auth.uid,
+      requestId,
+      input,
+    );
+    const timing = time();
+    const preflight = await beginStoragePreflight({
+      identity,
+      kind: "direct.attachment.finalize",
+      uid: auth.uid,
+      requestId,
+      timing,
+    });
+    if (preflight.replay) return preflight.replay;
+    if (!storage?.getMetadata || !storage?.getObjectReference) {
+      fail("failed-precondition", "Attachment storage is unavailable.");
+    }
+    const reservationRef = db.doc(`directMessageUploadReservations/${messageId}`);
+    const reservationSnapshot = await reservationRef.get();
+    if (!reservationSnapshot.exists) {
+      fail("not-found", "The attachment reservation does not exist.");
+    }
+    const reservation = reservationSnapshot.data() ?? {};
+    const expectedKeys = [
+      "contentType", "conversationId", "createdAt", "durationSeconds",
+      "expiresAt", "messageId", "ownerId", "recipientId", "schemaVersion",
+      "status", "storagePath", "type",
+    ];
+    const keys = Object.keys(reservation).sort();
+    if (keys.length !== expectedKeys.length ||
+        keys.some((key, index) => key !== expectedKeys[index]) ||
+        reservation.schemaVersion !== 1 || reservation.ownerId !== auth.uid ||
+        reservation.conversationId !== conversationId ||
+        reservation.messageId !== messageId || reservation.status !== "uploading" ||
+        timestampMillis(reservation.expiresAt) === null ||
+        timestampMillis(reservation.expiresAt) <= timing.nowMs ||
+        reservation.storagePath !== directMediaStoragePath(
+          auth.uid,
+          conversationId,
+          messageId,
+          reservation.type,
+          reservation.contentType,
+        )) {
+      fail("failed-precondition", "The attachment reservation is invalid.");
+    }
+    const metadata = await storage.getMetadata(reservation.storagePath);
+    const media = validateStoredDirectMedia(
+      metadata,
+      reservation,
+      objectGeneration,
+    );
+    const mediaReference = storage.getObjectReference(reservation.storagePath);
+    if (typeof mediaReference !== "string" || !mediaReference.startsWith("gs://") ||
+        mediaReference.length > 4096) {
+      fail("failed-precondition", "The attachment reference is invalid.");
+    }
+
+    return db.runTransaction(async (transaction) => {
+      const ledgerRef = ledgerReference(identity);
+      const preflightRef = db.doc(`integrityPreflightLedgers/${identity.id}`);
+      const conversationRef = db.doc(`conversations/${conversationId}`);
+      const messageRef = conversationRef.collection("messages").doc(messageId);
+      const [ledger, preflightLedger, conversation, currentReservation, existing] =
+        await transactionGetAll(
+          transaction,
+          ledgerRef,
+          preflightRef,
+          conversationRef,
+          reservationRef,
+          messageRef,
+        );
+      const replay = assertLedgerReplay(ledger, {
+        kind: "direct.attachment.finalize",
+        uid: auth.uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return replay;
+      const preflightData = preflightLedger.exists
+        ? preflightLedger.data() ?? {}
+        : {};
+      if (preflightData.ownerId !== auth.uid ||
+          preflightData.kind !== "direct.attachment.finalize" ||
+          preflightData.inputHash !== identity.inputHash) {
+        fail("failed-precondition", "The upload preflight is not canonical.");
+      }
+      if (!currentReservation.exists ||
+          currentReservation.data()?.ownerId !== auth.uid ||
+          currentReservation.data()?.storagePath !== reservation.storagePath) {
+        fail("failed-precondition", "The attachment reservation changed.");
+      }
+      if (existing.exists) {
+        fail("data-loss", "An attachment message exists without its ledger.");
+      }
+      const preliminary = conversationParticipants(conversation, auth.uid);
+      const recipientId = preliminary.participants.find((uid) => uid !== auth.uid);
+      const related = await transactionGetAll(
+        transaction,
+        db.doc(`users/${auth.uid}`),
+        db.doc(`users/${recipientId}`),
+        db.doc(`restrictions/${auth.uid}`),
+        db.doc(`restrictions/${recipientId}`),
+        db.doc(`users/${auth.uid}/blocked/${recipientId}`),
+        db.doc(`users/${recipientId}/blocked/${auth.uid}`),
+        db.doc(`directConversationPairs/${canonicalPairKey(
+          ...preliminary.participants,
+        )}`),
+      );
+      const context = validateConversation(
+        conversation,
+        conversationId,
+        auth.uid,
+        related[6],
+      );
+      activeProfile(related[0], "Your");
+      activeProfile(related[1], "The recipient");
+      assertNotRestricted(related[2], "Your", timing.nowMs);
+      assertNotRestricted(related[3], "The recipient", timing.nowMs);
+      assertNotBlocked(related[4], related[5]);
+      const sequence = incrementCanonicalCount(
+        context.data.lastMessageSequence,
+        "lastMessageSequence",
+      );
+      const preview = reservation.type === "image" ? "Photo" : "Voice message";
+      transaction.create(messageRef, {
+        schemaVersion: 2,
+        sequence,
+        conversationId,
+        senderId: auth.uid,
+        type: reservation.type,
+        content: "",
+        mediaUrl: mediaReference,
+        durationSeconds: reservation.durationSeconds,
+        sentAt: timing.now,
+        readBy: [auth.uid],
+        reactions: {},
+        isDeleted: false,
+        editedAt: null,
+        replyToMessageId: null,
+        replyToSenderId: null,
+        replyToContent: null,
+      });
+      const unreadCounts = { ...context.data.unreadCounts };
+      unreadCounts[auth.uid] = 0;
+      unreadCounts[recipientId] = incrementCanonicalCount(
+        unreadCounts[recipientId],
+        "Recipient unread count",
+      );
+      transaction.update(conversationRef, {
+        lastMessage: preview,
+        lastMessageId: messageId,
+        lastMessageSequence: sequence,
+        lastMessageType: reservation.type,
+        lastMessageSenderId: auth.uid,
+        updatedAt: timing.now,
+        archivedBy: [],
+        unreadCounts,
+      });
+      transaction.delete(reservationRef);
+      const result = {
+        conversationId,
+        messageId,
+        recipientId,
+        type: reservation.type,
+        mediaSize: media.size,
+        created: true,
+      };
+      transaction.create(ledgerRef, ledgerData({
+        kind: "direct.attachment.finalize",
+        uid: auth.uid,
+        requestId,
+        inputHash: identity.inputHash,
+        result,
+        now: timing.now,
+      }));
+      return result;
+    });
+  }
+
   async function mutateMessage(request, action) {
     const auth = requireActor(request);
     const isEdit = action === "edit";
@@ -704,6 +1154,12 @@ function createDirectMessagingService({
           });
         }
       } else {
+        const attachmentPath = directMediaPathFromReference(
+          messageData.mediaUrl,
+          auth.uid,
+          conversationId,
+          messageId,
+        );
         transaction.update(messageRef, {
           content: "",
           mediaUrl: null,
@@ -715,6 +1171,25 @@ function createDirectMessagingService({
         if (context.data.lastMessageId === messageId) {
           transaction.update(conversationRef, {
             lastMessage: "Message deleted",
+            updatedAt: timing.now,
+          });
+        }
+        if (attachmentPath) {
+          const outboxId = digest(
+            "direct-attachment-cleanup",
+            conversationId,
+            messageId,
+          );
+          transaction.set(db.doc(`contentCleanupOutbox/${outboxId}`), {
+            schemaVersion: 1,
+            kind: "directMessageAttachment",
+            rootPath: messageRef.path,
+            objectPaths: [attachmentPath],
+            status: "pending",
+            attemptCount: 0,
+            requestedBy: auth.uid,
+            requestedReason: "authorDeletedMessage",
+            createdAt: timing.now,
             updatedAt: timing.now,
           });
         }
@@ -1112,11 +1587,77 @@ function createDirectMessagingService({
     });
   }
 
+  async function expireAbandonedAttachmentReservations({ limit = 100 } = {}) {
+    requireSafeInteger(limit, "limit", { min: 1, max: 100 });
+    const timing = time();
+    const snapshot = await db.collection("directMessageUploadReservations")
+      .where("expiresAt", "<=", timing.now)
+      .limit(limit)
+      .get();
+    const expired = [];
+    const malformed = [];
+    for (const document of snapshot.docs) {
+      const outcome = await db.runTransaction(async (transaction) => {
+        const current = await transaction.get(document.ref);
+        if (!current.exists) return "gone";
+        const data = current.data() ?? {};
+        const expiresAt = timestampMillis(data.expiresAt);
+        if (data.status !== "uploading" || expiresAt === null ||
+            expiresAt > timing.nowMs) return "unchanged";
+        const config = DIRECT_MEDIA_TYPES[data.type];
+        const canonical = config && isValidOpaqueUid(data.ownerId) &&
+          typeof data.conversationId === "string" && SAFE_ID.test(data.conversationId) &&
+          data.messageId === current.id && /^m_[a-f0-9]{40}$/u.test(current.id) &&
+          config.contentTypes.includes(data.contentType) &&
+          data.storagePath === directMediaStoragePath(
+            data.ownerId,
+            data.conversationId,
+            current.id,
+            data.type,
+            data.contentType,
+          );
+        transaction.delete(current.ref);
+        if (!canonical) {
+          transaction.set(db.doc(`contentCleanupQuarantine/${digest(
+            "direct-reservation-quarantine",
+            current.id,
+          )}`), {
+            schemaVersion: 1,
+            rootPath: current.ref.path,
+            reason: "nonCanonicalExpiredDirectAttachmentReservation",
+            createdAt: timing.now,
+          });
+          return "malformed";
+        }
+        const outboxId = digest("direct-reservation-cleanup", current.id);
+        transaction.set(db.doc(`contentCleanupOutbox/${outboxId}`), {
+          schemaVersion: 1,
+          kind: "directMessageAttachmentReservation",
+          rootPath: current.ref.path,
+          objectPaths: [data.storagePath],
+          status: "pending",
+          attemptCount: 0,
+          requestedBy: data.ownerId,
+          requestedReason: "expiredUploadReservation",
+          createdAt: timing.now,
+          updatedAt: timing.now,
+        });
+        return "expired";
+      });
+      if (outcome === "expired") expired.push(document.id);
+      if (outcome === "malformed") malformed.push(document.id);
+    }
+    return { expired, malformed, hasMore: snapshot.size === limit };
+  }
+
   return {
     deleteDirectMessage,
     editDirectMessage,
+    expireAbandonedAttachmentReservations,
+    finalizeDirectMessageAttachment,
     markDirectConversationRead,
     openDirectConversation,
+    reserveDirectMessageAttachment,
     sendDirectMessage,
     setDirectConversationPreference,
     setDirectMessageReaction,
@@ -1130,6 +1671,9 @@ module.exports = {
   canonicalConversationId,
   canonicalPairKey,
   createDirectMessagingService,
+  directMediaMessageId,
+  directMediaStoragePath,
+  validateStoredDirectMedia,
   validateConversation,
   validateMessage,
 };

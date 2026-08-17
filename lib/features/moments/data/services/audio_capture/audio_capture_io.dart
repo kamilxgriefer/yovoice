@@ -95,8 +95,11 @@ class FileRecordedAudio extends RecordedAudio {
     SettableMetadata metadata,
   ) async {
     final snapshot = await reference.putFile(file, metadata);
-    final stored = await snapshot.ref.getMetadata();
-    return stored.generation ?? '';
+    final snapshotGeneration = snapshot.metadata?.generation?.trim();
+    if (snapshotGeneration != null && snapshotGeneration.isNotEmpty) {
+      return snapshotGeneration;
+    }
+    return (await snapshot.ref.getMetadata()).generation ?? '';
   }
 
   @override

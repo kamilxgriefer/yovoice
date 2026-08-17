@@ -8,6 +8,8 @@ const {
 const USER_CALLABLE_METHODS = Object.freeze({
   openDirectConversation: ["direct", "openDirectConversation"],
   sendDirectMessage: ["direct", "sendDirectMessage"],
+  reserveDirectMessageAttachment: ["direct", "reserveDirectMessageAttachment"],
+  finalizeDirectMessageAttachment: ["direct", "finalizeDirectMessageAttachment"],
   editDirectMessage: ["direct", "editDirectMessage"],
   deleteDirectMessage: ["direct", "deleteDirectMessage"],
   setDirectConversationPreference: [
@@ -62,14 +64,15 @@ function createUserCallableHandlers(runtime) {
 
 function createMaintenanceHandlers({
   db,
+  direct,
   FieldPath,
   moments,
   logger = console,
   cleanupBatchSize = 12,
   expiryBatchSize = 100,
 } = {}) {
-  if (!db || !FieldPath?.documentId || !moments) {
-    throw new TypeError("db, FieldPath and moments are required.");
+  if (!db || !FieldPath?.documentId || !direct || !moments) {
+    throw new TypeError("db, direct, FieldPath and moments are required.");
   }
   requireSafeInteger(cleanupBatchSize, "cleanupBatchSize", { min: 1, max: 25 });
   requireSafeInteger(expiryBatchSize, "expiryBatchSize", { min: 1, max: 100 });
@@ -117,12 +120,19 @@ function createMaintenanceHandlers({
     return moments.expireAbandonedVoiceCommentDrafts({ limit: expiryBatchSize });
   }
 
+  async function expireAbandonedDirectMessageAttachments() {
+    return direct.expireAbandonedAttachmentReservations({
+      limit: expiryBatchSize,
+    });
+  }
+
   async function rejectExternalMaintenanceInvocation() {
     fail("permission-denied", "Maintenance handlers are not callable endpoints.");
   }
 
   return Object.freeze({
     expireAbandonedMomentDrafts,
+    expireAbandonedDirectMessageAttachments,
     expireAbandonedVoiceCommentDrafts,
     onContentCleanupOutboxCreated,
     processPendingContentCleanup,

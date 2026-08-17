@@ -82,7 +82,13 @@ to server-authoritative callables:
 
 - `openDirectConversation`, `sendDirectMessage`, `editDirectMessage`,
   `deleteDirectMessage`, `setDirectConversationPreference`, `markDirectConversationRead`,
-  `setDirectMessageReaction`, `setDirectTyping` in `functions/index.js`.
+  `setDirectMessageReaction`, `setDirectTyping`,
+  `reserveDirectMessageAttachment` and `finalizeDirectMessageAttachment` in
+  `functions/index.js`. The attachment pair binds an immutable Storage object
+  to one canonical message after rechecking both participants, blocks,
+  restrictions, MIME, size, metadata and object generation. Expired
+  reservations and deleted-message objects are handled by the bounded cleanup
+  worker; clients never receive a public download URL.
 - `reserveMomentDraft`, `finalizeMomentDraft`, `reserveVoiceCommentDraft`,
   `finalizeVoiceCommentDraft`, `createMomentComment`, `deleteMomentComment`,
   `deleteMoment`, `setMomentLike`.
@@ -117,6 +123,14 @@ never touch again. `conversations` create is `if false` in `firestore.rules`
 for the same reason. Where a fallback *does* exist, it owes the server's
 document key for key
 ([ADR-061](Decisions.md#adr-061-a-callable-that-answers-is-the-whole-write-and-its-client-fallback-must-write-the-same-document)).
+
+The Admin SDK bootstrap deliberately does not derive a bucket name from the
+project id. New Firebase projects use `<project>.firebasestorage.app`, while
+the historic suffix is `<project>.appspot.com`; guessing the latter makes an
+upload succeed in the client bucket and finalization inspect a different
+bucket. `functions/index.js` therefore lets `FIREBASE_CONFIG` select the
+canonical bucket unless an operator explicitly sets one of the documented
+bucket override environment variables.
 
 ## Clubs
 

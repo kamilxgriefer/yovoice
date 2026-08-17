@@ -59,6 +59,26 @@ in GitHub settings and cannot be guaranteed by a repository file. Until those
 settings are enabled, the manual dispatch is the release confirmation; never
 grant the Hosting service-account secret to a different environment.
 
+### DM media and Safari Voice Moment rollout order
+
+The private photo/voice DM client depends on two new callables and a new
+Storage path, while Voice Moment finalization depends on the corrected Admin
+bucket bootstrap. Release this revision in the following order:
+
+1. deploy all Cloud Functions and verify that
+   `reserveDirectMessageAttachment`, `finalizeDirectMessageAttachment` and
+   the cleanup schedule are ACTIVE;
+2. deploy `storage.rules` and run an authenticated participant/non-participant
+   smoke test against `message_attachments`;
+3. only then deploy the Flutter Hosting artifact;
+4. on the deployed build, send one photo and one voice DM between two test
+   accounts, then publish a one-second Voice Moment from a physical iPhone
+   Safari session.
+
+Reversing steps 1–3 exposes working-looking attachment buttons to a client
+whose trusted backend or Storage contract is not live yet. Firestore rules and
+indexes are unchanged by this particular media rollout.
+
 ## Why rules/functions are tested but not auto-deployed
 
 Auto-deploying `firestore.rules` on every push to `main` would mean a

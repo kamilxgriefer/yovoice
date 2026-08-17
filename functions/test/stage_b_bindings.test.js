@@ -16,6 +16,7 @@ function fakeRuntime(calls = []) {
     return { serviceName, methodName, uid: request.auth.uid };
   };
   const direct = {};
+  direct.expireAbandonedAttachmentReservations = async () => ({ expired: [] });
   const moments = {
     processCleanupOutbox: async () => ({ completed: true }),
     expireAbandonedMomentDrafts: async () => ({ expired: [] }),
@@ -120,6 +121,7 @@ test("Stage B export map registers every callable, schedule and trigger", () => 
     "processPendingContentCleanupSchedule",
     "expireAbandonedMomentDraftsSchedule",
     "expireAbandonedVoiceCommentDraftsSchedule",
+    "expireAbandonedDirectMessageAttachmentsSchedule",
   ];
   const triggerNames = [
     "onContentCleanupOutboxCreated",
@@ -128,8 +130,8 @@ test("Stage B export map registers every callable, schedule and trigger", () => 
     Object.keys(functions).sort(),
     [...callableNames, ...scheduleNames, ...triggerNames].sort(),
   );
-  assert.equal(registrations.filter((item) => item.kind === "callable").length, 21);
-  assert.equal(registrations.filter((item) => item.kind === "schedule").length, 3);
+  assert.equal(registrations.filter((item) => item.kind === "callable").length, 23);
+  assert.equal(registrations.filter((item) => item.kind === "schedule").length, 4);
   assert.equal(registrations.filter((item) => item.kind === "created").length, 1);
 
   for (const name of callableNames) {

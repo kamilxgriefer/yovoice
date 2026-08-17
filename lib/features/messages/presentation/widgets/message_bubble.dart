@@ -1,3 +1,8 @@
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:audioplayers/audioplayers.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/messages/data/models/message.dart';
@@ -8,12 +13,17 @@ class MessageBubble extends StatelessWidget {
     required this.message,
     required this.currentUserId,
     required this.onLongPress,
+    this.privateMediaLoader,
+    this.audioPlayerFactory,
     super.key,
   });
 
   final Message message;
   final String currentUserId;
   final VoidCallback onLongPress;
+  final Future<Uint8List?> Function(String? reference, int maxBytes)?
+  privateMediaLoader;
+  final AudioPlayer Function()? audioPlayerFactory;
 
   static const Color _surface = Color(0xFF17121F);
   static const Color _border = Color(0xFF30263F);
@@ -37,98 +47,94 @@ class MessageBubble extends StatelessWidget {
           padding: EdgeInsets.only(
             left: isMine ? 54 : 0,
             right: isMine ? 0 : 54,
-            bottom: reactionSummary.isEmpty ? 10 : 18,
+            bottom: 10,
           ),
           child: Column(
             crossAxisAlignment: isMine
                 ? CrossAxisAlignment.end
                 : CrossAxisAlignment.start,
             children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 11,
-                    ),
-                    decoration: BoxDecoration(
-                      gradient: isMine
-                          ? const LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [Color(0xFFA72DFF), Color(0xFF7821E8)],
-                            )
-                          : null,
-                      color: isMine ? null : _surface,
-                      borderRadius: BorderRadius.only(
-                        topLeft: const Radius.circular(20),
-                        topRight: const Radius.circular(20),
-                        bottomLeft: Radius.circular(isMine ? 20 : 5),
-                        bottomRight: Radius.circular(isMine ? 5 : 20),
-                      ),
-                      border: isMine ? null : Border.all(color: _border),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (message.replyToContent?.isNotEmpty == true)
-                          Container(
-                            width: double.infinity,
-                            margin: const EdgeInsets.only(bottom: 8),
-                            padding: const EdgeInsets.all(9),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: .18),
-                              borderRadius: BorderRadius.circular(11),
-                              border: Border(
-                                left: BorderSide(
-                                  color: isMine
-                                      ? Colors.white70
-                                      : const Color(0xFFC35CFF),
-                                  width: 3,
-                                ),
-                              ),
-                            ),
-                            child: Text(
-                              message.replyToContent!,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 12,
-                              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 11,
+                ),
+                decoration: BoxDecoration(
+                  gradient: isMine
+                      ? const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFFA72DFF), Color(0xFF7821E8)],
+                        )
+                      : null,
+                  color: isMine ? null : _surface,
+                  borderRadius: BorderRadius.only(
+                    topLeft: const Radius.circular(20),
+                    topRight: const Radius.circular(20),
+                    bottomLeft: Radius.circular(isMine ? 20 : 5),
+                    bottomRight: Radius.circular(isMine ? 5 : 20),
+                  ),
+                  border: isMine ? null : Border.all(color: _border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (message.replyToContent?.isNotEmpty == true)
+                      Container(
+                        width: double.infinity,
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(9),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: .18),
+                          borderRadius: BorderRadius.circular(11),
+                          border: Border(
+                            left: BorderSide(
+                              color: isMine
+                                  ? Colors.white70
+                                  : const Color(0xFFC35CFF),
+                              width: 3,
                             ),
                           ),
-                        _MessageContent(message: message),
-                      ],
-                    ),
-                  ),
-                  if (reactionSummary.isNotEmpty)
-                    Positioned(
-                      bottom: -13,
-                      right: isMine ? 7 : null,
-                      left: isMine ? null : 7,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF21192D),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: _border),
-                          boxShadow: const [
-                            BoxShadow(color: Color(0x44000000), blurRadius: 8),
-                          ],
                         ),
                         child: Text(
-                          reactionSummary,
-                          style: const TextStyle(fontSize: 13),
+                          message.replyToContent!,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
                         ),
                       ),
+                    _MessageContent(
+                      message: message,
+                      privateMediaLoader: privateMediaLoader,
+                      audioPlayerFactory: audioPlayerFactory,
                     ),
-                ],
+                  ],
+                ),
               ),
+              if (reactionSummary.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF21192D),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: _border),
+                    boxShadow: const [
+                      BoxShadow(color: Color(0x44000000), blurRadius: 8),
+                    ],
+                  ),
+                  child: Text(
+                    reactionSummary,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+              ],
               const SizedBox(height: 4),
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -189,9 +195,16 @@ class MessageBubble extends StatelessWidget {
 }
 
 class _MessageContent extends StatelessWidget {
-  const _MessageContent({required this.message});
+  const _MessageContent({
+    required this.message,
+    required this.privateMediaLoader,
+    required this.audioPlayerFactory,
+  });
 
   final Message message;
+  final Future<Uint8List?> Function(String? reference, int maxBytes)?
+  privateMediaLoader;
+  final AudioPlayer Function()? audioPlayerFactory;
 
   @override
   Widget build(BuildContext context) {
@@ -215,9 +228,16 @@ class _MessageContent extends StatelessWidget {
 
     switch (message.type) {
       case MessageType.voice:
-        return _VoiceMessageContent(message: message);
+        return _VoiceMessageContent(
+          message: message,
+          privateMediaLoader: privateMediaLoader,
+          audioPlayerFactory: audioPlayerFactory,
+        );
       case MessageType.image:
-        return _ImageMessageContent(message: message);
+        return _ImageMessageContent(
+          message: message,
+          privateMediaLoader: privateMediaLoader,
+        );
       case MessageType.text:
         return Text(
           message.content,
@@ -231,59 +251,214 @@ class _MessageContent extends StatelessWidget {
   }
 }
 
-class _VoiceMessageContent extends StatelessWidget {
-  const _VoiceMessageContent({required this.message});
+class _VoiceMessageContent extends StatefulWidget {
+  const _VoiceMessageContent({
+    required this.message,
+    required this.privateMediaLoader,
+    required this.audioPlayerFactory,
+  });
 
   final Message message;
+  final Future<Uint8List?> Function(String? reference, int maxBytes)?
+  privateMediaLoader;
+  final AudioPlayer Function()? audioPlayerFactory;
+
+  @override
+  State<_VoiceMessageContent> createState() => _VoiceMessageContentState();
+}
+
+class _VoiceMessageContentState extends State<_VoiceMessageContent> {
+  late final AudioPlayer _player;
+  StreamSubscription<PlayerState>? _stateSubscription;
+  Uint8List? _bytes;
+  bool _loading = false;
+  bool _playing = false;
+  bool _paused = false;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _player = widget.audioPlayerFactory?.call() ?? AudioPlayer();
+    _stateSubscription = _player.onPlayerStateChanged.listen((state) {
+      if (!mounted) return;
+      setState(() {
+        _playing = state == PlayerState.playing;
+        _paused = state == PlayerState.paused;
+      });
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _VoiceMessageContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.message.id != widget.message.id ||
+        oldWidget.message.mediaUrl != widget.message.mediaUrl) {
+      _bytes = null;
+      _loading = false;
+      _playing = false;
+      _paused = false;
+      _failed = false;
+      unawaited(_player.stop());
+    }
+  }
+
+  @override
+  void dispose() {
+    unawaited(_stateSubscription?.cancel());
+    unawaited(_player.dispose());
+    super.dispose();
+  }
+
+  Future<void> _toggle() async {
+    if (_loading) return;
+    if (_playing) {
+      await _player.pause();
+      return;
+    }
+    if (_paused) {
+      await _player.resume();
+      return;
+    }
+    try {
+      setState(() {
+        _loading = true;
+        _failed = false;
+      });
+      final reference = widget.message.mediaUrl?.trim() ?? '';
+      if (reference.startsWith('gs://')) {
+        _bytes ??=
+            await (widget.privateMediaLoader?.call(
+                  reference,
+                  12 * 1024 * 1024,
+                ) ??
+                _privateMediaBytes(reference, maxBytes: 12 * 1024 * 1024));
+        final bytes = _bytes;
+        if (bytes == null || bytes.isEmpty) {
+          throw StateError('Voice message unavailable');
+        }
+        await _player.play(BytesSource(bytes));
+      } else if (reference.startsWith('https://')) {
+        await _player.play(UrlSource(reference));
+      } else {
+        throw StateError('Voice message unavailable');
+      }
+    } catch (_) {
+      if (mounted) setState(() => _failed = true);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final duration = message.durationSeconds ?? 0;
+    final duration = widget.message.durationSeconds ?? 0;
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 27),
-        const SizedBox(width: 6),
-        SizedBox(
-          width: 126,
-          height: 32,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: List.generate(24, (index) {
-              final height = 7 + ((index * 13 + duration) % 22);
-
-              return Expanded(
-                child: Container(
-                  height: height.toDouble(),
-                  margin: const EdgeInsets.symmetric(horizontal: 1),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: .82),
-                    borderRadius: BorderRadius.circular(20),
+    return Semantics(
+      button: true,
+      label: _failed
+          ? 'Voice message unavailable. Tap to retry.'
+          : _playing
+          ? 'Pause voice message'
+          : 'Play voice message, $duration seconds',
+      child: InkWell(
+        onTap: _toggle,
+        borderRadius: BorderRadius.circular(12),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_loading)
+              const SizedBox.square(
+                dimension: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            else
+              Icon(
+                _failed
+                    ? Icons.refresh_rounded
+                    : _playing
+                    ? Icons.pause_rounded
+                    : Icons.play_arrow_rounded,
+                color: _failed ? const Color(0xFFFF9BB1) : Colors.white,
+                size: 27,
+              ),
+            const SizedBox(width: 6),
+            Flexible(
+              fit: FlexFit.loose,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 48, maxWidth: 126),
+                child: SizedBox(
+                  height: 32,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: List.generate(24, (index) {
+                      final height = 7 + ((index * 13 + duration) % 22);
+                      return Expanded(
+                        child: Container(
+                          height: height.toDouble(),
+                          margin: const EdgeInsets.symmetric(horizontal: 1),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: .82),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                        ),
+                      );
+                    }),
                   ),
                 ),
-              );
-            }),
-          ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '${duration ~/ 60}:${(duration % 60).toString().padLeft(2, '0')}',
+              style: const TextStyle(color: Colors.white70, fontSize: 11),
+            ),
+          ],
         ),
-        const SizedBox(width: 8),
-        Text(
-          '${duration ~/ 60}:${(duration % 60).toString().padLeft(2, '0')}',
-          style: const TextStyle(color: Colors.white70, fontSize: 11),
-        ),
-      ],
+      ),
     );
   }
 }
 
-class _ImageMessageContent extends StatelessWidget {
-  const _ImageMessageContent({required this.message});
+class _ImageMessageContent extends StatefulWidget {
+  const _ImageMessageContent({
+    required this.message,
+    required this.privateMediaLoader,
+  });
 
   final Message message;
+  final Future<Uint8List?> Function(String? reference, int maxBytes)?
+  privateMediaLoader;
+
+  @override
+  State<_ImageMessageContent> createState() => _ImageMessageContentState();
+}
+
+class _ImageMessageContentState extends State<_ImageMessageContent> {
+  late Future<Uint8List?> _image = _load();
+
+  Future<Uint8List?> _load() =>
+      widget.privateMediaLoader?.call(
+        widget.message.mediaUrl,
+        8 * 1024 * 1024,
+      ) ??
+      _privateMediaBytes(widget.message.mediaUrl, maxBytes: 8 * 1024 * 1024);
+
+  @override
+  void didUpdateWidget(covariant _ImageMessageContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.message.id != widget.message.id ||
+        oldWidget.message.mediaUrl != widget.message.mediaUrl) {
+      _image = _load();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final mediaUrl = message.mediaUrl?.trim() ?? '';
+    final mediaUrl = widget.message.mediaUrl?.trim() ?? '';
 
     if (mediaUrl.isEmpty) {
       return const Row(
@@ -296,23 +471,74 @@ class _ImageMessageContent extends StatelessWidget {
       );
     }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: Image.network(
-        mediaUrl,
-        width: 210,
-        height: 230,
-        fit: BoxFit.cover,
-        errorBuilder: (_, __, ___) {
-          return const SizedBox(
+    if (mediaUrl.startsWith('https://')) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Image.network(
+          mediaUrl,
+          width: 210,
+          height: 230,
+          fit: BoxFit.cover,
+          semanticLabel: 'Photo message',
+          errorBuilder: (_, _, _) => const SizedBox(
             width: 210,
             height: 130,
             child: Center(
               child: Icon(Icons.broken_image_outlined, color: Colors.white54),
             ),
+          ),
+        ),
+      );
+    }
+
+    return FutureBuilder<Uint8List?>(
+      key: ValueKey('${widget.message.id}:${widget.message.mediaUrl}'),
+      future: _image,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const SizedBox(
+            width: 210,
+            height: 160,
+            child: Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            ),
           );
-        },
-      ),
+        }
+        final bytes = snapshot.data;
+        if (snapshot.hasError || bytes == null || bytes.isEmpty) {
+          return TextButton.icon(
+            onPressed: () => setState(() => _image = _load()),
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Photo unavailable — retry'),
+          );
+        }
+        return Semantics(
+          image: true,
+          label: 'Photo message',
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: Image.memory(
+              bytes,
+              width: 210,
+              height: 230,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+            ),
+          ),
+        );
+      },
     );
   }
+}
+
+Future<Uint8List?> _privateMediaBytes(
+  String? reference, {
+  required int maxBytes,
+}) async {
+  final value = reference?.trim() ?? '';
+  if (!value.startsWith('gs://')) return null;
+  return FirebaseStorage.instance.refFromURL(value).getData(maxBytes);
 }

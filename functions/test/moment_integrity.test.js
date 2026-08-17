@@ -262,6 +262,68 @@ test("draft reservation and finalize bind canonical identity and immutable media
   );
 });
 
+test("a one-second recording publishes through the canonical draft contract", async () => {
+  const service = momentService();
+  const reserved = await service.reserveMomentDraft(request(A, {
+    caption: "One second",
+    durationSeconds: 1,
+    requestId: "reserve-one-second",
+  }));
+  storage.put(reserved.storagePath, {
+    authorId: A,
+    momentId: reserved.momentId,
+    generation: "1000000000000001",
+    size: 1024,
+  });
+
+  const finalized = await service.finalizeMomentDraft(request(A, {
+    momentId: reserved.momentId,
+    objectGeneration: "1000000000000001",
+    requestId: "finalize-one-second",
+  }));
+
+  assert.equal(finalized.published, true);
+  const moment = await db.doc(`voiceMoments/${reserved.momentId}`).get();
+  assert.equal(moment.data().durationSeconds, 1);
+  assert.equal(moment.data().mediaSize, 1024);
+  assert.equal(moment.data().status, "published");
+});
+
+test("unverified actors cannot reserve or finalize Voice Moment uploads", async () => {
+  const service = momentService();
+  await assert.rejects(
+    service.reserveMomentDraft(request(A, {
+      caption: "Unverified reserve",
+      durationSeconds: 1,
+      requestId: "reserve-unverified",
+    }, false)),
+    (error) => error.code === "failed-precondition",
+  );
+
+  const reserved = await service.reserveMomentDraft(request(A, {
+    caption: "Verified reserve",
+    durationSeconds: 1,
+    requestId: "reserve-before-unverified-finalize",
+  }));
+  storage.put(reserved.storagePath, {
+    authorId: A,
+    momentId: reserved.momentId,
+    generation: "1000000000000002",
+    size: 1024,
+  });
+  await assert.rejects(
+    service.finalizeMomentDraft(request(A, {
+      momentId: reserved.momentId,
+      objectGeneration: "1000000000000002",
+      requestId: "finalize-unverified",
+    }, false)),
+    (error) => error.code === "failed-precondition",
+  );
+  const moment = await db.doc(`voiceMoments/${reserved.momentId}`).get();
+  assert.equal(moment.data().isPublished, false);
+  assert.equal(moment.data().status, "uploading");
+});
+
 test("Moment creation requires an exact HTTPS public identity projection", async () => {
   const service = momentService();
   await db.doc(`publicProfiles/${A}`).delete();
@@ -710,6 +772,36 @@ test("voice comments use expiring draft-first reservations and exact-once finali
     `voiceMomentUploadReservations/${reserved.commentId}`,
   ).get()).exists, false);
   assert.equal((await db.doc(`voiceMoments/${momentId}`).get()).data().commentCount, 1);
+});
+
+test("generic cleanup worker removes private direct-message attachment objects", async () => {
+  const conversationId = "direct-cleanup-conversation";
+  const messageId = `m_${"d".repeat(40)}`;
+  const objectPath =
+    `message_attachments/${A}/${conversationId}/${messageId}.jpg`;
+  storage.objects.set(objectPath, {
+    contentType: "image/jpeg",
+    generation: "1",
+    size: "2048",
+    metadata: {},
+  });
+  const outboxId = "direct-cleanup-outbox";
+  await db.doc(`contentCleanupOutbox/${outboxId}`).set({
+    schemaVersion: 1,
+    kind: "directMessageAttachment",
+    rootPath: `conversations/${conversationId}/messages/${messageId}`,
+    objectPaths: [objectPath],
+    status: "pending",
+    attemptCount: 0,
+    requestedBy: A,
+    requestedReason: "authorDeletedMessage",
+    createdAt: Timestamp.fromMillis(nowMs),
+    updatedAt: Timestamp.fromMillis(nowMs),
+  });
+  const result = await momentService().processCleanupOutbox(outboxId);
+  assert.equal(result.completed, true);
+  assert.deepEqual(storage.deleted, [objectPath]);
+  assert.equal(storage.objects.has(objectPath), false);
 });
 
 test("expired voice reservation cannot finalize and scheduler deletes its orphan", async () => {

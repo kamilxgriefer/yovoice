@@ -46,6 +46,7 @@ function createStageBIntegrityRuntime({
   const direct = createDirectMessagingService({
     db: database,
     Timestamp: TimestampImpl,
+    storage: objectStorage,
     clock,
     ...directOptions,
   });

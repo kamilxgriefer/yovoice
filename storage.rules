@@ -215,6 +215,77 @@ service firebase.storage {
       allow create, update, delete: if false;
     }
 
+    // Private direct-message attachments are immutable, server-reserved
+    // objects. A participant may read through the authenticated Storage SDK;
+    // no public download-token URL is stored in Firestore. Creation is bound
+    // to an unexpired, server-owned reservation whose exact object identity
+    // and media contract are mirrored in custom metadata.
+    match /message_attachments/{ownerId}/{conversationId}/{fileName} {
+      function reservationPath() {
+        return /databases/(default)/documents/directMessageUploadReservations/$(request.resource.metadata.get('yovoiceMessageId', ''));
+      }
+
+      function conversationPath() {
+        return /databases/(default)/documents/conversations/$(conversationId);
+      }
+
+      function validAttachmentIdentity() {
+        let messageId = request.resource.metadata.get('yovoiceMessageId', '');
+        let reservation = firestore.get(reservationPath()).data;
+        return request.resource.metadata.keys().hasOnly([
+              'yovoiceConversationId', 'yovoiceMessageId',
+              'yovoiceMessagePath', 'yovoiceMediaType', 'yovoiceOwnerUid'
+            ]) &&
+            messageId.matches('m_[a-f0-9]{40}') &&
+            fileName.matches(messageId + '[.](jpg|png|webp|m4a)') &&
+            request.resource.metadata.get('yovoiceOwnerUid', '') == ownerId &&
+            request.resource.metadata.get('yovoiceConversationId', '') == conversationId &&
+            request.resource.metadata.get('yovoiceMessagePath', '') ==
+              'conversations/' + conversationId + '/messages/' + messageId &&
+            firestore.exists(reservationPath()) &&
+            reservation.schemaVersion == 1 &&
+            reservation.ownerId == ownerId &&
+            reservation.conversationId == conversationId &&
+            reservation.messageId == messageId &&
+            reservation.storagePath ==
+              'message_attachments/' + ownerId + '/' + conversationId + '/' + fileName &&
+            reservation.status == 'uploading' &&
+            reservation.expiresAt > request.time &&
+            reservation.contentType == request.resource.contentType &&
+            reservation.type == request.resource.metadata.get('yovoiceMediaType', '') &&
+            (
+              (
+                reservation.type == 'image' &&
+                reservation.durationSeconds == null &&
+                isValidImagePayload(8 * 1024 * 1024) &&
+                imageExtensionMatchesMime(fileName)
+              ) ||
+              (
+                reservation.type == 'voice' &&
+                fileName.matches('m_[a-f0-9]{40}[.]m4a') &&
+                reservation.durationSeconds is int &&
+                reservation.durationSeconds >= 1 &&
+                reservation.durationSeconds <= 60 &&
+                isValidAudioPayload()
+              )
+            );
+      }
+
+      function canReadPrivateAttachment() {
+        return isActiveUser(request.auth.uid) &&
+            firestore.exists(conversationPath()) &&
+            firestore.get(conversationPath()).data.schemaVersion == 2 &&
+            request.auth.uid in firestore.get(conversationPath()).data.participantIds;
+      }
+
+      allow read: if canReadPrivateAttachment();
+      allow create: if resource == null &&
+          isVerified() &&
+          isActiveUser(ownerId) &&
+          validAttachmentIdentity();
+      allow update, delete: if false;
+    }
+
     match /voice_moments/{userId}/{fileName} {
       function validUnpublishedDraft() {
         let momentId = request.resource.metadata.get('momentId', '');

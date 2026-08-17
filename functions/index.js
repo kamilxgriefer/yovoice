@@ -1,20 +1,20 @@
 const { getApps, initializeApp } = require("firebase-admin/app");
 
-const __storageBucket =
+// Let the Admin SDK read the deployed project's canonical bucket from
+// FIREBASE_CONFIG unless an operator intentionally supplies an override.
+// New Firebase projects use `<project>.firebasestorage.app`; synthesizing the
+// historical `<project>.appspot.com` name from GCLOUD_PROJECT silently points
+// finalize/cleanup at a different bucket than the clients upload to.
+const __storageBucketOverride =
   process.env.FIREBASE_STORAGE_BUCKET ||
   process.env.STORAGE_BUCKET ||
-  process.env.GCLOUD_STORAGE_BUCKET ||
-  (() => {
-    const projectId =
-      process.env.GCLOUD_PROJECT ||
-      process.env.GOOGLE_CLOUD_PROJECT ||
-      process.env.FIREBASE_PROJECT;
-    return projectId ? `${projectId}.appspot.com` : undefined;
-  })();
+  process.env.GCLOUD_STORAGE_BUCKET;
 
 if (!getApps().length) {
   initializeApp(
-    __storageBucket ? { storageBucket: __storageBucket } : undefined,
+    __storageBucketOverride
+      ? { storageBucket: __storageBucketOverride }
+      : undefined,
   );
 }
 

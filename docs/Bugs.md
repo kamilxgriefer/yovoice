@@ -553,6 +553,29 @@ permission flags).
 
 ## UI
 
+- **Fixed (2026-08-17, this revision): photo and microphone actions in a
+  direct chat were placeholders.** Both buttons only displayed “prepared in
+  the interface” notices. They now run a real private-media flow: gallery
+  selection or a 1–60 second recorder, server reservation, immutable Storage
+  upload, canonical message finalization, authenticated image loading and
+  voice play/pause/resume. Lost upload/finalize responses reuse the same
+  reservation and request id. Independent review also caught and fixed two
+  pre-release UI defects: resume restarted audio from zero, and recycled list
+  state could briefly show/play the previous message's media.
+
+- **Fixed in code (2026-08-17, this revision; post-deploy iPhone verification
+  still required): Safari Voice Moment publish stopped after draft
+  reservation but before Storage upload.** Production evidence showed two
+  canonical one-second drafts, zero finalizations and zero bucket objects.
+  The web path converted a native `MediaRecorder` Blob through
+  Blob→ArrayBuffer→Dart bytes→JS bytes. It now gives the native Blob directly
+  to Firebase Storage `putBlob`, recovers object generation after an ambiguous
+  commit and never deletes a valid object merely because finalization failed.
+  The investigation also found a backend bootstrap bug that could replace the
+  configured `.firebasestorage.app` bucket with a guessed `.appspot.com`
+  bucket; the Admin SDK now respects `FIREBASE_CONFIG` unless an explicit
+  bucket override is supplied.
+
 - **Fixed (2026-08-17, `6ef4380`): no production user could record a Voice
   Moment at all.** The recorder called `getTemporaryDirectory()`, which
   `path_provider` does not implement on web, and a broad catch turned the
@@ -609,13 +632,13 @@ permission flags).
   **Worth remembering: a preview harness that does not install the
   production theme produces screenshots that look like proof and are not.**
 
-- **OPEN (2026-08-17): Safari, real microphone capture, and end-to-end
-  publish against Firebase are UNVERIFIED.** Recording is verified in
-  Chromium 148 (MIME negotiation measured directly) and by 521 automated
-  tests; the format decision is described in
+- **OPEN release verification (2026-08-17): a real post-deploy iPhone Safari
+  publish is still required.** The native-Blob browser seam, native-file seam,
+  reservation/finalization retries and Firestore+Storage contracts are now
+  automated, but no physical iPhone has exercised the new build against
+  production yet. The format decision is described in
   [ADR-057](Decisions.md#adr-057-voice-moment-recording-splits-only-at-byte-acquisition-and-byte-upload-and-the-server-pins-the-audio-container).
-  Nobody has yet recorded a Voice Moment with a real microphone and
-  watched it publish to production Storage and Firestore. Firefox is
+  Firefox is
   **known unsupported** and shows an honest unavailable panel — see
   [Roadmap 0i](Roadmap.md#0i-voice-moment-recording-on-firefox-needs-a-coordinated-backend-change).
 

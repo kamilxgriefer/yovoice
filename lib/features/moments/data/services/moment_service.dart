@@ -24,6 +24,13 @@ class MomentService {
   final FirebaseStorage _storage;
   final FirebaseFunctions? _functionsOverride;
 
+  /// One logical publish operation per recording. Keeping this state in the
+  /// service makes the screen's "try publishing again" a real retry: the
+  /// same server reservation and request id are reused instead of consuming a
+  /// second quota slot and leaving another abandoned draft behind.
+  final Map<RecordedAudio, _PendingMomentPublish> _pendingMomentPublishes =
+      Map<RecordedAudio, _PendingMomentPublish>.identity();
+
   FirebaseFunctions? get _functions =>
       _functionsOverride ??
       (() {
@@ -53,8 +60,7 @@ class MomentService {
     if (error is FirebaseException && error.code == 'no-app') {
       return true;
     }
-    return error is FirebaseFunctionsException &&
-        (error.code == 'unimplemented' || error.code == 'not-found');
+    return error is FirebaseFunctionsException && error.code == 'unimplemented';
   }
 
   Stream<List<VoiceMoment>> watchPublishedMoments({int limit = 30}) {
@@ -99,7 +105,7 @@ class MomentService {
   /// Publishes a finished recording.
   ///
   /// [audio] is the platform seam: native passes a temporary file, web
-  /// passes the bytes the browser produced. Everything below — the draft
+  /// passes the native Blob the browser produced. Everything below — the draft
   /// reservation, the object metadata the Storage rules check, the
   /// finalize call, and the legacy fallback — is identical either way.
   Future<String> publishRecordedMoment({
@@ -130,11 +136,30 @@ class MomentService {
     final normalizedCaption = caption.trim().isEmpty
         ? 'Voice Moment'
         : caption.trim();
+    final trimmedReplyToMomentId = replyToMomentId?.trim();
+    final normalizedReplyToMomentId =
+        trimmedReplyToMomentId == null || trimmedReplyToMomentId.isEmpty
+        ? null
+        : trimmedReplyToMomentId;
 
-    if (replyToMomentId != null && replyToMomentId.isNotEmpty) {
+    final existingPending = _pendingMomentPublishes[audio];
+    if (existingPending != null &&
+        !existingPending.matches(
+          caption: normalizedCaption,
+          durationSeconds: durationSeconds,
+          replyToMomentId: normalizedReplyToMomentId,
+        )) {
+      throw StateError(
+        'Publishing already started with a different caption, duration, or '
+        'reply target. Restore the original details to retry this recording, '
+        'or record again to publish the new version.',
+      );
+    }
+
+    if (normalizedReplyToMomentId != null) {
       final identity = await _identity(user);
       return _publishVoiceReply(
-        parentMomentId: replyToMomentId,
+        parentMomentId: normalizedReplyToMomentId,
         audio: audio,
         durationSeconds: durationSeconds,
         caption: normalizedCaption,
@@ -144,6 +169,16 @@ class MomentService {
       );
     }
 
+    final pending = _pendingMomentPublishes.putIfAbsent(
+      audio,
+      () => _PendingMomentPublish(
+        requestId: _newRequestId(),
+        caption: normalizedCaption,
+        durationSeconds: durationSeconds,
+        replyToMomentId: normalizedReplyToMomentId,
+      ),
+    );
+
     try {
       final functions = _functions;
       if (functions == null) {
@@ -152,17 +187,20 @@ class MomentService {
           message: 'Cloud Functions unavailable.',
         );
       }
-      final requestId = _newRequestId();
-      final reserve = functions.httpsCallable('reserveMomentDraft');
-      final reserved = await reserve.call<Map<Object?, Object?>>({
-        'caption': normalizedCaption,
-        'durationSeconds': durationSeconds,
-        'requestId': requestId,
-      });
+      if (pending.momentId == null || pending.storagePath == null) {
+        final reserve = functions.httpsCallable('reserveMomentDraft');
+        final reserved = await reserve.call<Map<Object?, Object?>>({
+          'caption': normalizedCaption,
+          'durationSeconds': durationSeconds,
+          'requestId': pending.requestId,
+        });
+        pending
+          ..momentId = reserved.data['momentId'] as String?
+          ..storagePath = reserved.data['storagePath'] as String?;
+      }
 
-      final reservedData = reserved.data;
-      final momentId = reservedData['momentId'] as String?;
-      final storagePath = reservedData['storagePath'] as String?;
+      final momentId = pending.momentId;
+      final storagePath = pending.storagePath;
       if (momentId == null ||
           momentId.isEmpty ||
           storagePath == null ||
@@ -170,43 +208,65 @@ class MomentService {
         throw StateError('Malformed server draft reservation for moment.');
       }
       final storageReference = _storage.ref(storagePath);
-      try {
-        final objectGeneration = await audio.uploadTo(
-          storageReference,
-          SettableMetadata(
-            contentType: audio.contentType,
-            customMetadata: {'authorId': user.uid, 'momentId': momentId},
-          ),
-        );
 
-        if (objectGeneration.isEmpty) {
-          throw StateError('The upload did not return a valid generation.');
+      if (pending.objectGeneration == null) {
+        try {
+          pending.objectGeneration = await audio.uploadTo(
+            storageReference,
+            SettableMetadata(
+              contentType: audio.contentType,
+              customMetadata: {'authorId': user.uid, 'momentId': momentId},
+            ),
+          );
+        } catch (_) {
+          // A mobile connection can drop after Storage commits the object but
+          // before the client receives the upload response. Recovering the
+          // generation turns that ambiguous failure into a safe finalize;
+          // the server still validates size, MIME, metadata and ownership.
+          pending.objectGeneration = await _uploadedGeneration(
+            storageReference,
+          );
+          if (pending.objectGeneration == null) rethrow;
         }
-
-        final finalize = functions.httpsCallable('finalizeMomentDraft');
-        await finalize.call<Map<Object?, Object?>>({
-          'momentId': momentId,
-          'objectGeneration': objectGeneration,
-          'requestId': requestId,
-        });
-
-        return momentId;
-      } catch (error) {
-        await storageReference.delete().catchError((_) {});
-        rethrow;
       }
+
+      final objectGeneration = pending.objectGeneration;
+      if (objectGeneration == null || objectGeneration.isEmpty) {
+        throw StateError('The upload did not return a valid generation.');
+      }
+
+      final finalize = functions.httpsCallable('finalizeMomentDraft');
+      await finalize.call<Map<Object?, Object?>>({
+        'momentId': momentId,
+        'objectGeneration': objectGeneration,
+        'requestId': pending.requestId,
+      });
+
+      _pendingMomentPublishes.remove(audio);
+      return momentId;
     } catch (error) {
       if (!_isCallableUnavailable(error)) {
         rethrow;
       }
     }
 
+    _pendingMomentPublishes.remove(audio);
     return _publishRecordedMomentLegacy(
       user: user,
       audio: audio,
       durationSeconds: durationSeconds,
       caption: normalizedCaption,
     );
+  }
+
+  Future<String?> _uploadedGeneration(Reference reference) async {
+    try {
+      final metadata = await reference.getMetadata();
+      final generation = metadata.generation?.trim();
+      return generation == null || generation.isEmpty ? null : generation;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<String> _publishVoiceReply({
@@ -391,10 +451,12 @@ class MomentService {
       'voice_moments/${user.uid}/${document.id}.$kVoiceMomentFileExtension',
     );
 
+    final identity = await _identity(user);
     await document.set({
+      'schemaVersion': 2,
       'authorId': user.uid,
-      'authorName': (await _identity(user)).displayName,
-      'authorPhotoUrl': (await _identity(user)).photoUrl,
+      'authorName': identity.displayName,
+      'authorPhotoUrl': identity.photoUrl,
       'caption': caption,
       'audioUrl': null,
       'storagePath': storageReference.fullPath,
@@ -403,12 +465,18 @@ class MomentService {
       'commentCount': 0,
       'replyToMomentId': null,
       'isPublished': false,
+      'isDeleted': false,
+      'status': 'uploading',
+      'mediaGeneration': null,
+      'mediaSize': null,
+      'mediaContentType': null,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
+      'publishedAt': null,
     });
 
     try {
-      await audio.uploadTo(
+      final objectGeneration = await audio.uploadTo(
         storageReference,
         SettableMetadata(
           contentType: audio.contentType,
@@ -420,6 +488,10 @@ class MomentService {
       await document.update({
         'audioUrl': downloadUrl,
         'isPublished': true,
+        'status': 'published',
+        'mediaGeneration': objectGeneration,
+        'mediaSize': audio.byteLength,
+        'mediaContentType': audio.contentType,
         'publishedAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -552,4 +624,30 @@ class MomentService {
       await batch.commit();
     }
   }
+}
+
+class _PendingMomentPublish {
+  _PendingMomentPublish({
+    required this.requestId,
+    required this.caption,
+    required this.durationSeconds,
+    required this.replyToMomentId,
+  });
+
+  final String requestId;
+  final String caption;
+  final int durationSeconds;
+  final String? replyToMomentId;
+  String? momentId;
+  String? storagePath;
+  String? objectGeneration;
+
+  bool matches({
+    required String caption,
+    required int durationSeconds,
+    required String? replyToMomentId,
+  }) =>
+      this.caption == caption &&
+      this.durationSeconds == durationSeconds &&
+      this.replyToMomentId == replyToMomentId;
 }

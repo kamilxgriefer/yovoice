@@ -4186,3 +4186,57 @@ installs a clean, mappable `permission-denied` instead.
 - `functions/test/direct_integrity.test.js` pins the pre-migration fork
   behaviour, so the cost of not running the migration is visible in the
   suite rather than only in production.
+
+## ADR-063: Private conversation media uses a server reservation and web audio preserves the browser-native Blob
+
+**Status:** Accepted — 2026-08-17
+
+### Context
+
+The direct-chat photo and microphone buttons were presentation-only
+placeholders. Voice Moment recording did reserve canonical drafts in
+production Safari, but no object reached Storage and finalization was never
+called. The web recorder converted its native Blob through ArrayBuffer, Dart
+`Uint8List` and back into JavaScript bytes before upload. A separate bootstrap
+bug could also initialize Admin Storage with a guessed `.appspot.com` bucket
+while the client used the configured `.firebasestorage.app` bucket.
+
+Media messages cannot safely be implemented as client-authored public URLs.
+The server must bind the object to one canonical conversation/message, and a
+lost upload or callable response must not create duplicates.
+
+### Decision
+
+1. A DM photo or voice message begins with
+   `reserveDirectMessageAttachment`. The server rechecks the authenticated,
+   verified, active participant, both block directions, restrictions and
+   quota, then issues a deterministic message id, immutable Storage path and
+   15-minute reservation.
+2. Storage creation requires that exact reservation, owner, conversation,
+   message id, MIME/extension, size, duration and custom metadata. Clients may
+   neither update nor delete the object. Reads require an active participant
+   in the canonical schema-v2 conversation.
+3. `finalizeDirectMessageAttachment` reads the actual object generation and
+   metadata, rechecks live access in the transaction and atomically writes the
+   message/summary/unread state. The message stores a private `gs://`
+   reference; it never stores a download-token URL.
+4. Retry keeps the same reservation, object path, generation and finalization
+   request id. After a lost upload response the client verifies metadata on
+   that path before retrying. Expired reservations and deleted-message media
+   enter bounded, idempotent backend cleanup.
+5. Web audio uploads retain the browser-native `Blob` and call Firebase
+   Storage `putBlob`. Native platforms keep their file upload path.
+6. Admin SDK initialization trusts the canonical bucket in `FIREBASE_CONFIG`
+   unless an operator explicitly supplies a bucket override. It never derives
+   a bucket suffix from `GCLOUD_PROJECT`.
+
+### Consequences
+
+- DM media remains private even if a Firestore document id is guessed.
+- Network ambiguity cannot create a second message or silently delete a valid
+  object.
+- Existing HTTPS media URLs remain readable for legacy messages, but every new
+  message uses the private `gs://` contract.
+- Functions and Storage rules must be deployed before the Hosting client.
+- Automated browser/native seams and emulator rules are release gates; a real
+  iPhone Safari publish remains a required post-deploy smoke test.

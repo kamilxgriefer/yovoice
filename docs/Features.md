@@ -74,6 +74,14 @@ Direct messages (`conversations/{id}/messages`) and club channel chat
 (`clubs/{clubId}/channels/{channelId}/messages`) — `lib/features/messages/`
 and `lib/features/chats/`.
 
+Direct conversations support text, private photos and private voice messages
+(1–60 seconds). Photo and voice uploads use a server-issued, expiring
+reservation; the resulting message stores a private `gs://` object reference,
+not a public download-token URL. Only active participants can read the object
+through the authenticated Firebase Storage SDK. Upload and finalization are
+idempotent, so a lost network response reuses the same reservation and object
+instead of creating a duplicate message.
+
 Home surfaces the three most recently updated non-archived direct
 conversations as `Your recent chats`. Global Chat is retired from the app
 UI; its existing backend data remains compatibility-only for older clients
@@ -94,9 +102,13 @@ naming the reason, because MP4/AAC is the only container the backend
 accepts and Firefox's `MediaRecorder` does not produce it
 ([ADR-057](Decisions.md#adr-057-voice-moment-recording-splits-only-at-byte-acquisition-and-byte-upload-and-the-server-pins-the-audio-container)).
 Until `6ef4380`, recording failed on web entirely — which, web being the
-only published client, meant nobody could create a Voice Moment. **Safari
-and real end-to-end publish are UNVERIFIED**; verification so far is 521
-automated tests plus a direct Chromium 148 check of the MIME negotiation.
+only published client, meant nobody could create a Voice Moment. A later
+Safari-specific upload defect converted the native `MediaRecorder` Blob to a
+Dart byte array before upload and failed before Storage created an object. Web
+now preserves the native Blob and uploads it with `putBlob`; retry reuses the
+same draft, request id and object generation. Browser/native seams and the
+complete reservation/rules contract are automated, but a real post-deploy
+iPhone Safari publish remains a release verification step.
 
 ## Achievements / Awards
 
