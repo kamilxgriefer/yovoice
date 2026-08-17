@@ -101,6 +101,7 @@ void main() {
       // The accepted six-item contract is unchanged.
       expect(desktopRailDestinations, {
         MoreDestination.discover,
+        MoreDestination.findCreators,
         MoreDestination.friends,
       });
       expect(

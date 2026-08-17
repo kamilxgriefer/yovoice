@@ -240,6 +240,7 @@ void main() {
   DesktopHome buildHome({
     void Function(VoiceRoom)? onOpenRoom,
     VoidCallback? onSeeAll,
+    VoidCallback? onFindCreators,
     VoidCallback? onFriends,
     VoidCallback? onStartRoom,
     void Function(VoiceMoment)? onOpenMoment,
@@ -259,6 +260,7 @@ void main() {
       currentUserId: uid,
       onOpenRoom: onOpenRoom ?? (_) {},
       onSeeAllRooms: onSeeAll ?? () {},
+      onFindCreators: onFindCreators,
       onViewAllFriends: onFriends ?? () {},
       onStartRoom: onStartRoom ?? () {},
       onOpenMoment: onOpenMoment ?? (_) {},
@@ -749,8 +751,16 @@ void main() {
         'never a blank band', (tester) async {
       useDesktop(tester, const Size(1440, 820));
       var discover = 0;
+      var creators = 0;
 
-      await tester.pumpWidget(host(buildHome(onSeeAll: () => discover++)));
+      await tester.pumpWidget(
+        host(
+          buildHome(
+            onSeeAll: () => discover++,
+            onFindCreators: () => creators++,
+          ),
+        ),
+      );
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 60));
       }
@@ -762,7 +772,8 @@ void main() {
 
       await tester.tap(find.text('Find creators'));
       await tester.pump();
-      expect(discover, 1);
+      expect(creators, 1);
+      expect(discover, 0);
     });
   });
 

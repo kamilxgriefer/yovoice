@@ -16,7 +16,15 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 /// Deliberately NOT a nav item: Profile. On desktop the signed-in user is
 /// represented by the profile card pinned at the bottom of this rail
 /// (tap = profile, gear = profile & account settings).
-enum DesktopNavItem { home, discover, chats, notifications, friends, more }
+enum DesktopNavItem {
+  home,
+  discover,
+  findCreators,
+  chats,
+  notifications,
+  friends,
+  more,
+}
 
 class DesktopSidebar extends StatelessWidget {
   const DesktopSidebar({
@@ -95,6 +103,13 @@ class DesktopSidebar extends StatelessWidget {
                     icon: Icons.explore_outlined,
                     label: 'Discover',
                     active: active == DesktopNavItem.discover,
+                    onTap: onSelect,
+                  ),
+                  _NavTile(
+                    item: DesktopNavItem.findCreators,
+                    icon: Icons.person_search_outlined,
+                    label: 'Find creators',
+                    active: active == DesktopNavItem.findCreators,
                     onTap: onSelect,
                   ),
                   _NavTile(

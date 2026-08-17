@@ -343,14 +343,23 @@ const onAuthUserDeleted = functionsV1
     await handleAuthUserDeleted(user.uid);
   });
 
-function searchResult(snapshot) {
+function searchResult(snapshot, authority = {}) {
   const data = snapshot.data() ?? {};
+  const accountType = ["personal", "creator", "official"].includes(
+    authority.accountType,
+  )
+    ? authority.accountType
+    : "personal";
   return {
     uid: snapshot.id,
     displayName: safeString(data.displayName, 120) || "YO Voice user",
     username: safeString(data.username, 80),
     photoUrl: safeNullableUrl(data.photoUrl),
-    premiumIdentity: data.premiumIdentity === true,
+    bio: safeString(data.bio, 220),
+    statusMessage: safeString(data.statusMessage, 120),
+    accountType,
+    premiumIdentity: authority.premiumIdentity === true,
+    followerCount: safeCount(data.followerCount),
   };
 }
 
@@ -469,18 +478,45 @@ const searchPublicProfiles = onCall(
     const limit = Number.isFinite(parsedLimit)
       ? Math.min(Math.max(parsedLimit, 1), MAX_SEARCH_LIMIT)
       : DEFAULT_SEARCH_LIMIT;
+    const rawAccountTypes = request.data?.accountTypes;
+    let accountTypes = null;
+    if (rawAccountTypes !== undefined) {
+      if (
+        !Array.isArray(rawAccountTypes) ||
+        rawAccountTypes.length === 0 ||
+        rawAccountTypes.length > 3 ||
+        rawAccountTypes.some(
+          (value) =>
+            typeof value !== "string" ||
+            !["personal", "creator", "official"].includes(value),
+        )
+      ) {
+        throw new HttpsError(
+          "invalid-argument",
+          "Account types must contain only personal, creator or official.",
+        );
+      }
+      accountTypes = new Set(rawAccountTypes);
+    }
     const queryLimit = Math.min(limit * 2, MAX_SEARCH_LIMIT * 2);
     const end = `${term}\uf8ff`;
 
     const profiles = db.collection("publicProfiles");
+    const requestedTypes = accountTypes === null ? null : [...accountTypes];
+    const displayNameQuery = requestedTypes
+      ? profiles.where("accountType", "in", requestedTypes)
+      : profiles;
+    const usernameQuery = requestedTypes
+      ? profiles.where("accountType", "in", requestedTypes)
+      : profiles;
     const [byDisplayName, byUsername] = await Promise.all([
-      profiles
+      displayNameQuery
         .orderBy("displayNameSearch")
         .startAt(term)
         .endAt(end)
         .limit(queryLimit)
         .get(),
-      profiles
+      usernameQuery
         .orderBy("usernameSearch")
         .startAt(term)
         .endAt(end)
@@ -491,14 +527,20 @@ const searchPublicProfiles = onCall(
     const candidates = new Map();
     for (const snapshot of [...byUsername.docs, ...byDisplayName.docs]) {
       if (snapshot.id === auth.uid) continue;
+      if (
+        accountTypes !== null &&
+        !accountTypes.has(snapshot.data()?.accountType ?? "personal")
+      ) {
+        continue;
+      }
       candidates.set(snapshot.id, snapshot);
       if (candidates.size >= MAX_SEARCH_LIMIT * 2) break;
     }
 
     const candidateIds = [...candidates.keys()];
-    const [forwardBlocks, reverseBlocks, sourceProfiles] =
+    const [forwardBlocks, reverseBlocks, sourceProfiles, entitlements] =
       candidateIds.length === 0
-        ? [[], [], []]
+        ? [[], [], [], []]
         : await Promise.all([
             // Never enumerate the caller's whole block list. A caller controls
             // its size, so doing that would make every search arbitrarily costly.
@@ -526,23 +568,61 @@ const searchPublicProfiles = onCall(
             db.getAll(
               ...candidateIds.map((uid) => db.collection("users").doc(uid)),
             ),
+            db.getAll(
+              ...candidateIds.map((uid) =>
+                db.collection("entitlements").doc(uid),
+              ),
+            ),
           ]);
     const hidden = new Set();
+    const authorityByUid = new Map();
+    const nowMillis = Date.now();
     for (let index = 0; index < candidateIds.length; index += 1) {
       if (forwardBlocks[index]?.exists || reverseBlocks[index]?.exists) {
         hidden.add(candidateIds[index]);
       }
     }
-    for (const snapshot of sourceProfiles) {
+    for (let index = 0; index < sourceProfiles.length; index += 1) {
+      const snapshot = sourceProfiles[index];
       const source = snapshot.exists ? (snapshot.data() ?? {}) : null;
       if (!source || source.banned === true || source.disabled === true) {
         hidden.add(snapshot.id);
+        continue;
       }
+      const entitlement = entitlements[index]?.data() ?? {};
+      const periodEndMillis = entitlement.currentPeriodEnd?.toMillis?.();
+      const premiumActive =
+        ["active", "trialing", "grace"].includes(entitlement.status) &&
+        entitlement.isPremium === true &&
+        entitlement.premiumIdentityEnabled === true &&
+        Number.isFinite(periodEndMillis) &&
+        periodEndMillis > nowMillis;
+      const creatorActive =
+        source.accountType === "creator" &&
+        premiumActive &&
+        entitlement.creatorEnabled === true;
+      const canonicalAccountType =
+        source.accountType === "official"
+          ? "official"
+          : creatorActive
+            ? "creator"
+            : "personal";
+      if (
+        accountTypes !== null &&
+        !accountTypes.has(canonicalAccountType)
+      ) {
+        hidden.add(snapshot.id);
+        continue;
+      }
+      authorityByUid.set(snapshot.id, {
+        accountType: canonicalAccountType,
+        premiumIdentity: premiumActive,
+      });
     }
 
     const results = candidateIds
       .filter((uid) => !hidden.has(uid))
-      .map((uid) => searchResult(candidates.get(uid)))
+      .map((uid) => searchResult(candidates.get(uid), authorityByUid.get(uid)))
       .sort((left, right) => {
         const leftUsername = normalizeSearchText(left.username);
         const rightUsername = normalizeSearchText(right.username);

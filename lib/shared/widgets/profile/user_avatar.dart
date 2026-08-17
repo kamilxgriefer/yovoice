@@ -66,30 +66,31 @@ class UserAvatar extends StatelessWidget {
         alignment: Alignment.center,
         child: url == null || url.isEmpty
             ? fallback()
-            : Image.network(
-                url,
-                width: diameter,
-                height: diameter,
-                fit: BoxFit.cover,
-                frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-                  if (wasSynchronouslyLoaded) return child;
-                  return AnimatedOpacity(
-                    opacity: frame == null ? 0 : 1,
-                    duration: const Duration(milliseconds: 180),
-                    child: child,
-                  );
-                },
-                errorBuilder: (context, error, stackTrace) {
-                  // The graceful fallback must never be a silent one:
-                  // production debugging showed Firestore holding a valid
-                  // URL while the avatar "wasn't there" — the load was
-                  // failing and this branch hid it. Path only, no token.
-                  debugPrint(
-                    '[IMAGE] avatar load failed '
-                    '${Uri.tryParse(url)?.path}: $error',
-                  );
-                  return fallback();
-                },
+            : SizedBox.expand(
+                child: Image.network(
+                  url,
+                  fit: BoxFit.cover,
+                  frameBuilder:
+                      (context, child, frame, wasSynchronouslyLoaded) {
+                        if (wasSynchronouslyLoaded) return child;
+                        return AnimatedOpacity(
+                          opacity: frame == null ? 0 : 1,
+                          duration: const Duration(milliseconds: 180),
+                          child: child,
+                        );
+                      },
+                  errorBuilder: (context, error, stackTrace) {
+                    // The graceful fallback must never be a silent one:
+                    // production debugging showed Firestore holding a valid
+                    // URL while the avatar "wasn't there" — the load was
+                    // failing and this branch hid it. Path only, no token.
+                    debugPrint(
+                      '[IMAGE] avatar load failed '
+                      '${Uri.tryParse(url)?.path}: $error',
+                    );
+                    return fallback();
+                  },
+                ),
               ),
       ),
     );

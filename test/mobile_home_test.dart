@@ -103,6 +103,7 @@ void main() {
   MobileHome buildHome({
     void Function(VoiceRoom)? onOpenRoom,
     VoidCallback? onDiscover,
+    VoidCallback? onFindCreators,
     VoidCallback? onFriends,
     VoidCallback? onCreateMoment,
     VoidCallback? onCreateRoom,
@@ -113,6 +114,7 @@ void main() {
     return MobileHome(
       onOpenRoom: onOpenRoom ?? (_) {},
       onOpenDiscover: onDiscover ?? () {},
+      onOpenFindCreators: onFindCreators,
       onOpenFriends: onFriends ?? () {},
       onOpenNotifications: () {},
       onOpenProfile: onProfile ?? () {},
@@ -196,6 +198,7 @@ void main() {
 
     VoiceRoom? opened;
     var discover = 0;
+    var creators = 0;
     var friends = 0;
     var moment = 0;
 
@@ -204,6 +207,7 @@ void main() {
         buildHome(
           onOpenRoom: (room) => opened = room,
           onDiscover: () => discover++,
+          onFindCreators: () => creators++,
           onFriends: () => friends++,
           onCreateMoment: () => moment++,
         ),
@@ -217,11 +221,11 @@ void main() {
     await tester.pump();
     expect(opened?.name, 'Evening Talks');
 
-    // Discover is reached from the Moments empty state's Find creators —
-    // the rail is where people discovery lives now.
+    // Creator discovery is its own destination; room discovery must stay put.
     await tester.tap(find.text('Find creators'));
     await tester.pump();
-    expect(discover, 1);
+    expect(creators, 1);
+    expect(discover, 0);
 
     await tester.tap(find.text('Record a Moment'));
     await tester.pump();

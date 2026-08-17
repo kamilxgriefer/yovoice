@@ -41,6 +41,7 @@ class MobileHome extends StatefulWidget {
   const MobileHome({
     required this.onOpenRoom,
     required this.onOpenDiscover,
+    this.onOpenFindCreators,
     required this.onOpenFriends,
     required this.onOpenNotifications,
     required this.onOpenProfile,
@@ -60,6 +61,7 @@ class MobileHome extends StatefulWidget {
 
   final ValueChanged<VoiceRoom> onOpenRoom;
   final VoidCallback onOpenDiscover;
+  final VoidCallback? onOpenFindCreators;
   final VoidCallback onOpenFriends;
   final VoidCallback onOpenNotifications;
   final VoidCallback onOpenProfile;
@@ -191,7 +193,8 @@ class _MobileHomeState extends State<MobileHome> {
                     currentUserId: _resolvedUserId,
                     onOpenMoment: widget.onOpenComments,
                     onCreateMoment: widget.onCreateMoment,
-                    onDiscover: widget.onOpenDiscover,
+                    onDiscover:
+                        widget.onOpenFindCreators ?? widget.onOpenDiscover,
                   ),
                 ),
                 MobileSectionHeader(

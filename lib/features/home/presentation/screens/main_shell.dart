@@ -72,6 +72,7 @@ class MainShell extends StatefulWidget {
     9: MoreDestination.settings,
     10: MoreDestination.moderation,
     11: MoreDestination.staffCenter,
+    12: MoreDestination.findCreators,
   };
 
   @override
@@ -131,6 +132,7 @@ class _MainShellState extends State<MainShell>
 
   static const int _discoverSlot = 3;
   static const int _notificationsSlot = 4;
+  static const int _findCreatorsSlot = 12;
 
   /// DESKTOP content slots beyond the three shared dock tabs. Every
   /// desktop destination — rail items AND everything chosen from the
@@ -141,7 +143,7 @@ class _MainShellState extends State<MainShell>
 
   /// The notifications FEED (the bell) is its own screen rather than a
   /// MoreDestination — Alerts (preferences) is the one in the popover.
-  static const int _slotCount = 12;
+  static const int _slotCount = 13;
 
   /// Slots are built on FIRST visit and then kept alive, so switching
   /// back is instant and scroll position survives — without mounting
@@ -182,6 +184,8 @@ class _MainShellState extends State<MainShell>
     onOpenRoom: (room) => unawaited(_openRoom(room)),
     onOpenDiscover: () =>
         unawaited(_openMoreDestination(MoreDestination.discover)),
+    onOpenFindCreators: () =>
+        unawaited(_openMoreDestination(MoreDestination.findCreators)),
     onOpenFriends: () => _onDestinationSelected(2),
     onOpenNotifications: () => unawaited(
       Navigator.of(context).push<void>(
@@ -212,6 +216,7 @@ class _MainShellState extends State<MainShell>
     currentUserId: _currentUserId,
     onOpenRoom: (room) => unawaited(_openRoom(room)),
     onSeeAllRooms: () => _onDestinationSelected(_discoverSlot),
+    onFindCreators: () => _onDestinationSelected(_findCreatorsSlot),
     onViewAllFriends: () => _onDestinationSelected(2),
     onStartRoom: () => unawaited(_openCreateRoom()),
     onOpenMoment: (moment) => unawaited(
@@ -684,6 +689,7 @@ class _MainShellState extends State<MainShell>
   static DesktopNavItem? _desktopItemFor(MoreDestination destination) {
     return switch (destination) {
       MoreDestination.discover => DesktopNavItem.discover,
+      MoreDestination.findCreators => DesktopNavItem.findCreators,
       MoreDestination.friends => DesktopNavItem.friends,
       // Everything reached THROUGH the More popover keeps More lit.
       MoreDestination.moments ||
@@ -710,6 +716,7 @@ class _MainShellState extends State<MainShell>
     1 => DesktopNavItem.chats,
     2 => DesktopNavItem.friends,
     _discoverSlot => DesktopNavItem.discover,
+    _findCreatorsSlot => DesktopNavItem.findCreators,
     _notificationsSlot => DesktopNavItem.notifications,
     // Slots reached through the popover keep More lit.
     >= 5 => DesktopNavItem.more,
@@ -726,6 +733,8 @@ class _MainShellState extends State<MainShell>
         _onDestinationSelected(2);
       case DesktopNavItem.discover:
         _onDestinationSelected(_discoverSlot);
+      case DesktopNavItem.findCreators:
+        _onDestinationSelected(_findCreatorsSlot);
       case DesktopNavItem.notifications:
         _onDestinationSelected(_notificationsSlot);
       case DesktopNavItem.more:
@@ -801,6 +810,8 @@ class _MainShellState extends State<MainShell>
         ),
       ),
       onSeeAll: () => unawaited(_openMoreDestination(MoreDestination.discover)),
+      onFindCreators: () =>
+          unawaited(_openMoreDestination(MoreDestination.findCreators)),
       onCheckPlans: () => unawaited(
         Navigator.of(context).push<void>(
           MaterialPageRoute<void>(builder: (_) => const PremiumScreen()),
@@ -944,6 +955,7 @@ class _DesktopHomeExtras extends StatelessWidget {
     required this.currentUserId,
     required this.onOpenRoom,
     required this.onSeeAll,
+    required this.onFindCreators,
     required this.onCheckPlans,
     required this.onOpenCreator,
     required this.onViewAllCreators,
@@ -952,6 +964,7 @@ class _DesktopHomeExtras extends StatelessWidget {
   final String currentUserId;
   final ValueChanged<VoiceRoom> onOpenRoom;
   final VoidCallback onSeeAll;
+  final VoidCallback onFindCreators;
   final VoidCallback onCheckPlans;
   final ValueChanged<FollowUser> onOpenCreator;
   final VoidCallback onViewAllCreators;
@@ -967,7 +980,7 @@ class _DesktopHomeExtras extends StatelessWidget {
           currentUserId: currentUserId,
           onOpenCreator: onOpenCreator,
           onViewAll: onViewAllCreators,
-          onDiscover: onSeeAll,
+          onDiscover: onFindCreators,
         ),
         const SizedBox(height: 16),
         VoiceTrendingCard(onOpenRoom: onOpenRoom, onSeeAll: onSeeAll),

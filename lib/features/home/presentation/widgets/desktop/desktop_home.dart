@@ -49,6 +49,7 @@ class DesktopHome extends StatefulWidget {
     required this.currentUserId,
     required this.onOpenRoom,
     required this.onSeeAllRooms,
+    this.onFindCreators,
     required this.onViewAllFriends,
     required this.onStartRoom,
     required this.onOpenMoment,
@@ -79,6 +80,7 @@ class DesktopHome extends StatefulWidget {
   /// Discover — also the destination behind every "go find something"
   /// action in the empty states.
   final VoidCallback onSeeAllRooms;
+  final VoidCallback? onFindCreators;
   final VoidCallback onViewAllFriends;
   final VoidCallback onStartRoom;
 
@@ -231,7 +233,7 @@ class _DesktopHomeState extends State<DesktopHome> {
                   onOpenMoment: widget.onOpenMoment,
                   onCreateMoment: widget.onCreateMoment,
                   onSeeAll: widget.onSeeAllMoments,
-                  onDiscover: widget.onSeeAllRooms,
+                  onDiscover: widget.onFindCreators ?? widget.onSeeAllRooms,
                   onOpenProfile: (userId) =>
                       showProfilePreview(context, userId: userId),
                 ),

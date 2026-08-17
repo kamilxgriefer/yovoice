@@ -57,16 +57,26 @@ async function applyEntitlements(uid, { plan, status, currentPeriodEnd, source }
     updatedAt: FieldValue.serverTimestamp(),
   };
 
-  const batch = db.batch();
-  batch.set(db.collection("entitlements").doc(uid), entitlements, {
-    merge: true,
+  const entitlementRef = db.collection("entitlements").doc(uid);
+  const userRef = db.collection("users").doc(uid);
+  await db.runTransaction(async (transaction) => {
+    const userSnapshot = await transaction.get(userRef);
+    const user = userSnapshot.data() ?? {};
+    transaction.set(entitlementRef, entitlements, { merge: true });
+    transaction.set(
+      userRef,
+      {
+        premiumIdentity: premiumActive,
+        // Creator is a paid account mode. Revocation/refund must remove it
+        // in the same commit as the entitlement, while server-owned Official
+        // accounts remain Official.
+        ...(premiumActive !== true && user.accountType === "creator"
+          ? { accountType: "personal" }
+          : {}),
+      },
+      { merge: true },
+    );
   });
-  batch.set(
-    db.collection("users").doc(uid),
-    { premiumIdentity: premiumActive },
-    { merge: true },
-  );
-  await batch.commit();
 
   logger.info("entitlements applied", { uid, plan, status, premiumActive });
   return entitlements;
@@ -173,11 +183,19 @@ async function commitExpiredPremiumPage(documents, { now }) {
     // Re-read inside the transaction so a concurrent verified renewal cannot
     // be overwritten by a sweep that queried the old expiry milliseconds
     // earlier. Firestore retries this transaction on any concurrent change.
-    const currentDocuments = await transaction.getAll(
-      ...documents.map((document) => document.ref),
+    const entitlementRefs = documents.map((document) => document.ref);
+    const userRefs = documents.map((document) =>
+      db.collection("users").doc(document.id),
     );
+    const snapshots = await transaction.getAll(
+      ...entitlementRefs,
+      ...userRefs,
+    );
+    const currentDocuments = snapshots.slice(0, entitlementRefs.length);
+    const currentUsers = snapshots.slice(entitlementRefs.length);
     let expired = 0;
-    for (const document of currentDocuments) {
+    for (let index = 0; index < currentDocuments.length; index += 1) {
+      const document = currentDocuments[index];
       const data = document.data() ?? {};
       const periodEndMillis = data.currentPeriodEnd?.toMillis?.();
       if (
@@ -199,9 +217,15 @@ async function commitExpiredPremiumPage(documents, { now }) {
         },
         { merge: true },
       );
+      const user = currentUsers[index]?.data() ?? {};
       transaction.set(
         db.collection("users").doc(document.id),
-        { premiumIdentity: false },
+        {
+          premiumIdentity: false,
+          ...(user.accountType === "creator"
+            ? { accountType: "personal" }
+            : {}),
+        },
         { merge: true },
       );
       expired += 1;

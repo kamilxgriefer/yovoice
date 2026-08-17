@@ -305,12 +305,13 @@ void main() {
     Future<void> pumpEditProfile(
       WidgetTester tester, {
       required FakeFirebaseFirestore db,
+      AccountType accountType = AccountType.personal,
     }) async {
       final auth = _auth();
       await tester.pumpWidget(
         MaterialApp(
           home: EditProfileScreen(
-            profile: _profile(AccountType.personal),
+            profile: _profile(accountType),
             service: ProfileService(firestore: db, auth: auth),
             entitlements: EntitlementService(firestore: db, auth: auth),
           ),
@@ -403,6 +404,21 @@ void main() {
         expect(profile.data()?['accountType'], isNot('creator'));
       },
     );
+
+    testWidgets('expired Creator copy requires explicit reactivation', (
+      tester,
+    ) async {
+      final db = FakeFirebaseFirestore();
+      await _seedEntitlements(
+        db,
+        status: 'expired',
+        periodEnd: DateTime.now().subtract(const Duration(minutes: 1)),
+      );
+      await pumpEditProfile(tester, db: db, accountType: AccountType.creator);
+
+      expect(find.textContaining('reactivate Creator'), findsOneWidget);
+      expect(find.textContaining('unlock again with Premium'), findsNothing);
+    });
   });
 
   group('Premium destination boundary', () {

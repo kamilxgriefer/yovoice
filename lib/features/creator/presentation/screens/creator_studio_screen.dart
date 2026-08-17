@@ -1083,8 +1083,9 @@ class _ErrorBody extends StatelessWidget {
   }
 }
 
-/// Shown when the account is Creator but the Premium subscription has
-/// lapsed. Data is never deleted; tools resume with Premium.
+/// Shown briefly when the local profile still says Creator after Premium has
+/// lapsed. Studio data remains available, but Creator must be reactivated
+/// explicitly after renewal.
 class _CreatorPausedBanner extends StatelessWidget {
   const _CreatorPausedBanner();
 
@@ -1109,7 +1110,8 @@ class _CreatorPausedBanner extends StatelessWidget {
           const Expanded(
             child: Text(
               'Creator tools are paused — your Premium has ended. Your '
-              'Creator profile, followers and content are safe.',
+              'Studio data stays safe. Renew Premium, then reactivate '
+              'Creator in Edit profile.',
               style: TextStyle(
                 color: Color(0xFFF5D9A8),
                 fontSize: 12.5,

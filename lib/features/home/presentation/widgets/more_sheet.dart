@@ -4,6 +4,7 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/achievements/presentation/screens/achievements_screen.dart';
 import 'package:yovoice/features/clubs/presentation/screens/clubs_screen.dart';
 import 'package:yovoice/features/creator/presentation/screens/creator_studio_screen.dart';
+import 'package:yovoice/features/creator/presentation/screens/find_creators_screen.dart';
 import 'package:yovoice/features/discover/presentation/screens/discover_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/moderation/presentation/screens/moderation_center_screen.dart';
@@ -21,6 +22,7 @@ import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 enum MoreDestination {
   friends,
   discover,
+  findCreators,
   clubs,
   moments,
   notifications,
@@ -68,6 +70,7 @@ bool moreDestinationIsLocked(
 /// from the rail's profile card (Profile, and its gear → Settings).
 const Set<MoreDestination> desktopRailDestinations = {
   MoreDestination.discover,
+  MoreDestination.findCreators,
   MoreDestination.friends,
 };
 
@@ -99,6 +102,7 @@ Widget moreDestinationScreen(
   final screen = switch (destination) {
     MoreDestination.friends => FriendsScreen(isRootTab: isRootTab),
     MoreDestination.discover => DiscoverScreen(isRootTab: isRootTab),
+    MoreDestination.findCreators => FindCreatorsScreen(isRootTab: isRootTab),
     MoreDestination.clubs => ClubsScreen(isRootTab: isRootTab),
     MoreDestination.moments => const MomentsScreen(),
     MoreDestination.notifications => NotificationPreferencesScreen(
@@ -449,8 +453,8 @@ class _MoreSheetState extends State<MoreSheet> {
                       final usesTwoColumns =
                           constraints.maxWidth < 400 || textScale > 1.3;
                       final baseExtent = usesTwoColumns
-                          ? (constraints.maxWidth < 350 ? 156.0 : 140.0)
-                          : 160.0;
+                          ? (constraints.maxWidth < 350 ? 176.0 : 160.0)
+                          : 170.0;
                       final tileExtent =
                           (baseExtent + ((textScale - 1).clamp(0, 1.5) * 104))
                               .clamp(baseExtent, 272)
@@ -479,6 +483,12 @@ class _MoreSheetState extends State<MoreSheet> {
                             label: 'Discover',
                             subtitle: 'Find rooms',
                           ),
+                          const _MoreTile(
+                            destination: MoreDestination.findCreators,
+                            icon: Icons.person_search_rounded,
+                            label: 'Find creators',
+                            subtitle: 'People to follow',
+                          ),
                           _MoreTile(
                             destination: MoreDestination.clubs,
                             icon: Icons.groups_2_rounded,
@@ -488,6 +498,12 @@ class _MoreSheetState extends State<MoreSheet> {
                               MoreDestination.clubs,
                               widget.entitlements,
                             ),
+                          ),
+                          const _MoreTile(
+                            destination: MoreDestination.moments,
+                            icon: Icons.graphic_eq_rounded,
+                            label: 'Moments',
+                            subtitle: 'Voice feed',
                           ),
                           const _MoreTile(
                             destination: MoreDestination.notifications,
@@ -515,7 +531,7 @@ class _MoreSheetState extends State<MoreSheet> {
                       );
                     },
                   ),
-                  // The staff section: BELOW the six tiles, ABOVE Settings, and
+                  // The staff section: BELOW the destination grid, ABOVE Settings, and
                   // present only when the server-derived capabilities back a
                   // real door. Ordinary and VIP accounts render the exact layout
                   // this sheet always had.

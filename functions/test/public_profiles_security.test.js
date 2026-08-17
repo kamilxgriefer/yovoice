@@ -25,6 +25,10 @@ const {
   SEARCH_MINUTE_MS,
 } = require("../profile/public_profiles");
 const { backfill } = require("../scripts/backfill_public_profiles");
+const {
+  applyEntitlements,
+  commitExpiredPremiumPage,
+} = require("../premium/entitlements");
 
 const db = getFirestore();
 const runSearch = searchPublicProfiles.run ?? searchPublicProfiles;
@@ -46,7 +50,15 @@ function rateLimitId(uid) {
 }
 
 async function wipe() {
-  const uids = [CALLER, VISIBLE, BLOCKED, REVERSE_BLOCKED, `${P}inactive`];
+  const uids = [
+    CALLER,
+    VISIBLE,
+    BLOCKED,
+    REVERSE_BLOCKED,
+    `${P}inactive`,
+    `${P}creator`,
+    `${P}official`,
+  ];
   const backfillUsers = [`${P}backfill-a`, `${P}backfill-b`];
   const unrelatedBlocked = Array.from(
     { length: 75 },
@@ -57,6 +69,7 @@ async function wipe() {
       db.collection("users").doc(uid).delete(),
       db.collection("publicProfiles").doc(uid).delete(),
       db.collection("socialPresence").doc(uid).delete(),
+      db.collection("entitlements").doc(uid).delete(),
       db
         .collection("users")
         .doc(CALLER)
@@ -406,8 +419,183 @@ describe("public profile search", () => {
       displayName: "Voice Friend",
       username: "voice.friend",
       photoUrl: "https://cdn.example/avatar.jpg",
+      bio: "",
+      statusMessage: "",
+      accountType: "personal",
       premiumIdentity: false,
+      followerCount: 0,
     });
+  });
+
+  test("creator directory returns only requested canonical account types", async () => {
+    await seedSearchWorld();
+    await Promise.all([
+      db.collection("users").doc(`${P}creator`).set({
+        displayName: "Voice Creator",
+        username: "voice.creator",
+        accountType: "creator",
+        banned: false,
+      }),
+      db.collection("users").doc(`${P}official`).set({
+        displayName: "Voice Official",
+        username: "voice.official",
+        accountType: "official",
+        banned: false,
+      }),
+    ]);
+    await db.collection("entitlements").doc(`${P}creator`).set({
+      status: "active",
+      isPremium: true,
+      creatorEnabled: true,
+      premiumIdentityEnabled: true,
+      currentPeriodEnd: Timestamp.fromMillis(Date.now() + 60_000),
+    });
+    await Promise.all([
+      db.collection("publicProfiles").doc(`${P}creator`).set(
+        derivePublicProfile(`${P}creator`, {
+          displayName: "Voice Creator",
+          username: "voice.creator",
+          accountType: "creator",
+          bio: "Makes rooms about design.",
+          followerCount: 12,
+        }),
+      ),
+      db.collection("publicProfiles").doc(`${P}official`).set(
+        derivePublicProfile(`${P}official`, {
+          displayName: "Voice Official",
+          username: "voice.official",
+          accountType: "official",
+        }),
+      ),
+    ]);
+
+    const response = await runSearch({
+      auth: { uid: CALLER, token: { email_verified: true } },
+      data: {
+        query: "voice",
+        limit: 20,
+        accountTypes: ["creator", "official"],
+      },
+    });
+
+    assert.deepEqual(
+      response.profiles.map((profile) => profile.accountType).sort(),
+      ["creator", "official"],
+    );
+    assert.equal(
+      response.profiles.some((profile) => profile.uid === VISIBLE),
+      false,
+    );
+    const creator = response.profiles.find(
+      (profile) => profile.uid === `${P}creator`,
+    );
+    assert.equal(creator.bio, "Makes rooms about design.");
+    assert.equal(creator.followerCount, 12);
+
+    await assert.rejects(
+      runSearch({
+        auth: { uid: CALLER, token: { email_verified: true } },
+        data: { query: "voice", accountTypes: ["creator", "staff"] },
+      }),
+      (error) => error.code === "invalid-argument",
+    );
+  });
+
+  test("creator directory fails closed for stale identity and expired Premium", async () => {
+    await seedSearchWorld();
+    const staleCreator = `${P}creator`;
+    const staleOfficial = `${P}official`;
+    await Promise.all([
+      db.collection("users").doc(staleCreator).set({
+        displayName: "Voice Former Creator",
+        username: "voice.former.creator",
+        accountType: "creator",
+        premiumIdentity: true,
+        banned: false,
+      }),
+      db.collection("users").doc(staleOfficial).set({
+        displayName: "Voice Former Official",
+        username: "voice.former.official",
+        accountType: "personal",
+        banned: false,
+      }),
+      db.collection("entitlements").doc(staleCreator).set({
+        status: "expired",
+        isPremium: false,
+        creatorEnabled: false,
+        premiumIdentityEnabled: false,
+        currentPeriodEnd: Timestamp.fromMillis(Date.now() - 60_000),
+      }),
+      db.collection("publicProfiles").doc(staleCreator).set(
+        derivePublicProfile(staleCreator, {
+          displayName: "Voice Former Creator",
+          username: "voice.former.creator",
+          accountType: "creator",
+          premiumIdentity: true,
+        }),
+      ),
+      db.collection("publicProfiles").doc(staleOfficial).set(
+        derivePublicProfile(staleOfficial, {
+          displayName: "Voice Former Official",
+          username: "voice.former.official",
+          accountType: "official",
+        }),
+      ),
+    ]);
+
+    const response = await runSearch({
+      auth: { uid: CALLER, token: { email_verified: true } },
+      data: {
+        query: "voice",
+        accountTypes: ["creator", "official"],
+      },
+    });
+    assert.equal(
+      response.profiles.some(
+        (profile) => profile.uid === staleCreator || profile.uid === staleOfficial,
+      ),
+      false,
+    );
+
+    await applyEntitlements(staleCreator, {
+      plan: "none",
+      status: "expired",
+      currentPeriodEnd: Timestamp.now(),
+      source: "test",
+    });
+    const downgraded = await db.collection("users").doc(staleCreator).get();
+    assert.equal(downgraded.data().accountType, "personal");
+    assert.equal(downgraded.data().premiumIdentity, false);
+  });
+
+  test("scheduled Premium expiry atomically removes Creator account mode", async () => {
+    const uid = `${P}creator`;
+    const now = Timestamp.now();
+    await Promise.all([
+      db.collection("users").doc(uid).set({
+        accountType: "creator",
+        premiumIdentity: true,
+      }),
+      db.collection("entitlements").doc(uid).set({
+        status: "active",
+        isPremium: true,
+        creatorEnabled: true,
+        canCreateClubs: true,
+        premiumIdentityEnabled: true,
+        currentPeriodEnd: Timestamp.fromMillis(now.toMillis() - 1),
+      }),
+    ]);
+    const expired = await db.collection("entitlements").doc(uid).get();
+
+    assert.equal(await commitExpiredPremiumPage([expired], { now }), 1);
+    const [userAfter, entitlementAfter] = await Promise.all([
+      db.collection("users").doc(uid).get(),
+      db.collection("entitlements").doc(uid).get(),
+    ]);
+    assert.equal(userAfter.data().accountType, "personal");
+    assert.equal(userAfter.data().premiumIdentity, false);
+    assert.equal(entitlementAfter.data().isPremium, false);
+    assert.equal(entitlementAfter.data().creatorEnabled, false);
   });
 
   test("does not enumerate an attacker-inflated block list", async () => {

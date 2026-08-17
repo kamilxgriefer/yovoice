@@ -200,6 +200,7 @@ void main() {
 
       for (final label in [
         'Discover',
+        'Find creators',
         'Chats',
         'Notifications',
         'Friends',
@@ -211,6 +212,7 @@ void main() {
 
       expect(tapped, [
         DesktopNavItem.discover,
+        DesktopNavItem.findCreators,
         DesktopNavItem.chats,
         DesktopNavItem.notifications,
         DesktopNavItem.friends,
@@ -266,52 +268,59 @@ void main() {
   });
 
   group('desktop information architecture', () {
-    test('every destination is reachable: the rail owns Discover and '
-        'Friends, everything else is in More or the profile card', () {
-      // The rail's own primary items (Home/Chats live in the shell's
-      // IndexedStack; Notifications pushes the bell feed).
-      const railOwned = desktopRailDestinations;
-      expect(railOwned, {MoreDestination.discover, MoreDestination.friends});
+    test(
+      'every destination is reachable: the rail owns Discover, creator '
+      'search and Friends, everything else is in More or the profile card',
+      () {
+        // The rail's own primary items (Home/Chats live in the shell's
+        // IndexedStack; Notifications pushes the bell feed).
+        const railOwned = desktopRailDestinations;
+        expect(railOwned, {
+          MoreDestination.discover,
+          MoreDestination.findCreators,
+          MoreDestination.friends,
+        });
 
-      // Reached from the profile card at the bottom of the rail.
-      const profileCardOwned = {
-        MoreDestination.profile,
-        MoreDestination.settings,
-      };
+        // Reached from the profile card at the bottom of the rail.
+        const profileCardOwned = {
+          MoreDestination.profile,
+          MoreDestination.settings,
+        };
 
-      // Anything else MUST be listed in the desktop More popover, or it
-      // would become unreachable at desktop width.
-      const inMorePopover = {
-        MoreDestination.moments,
-        MoreDestination.clubs,
-        MoreDestination.creatorStudio,
-        MoreDestination.achievements,
-        MoreDestination.notifications,
-        MoreDestination.settings,
-        // Listed in the SAME popover, but only for accounts that pass
-        // the staff check — an ordinary user never sees it. It is not
-        // orphaned: for staff it is one popover entry like the rest.
-        MoreDestination.moderation,
-        // Same shape, one tier stricter: listed only for the confirmed
-        // protected owner (capabilities.manageRoles).
-        MoreDestination.staffCenter,
-      };
+        // Anything else MUST be listed in the desktop More popover, or it
+        // would become unreachable at desktop width.
+        const inMorePopover = {
+          MoreDestination.moments,
+          MoreDestination.clubs,
+          MoreDestination.creatorStudio,
+          MoreDestination.achievements,
+          MoreDestination.notifications,
+          MoreDestination.settings,
+          // Listed in the SAME popover, but only for accounts that pass
+          // the staff check — an ordinary user never sees it. It is not
+          // orphaned: for staff it is one popover entry like the rest.
+          MoreDestination.moderation,
+          // Same shape, one tier stricter: listed only for the confirmed
+          // protected owner (capabilities.manageRoles).
+          MoreDestination.staffCenter,
+        };
 
-      final unreachable = MoreDestination.values
-          .where(
-            (destination) =>
-                !railOwned.contains(destination) &&
-                !profileCardOwned.contains(destination) &&
-                !inMorePopover.contains(destination),
-          )
-          .toList();
+        final unreachable = MoreDestination.values
+            .where(
+              (destination) =>
+                  !railOwned.contains(destination) &&
+                  !profileCardOwned.contains(destination) &&
+                  !inMorePopover.contains(destination),
+            )
+            .toList();
 
-      expect(
-        unreachable,
-        isEmpty,
-        reason: 'no destination may be orphaned by the desktop rail',
-      );
-    });
+        expect(
+          unreachable,
+          isEmpty,
+          reason: 'no destination may be orphaned by the desktop rail',
+        );
+      },
+    );
 
     test('every destination still resolves to its real screen — moving '
         'items between rail and More changes no routes', () {
@@ -334,6 +343,7 @@ void main() {
       const slotBacked = {
         DesktopNavItem.home,
         DesktopNavItem.discover,
+        DesktopNavItem.findCreators,
         DesktopNavItem.chats,
         DesktopNavItem.notifications,
         DesktopNavItem.friends,
@@ -359,7 +369,13 @@ void main() {
       );
       await tester.pump();
 
-      for (final label in ['Discover', 'Notifications', 'Chats', 'Friends']) {
+      for (final label in [
+        'Discover',
+        'Find creators',
+        'Notifications',
+        'Chats',
+        'Friends',
+      ]) {
         await tester.tap(find.text(label));
         await tester.pump();
         // The rail is never duplicated or rebuilt as a second shell.
@@ -937,13 +953,21 @@ class _FakeDesktopShell extends StatefulWidget {
 class _FakeDesktopShellState extends State<_FakeDesktopShell> {
   int _index = 0;
 
-  static const _slots = ['home', 'chats', 'friends', 'discover', 'alerts'];
+  static const _slots = [
+    'home',
+    'chats',
+    'friends',
+    'discover',
+    'find-creators',
+    'alerts',
+  ];
 
   DesktopNavItem get _active => switch (_index) {
     1 => DesktopNavItem.chats,
     2 => DesktopNavItem.friends,
     3 => DesktopNavItem.discover,
-    4 => DesktopNavItem.notifications,
+    4 => DesktopNavItem.findCreators,
+    5 => DesktopNavItem.notifications,
     _ => DesktopNavItem.home,
   };
 
@@ -954,7 +978,8 @@ class _FakeDesktopShellState extends State<_FakeDesktopShell> {
         DesktopNavItem.chats => 1,
         DesktopNavItem.friends => 2,
         DesktopNavItem.discover => 3,
-        DesktopNavItem.notifications => 4,
+        DesktopNavItem.findCreators => 4,
+        DesktopNavItem.notifications => 5,
         DesktopNavItem.more => _index,
       };
     });

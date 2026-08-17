@@ -764,8 +764,8 @@ class _AccountTypePicker extends StatelessWidget {
             const SizedBox(height: 10),
             const Text(
               'Creator tools are paused — your Premium subscription has '
-              'ended. Your Creator profile and data are safe and unlock '
-              'again with Premium.',
+              'ended. Your Studio data stays safe. Renew Premium, then '
+              'reactivate Creator in Edit profile.',
               style: TextStyle(color: Color(0xFFFFB547), fontSize: 11),
             ),
           ],

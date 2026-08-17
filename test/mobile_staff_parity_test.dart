@@ -297,7 +297,7 @@ void main() {
   });
 
   group('mobile More sheet', () {
-    testWidgets("an ordinary account's sheet is unchanged: six tiles, "
+    testWidgets("an ordinary account's sheet keeps all product destinations, "
         'Settings, no staff section, no gap', (tester) async {
       useSize(tester, const Size(390, 844));
       await tester.pumpWidget(modalSheetHost());
@@ -307,7 +307,9 @@ void main() {
       for (final label in [
         'Profile',
         'Discover',
+        'Find creators',
         'Clubs',
+        'Moments',
         'Alerts',
         'Awards',
         'Creator',

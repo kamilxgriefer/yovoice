@@ -152,8 +152,8 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
               stream: _following,
               builder: (context, followingSnapshot) {
                 final followed = {
-                  for (final user in
-                      followingSnapshot.data ?? const <FollowUser>[])
+                  for (final user
+                      in followingSnapshot.data ?? const <FollowUser>[])
                     user.uid,
                 };
                 // The segment past the divider: people this account
@@ -169,108 +169,117 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                     .toList(growable: false);
 
                 return StreamBuilder<List<VoiceMoment>>(
-          stream: _moments,
-          builder: (context, snapshot) {
-            final all = snapshot.data ?? const <VoiceMoment>[];
-            final mine = all
-                .where((moment) => moment.authorId == profile?.uid)
-                .toList(growable: false);
-            final others = _newestPerAuthor(all, profile?.uid);
+                  stream: _moments,
+                  builder: (context, snapshot) {
+                    final all = snapshot.data ?? const <VoiceMoment>[];
+                    final mine = all
+                        .where((moment) => moment.authorId == profile?.uid)
+                        .toList(growable: false);
+                    final others = _newestPerAuthor(all, profile?.uid);
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _StripHeading(
-                  onSeeAll: widget.onSeeAll,
-                  // Nothing to "see all" of until the circle has posted.
-                  showSeeAll: others.isNotEmpty || mine.isNotEmpty,
-                  onDiscover: widget.onDiscover,
-                  showDiscover: others.isNotEmpty || toFollow.isNotEmpty,
-                ),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final tileWidth = _MomentTile.widthFor(context);
-                    final tileHeight = _MomentTile.heightFor(context);
-                    // "Your Moment" always holds the first slot; the rest
-                    // of the width decides how many people fit, capped at
-                    // the 8 the composition is designed around.
-                    final fits =
-                        ((constraints.maxWidth + _tileGap) /
-                                (tileWidth + _tileGap))
-                            .floor();
-                    final capacity = (fits - 1).clamp(0, 7);
-                    final shown = others.take(capacity).toList(growable: false);
-
-                    final tiles = <Widget>[
-                      _YourMomentTile(
-                        profile: profile,
-                        newest: mine.isEmpty ? null : mine.first,
-                        onCreate: widget.onCreateMoment,
-                        onOpen: widget.onOpenMoment,
-                      ),
-                      for (final moment in shown)
-                        _MomentTile(
-                          moment: moment,
-                          onTap: () => widget.onOpenMoment(moment),
-                          online: online.contains(moment.authorId),
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _StripHeading(
+                          onSeeAll: widget.onSeeAll,
+                          // Nothing to "see all" of until the circle has posted.
+                          showSeeAll: others.isNotEmpty || mine.isNotEmpty,
+                          onDiscover: widget.onDiscover,
+                          showDiscover:
+                              others.isNotEmpty || toFollow.isNotEmpty,
                         ),
-                    ];
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final tileWidth = _MomentTile.widthFor(context);
+                            final tileHeight = _MomentTile.heightFor(context);
+                            // "Your Moment" always holds the first slot; the rest
+                            // of the width decides how many people fit, capped at
+                            // the 8 the composition is designed around.
+                            final fits =
+                                ((constraints.maxWidth + _tileGap) /
+                                        (tileWidth + _tileGap))
+                                    .floor();
+                            final capacity = (fits - 1).clamp(0, 7);
+                            final shown = others
+                                .take(capacity)
+                                .toList(growable: false);
 
-                    // Nothing from the circle and nobody to follow: the
-                    // quiet state fills the band rather than leaving it
-                    // blank.
-                    if (others.isEmpty && toFollow.isEmpty) {
-                      return SizedBox(
-                        height: tileHeight,
-                        child: Row(
-                          children: [
-                            tiles.first,
-                            const SizedBox(width: 14),
-                            Expanded(
-                              flex: 3,
-                              child: _CircleQuietState(
-                                onDiscover: widget.onDiscover,
+                            final tiles = <Widget>[
+                              _YourMomentTile(
+                                profile: profile,
+                                newest: mine.isEmpty ? null : mine.first,
+                                onCreate: widget.onCreateMoment,
+                                onOpen: widget.onOpenMoment,
                               ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }
-
-                    // ONE row, packed from the left: people you can hear,
-                    // then the divider, then people you could follow. A
-                    // Flexible list here let the follow segment drift to
-                    // the far edge with a gap in the middle.
-                    return SizedBox(
-                      height: tileHeight,
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          children: [
-                            for (var i = 0; i < tiles.length; i++) ...[
-                              if (i > 0) const SizedBox(width: _tileGap),
-                              tiles[i],
-                            ],
-                            if (toFollow.isNotEmpty) ...[
-                              const _RailDivider(),
-                              for (var i = 0; i < toFollow.length; i++) ...[
-                                if (i > 0) const SizedBox(width: _tileGap),
-                                _FollowablePersonTile(
-                                  person: toFollow[i],
-                                  follow: _follow,
-                                  onOpenProfile: widget.onOpenProfile,
+                              for (final moment in shown)
+                                _MomentTile(
+                                  moment: moment,
+                                  onTap: () => widget.onOpenMoment(moment),
+                                  online: online.contains(moment.authorId),
                                 ),
-                              ],
-                            ],
-                          ],
+                            ];
+
+                            // Nothing from the circle and nobody to follow: the
+                            // quiet state fills the band rather than leaving it
+                            // blank.
+                            if (others.isEmpty && toFollow.isEmpty) {
+                              return SizedBox(
+                                height: tileHeight,
+                                child: Row(
+                                  children: [
+                                    tiles.first,
+                                    const SizedBox(width: 14),
+                                    Expanded(
+                                      flex: 3,
+                                      child: _CircleQuietState(
+                                        onDiscover: widget.onDiscover,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }
+
+                            // ONE row, packed from the left: people you can hear,
+                            // then the divider, then people you could follow. A
+                            // Flexible list here let the follow segment drift to
+                            // the far edge with a gap in the middle.
+                            return SizedBox(
+                              height: tileHeight,
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: Row(
+                                  children: [
+                                    for (var i = 0; i < tiles.length; i++) ...[
+                                      if (i > 0)
+                                        const SizedBox(width: _tileGap),
+                                      tiles[i],
+                                    ],
+                                    if (toFollow.isNotEmpty) ...[
+                                      const _RailDivider(),
+                                      for (
+                                        var i = 0;
+                                        i < toFollow.length;
+                                        i++
+                                      ) ...[
+                                        if (i > 0)
+                                          const SizedBox(width: _tileGap),
+                                        _FollowablePersonTile(
+                                          person: toFollow[i],
+                                          follow: _follow,
+                                          onOpenProfile: widget.onOpenProfile,
+                                        ),
+                                      ],
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
                         ),
-                      ),
+                      ],
                     );
                   },
-                ),
-              ],
-            );
-          },
                 );
               },
             );
@@ -332,10 +341,7 @@ class _StripHeading extends StatelessWidget {
             TextButton(
               onPressed: onDiscover,
               style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 4,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
@@ -427,6 +433,7 @@ class _MomentRing extends StatelessWidget {
       ),
       child: Container(
         padding: const EdgeInsets.all(2),
+        clipBehavior: Clip.antiAlias,
         decoration: const BoxDecoration(
           shape: BoxShape.circle,
           color: Color(0xFF0C0814),
