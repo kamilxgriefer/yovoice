@@ -1,11 +1,11 @@
 // Public statistics — the real numbers the marketing site publishes.
 //
 // One server-owned document, `publicStats/live`, written only from here
-// through the Admin SDK on a schedule. It is the project's only publicly
-// readable document (`match /publicStats/live` in firestore.rules, pinned id,
-// `allow get: if true`), so it deliberately carries nothing except aggregates
-// and the time they were computed: no uids, no room ids, no per-room
-// breakdown, nothing that could be joined back to a person.
+// through the Admin SDK on a schedule. It is one of the project's two pinned,
+// publicly readable documents (`publicShowcase/live` is the other). This
+// aggregate document deliberately carries nothing except totals and the time
+// they were computed: no uids, no room ids, no per-room breakdown, nothing
+// that could be joined back to a person.
 //
 // WHAT IS PUBLISHED, AND WHY EACH NAME IS THE NAME IT IS.
 //

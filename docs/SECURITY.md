@@ -489,6 +489,24 @@ is evidence. Commands in
 Live-updated detail: [Bugs.md](Bugs.md#security). Full historical audit,
 findings, and the exact fix for each: [Archive/SECURITY_AUDIT.md](Archive/SECURITY_AUDIT.md).
 
+## Public website showcase boundary
+
+The marketing site has no read path into account, presence, social-graph or
+Club collections. A person or public Community Club appears only after its
+owner creates an exact private consent document. A scheduled Admin publisher
+rechecks Firebase Auth and canonical Firestore state, then writes one bounded,
+short-lived `publicShowcase/live` document. Anonymous access is pinned to that
+single id; list, sibling and client writes are denied.
+
+Recent activity is deliberately labelled **Active recently**, not **Online
+now**: the source is an explicitly consented, fresh client heartbeat and is
+suppressed unless a minimum privacy cohort exists. Family Rooms, private
+Clubs, staff identities, photos, usernames, identifiers, email, last-seen
+timestamps and blocked-relationship data are never published. Consent is
+revoked during Auth deletion, permanent Club deletion and both ownership
+transfer paths so a recreated identity or a new owner cannot inherit an old
+public grant.
+
 ## If you find a security issue
 
 This is currently a solo project with no formal disclosure program.

@@ -11,6 +11,7 @@ import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/blocked_users_screen.dart';
+import 'package:yovoice/features/marketing/data/services/public_showcase_consent_service.dart';
 import 'package:yovoice/features/notifications/presentation/screens/notification_preferences_screen.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
@@ -47,6 +48,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _authService = AuthService();
   final _friendService = FriendService();
   final _entitlementService = EntitlementService();
+  final _showcaseConsentService = PublicShowcaseConsentService();
 
   PackageInfo? _packageInfo;
   final Map<Permission, PermissionStatus> _permissionStatus = {};
@@ -55,6 +57,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _resendingVerification = false;
   bool _refreshingVerification = false;
   bool _clearingCache = false;
+  bool _updatingShowcaseConsent = false;
+
+  Future<void> _setShowcaseConsent({
+    required UserProfile profile,
+    required bool showProfile,
+    required bool showActivity,
+  }) async {
+    if (_updatingShowcaseConsent) return;
+    setState(() => _updatingShowcaseConsent = true);
+    try {
+      await _showcaseConsentService.setProfileConsent(
+        userId: profile.uid,
+        showProfile: showProfile,
+        showActivity: showActivity,
+      );
+      _notify(
+        showProfile
+            ? 'Your public website showcase preferences were saved.'
+            : 'Your profile will no longer appear in the website showcase.',
+      );
+    } catch (error) {
+      _notify(friendlyErrorMessage(error), isError: true);
+    } finally {
+      if (mounted) setState(() => _updatingShowcaseConsent = false);
+    }
+  }
 
   @override
   void initState() {
@@ -494,6 +522,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: 'Profile visibility',
               subtitle: 'Choose who can view your profile',
               comingSoon: true,
+            ),
+            StreamBuilder<PublicProfileShowcaseConsent>(
+              stream: _showcaseConsentService.watchProfileConsent(profile.uid),
+              initialData: const PublicProfileShowcaseConsent.hidden(),
+              builder: (context, snapshot) {
+                final consent =
+                    snapshot.data ??
+                    const PublicProfileShowcaseConsent.hidden();
+                return Column(
+                  children: [
+                    _SettingsTile(
+                      icon: Icons.public_rounded,
+                      title: 'Appear on the YO Voice website',
+                      subtitle:
+                          'Show your display name and profile type on the public internet, including to signed-out visitors and people you have blocked.',
+                      trailing: Switch.adaptive(
+                        value: consent.showProfile,
+                        onChanged: _updatingShowcaseConsent
+                            ? null
+                            : (value) => _setShowcaseConsent(
+                                profile: profile,
+                                showProfile: value,
+                                showActivity: value && consent.showActivity,
+                              ),
+                      ),
+                    ),
+                    _SettingsTile(
+                      icon: Icons.circle,
+                      title: 'Show my recent activity',
+                      subtitle:
+                          'May show “Active recently” after a fresh app heartbeat — never your last-seen time.',
+                      trailing: Switch.adaptive(
+                        value: consent.showActivity,
+                        onChanged:
+                            !consent.showProfile || _updatingShowcaseConsent
+                            ? null
+                            : (value) => _setShowcaseConsent(
+                                profile: profile,
+                                showProfile: true,
+                                showActivity: value,
+                              ),
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
             const _SettingsTile(
               icon: Icons.forum_outlined,

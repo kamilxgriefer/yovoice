@@ -308,17 +308,24 @@ describe("privacy projection trigger", () => {
       db.collection("socialPresence").doc(VISIBLE).set({ uid: VISIBLE }),
       db.collection("publicBadges").doc(VISIBLE).set({ staffRole: "user" }),
       db.collection("userDirectory").doc(VISIBLE).set({ email: "old@invalid" }),
+      db.collection("marketingConsents").doc(VISIBLE).set({
+        schemaVersion: 1,
+        showProfileOnWebsite: true,
+        showActivityOnWebsite: true,
+      }),
     ]);
 
     const outcome = await handleAuthUserDeleted(VISIBLE, { database: db });
     assert.equal(outcome.outcome, "retired");
-    const [source, profile, presence, badge, directory] = await db.getAll(
-      db.collection("users").doc(VISIBLE),
-      db.collection("publicProfiles").doc(VISIBLE),
-      db.collection("socialPresence").doc(VISIBLE),
-      db.collection("publicBadges").doc(VISIBLE),
-      db.collection("userDirectory").doc(VISIBLE),
-    );
+    const [source, profile, presence, badge, directory, marketingConsent] =
+      await db.getAll(
+        db.collection("users").doc(VISIBLE),
+        db.collection("publicProfiles").doc(VISIBLE),
+        db.collection("socialPresence").doc(VISIBLE),
+        db.collection("publicBadges").doc(VISIBLE),
+        db.collection("userDirectory").doc(VISIBLE),
+        db.collection("marketingConsents").doc(VISIBLE),
+      );
     assert.equal(source.data().disabled, true);
     assert.equal(source.data().isOnline, false);
     assert.ok(source.data().authDeletedAt);
@@ -326,6 +333,7 @@ describe("privacy projection trigger", () => {
     assert.equal(presence.exists, false);
     assert.equal(badge.exists, false);
     assert.equal(directory.exists, false);
+    assert.equal(marketingConsent.exists, false);
 
     const replay = await syncPrivacyProjectionsForUser(VISIBLE, {
       database: db,

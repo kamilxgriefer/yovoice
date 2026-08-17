@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
+import 'package:yovoice/features/marketing/data/services/public_showcase_consent_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class ClubSettingsScreen extends StatefulWidget {
@@ -15,11 +17,15 @@ class ClubSettingsScreen extends StatefulWidget {
 
 class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
   final ClubService _service = ClubService();
+  final PublicShowcaseConsentService _showcaseConsentService =
+      PublicShowcaseConsentService();
   late final TextEditingController _name;
   late final TextEditingController _description;
   late final TextEditingController _language;
   late ClubPrivacy _privacy;
   bool _saving = false;
+  bool _showOnWebsite = false;
+  bool _loadedShowcaseConsent = false;
 
   @override
   void initState() {
@@ -28,7 +34,35 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
     _description = TextEditingController(text: widget.club.description);
     _language = TextEditingController(text: widget.club.defaultLanguage);
     _privacy = widget.club.privacy;
+    if (_canControlShowcase) {
+      _showcaseConsentService
+          .watchClubConsent(
+            clubId: widget.club.id,
+            ownerId: widget.club.ownerId,
+          )
+          .first
+          .then<void>(
+            (value) {
+              if (!mounted) return;
+              setState(() {
+                _showOnWebsite = value;
+                _loadedShowcaseConsent = true;
+              });
+            },
+            onError: (Object _, StackTrace __) {
+              if (!mounted) return;
+              setState(() {
+                _showOnWebsite = false;
+                _loadedShowcaseConsent = true;
+              });
+            },
+          );
+    }
   }
+
+  bool get _canControlShowcase =>
+      !widget.club.isFamilyRoom &&
+      FirebaseAuth.instance.currentUser?.uid == widget.club.ownerId;
 
   @override
   void dispose() {
@@ -49,6 +83,13 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
         defaultLanguage: _language.text,
         privacy: _privacy,
       );
+      if (_canControlShowcase) {
+        await _showcaseConsentService.setClubConsent(
+          clubId: widget.club.id,
+          ownerId: widget.club.ownerId,
+          showOnWebsite: _privacy == ClubPrivacy.public && _showOnWebsite,
+        );
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -166,6 +207,47 @@ class _ClubSettingsScreenState extends State<ClubSettingsScreen> {
                 ),
               );
             }),
+            if (_canControlShowcase) ...[
+              const SizedBox(height: 18),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF171120),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFF30263F)),
+                ),
+                child: SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  value:
+                      _loadedShowcaseConsent &&
+                      _privacy == ClubPrivacy.public &&
+                      _showOnWebsite,
+                  onChanged:
+                      !_loadedShowcaseConsent || _privacy != ClubPrivacy.public
+                      ? null
+                      : (value) => setState(() => _showOnWebsite = value),
+                  title: const Text(
+                    'Feature this Club on the YO Voice website',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  subtitle: Text(
+                    _privacy == ClubPrivacy.public
+                        ? 'Publishes only the Club name and current member count. Family and private Clubs are never included.'
+                        : 'Make the Club public before featuring it on the website.',
+                    style: const TextStyle(
+                      color: Color(0xFFB6ACBB),
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: _saving ? null : _save,

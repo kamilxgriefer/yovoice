@@ -8403,7 +8403,235 @@ async function main() {
     },
   );
 
-  // --- publicStats/live: the project's first world-readable document ---
+  // --- consent-backed public marketing showcase ---
+
+  const showcaseStranger = testEnv.unauthenticatedContext();
+  const accountConsentRef = doc(
+    host.firestore(),
+    "marketingConsents/host-uid",
+  );
+
+  await check(
+    "MARKETING CONSENT: an account can create and read its exact own consent",
+    async () => {
+      await assertSucceeds(setDoc(accountConsentRef, {
+        schemaVersion: 1,
+        showProfileOnWebsite: true,
+        showActivityOnWebsite: true,
+        updatedAt: serverTimestamp(),
+      }));
+      const snapshot = await assertSucceeds(getDoc(accountConsentRef));
+      assert.equal(snapshot.data()?.showProfileOnWebsite, true);
+    },
+  );
+
+  await check(
+    "SECURITY MARKETING CONSENT: activity cannot be public when profile is private",
+    async () => {
+      await assertFails(setDoc(
+        doc(attacker.firestore(), "marketingConsents/attacker-uid"),
+        {
+          schemaVersion: 1,
+          showProfileOnWebsite: false,
+          showActivityOnWebsite: true,
+          updatedAt: serverTimestamp(),
+        },
+      ));
+    },
+  );
+
+  await check(
+    "SECURITY MARKETING CONSENT: extra fields and caller timestamps are denied",
+    async () => {
+      await assertFails(setDoc(accountConsentRef, {
+        schemaVersion: 1,
+        showProfileOnWebsite: true,
+        showActivityOnWebsite: false,
+        email: "must-not-be-published@private.invalid",
+        updatedAt: serverTimestamp(),
+      }));
+      await assertFails(setDoc(accountConsentRef, {
+        schemaVersion: 1,
+        showProfileOnWebsite: true,
+        showActivityOnWebsite: false,
+        updatedAt: Timestamp.fromMillis(1_800_000_000_000),
+      }));
+    },
+  );
+
+  await check(
+    "SECURITY MARKETING CONSENT: another account and anonymous caller cannot read or write it",
+    async () => {
+      await assertFails(getDoc(doc(
+        attacker.firestore(),
+        "marketingConsents/host-uid",
+      )));
+      await assertFails(getDoc(doc(
+        showcaseStranger.firestore(),
+        "marketingConsents/host-uid",
+      )));
+      await assertFails(setDoc(
+        doc(attacker.firestore(), "marketingConsents/host-uid"),
+        {
+          schemaVersion: 1,
+          showProfileOnWebsite: true,
+          showActivityOnWebsite: false,
+          updatedAt: serverTimestamp(),
+        },
+      ));
+    },
+  );
+
+  await check(
+    "SECURITY MARKETING CONSENT: clients cannot enumerate account consents",
+    async () => {
+      await assertFails(getDocs(collection(host.firestore(), "marketingConsents")));
+      await assertFails(getDocs(collection(
+        showcaseStranger.firestore(),
+        "marketingConsents",
+      )));
+    },
+  );
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), "clubs/showcase-club"), {
+      ownerId: "host-uid",
+      name: "Real public club",
+      type: "community",
+      privacy: "public",
+      status: "active",
+      memberCount: 3,
+    });
+  });
+
+  const clubConsentRef = doc(
+    host.firestore(),
+    "clubMarketingConsents/showcase-club",
+  );
+
+  await check(
+    "CLUB MARKETING CONSENT: the current owner can grant an exact owner-bound consent",
+    async () => {
+      await assertSucceeds(setDoc(clubConsentRef, {
+        schemaVersion: 1,
+        clubId: "showcase-club",
+        ownerId: "host-uid",
+        showOnWebsite: true,
+        updatedAt: serverTimestamp(),
+      }));
+      await assertSucceeds(getDoc(clubConsentRef));
+    },
+  );
+
+  await check(
+    "SECURITY CLUB MARKETING CONSENT: non-owner, wrong binding and extra fields fail",
+    async () => {
+      await assertFails(getDoc(doc(
+        attacker.firestore(),
+        "clubMarketingConsents/showcase-club",
+      )));
+      await assertFails(setDoc(
+        doc(attacker.firestore(), "clubMarketingConsents/showcase-club"),
+        {
+          schemaVersion: 1,
+          clubId: "showcase-club",
+          ownerId: "attacker-uid",
+          showOnWebsite: true,
+          updatedAt: serverTimestamp(),
+        },
+      ));
+      await assertFails(setDoc(clubConsentRef, {
+        schemaVersion: 1,
+        clubId: "some-other-club",
+        ownerId: "host-uid",
+        showOnWebsite: true,
+        updatedAt: serverTimestamp(),
+      }));
+      await assertFails(setDoc(clubConsentRef, {
+        schemaVersion: 1,
+        clubId: "showcase-club",
+        ownerId: "host-uid",
+        showOnWebsite: true,
+        ownerEmail: "must-not-leak@private.invalid",
+        updatedAt: serverTimestamp(),
+      }));
+    },
+  );
+
+  await check(
+    "SECURITY CLUB MARKETING CONSENT: clients cannot enumerate club consents",
+    async () => {
+      await assertFails(getDocs(collection(
+        host.firestore(),
+        "clubMarketingConsents",
+      )));
+      await assertFails(getDocs(collection(
+        showcaseStranger.firestore(),
+        "clubMarketingConsents",
+      )));
+    },
+  );
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await Promise.all([
+      setDoc(doc(db, "publicShowcase/live"), {
+        schemaVersion: 1,
+        people: [{
+          displayName: "Consenting creator",
+          accountType: "creator",
+          activity: "undisclosed",
+        }],
+        clubs: [{ name: "Real public club", memberCount: 3 }],
+        generatedAt: Timestamp.now(),
+        activityValidUntil: Timestamp.now(),
+        validUntil: Timestamp.now(),
+      }),
+      setDoc(doc(db, "publicShowcase/internal"), {
+        secret: "not public",
+      }),
+    ]);
+  });
+
+  await check(
+    "PUBLIC SHOWCASE: anonymous and signed-in callers can get only the pinned live document",
+    async () => {
+      await assertSucceeds(getDoc(doc(
+        showcaseStranger.firestore(),
+        "publicShowcase/live",
+      )));
+      await assertSucceeds(getDoc(doc(host.firestore(), "publicShowcase/live")));
+      await assertFails(getDoc(doc(
+        showcaseStranger.firestore(),
+        "publicShowcase/internal",
+      )));
+    },
+  );
+
+  await check(
+    "SECURITY PUBLIC SHOWCASE: no caller can list, create, update or delete the projection",
+    async () => {
+      await assertFails(getDocs(collection(
+        showcaseStranger.firestore(),
+        "publicShowcase",
+      )));
+      await assertFails(getDocs(collection(host.firestore(), "publicShowcase")));
+      await assertFails(setDoc(
+        doc(attacker.firestore(), "publicShowcase/live"),
+        { people: [{ displayName: "Forged" }] },
+      ));
+      await assertFails(updateDoc(
+        doc(host.firestore(), "publicShowcase/live"),
+        { people: [] },
+      ));
+      await assertFails(deleteDoc(doc(
+        showcaseStranger.firestore(),
+        "publicShowcase/live",
+      )));
+    },
+  );
+
+  // --- publicStats/live: the project's first aggregate-only world-readable document ---
   //
   // Every other `allow` in this file ends at some account. This one does not,
   // so the cases below are the entire boundary and they are written as if the

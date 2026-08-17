@@ -301,6 +301,11 @@ const transferClubOwnershipSelf = onCall(
           updatedAt: FieldValue.serverTimestamp(),
         });
       }
+      // Website publication consent belongs to the owner who granted it.
+      // A transfer must never let the recipient inherit that public opt-in.
+      transaction.delete(
+        db.collection("clubMarketingConsents").doc(clubId),
+      );
       touchOwnershipGuards(transaction, guardReferences);
     });
 

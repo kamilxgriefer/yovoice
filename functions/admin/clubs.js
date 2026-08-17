@@ -853,6 +853,11 @@ const transferClubOwnership = onCall(
           updatedAt: FieldValue.serverTimestamp(),
         });
       }
+      // Public marketing consent is owner-specific and cannot survive a
+      // transfer performed by staff on the owner's behalf.
+      transaction.delete(
+        db.collection("clubMarketingConsents").doc(clubId),
+      );
       touchOwnershipGuards(transaction, guardReferences);
     });
 
@@ -1066,6 +1071,10 @@ const adminDeleteClub = onCall(
       entryId: `delete_club_${clubId}`,
     });
 
+    // A marketing grant is tied to this exact Club lifecycle. Delete it
+    // before the canonical root so it cannot become an orphan or silently
+    // reactivate if the same document id is ever recreated.
+    await db.collection("clubMarketingConsents").doc(clubId).delete();
     await deleteDocumentRecursively(clubReference);
 
     return {

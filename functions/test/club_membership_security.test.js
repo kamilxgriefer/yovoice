@@ -341,6 +341,12 @@ describe("transferClubOwnershipSelf", () => {
   test("updates root, canonical roles, both mirrors and both guards", async () => {
     const clubId = `${P}transfer`;
     await seedTransfer(clubId);
+    await db.collection("clubMarketingConsents").doc(clubId).set({
+      schemaVersion: 1,
+      clubId,
+      ownerId: IDS.owner,
+      showOnWebsite: true,
+    });
     await runTransfer(
       callableRequest(IDS.owner, "user", { clubId, newOwnerId: IDS.next }),
     );
@@ -376,6 +382,10 @@ describe("transferClubOwnershipSelf", () => {
     assert.equal(lounge.data().isLive, false);
     assert.deepEqual(ownershipControlCalls, [`club_lounge_${clubId}`]);
     assert.equal(club.data().ownershipVoiceResetPending, false);
+    assert.equal(
+      (await db.collection("clubMarketingConsents").doc(clubId).get()).exists,
+      false,
+    );
 
     const retry = await runTransfer(
       callableRequest(IDS.owner, "user", { clubId, newOwnerId: IDS.next }),
@@ -522,6 +532,12 @@ describe("admin Club mutation authorization", () => {
     ]);
     await seedMember(clubId, IDS.owner, "owner");
     await seedMember(clubId, IDS.next, "member");
+    await db.collection("clubMarketingConsents").doc(clubId).set({
+      schemaVersion: 1,
+      clubId,
+      ownerId: IDS.owner,
+      showOnWebsite: true,
+    });
 
     const result = await runAdminTransfer(
       callableRequest(IDS.activeAdmin, "superAdmin", {
@@ -550,6 +566,10 @@ describe("admin Club mutation authorization", () => {
     assert.equal(oldProjection.data().role, "member");
     assert.equal(newProjection.data().role, "owner");
     assert.deepEqual(clubControlCalls, [["endRoom", roomId]]);
+    assert.equal(
+      (await db.collection("clubMarketingConsents").doc(clubId).get()).exists,
+      false,
+    );
   });
 
   test("active staff removal cleans membership, projection and voice", async () => {
@@ -630,6 +650,12 @@ describe("admin Club deletion lifecycle", () => {
         status: "active",
         isLive: true,
       }),
+      db.collection("clubMarketingConsents").doc(clubId).set({
+        schemaVersion: 1,
+        clubId,
+        ownerId: IDS.owner,
+        showOnWebsite: true,
+      }),
     ]);
     await Promise.all([
       seedMember(clubId, IDS.owner, "owner"),
@@ -681,6 +707,10 @@ describe("admin Club deletion lifecycle", () => {
     assert.equal(ownerProjection.exists, false);
     assert.equal(memberProjection.exists, false);
     assert.equal(ghostProjection.exists, false);
+    assert.equal(
+      (await db.collection("clubMarketingConsents").doc(clubId).get()).exists,
+      false,
+    );
     assert.equal(
       (await db.collection("adminAuditLogs")
         .doc(`delete_club_${clubId}`).get()).exists,

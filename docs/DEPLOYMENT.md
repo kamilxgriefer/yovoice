@@ -573,6 +573,35 @@ The real fix is the same unexported webhook that would repair
 LiveKit's own `participant_left` / `participant_connection_aborted`
 events, which the SFU emits on a crash.
 
+### Pending release: consent-backed public showcase
+
+`publicShowcase/live` is a separate pinned, server-owned projection for the
+marketing website. It must never be populated by widening reads on
+`users`, `publicProfiles`, `socialPresence`, `clubs`, or either consent
+collection. The publisher revalidates Auth existence, account status,
+ordinary-user role, profile/Club state and explicit owner consent, and emits
+only bounded names, account type, an honest coarse activity label and Club
+name/member count. It emits no uid, username, email, image URL, staff badge,
+last-seen time, owner id or Club id.
+
+Safe release order:
+
+1. Deploy `publishPublicShowcaseSchedule` and verify it is ACTIVE.
+2. Deploy `firestore.rules`; verify anonymous GET of exactly
+   `publicShowcase/live` and denial of list/siblings/client writes.
+3. Release the Flutter consent controls. Absence of consent is the safe
+   default, so the publisher legitimately emits empty arrays until people
+   explicitly opt in.
+4. Release the marketing website consumer last. It must hide an invalid or
+   expired payload and show the neutral sign-up CTA; fixtures and fabricated
+   fallback identities are prohibited.
+
+The one-minute publisher uses a three-minute document TTL and fails closed
+when its bounded consent scan is exceeded. Scale that scan with a reviewed
+pagination/fair-sampling design before raising the current cap; never silently
+publish a partial cohort. Removing an account/Club or transferring Club
+ownership deletes its grant server-side.
+
 ---
 
 ## Historical: the 2026-08-11 selective manifest (SUPERSEDED)

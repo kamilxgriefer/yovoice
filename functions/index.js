@@ -345,6 +345,18 @@ exports.publishPublicStatsSchedule = publishPublicStatsSchedule;
 
 /*
 |--------------------------------------------------------------------------
+| Public marketing showcase (consent-backed publicShowcase/live)
+|--------------------------------------------------------------------------
+*/
+
+const {
+  publishPublicShowcaseSchedule,
+} = require("./marketing/public_showcase");
+
+exports.publishPublicShowcaseSchedule = publishPublicShowcaseSchedule;
+
+/*
+|--------------------------------------------------------------------------
 | Premium
 |--------------------------------------------------------------------------
 */

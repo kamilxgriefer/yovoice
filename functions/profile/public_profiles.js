@@ -308,6 +308,10 @@ async function handleAuthUserDeleted(uid, { database = db } = {}) {
     database.collection("socialPresence").doc(cleanUid),
     database.collection("publicBadges").doc(cleanUid),
     database.collection("userDirectory").doc(cleanUid),
+    // Consent belongs to this exact Auth identity. Keeping it after account
+    // deletion could silently opt a later re-created uid back into the public
+    // website showcase.
+    database.collection("marketingConsents").doc(cleanUid),
   ];
 
   await database.runTransaction(async (transaction) => {

@@ -1170,7 +1170,86 @@ service cloud.firestore {
           role == 'member' ? 20 : 10;
     }
 
-    // THE ONLY DOCUMENT IN THIS DATABASE THAT A STRANGER CAN READ.
+    // Explicit, revocable permission for the marketing site to publish a
+    // minimal account label. This document contains no profile data itself;
+    // the Admin-only scheduler revalidates the active public projection and
+    // private account status before copying displayName/accountType. Activity
+    // is a separate opt-in and cannot be enabled without profile publication.
+    function marketingConsentSchemaIsExact() {
+      return request.resource.data.keys().hasOnly([
+            'schemaVersion', 'showProfileOnWebsite',
+            'showActivityOnWebsite', 'updatedAt'
+          ]) &&
+          request.resource.data.keys().hasAll([
+            'schemaVersion', 'showProfileOnWebsite',
+            'showActivityOnWebsite', 'updatedAt'
+          ]) &&
+          request.resource.data.schemaVersion == 1 &&
+          request.resource.data.showProfileOnWebsite is bool &&
+          request.resource.data.showActivityOnWebsite is bool &&
+          (
+            request.resource.data.showActivityOnWebsite == false ||
+            request.resource.data.showProfileOnWebsite == true
+          ) &&
+          request.resource.data.updatedAt == request.time;
+    }
+
+    // Club publication is bound to the owner who granted it. Requiring both
+    // ids in the exact consent shape means an ownership transfer invalidates
+    // the old grant in the publisher instead of silently inheriting consent.
+    function clubMarketingConsentSchemaIsExact(clubId) {
+      return request.resource.data.keys().hasOnly([
+            'schemaVersion', 'clubId', 'ownerId', 'showOnWebsite',
+            'updatedAt'
+          ]) &&
+          request.resource.data.keys().hasAll([
+            'schemaVersion', 'clubId', 'ownerId', 'showOnWebsite',
+            'updatedAt'
+          ]) &&
+          request.resource.data.schemaVersion == 1 &&
+          request.resource.data.clubId == clubId &&
+          request.resource.data.ownerId == request.auth.uid &&
+          request.resource.data.showOnWebsite is bool &&
+          request.resource.data.updatedAt == request.time;
+    }
+
+    function ownsMarketingClub(clubId) {
+      return isSignedIn() &&
+          exists(/databases/$(database)/documents/clubs/$(clubId)) &&
+          get(/databases/$(database)/documents/clubs/$(clubId))
+            .data.ownerId == request.auth.uid;
+    }
+
+    match /marketingConsents/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if false;
+      allow create, update: if isOwner(userId) &&
+          marketingConsentSchemaIsExact();
+      // Withdrawal stays available even if the account has since been
+      // restricted. Publication still independently rejects inactive users.
+      allow delete: if isOwner(userId);
+    }
+
+    match /clubMarketingConsents/{clubId} {
+      allow get: if ownsMarketingClub(clubId);
+      allow list: if false;
+      allow create, update: if ownsMarketingClub(clubId) &&
+          clubMarketingConsentSchemaIsExact(clubId);
+      allow delete: if ownsMarketingClub(clubId);
+    }
+
+    // A second pinned, server-owned document for the consent-backed marketing
+    // showcase. The payload is deliberately not merged with publicStats/live:
+    // it has a different privacy contract and a much shorter validity window.
+    // Anonymous callers may fetch this exact id but cannot enumerate siblings,
+    // reach subcollections or write any part of the projection.
+    match /publicShowcase/live {
+      allow get: if true;
+      allow list: if false;
+      allow create, update, delete: if false;
+    }
+
+    // ONE OF THE TWO PINNED DOCUMENTS A STRANGER CAN READ.
     //
     // `publicStats/live` is a server-owned aggregate written by
     // publishPublicStatsSchedule (functions/stats/public_stats.js) through the

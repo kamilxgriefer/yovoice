@@ -11,11 +11,11 @@ figure is a suite run, not an estimate; file counts are `find`.
 
 | Suite | Command | Count |
 |---|---|---|
-| Firestore rules | `npm --prefix firestore-tests test` | **353** checks |
+| Firestore rules | `npm --prefix firestore-tests test` | **363** checks |
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **52** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
-| Cloud Functions | `npm --prefix functions test` | **579** tests across **94** suites (48 `*.test.js` files) |
-| Flutter | `flutter test` | **620** tests across **64** files |
+| Cloud Functions | `npm --prefix functions test` | **593** tests across **98** suites (49 `*.test.js` files) |
+| Flutter | `flutter test` | **622** tests across **65** files |
 
 > **Correction, 2026-08-16.** These numbers were wrong in several docs for
 > most of a week — TESTING.md claimed 268 rules checks and 43 Storage
@@ -92,11 +92,22 @@ figure is a suite run, not an estimate; file counts are `find`.
 > combined Family media suite remains **11/11**. `flutter analyze` and
 > `flutter build web --release` also passed in the same final verification.
 
+> **Movement, 2026-08-17 (consent-backed public website showcase).** Rules
+> **353 → 363** add exact owner-controlled profile/Club consent documents and
+> a pinned, read-only `publicShowcase/live` projection. Functions **579/94 →
+> 593/98** add the bounded one-minute publisher, Auth/status/role revalidation,
+> activity-cohort privacy, lifecycle cleanup and transfer-revocation cases.
+> Flutter **620/64 → 622/65** adds the exact consent service and its profile/
+> Club opt-in behavior. The complete Functions suite, Rules suite, focused
+> Flutter tests and full `flutter analyze` were re-run after the final privacy
+> review; the website separately passed its exact-schema parser tests, lint and
+> a 42-route production build.
+
 ## Firestore rules — the most mature coverage in the project
 
 `firestore-tests/` — a standalone Node project running regression and
 attack-scenario checks against `firestore.rules` via
-`@firebase/rules-unit-testing` and the Firestore emulator — **353 checks
+`@firebase/rules-unit-testing` and the Firestore emulator — **363 checks
 passing** — plus `storage.test.js`, the same treatment for `storage.rules`
 against the Storage emulator (52 checks: path ownership, size caps,
 content-type allowlists, read gating, default deny), plus 11 combined
@@ -223,7 +234,7 @@ wrong reason.
 
 ## Cloud Functions — real coverage, unevenly distributed
 
-`functions/test/` — **579 tests across 94 suites in 48 files**, run with
+`functions/test/` — **593 tests across 98 suites in 49 files**, run with
 `node --test test/*.test.js` against the Auth + Firestore emulators, and
 gating the Hosting release in CI like the rules suites do. A separate
 `npm --prefix functions run test:smoke` drives three trigger smoke scripts
@@ -249,7 +260,7 @@ absolute count over a collection your file does not exclusively own.
 
 ## Dart tests — real, but narrow
 
-`test/` — **620 tests across 64 files**, green in local verification,
+`test/` — **622 tests across 65 files**, green in local verification,
 grown mostly
 out of real bugs rather than an even coverage discipline. The
 pattern throughout: fake the Firebase backends
