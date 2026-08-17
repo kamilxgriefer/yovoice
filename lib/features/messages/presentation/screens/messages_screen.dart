@@ -14,7 +14,20 @@ import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart'
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class MessagesScreen extends StatefulWidget {
-  const MessagesScreen({super.key});
+  const MessagesScreen({
+    this.messageService,
+    this.friendService,
+    this.auth,
+    super.key,
+  });
+
+  /// Optional injection seams, matching the established pattern on
+  /// FriendProfileScreen and NotificationsScreen: production passes
+  /// nothing and gets the live singletons, tests pass fakes so the
+  /// failure paths below can be exercised without a Firebase app.
+  final MessageService? messageService;
+  final FriendService? friendService;
+  final FirebaseAuth? auth;
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -28,9 +41,13 @@ class _MessagesScreenState extends State<MessagesScreen> {
   static const Color _muted = Color(0xFF9D95AD);
   static const Color _primary = Color(0xFF9D20FF);
 
-  final MessageService _messageService = MessageService();
-  final FriendService _friendService = FriendService();
+  late final MessageService _messageService =
+      widget.messageService ?? MessageService();
+  late final FriendService _friendService =
+      widget.friendService ?? FriendService();
   final TextEditingController _searchController = TextEditingController();
+
+  FirebaseAuth get _auth => widget.auth ?? FirebaseAuth.instance;
 
   late final Stream<List<Conversation>> _conversationsStream;
   late final Stream<List<FriendUser>> _friendsStream;
@@ -67,7 +84,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 
   Future<void> _openConversation(Conversation conversation) async {
-    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    final currentUserId = _auth.currentUser?.uid;
 
     if (currentUserId == null) {
       return;
@@ -76,7 +93,22 @@ class _MessagesScreenState extends State<MessagesScreen> {
     final otherUserId = conversation.otherUserId(currentUserId);
 
     if (conversation.isArchivedFor(currentUserId)) {
-      await _messageService.unarchiveConversation(conversation.id);
+      try {
+        await _messageService.unarchiveConversation(conversation.id);
+      } catch (error) {
+        // Opening is the tap's intent; un-archiving is the side effect. A
+        // rejected un-archive must not swallow the tap AND stay silent —
+        // this method is fired through `unawaited`, so without this the
+        // conversation simply never opened and nothing was ever said.
+        if (mounted) {
+          _showMessage(
+            intentionalOrFriendly(
+              error,
+              fallback: 'Could not move this conversation out of Archived.',
+            ),
+          );
+        }
+      }
     }
 
     if (!mounted) {
@@ -91,6 +123,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
           otherDisplayName: conversation.displayNameFor(otherUserId),
           otherEmail: '',
           otherPhotoUrl: conversation.photoUrlFor(otherUserId),
+          messageService: widget.messageService,
+          auth: widget.auth,
         ),
       ),
     );
@@ -117,6 +151,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
             otherDisplayName: friend.displayName,
             otherEmail: '',
             otherPhotoUrl: friend.photoUrl ?? '',
+            messageService: widget.messageService,
+            auth: widget.auth,
           ),
         ),
       );
@@ -125,7 +161,12 @@ class _MessagesScreenState extends State<MessagesScreen> {
         return;
       }
 
-      _showMessage(error.toString().replaceFirst('Bad state: ', ''));
+      _showMessage(
+        intentionalOrFriendly(
+          error,
+          fallback: 'Could not open this conversation.',
+        ),
+      );
     }
   }
 
@@ -139,7 +180,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
         return NewMessageSheet(
           friendsStream: _friendsStream,
           conversationsStream: _conversationsStream,
-          currentUserId: FirebaseAuth.instance.currentUser?.uid ?? '',
+          currentUserId: _auth.currentUser?.uid ?? '',
           onFriendSelected: (friend) {
             Navigator.pop(sheetContext);
             unawaited(_startChat(friend));
@@ -203,7 +244,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    final currentUserId = _auth.currentUser?.uid;
 
     return Scaffold(
       backgroundColor: _background,
@@ -317,6 +358,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                             conversation: conversation,
                             currentUserId: currentUserId,
                             muted: muted,
+                            service: _messageService,
                             onTap: () => _openConversation(conversation),
                             onArchive: () => _archiveConversation(conversation),
                             onToggleMute: () =>
@@ -652,6 +694,7 @@ class _ConversationTile extends StatelessWidget {
     required this.conversation,
     required this.currentUserId,
     required this.muted,
+    required this.service,
     required this.onTap,
     required this.onArchive,
     required this.onToggleMute,
@@ -660,6 +703,10 @@ class _ConversationTile extends StatelessWidget {
   final Conversation conversation;
   final String currentUserId;
   final bool muted;
+
+  /// The screen's own service, rather than one built inside `build` —
+  /// see [_ConversationAvatar].
+  final MessageService service;
   final VoidCallback onTap;
   final VoidCallback onArchive;
   final VoidCallback onToggleMute;
@@ -690,6 +737,7 @@ class _ConversationTile extends StatelessWidget {
                 name: name,
                 photoUrl: photoUrl,
                 userId: otherUserId,
+                service: service,
               ),
               const SizedBox(width: 13),
               Expanded(
@@ -850,23 +898,49 @@ class _ConversationTile extends StatelessWidget {
   }
 }
 
-class _ConversationAvatar extends StatelessWidget {
+/// Stateful on purpose: this used to construct a brand new
+/// [MessageService] and open a brand new presence subscription on EVERY
+/// build, which both coupled the tile to the live Firebase singletons and
+/// leaked a Firestore listener per rebuild. The screen's service is passed
+/// in and the stream is opened once.
+class _ConversationAvatar extends StatefulWidget {
   const _ConversationAvatar({
     required this.name,
     required this.photoUrl,
     required this.userId,
+    required this.service,
   });
 
   final String name;
   final String photoUrl;
   final String userId;
+  final MessageService service;
+
+  @override
+  State<_ConversationAvatar> createState() => _ConversationAvatarState();
+}
+
+class _ConversationAvatarState extends State<_ConversationAvatar> {
+  late Stream<ChatPresence> _presence = widget.service.watchUserPresence(
+    widget.userId,
+  );
+
+  @override
+  void didUpdateWidget(_ConversationAvatar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.userId != widget.userId ||
+        oldWidget.service != widget.service) {
+      _presence = widget.service.watchUserPresence(widget.userId);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final service = MessageService();
+    final name = widget.name;
+    final photoUrl = widget.photoUrl;
 
     return StreamBuilder<ChatPresence>(
-      stream: service.watchUserPresence(userId),
+      stream: _presence,
       builder: (context, snapshot) {
         final online = snapshot.data?.isOnline ?? false;
 

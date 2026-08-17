@@ -19,6 +19,8 @@ class ChatScreen extends StatefulWidget {
     required this.otherDisplayName,
     required this.otherEmail,
     required this.otherPhotoUrl,
+    this.messageService,
+    this.auth,
     super.key,
   });
 
@@ -27,6 +29,13 @@ class ChatScreen extends StatefulWidget {
   final String otherDisplayName;
   final String otherEmail;
   final String otherPhotoUrl;
+
+  /// Optional injection seams, matching the established pattern on
+  /// FriendProfileScreen and NotificationsScreen: production passes
+  /// nothing and gets the live singletons, tests pass fakes so the
+  /// failure paths below can be exercised without a Firebase app.
+  final MessageService? messageService;
+  final FirebaseAuth? auth;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -40,7 +49,8 @@ class _ChatScreenState extends State<ChatScreen> {
   static const Color _muted = Color(0xFF9D95AD);
   static const Color _primary = Color(0xFF9D20FF);
 
-  final MessageService _service = MessageService();
+  late final MessageService _service =
+      widget.messageService ?? MessageService();
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
@@ -53,7 +63,13 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _sending = false;
   bool _isMuted = false;
 
-  String get _currentUserId => FirebaseAuth.instance.currentUser?.uid ?? '';
+  /// Typing presence is pushed on every keystroke, so a broken backend
+  /// would otherwise either be silent or produce a snackbar storm. It is
+  /// reported once per visit and logged every time.
+  bool _typingFailureReported = false;
+
+  String get _currentUserId =>
+      (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
 
   @override
   void initState() {
@@ -75,44 +91,79 @@ class _ChatScreenState extends State<ChatScreen> {
       ..removeListener(_handleTyping)
       ..dispose();
     _focusNode.dispose();
-    unawaited(
-      _service.setTyping(
-        conversationId: widget.conversationId,
-        isTyping: false,
-      ),
-    );
+    // Leaving the screen: nobody is left to tell, so this one only logs.
+    unawaited(_setTyping(false, announceFailure: false));
     super.dispose();
   }
 
   void _handleTyping() {
     final hasText = _controller.text.trim().isNotEmpty;
 
-    unawaited(
-      _service.setTyping(
-        conversationId: widget.conversationId,
-        isTyping: hasText,
-      ),
-    );
+    unawaited(_setTyping(hasText));
 
     _typingTimer?.cancel();
 
     if (hasText) {
       _typingTimer = Timer(const Duration(seconds: 4), () {
-        unawaited(
-          _service.setTyping(
-            conversationId: widget.conversationId,
-            isTyping: false,
+        unawaited(_setTyping(false));
+      });
+    }
+  }
+
+  /// Never let a rejected typing update disappear. It is not worth
+  /// interrupting the person mid-sentence more than once, but it must not
+  /// be invisible either — silent presence failures are exactly how the
+  /// duplicate-send defect stayed hidden.
+  Future<void> _setTyping(bool isTyping, {bool announceFailure = true}) async {
+    try {
+      await _service.setTyping(
+        conversationId: widget.conversationId,
+        isTyping: isTyping,
+      );
+    } catch (error) {
+      debugPrint('ChatScreen typing presence update failed: $error');
+
+      if (!announceFailure || !mounted || _typingFailureReported) {
+        return;
+      }
+
+      _typingFailureReported = true;
+      _showMessage(
+        friendlyErrorMessage(
+          error,
+          fallback: "Others won't see when you're typing right now.",
+        ),
+      );
+    }
+  }
+
+  Future<void> _toggleReaction(Message message, String emoji) async {
+    try {
+      await _service.toggleReaction(
+        conversationId: widget.conversationId,
+        messageId: message.id,
+        emoji: emoji,
+      );
+    } catch (error) {
+      if (mounted) {
+        _showMessage(
+          intentionalOrFriendly(
+            error,
+            fallback: 'Could not update your reaction.',
           ),
         );
-      });
+      }
     }
   }
 
   Future<void> _markRead() async {
     try {
       await _service.markConversationRead(widget.conversationId);
-    } catch (_) {
-      // The stream stays usable even when read receipts cannot update.
+    } catch (error) {
+      // The stream stays usable even when read receipts cannot update, and
+      // this runs on every rebuild, so it must not raise a snackbar — but
+      // it does not get to vanish either.
+      debugPrint('ChatScreen read-receipt update failed: $error');
     }
   }
 
@@ -166,13 +217,7 @@ class _ChatScreenState extends State<ChatScreen> {
           isMine: message.isMine(_currentUserId),
           onReaction: (emoji) {
             Navigator.pop(sheetContext);
-            unawaited(
-              _service.toggleReaction(
-                conversationId: widget.conversationId,
-                messageId: message.id,
-                emoji: emoji,
-              ),
-            );
+            unawaited(_toggleReaction(message, emoji));
           },
           onReply: () {
             Navigator.pop(sheetContext);
@@ -1077,58 +1122,71 @@ class _MessageActionsSheet extends StatelessWidget {
         color: Color(0xFF15101E),
         borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 42,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.white24,
-              borderRadius: BorderRadius.circular(20),
+      // Transparent Material, so the sheet keeps exactly this background
+      // while the ListTiles below get a Material to paint their ink on.
+      // Without it Flutter asserts that their splashes are invisible —
+      // Reply/Edit/Delete were silently rippling behind the container.
+      child: Material(
+        type: MaterialType.transparency,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 42,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(20),
+              ),
             ),
-          ),
-          const SizedBox(height: 15),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: reactions
-                .map(
-                  (emoji) => InkWell(
-                    onTap: () => onReaction(emoji),
-                    customBorder: const CircleBorder(),
-                    child: Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Text(emoji, style: const TextStyle(fontSize: 27)),
+            const SizedBox(height: 15),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: reactions
+                  .map(
+                    (emoji) => InkWell(
+                      onTap: () => onReaction(emoji),
+                      customBorder: const CircleBorder(),
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Text(
+                          emoji,
+                          style: const TextStyle(fontSize: 27),
+                        ),
+                      ),
                     ),
-                  ),
-                )
-                .toList(growable: false),
-          ),
-          const Divider(color: _ChatScreenState._border),
-          ListTile(
-            onTap: onReply,
-            leading: const Icon(Icons.reply_rounded, color: Colors.white),
-            title: const Text('Reply', style: TextStyle(color: Colors.white)),
-          ),
-          if (isMine)
-            ListTile(
-              onTap: onEdit,
-              leading: const Icon(Icons.edit_outlined, color: Colors.white),
-              title: const Text('Edit', style: TextStyle(color: Colors.white)),
+                  )
+                  .toList(growable: false),
             ),
-          if (isMine)
+            const Divider(color: _ChatScreenState._border),
             ListTile(
-              onTap: onDelete,
-              leading: const Icon(
-                Icons.delete_outline_rounded,
-                color: Color(0xFFFF668B),
-              ),
-              title: const Text(
-                'Delete',
-                style: TextStyle(color: Color(0xFFFF668B)),
-              ),
+              onTap: onReply,
+              leading: const Icon(Icons.reply_rounded, color: Colors.white),
+              title: const Text('Reply', style: TextStyle(color: Colors.white)),
             ),
-        ],
+            if (isMine)
+              ListTile(
+                onTap: onEdit,
+                leading: const Icon(Icons.edit_outlined, color: Colors.white),
+                title: const Text(
+                  'Edit',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            if (isMine)
+              ListTile(
+                onTap: onDelete,
+                leading: const Icon(
+                  Icons.delete_outline_rounded,
+                  color: Color(0xFFFF668B),
+                ),
+                title: const Text(
+                  'Delete',
+                  style: TextStyle(color: Color(0xFFFF668B)),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

@@ -309,34 +309,77 @@ class MessageService {
       'replyToMessageId': replyTo?.id,
     });
 
-    if (!called) {
-      final legacyNotifications = _legacyNotificationService;
-      bool suppressBell = false;
-      if (legacyNotifications != null) {
-        suppressBell = (await _users
-                .doc(recipientId)
-                .collection('friends')
-                .doc(currentUserId)
-                .get())
-            .exists;
-      }
+    if (called) {
+      // The callable is authoritative and has already performed the whole
+      // send inside one server transaction: it created the canonical
+      // message document and updated the conversation summary, the unread
+      // counts and the typing state. Anything written from here would be a
+      // SECOND message document under an auto-id and a SECOND
+      // `unreadCounts.<recipient>` increment. The client write below is the
+      // fallback for when the callable does not answer — never a follow-up
+      // to when it does.
+      return;
+    }
 
-      // Keep deterministic parity with pre-callable behavior in tests and
-      // old clients: write the message locally and update unread/badges here.
-      final conversation = _conversations.doc(conversationId);
-      final message = conversation.collection('messages').doc();
-      final now = Timestamp.now();
-      final batch = _firestore.batch();
+    await _sendTextMessageDirectly(
+      conversationId: conversationId,
+      recipientId: recipientId,
+      senderId: currentUserId,
+      text: trimmed,
+      replyTo: replyTo,
+    );
+  }
 
-      batch.set(message, {
+  /// The client-side send, used when `sendDirectMessage` is unavailable
+  /// (no Firebase app, or the callable is not deployed) and by the
+  /// previews/tests that inject a [NotificationService].
+  ///
+  /// Deliberately mirrors what the callable leaves behind, key for key:
+  /// `functions/messaging/direct_integrity.js`'s `validateMessage` demands
+  /// an EXACT key set, so a message written without `schemaVersion` and
+  /// `sequence` is one the server can never edit, delete, react to or be
+  /// replied to again ("The direct message schema is not canonical").
+  /// `sequence` has to be derived from the conversation, hence a
+  /// transaction rather than a batch.
+  Future<void> _sendTextMessageDirectly({
+    required String conversationId,
+    required String recipientId,
+    required String senderId,
+    required String text,
+    required Message? replyTo,
+  }) async {
+    final legacyNotifications = _legacyNotificationService;
+    bool suppressBell = false;
+    if (legacyNotifications != null) {
+      suppressBell = (await _users
+              .doc(recipientId)
+              .collection('friends')
+              .doc(senderId)
+              .get())
+          .exists;
+    }
+
+    final conversation = _conversations.doc(conversationId);
+    final message = conversation.collection('messages').doc();
+    final now = Timestamp.now();
+
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(conversation);
+      final previous =
+          (snapshot.data()?['lastMessageSequence'] as num?)?.toInt() ?? 0;
+      final sequence = previous < 0 ? 1 : previous + 1;
+
+      transaction.set(message, {
+        'schemaVersion': 2,
+        'sequence': sequence,
         'conversationId': conversationId,
-        'senderId': currentUserId,
+        'senderId': senderId,
         'type': MessageType.text.name,
-        'content': trimmed,
+        'content': text,
         'mediaUrl': null,
         'durationSeconds': null,
         'sentAt': now,
-        'readBy': [currentUserId],
+        'readBy': [senderId],
         'reactions': <String, String>{},
         'isDeleted': false,
         'editedAt': null,
@@ -346,125 +389,51 @@ class MessageService {
             ? null
             : replyTo.isDeleted
             ? 'Message deleted'
-            : replyTo.previewText(),
+            : _replyPreview(replyTo.previewText()),
       });
 
-      batch.update(conversation, {
-        'lastMessage': trimmed,
+      transaction.update(conversation, {
+        'lastMessage': text,
+        'lastMessageId': message.id,
+        'lastMessageSequence': sequence,
         'lastMessageType': MessageType.text.name,
-        'lastMessageSenderId': currentUserId,
+        'lastMessageSenderId': senderId,
         'updatedAt': now,
         'archivedBy': <String>[],
-        'unreadCounts.$currentUserId': 0,
+        'unreadCounts.$senderId': 0,
         'unreadCounts.$recipientId': FieldValue.increment(1),
-        'typing.$currentUserId.isTyping': false,
-        'typing.$currentUserId.updatedAt': now,
+        'typing.$senderId.isTyping': false,
+        'typing.$senderId.updatedAt': now,
       });
+    });
 
-      await batch.commit();
-
-      if (legacyNotifications != null) {
-        final type = replyTo?.senderId == recipientId
-            ? NotificationType.reply
-            : NotificationType.directMessage;
-        try {
-          await legacyNotifications.notify(
-            recipientId: recipientId,
-            type: type,
-            targetId: conversationId,
-            suppressBell: suppressBell,
-          );
-        } catch (_) {
-          if (suppressBell) {
-            await legacyNotifications.notify(
-              recipientId: recipientId,
-              type: type,
-              targetId: conversationId,
-            );
-          }
-        }
-      }
-
+    if (legacyNotifications == null) {
       return;
     }
 
-    final conversation = _conversations.doc(conversationId);
-    final message = conversation.collection('messages').doc();
-    final now = Timestamp.now();
-    final batch = _firestore.batch();
+    final type = replyTo?.senderId == recipientId
+        ? NotificationType.reply
+        : NotificationType.directMessage;
 
-    batch.set(message, {
-      'conversationId': conversationId,
-      'senderId': currentUserId,
-      'type': MessageType.text.name,
-      'content': trimmed,
-      'mediaUrl': null,
-      'durationSeconds': null,
-      'sentAt': now,
-      'readBy': [currentUserId],
-      'reactions': <String, String>{},
-      'isDeleted': false,
-      'editedAt': null,
-      'replyToMessageId': replyTo?.id,
-      'replyToSenderId': replyTo?.senderId,
-      'replyToContent': replyTo == null
-          ? null
-          : replyTo.isDeleted
-          ? 'Message deleted'
-          : replyTo.previewText(),
-    });
-
-    batch.update(conversation, {
-      'lastMessage': trimmed,
-      'lastMessageType': MessageType.text.name,
-      'lastMessageSenderId': currentUserId,
-      'updatedAt': now,
-      'archivedBy': <String>[],
-      'unreadCounts.$currentUserId': 0,
-      'unreadCounts.$recipientId': FieldValue.increment(1),
-      'typing.$currentUserId.isTyping': false,
-      'typing.$currentUserId.updatedAt': now,
-    });
-
-    await batch.commit();
-
-    // Production delivery is server-derived from the message document.
-    // This compatibility path exists only for deterministic unit tests and
-    // previews that explicitly inject an in-memory NotificationService.
-    final legacyNotifications = _legacyNotificationService;
-    if (legacyNotifications != null) {
-      var suppressBell = false;
-      try {
-        suppressBell =
-            (await _users
-                    .doc(recipientId)
-                    .collection('friends')
-                    .doc(currentUserId)
-                    .get())
-                .exists;
-      } catch (error) {
-        debugPrint('MessageService test notification lookup failed: $error');
+    try {
+      await legacyNotifications.notify(
+        recipientId: recipientId,
+        type: type,
+        targetId: conversationId,
+        suppressBell: suppressBell,
+      );
+    } catch (error) {
+      // Fail toward VISIBLE: a rejected bell suppression must not cost the
+      // recipient the record that carries the push.
+      if (!suppressBell) {
+        debugPrint('MessageService legacy notification failed: $error');
+        return;
       }
-      try {
-        await legacyNotifications.notify(
-          recipientId: recipientId,
-          type: replyTo?.senderId == recipientId
-              ? NotificationType.reply
-              : NotificationType.directMessage,
-          targetId: conversationId,
-          suppressBell: suppressBell,
-        );
-      } catch (error) {
-        if (suppressBell) {
-          await legacyNotifications.notify(
-            recipientId: recipientId,
-            type: replyTo?.senderId == recipientId
-                ? NotificationType.reply
-                : NotificationType.directMessage,
-            targetId: conversationId,
-          );
-        }
-      }
+      await legacyNotifications.notify(
+        recipientId: recipientId,
+        type: type,
+        targetId: conversationId,
+      );
     }
   }
 
@@ -681,6 +650,12 @@ class MessageService {
       'archivedBy': FieldValue.arrayRemove([userId]),
     });
   }
+
+  /// The server caps `replyToContent` at 240 characters and rejects the
+  /// whole message as non-canonical past it, so the fallback truncates the
+  /// same way rather than writing a reply that can never be edited again.
+  static String _replyPreview(String value) =>
+      value.length <= 240 ? value : value.substring(0, 240);
 
   static String buildConversationId(String firstId, String secondId) {
     final ids = [firstId, secondId]..sort();
