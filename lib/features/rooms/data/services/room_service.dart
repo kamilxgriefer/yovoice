@@ -42,25 +42,24 @@ class RoomService {
   }
 
   /// Canonical identity for everything this service writes (rosters,
-  /// members, messages): the profile document — the avatar system's
-  /// source of truth — with FirebaseAuth only as the fallback for
-  /// not-yet-seeded profiles. FirebaseAuth's displayName/photoURL go
-  /// stale after profile edits, which is how a renamed member's old
-  /// avatar kept appearing on stage tiles and chat rows.
+  /// members, messages): the private profile document. Display name never
+  /// falls back to Firebase Auth because Auth is a retryable mirror and may
+  /// be stale after a rename. The avatar keeps its legacy fallback because
+  /// this security boundary concerns the canonical display name.
   Future<({String displayName, String? photoUrl})> _identity() async {
     final user = _user;
-    try {
-      final snapshot = await _firestore.collection('users').doc(user.uid).get();
-      final data = snapshot.data();
-      final name = (data?['displayName'] as String?)?.trim();
-      final photo = (data?['photoUrl'] as String?)?.trim();
-      return (
-        displayName: name?.isNotEmpty == true ? name! : _resolveUserName(user),
-        photoUrl: photo?.isNotEmpty == true ? photo : user.photoURL,
-      );
-    } catch (_) {
-      return (displayName: _resolveUserName(user), photoUrl: user.photoURL);
+    final snapshot = await _firestore.collection('users').doc(user.uid).get();
+    final data = snapshot.data();
+    final name = data?['displayName'];
+    if (name is! String || name.trim().isEmpty) {
+      throw StateError('Your profile does not have a display name.');
     }
+    final photo = (data?['photoUrl'] as String?)?.trim();
+    return (
+      // Preserve exact stored bytes for the byte-for-byte Rules binding.
+      displayName: name,
+      photoUrl: photo?.isNotEmpty == true ? photo : user.photoURL,
+    );
   }
 
   Future<VoiceRoom> createRoom({
@@ -820,13 +819,5 @@ class RoomService {
     if (!room.exists || room.data()?['hostId'] != _user.uid) {
       throw StateError('Only the room owner can do this.');
     }
-  }
-
-  static String _resolveUserName(User user) {
-    final name = user.displayName?.trim();
-    if (name != null && name.isNotEmpty) return name;
-    final email = user.email?.trim();
-    if (email != null && email.isNotEmpty) return email.split('@').first;
-    return 'YO Voice user';
   }
 }

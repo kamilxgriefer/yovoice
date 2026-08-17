@@ -111,6 +111,38 @@ brief and instruct open sessions to refresh. Do not restore the pre-root
 exception as a compatibility fix: it is an orphan-storage abuse path. Do not
 restore Family download-token URLs: they bypass membership revocation.
 
+### Display-name cooldown rollout order
+
+The 30-day name limit spans a new callable, a new private user field and a
+Rules cutoff for the old direct-write path. Release it in this order:
+
+1. Run the focused `functions/test/display_name.test.js` suite and the complete
+   Firestore Rules emulator suite against a fresh, isolated emulator project.
+2. Deploy Cloud Functions first and verify `updateMyDisplayName` is ACTIVE in
+   `europe-west1`. At this point old clients still work through the previous
+   direct write, while new clients are not yet released.
+3. Deploy `firestore.rules`. From this point an established
+   `users/{uid}.displayName` cannot change directly and
+   `displayNameChangedAt` is server-only. Unchanged merged values and initial
+   profile bootstrap remain compatible; an old client attempting a real rename
+   now fails closed.
+4. Release the Flutter and website clients that call `updateMyDisplayName`.
+   Smoke-test one verified legacy account (first change succeeds), an immediate
+   second different name (structured cooldown), and a same-name replay
+   (idempotent success with unchanged timestamps). Confirm an eleventh
+   profile-reaching, locally valid same-name attempt inside one fixed server
+   minute returns `resource-exhausted`, while the first immediate Auth-sync
+   retry remains available.
+5. Confirm the canonical value converges in Firebase Auth,
+   `publicProfiles/{uid}`, `userDirectory/{uid}` and a previously materialized
+   identity snapshot. A transient Auth-sync error is repaired by replaying the
+   same canonical name; do not manually clear or advance the Firestore
+   timestamp.
+
+Do not reverse steps 2 and 3: Rules without the callable strand every rename.
+Do not release clients before step 2: there is no permitted direct-write
+fallback once the server answers or the Rules cutoff is live.
+
 ## Why rules/functions are tested but not auto-deployed
 
 Auto-deploying `firestore.rules` on every push to `main` would mean a

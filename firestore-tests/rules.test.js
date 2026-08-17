@@ -121,46 +121,69 @@ async function main() {
   });
 
   // --- Room creation + host's own participant doc (batch/getAfter path) ---
+  function createHostRoomBatch(
+    db,
+    roomId,
+    { hostName = "Host", participantName = "Host" } = {},
+  ) {
+    const batch = writeBatch(db);
+    batch.set(doc(db, `rooms/${roomId}`), {
+      hostId: "host-uid",
+      hostName,
+      name: "Test room",
+      description: "",
+      category: "talk",
+      visibility: "public",
+      language: "English",
+      maxParticipants: 25,
+      participantCount: 1,
+      memberCount: 0,
+      isLive: true,
+      roomType: "temporary",
+      status: "active",
+      approvalRequired: false,
+      slowModeSeconds: 0,
+      autoMuteNewUsers: true,
+      membersCanStartVoice: false,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(db, `rooms/${roomId}/participants/host-uid`), {
+      userId: "host-uid",
+      displayName: participantName,
+      photoUrl: null,
+      role: "host",
+      isMuted: false,
+      isSpeaker: true,
+      isHandRaised: false,
+      joinedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return batch;
+  }
+
+  await check(
+    "SECURITY: room root and initial participant cannot use Auth or arbitrary display names",
+    async () => {
+      const db = host.firestore();
+      await assertFails(
+        createHostRoomBatch(db, "forged-root-name", {
+          hostName: "Bypass Auth Name",
+        }).commit(),
+      );
+      await assertFails(
+        createHostRoomBatch(db, "forged-host-participant", {
+          participantName: "Arbitrary Participant Name",
+        }).commit(),
+      );
+    },
+  );
+
   await check(
     "host can create a room + their own host participant doc in one batch",
     async () => {
       const db = host.firestore();
-      const roomRef = doc(db, "rooms/room1");
-      const participantRef = doc(db, "rooms/room1/participants/host-uid");
-      const batch = writeBatch(db);
-      batch.set(roomRef, {
-        hostId: "host-uid",
-        hostName: "Host",
-        name: "Test room",
-        description: "",
-        category: "talk",
-        visibility: "public",
-        language: "English",
-        maxParticipants: 25,
-        participantCount: 1,
-        memberCount: 0,
-        isLive: true,
-        roomType: "temporary",
-        status: "active",
-        approvalRequired: false,
-        slowModeSeconds: 0,
-        autoMuteNewUsers: true,
-        membersCanStartVoice: false,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      batch.set(participantRef, {
-        userId: "host-uid",
-        displayName: "Host",
-        photoUrl: null,
-        role: "host",
-        isMuted: false,
-        isSpeaker: true,
-        isHandRaised: false,
-        joinedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      await assertSucceeds(batch.commit());
+      await assertSucceeds(createHostRoomBatch(db, "room1").commit());
     },
   );
 
@@ -186,6 +209,30 @@ async function main() {
       membersCanStartVoice: false,
     });
   });
+
+  await check(
+    "SECURITY: a self-joining participant cannot forge displayName",
+    async () => {
+      const db = attacker.firestore();
+      const batch = writeBatch(db);
+      batch.set(doc(db, "rooms/room1/participants/attacker-uid"), {
+        userId: "attacker-uid",
+        displayName: "Bypass Auth Name",
+        photoUrl: null,
+        role: "listener",
+        isMuted: true,
+        isSpeaker: false,
+        isHandRaised: false,
+        joinedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      batch.update(doc(db, "rooms/room1"), {
+        participantCount: 2,
+        updatedAt: serverTimestamp(),
+      });
+      await assertFails(batch.commit());
+    },
+  );
 
   await check(
     "non-host can join as a plain listener (self-service create)",
@@ -359,6 +406,21 @@ async function main() {
   await check(
     "ROOMS: a host can explicitly admit a private-room participant",
     async () => {
+      await assertFails(
+        setDoc(
+          doc(host.firestore(), "rooms/private-voice/participants/invitee-uid"),
+          {
+            userId: "invitee-uid",
+            displayName: "Arbitrary Invitee Name",
+            role: "speaker",
+            isMuted: true,
+            isSpeaker: true,
+            isHandRaised: false,
+            admittedBy: "host-uid",
+            updatedAt: serverTimestamp(),
+          },
+        ),
+      );
       await assertSucceeds(
         setDoc(
           doc(host.firestore(), "rooms/private-voice/participants/invitee-uid"),
@@ -420,13 +482,13 @@ async function main() {
         });
       });
 
-      function loungeJoinBatch(db, uid) {
+      function loungeJoinBatch(db, uid, displayName) {
         const batch = writeBatch(db);
         batch.set(
           doc(db, `rooms/club-lounge-security/participants/${uid}`),
           {
             userId: uid,
-            displayName: uid,
+            displayName,
             photoUrl: null,
             role: "listener",
             isMuted: false,
@@ -444,10 +506,18 @@ async function main() {
       }
 
       await assertFails(
-        loungeJoinBatch(attacker.firestore(), "attacker-uid").commit(),
+        loungeJoinBatch(
+          attacker.firestore(),
+          "attacker-uid",
+          "Attacker",
+        ).commit(),
       );
       await assertSucceeds(
-        loungeJoinBatch(invitee.firestore(), "invitee-uid").commit(),
+        loungeJoinBatch(
+          invitee.firestore(),
+          "invitee-uid",
+          "Invitee",
+        ).commit(),
       );
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         await updateDoc(doc(ctx.firestore(), "clubs/voice-access-club"), {
@@ -726,11 +796,67 @@ async function main() {
     });
   });
 
-  await check("regression: user can update their own profile fields", async () => {
+  await check("regression: user can update their own non-name profile fields", async () => {
     const db = host.firestore();
     const ref = doc(db, "users/host-uid");
-    await assertSucceeds(updateDoc(ref, { displayName: "Host renamed" }));
+    await assertSucceeds(updateDoc(ref, { bio: "A real profile update" }));
   });
+
+  await check(
+    "SECURITY: an established display name is server-authoritative",
+    async () => {
+      const db = host.firestore();
+      const ref = doc(db, "users/host-uid");
+      await assertFails(updateDoc(ref, { displayName: "Host renamed" }));
+      // Existing clients always send displayName in their merged profile
+      // payload. Keeping the same value must not break unrelated edits.
+      await assertSucceeds(
+        updateDoc(ref, {
+          displayName: "Host",
+          website: "https://example.com",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "regression: a partial user document can bootstrap displayName exactly once",
+    async () => {
+      const uid = "display-name-bootstrap-uid";
+      const profile = testEnv.authenticatedContext(uid, {
+        email_verified: true,
+      });
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), `users/${uid}`), {
+          uid,
+          isOnline: true,
+        });
+      });
+      const ref = doc(profile.firestore(), `users/${uid}`);
+      await assertSucceeds(
+        updateDoc(ref, { displayName: "Bootstrap Voice" }),
+      );
+      await assertFails(
+        updateDoc(ref, { displayName: "Second Bootstrap" }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: clients cannot forge or clear displayNameChangedAt",
+    async () => {
+      const ref = doc(host.firestore(), "users/host-uid");
+      await assertFails(
+        updateDoc(ref, { displayNameChangedAt: serverTimestamp() }),
+      );
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users/host-uid"), {
+          displayNameChangedAt: Timestamp.fromMillis(Date.now()),
+        });
+      });
+      await assertFails(updateDoc(ref, { displayNameChangedAt: deleteField() }));
+    },
+  );
 
   await check(
     "regression: achievement progress can atomically persist unlock timestamps",
@@ -892,6 +1018,44 @@ async function main() {
       }),
     );
   });
+
+  await check(
+    "SECURITY: a hand request display name is bound to the canonical profile",
+    async () => {
+      const db = attacker.firestore();
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await deleteDoc(
+          doc(
+            ctx.firestore(),
+            "rooms/broadcastRoom/handRequests/attacker-uid",
+          ),
+        );
+        await updateDoc(doc(ctx.firestore(), "users/attacker-uid"), {
+          displayName: "Renamed Attacker",
+        });
+      });
+      await assertFails(
+        setDoc(
+          doc(db, "rooms/broadcastRoom/handRequests/attacker-uid"),
+          {
+            displayName: "Attacker",
+            photoUrl: null,
+            createdAt: serverTimestamp(),
+          },
+        ),
+      );
+      await assertSucceeds(
+        setDoc(
+          doc(db, "rooms/broadcastRoom/handRequests/attacker-uid"),
+          {
+            displayName: "Renamed Attacker",
+            photoUrl: null,
+            createdAt: serverTimestamp(),
+          },
+        ),
+      );
+    },
+  );
 
   await check("regression: raising a hand in a non-broadcast room is rejected", async () => {
     const db = attacker.firestore();
@@ -2337,11 +2501,12 @@ async function main() {
     clubId,
     clubUpdate = {},
     projectionUpdate = {},
+    memberUpdate = {},
   ) {
     const batch = writeBatch(db);
     batch.set(
       doc(db, `clubs/${clubId}/members/invitee-uid`),
-      invitedMemberDocument(),
+      invitedMemberDocument(memberUpdate),
     );
     batch.set(doc(db, `users/invitee-uid/clubs/${clubId}`), {
       clubId,
@@ -2557,6 +2722,22 @@ async function main() {
   );
 
   await check(
+    "SECURITY CLUBS: invite acceptance binds displayName to users/{uid}",
+    async () => {
+      const clubId = "invite-forged-display-name";
+      await seedClubInviteAcceptanceCase(clubId);
+      const batch = inviteAcceptanceBatch(
+        invitee.firestore(),
+        clubId,
+        {},
+        {},
+        { displayName: "Bypass Auth Name" },
+      );
+      await assertFails(batch.commit());
+    },
+  );
+
+  await check(
     "CLUBS: an invitee can accept as a plain member in the real batch shape",
     async () => {
       const clubId = "invite-plain-member";
@@ -2564,6 +2745,37 @@ async function main() {
       const db = invitee.firestore();
       const batch = inviteAcceptanceBatch(db, clubId);
       await assertSucceeds(batch.commit());
+    },
+  );
+
+  await check(
+    "SECURITY CLUBS: self identity refresh accepts only the canonical displayName",
+    async () => {
+      const clubId = "invite-plain-member";
+      const db = invitee.firestore();
+      const member = doc(db, `clubs/${clubId}/members/invitee-uid`);
+      await assertFails(
+        updateDoc(member, {
+          displayName: "Arbitrary Member Name",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users/invitee-uid"), {
+          displayName: "Canonical Invitee Rename",
+        });
+      });
+      await assertSucceeds(
+        updateDoc(member, {
+          displayName: "Canonical Invitee Rename",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users/invitee-uid"), {
+          displayName: "Invitee",
+        });
+      });
     },
   );
 
@@ -3201,11 +3413,26 @@ async function main() {
       const db = joiner.firestore();
 
       // joinCommunity(): membership row + memberCount, one transaction.
+      await assertFails(
+        runTransaction(db, async (tx) => {
+          tx.set(doc(db, "rooms/recency-transitions/roomMembers/recency-member"), {
+            userId: "recency-member",
+            displayName: "Bypass Auth Name",
+            photoUrl: null,
+            role: "member",
+            joinedAt: serverTimestamp(),
+          });
+          tx.update(doc(db, "rooms/recency-transitions"), {
+            memberCount: 1,
+            updatedAt: serverTimestamp(),
+          });
+        }),
+      );
       await assertSucceeds(
         runTransaction(db, async (tx) => {
           tx.set(doc(db, "rooms/recency-transitions/roomMembers/recency-member"), {
             userId: "recency-member",
-            displayName: "Member",
+            displayName: "recency-member",
             photoUrl: null,
             role: "member",
             joinedAt: serverTimestamp(),
@@ -3233,7 +3460,7 @@ async function main() {
             doc(db, "rooms/recency-transitions/participants/recency-member"),
             {
               userId: "recency-member",
-              displayName: "Member",
+              displayName: "recency-member",
               photoUrl: null,
               role: "listener",
               isMuted: true,
@@ -5259,6 +5486,13 @@ async function main() {
   const familyMediaOwner = testEnv.authenticatedContext("family-media-uid", {
     email_verified: true,
   });
+  const familyIdentityOwner = testEnv.authenticatedContext(
+    "family-identity-uid",
+    {
+      email_verified: true,
+      name: "Bypass Auth Name",
+    },
+  );
   const FAMILY = "clubs/family_parent-uid";
 
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
@@ -5299,6 +5533,11 @@ async function main() {
         banned: false,
         disabled: false,
       }),
+      setDoc(doc(db, "users/family-identity-uid"), {
+        displayName: "Canonical Family Parent",
+        banned: false,
+        disabled: false,
+      }),
     ]);
   });
 
@@ -5330,6 +5569,8 @@ async function main() {
     const clubId = `family_${uid}`;
     const roomId = `club_lounge_${clubId}`;
     const ownerName = options.ownerName ?? "Family Organizer";
+    const memberName = options.memberName ?? ownerName;
+    const roomHostName = options.roomHostName ?? ownerName;
     const omitted = new Set(options.omit ?? []);
     const refs = {
       club: doc(db, `clubs/${clubId}`),
@@ -5365,7 +5606,7 @@ async function main() {
     if (!omitted.has("member")) {
       batch.set(refs.member, {
         userId: uid,
-        displayName: ownerName,
+        displayName: memberName,
         photoUrl: null,
         role: "owner",
         isOnline: true,
@@ -5416,7 +5657,7 @@ async function main() {
     if (!omitted.has("room")) {
       batch.set(refs.room, {
         hostId: uid,
-        hostName: ownerName,
+        hostName: roomHostName,
         hostPhotoUrl: null,
         name: "Batch Family Lounge",
         description: "Our private home",
@@ -5517,6 +5758,43 @@ async function main() {
   );
 
   await check(
+    "FAMILY SECURITY: Auth metadata and arbitrary root/member/lounge names cannot enter the graph",
+    async () => {
+      const db = familyIdentityOwner.firestore();
+      const uid = "family-identity-uid";
+      const canonical = "Canonical Family Parent";
+      for (const forged of [
+        {
+          ownerName: "Bypass Auth Name",
+          memberName: canonical,
+          roomHostName: canonical,
+        },
+        {
+          ownerName: canonical,
+          memberName: "Arbitrary Owner Member",
+          roomHostName: canonical,
+        },
+        {
+          ownerName: canonical,
+          memberName: canonical,
+          roomHostName: "Arbitrary Lounge Host",
+        },
+      ]) {
+        const { batch } = familyGraphBatch(db, uid, forged);
+        await assertFails(batch.commit());
+      }
+
+      const { batch, refs } = familyGraphBatch(db, uid, {
+        ownerName: canonical,
+      });
+      await assertSucceeds(batch.commit());
+      assert.equal((await getDoc(refs.club)).data().ownerName, canonical);
+      assert.equal((await getDoc(refs.member)).data().displayName, canonical);
+      assert.equal((await getDoc(refs.room)).data().hostName, canonical);
+    },
+  );
+
+  await check(
     "FAMILY SECURITY: root, projection and lounge media stay null atomically",
     async () => {
       const db = familyMediaOwner.firestore();
@@ -5527,10 +5805,15 @@ async function main() {
         { projectionAvatarUrl: "https://evil.invalid/projection.jpg" },
         { roomImageUrl: "https://evil.invalid/lounge.jpg" },
       ]) {
-        const { batch } = familyGraphBatch(db, uid, forged);
+        const { batch } = familyGraphBatch(db, uid, {
+          ownerName: "Private Media Parent",
+          ...forged,
+        });
         await assertFails(batch.commit());
       }
-      const { batch, refs } = familyGraphBatch(db, uid);
+      const { batch, refs } = familyGraphBatch(db, uid, {
+        ownerName: "Private Media Parent",
+      });
       await assertSucceeds(batch.commit());
       assert.equal((await getDoc(refs.club)).data().avatarUrl, null);
       assert.equal((await getDoc(refs.club)).data().bannerUrl, null);
@@ -5782,7 +6065,10 @@ async function main() {
       setDoc(doc(db, `${FAMILY}/checkIns/mine`), {
         userId: "sibling-uid",
         clubId: "family_parent-uid",
+        displayName: "Sibling",
+        photoUrl: null,
         status: "onMyWay",
+        createdAt: serverTimestamp(),
       }),
     );
   });
@@ -5806,6 +6092,18 @@ async function main() {
           userId: "sibling-uid",
           clubId: "family_parent-uid",
           status: "sos",
+        }),
+      );
+      // The visible identity snapshot comes from users/{uid}, never Auth or
+      // caller input.
+      await assertFails(
+        setDoc(doc(db, `${FAMILY}/checkIns/forged-name`), {
+          userId: "sibling-uid",
+          clubId: "family_parent-uid",
+          displayName: "Parent",
+          photoUrl: null,
+          status: "home",
+          createdAt: serverTimestamp(),
         }),
       );
       // Precise location is refused outright, not merely ignored.
@@ -7609,24 +7907,54 @@ async function main() {
   );
 
   await check(
-    "regression: a host may still refresh the display identity on a " +
-      "membership row, and a member their own",
+    "SECURITY: room membership identity refresh accepts only users/{uid}.displayName",
     async () => {
       const host = roomAttacker.firestore();
-      await assertSucceeds(
+      await assertFails(
         updateDoc(doc(host, "rooms/rm-attack-room/roomMembers/rm-attacker-uid"), {
-          displayName: "Renamed host",
+          displayName: "Arbitrary host name",
           photoUrl: "https://example.invalid/a.jpg",
           updatedAt: serverTimestamp(),
         }),
       );
       const member = communityMember.firestore();
-      await assertSucceeds(
+      await assertFails(
         updateDoc(doc(member, "rooms/cr-private/roomMembers/cr-member-uid"), {
-          displayName: "Renamed member",
+          displayName: "Arbitrary member name",
           updatedAt: serverTimestamp(),
         }),
       );
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await updateDoc(doc(db, "users/rm-attacker-uid"), {
+          displayName: "Canonical renamed host",
+        });
+        await updateDoc(doc(db, "users/cr-member-uid"), {
+          displayName: "Canonical renamed member",
+        });
+      });
+      await assertSucceeds(
+        updateDoc(doc(host, "rooms/rm-attack-room/roomMembers/rm-attacker-uid"), {
+          displayName: "Canonical renamed host",
+          photoUrl: "https://example.invalid/a.jpg",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await assertSucceeds(
+        updateDoc(doc(member, "rooms/cr-private/roomMembers/cr-member-uid"), {
+          displayName: "Canonical renamed member",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await updateDoc(doc(db, "users/rm-attacker-uid"), {
+          displayName: "Room attacker",
+        });
+        await updateDoc(doc(db, "users/cr-member-uid"), {
+          displayName: "CR Member",
+        });
+      });
     },
   );
 

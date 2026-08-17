@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -17,6 +18,7 @@ class EditProfileScreen extends StatefulWidget {
     required this.profile,
     this.service,
     this.entitlements,
+    this.clock,
     super.key,
   });
 
@@ -29,6 +31,9 @@ class EditProfileScreen extends StatefulWidget {
 
   /// Injectable for the premium-gating tests.
   final EntitlementService? entitlements;
+
+  /// Injectable clock for deterministic cooldown and boundary tests.
+  final DateTime Function()? clock;
 
   @override
   State<EditProfileScreen> createState() => _EditProfileScreenState();
@@ -69,6 +74,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _pickingAvatar = false;
   bool _pickingBanner = false;
   late AccountType _accountType;
+  late String _savedDisplayName;
+  DateTime? _nextDisplayNameChangeAt;
+  bool _displayNameSyncPending = false;
+  Timer? _displayNameCooldownTimer;
+
+  DateTime get _now => (widget.clock ?? DateTime.now)();
+
+  bool get _canChangeDisplayName {
+    final next = _nextDisplayNameChangeAt;
+    return next == null || !_now.isBefore(next);
+  }
 
   /// Chosen but not yet uploaded. Images commit on Save together with the
   /// text fields, so backing out leaves the remote profile untouched and
@@ -84,6 +100,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     super.initState();
     final profile = widget.profile;
     _displayName = TextEditingController(text: profile.displayName);
+    // Preserve the exact canonical-store value for change detection. Legacy
+    // records may contain surrounding whitespace; sending the trimmed value
+    // is then a real server-side normalization and must start the cooldown.
+    _savedDisplayName = profile.displayName;
+    _nextDisplayNameChangeAt = profile.nextDisplayNameChangeAt;
     _username = TextEditingController(text: profile.username);
     _statusMessage = TextEditingController(text: profile.statusMessage);
     _bio = TextEditingController(text: profile.bio);
@@ -97,10 +118,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
     _website = TextEditingController(text: profile.website);
     _accountType = profile.accountType;
+    _scheduleDisplayNameCooldownRefresh();
   }
 
   @override
   void dispose() {
+    _displayNameCooldownTimer?.cancel();
     _displayName.dispose();
     _username.dispose();
     _statusMessage.dispose();
@@ -137,6 +160,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
 
     final messenger = ScaffoldMessenger.of(context);
+    var displayNameSavedDuringAttempt = false;
     setState(() => _saving = true);
     try {
       // Re-check immediately before the write. The member may have selected
@@ -164,8 +188,58 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         }
       }
 
-      // Images first: if an upload fails the text edits are not committed
-      // either, so the user is never left with a half-applied save.
+      final requestedDisplayName = _displayName.text.trim();
+      final displayNameChanged = requestedDisplayName != _savedDisplayName;
+      if (displayNameChanged || _displayNameSyncPending) {
+        try {
+          final result = await _service.updateDisplayName(requestedDisplayName);
+          displayNameSavedDuringAttempt = result.changed;
+          _savedDisplayName = result.displayName;
+          _displayName.text = result.displayName;
+          _nextDisplayNameChangeAt = result.nextDisplayNameChangeAt;
+          _scheduleDisplayNameCooldownRefresh();
+          _displayNameSyncPending = false;
+        } on DisplayNameChangeException catch (error) {
+          if (error.failure == DisplayNameChangeFailure.cooldown) {
+            _nextDisplayNameChangeAt = error.nextDisplayNameChangeAt;
+            // The attempted value was rejected. Restore the canonical value
+            // before locking the field so the UI never presents an unsaved
+            // name as if it were active across YO Voice.
+            _displayName.text = _savedDisplayName;
+            _displayNameSyncPending = false;
+            _scheduleDisplayNameCooldownRefresh();
+          } else if (error.failure ==
+              DisplayNameChangeFailure.authSyncPending) {
+            final canonical = error.canonicalDisplayName;
+            if (canonical != null && canonical.trim().isNotEmpty) {
+              _savedDisplayName = canonical;
+              _displayName.text = canonical;
+            }
+            _nextDisplayNameChangeAt = error.nextDisplayNameChangeAt;
+            _scheduleDisplayNameCooldownRefresh();
+            _displayNameSyncPending = true;
+            displayNameSavedDuringAttempt = true;
+          } else if (error.failure ==
+              DisplayNameChangeFailure.authAccountMissingAfterSave) {
+            final canonical = error.canonicalDisplayName;
+            if (canonical != null && canonical.trim().isNotEmpty) {
+              _savedDisplayName = canonical;
+              _displayName.text = canonical;
+            }
+            _nextDisplayNameChangeAt = error.nextDisplayNameChangeAt;
+            _scheduleDisplayNameCooldownRefresh();
+            _displayNameSyncPending = false;
+            displayNameSavedDuringAttempt = true;
+          }
+          rethrow;
+        }
+      }
+
+      // Media and the remaining profile fields retain their existing save
+      // pipeline. The display-name callable intentionally ran first so a
+      // cooldown/verification rejection cannot upload anything. If a later
+      // upload fails, the catch below explicitly tells the member that the
+      // already-authorized name change did succeed.
       final avatar = _pendingAvatar;
       if (avatar != null) {
         await _service.uploadProfileImage(avatar);
@@ -176,7 +250,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       }
 
       await _service.updateProfile(
-        displayName: _displayName.text,
         username: _username.text,
         bio: _bio.text,
         country: _country.text,
@@ -195,9 +268,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       messenger.showSnackBar(const SnackBar(content: Text('Profile saved.')));
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(_friendlyUploadError(error))));
+      final message = _friendlySaveError(error);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            displayNameSavedDuringAttempt &&
+                    error is! DisplayNameChangeException
+                ? 'Your display name was saved, but other profile changes failed. $message'
+                : message,
+          ),
+        ),
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -251,7 +332,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text(_friendlyUploadError(error))));
+        ).showSnackBar(SnackBar(content: Text(_friendlySaveError(error))));
       }
     } finally {
       if (mounted) {
@@ -279,8 +360,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   /// Maps picker/Storage failures onto copy a person can act on. Raw
   /// Firebase messages ("[firebase_storage/unauthorized] ...") never reach
   /// the user.
-  String _friendlyUploadError(Object error) {
+  String _friendlySaveError(Object error) {
     if (error is ProfileImageException) return error.message;
+    if (error is DisplayNameChangeException) return error.message;
 
     final message = error.toString();
     if (error is ArgumentError) {
@@ -377,7 +459,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ],
                 const SizedBox(height: 26),
                 const _SectionLabel('Identity'),
-                _field(_displayName, 'Display name', required: true),
+                _field(
+                  _displayName,
+                  'Display name',
+                  required: true,
+                  readOnly: !_canChangeDisplayName,
+                  helper: _displayNameHelper(context),
+                  validator: _validateDisplayName,
+                  semanticLabel: _displayNameSemanticLabel(context),
+                ),
                 _field(_username, 'Username', required: true),
                 // The "vibe" line — the profile's social headline, shown
                 // on previews and search results. Website was demoted to
@@ -452,35 +542,134 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     bool required = false,
     int maxLines = 1,
     int? maxLength,
+    bool readOnly = false,
+    String? helper,
+    String? Function(String?)? validator,
+    String? semanticLabel,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
-      child: TextFormField(
-        controller: controller,
-        maxLines: maxLines,
-        maxLength: maxLength,
-        style: const TextStyle(color: Colors.white),
-        validator: required
-            ? (value) => value?.trim().isEmpty == true ? 'Required' : null
-            : null,
-        decoration: InputDecoration(
-          labelText: label,
-          hintText: hint,
-          labelStyle: const TextStyle(color: Color(0xFFB3A7BC)),
-          hintStyle: const TextStyle(color: Color(0xFF766B80)),
-          filled: true,
-          fillColor: const Color(0xFF17101F),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(color: Color(0xFF3B2B48)),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: const BorderSide(color: Color(0xFF3B2B48)),
+      child: Semantics(
+        label: semanticLabel,
+        textField: true,
+        readOnly: readOnly,
+        child: TextFormField(
+          controller: controller,
+          maxLines: maxLines,
+          maxLength: maxLength,
+          readOnly: readOnly,
+          style: const TextStyle(color: Colors.white),
+          validator:
+              validator ??
+              (required
+                  ? (value) => value?.trim().isEmpty == true ? 'Required' : null
+                  : null),
+          decoration: InputDecoration(
+            labelText: label,
+            hintText: hint,
+            helperText: helper,
+            // At 200% text a localized date and time can legitimately wrap
+            // across several lines on a 320px phone. Keep the full server
+            // boundary visible instead of silently ellipsizing it.
+            helperMaxLines: 8,
+            suffixIcon: readOnly
+                ? const Icon(
+                    Icons.lock_clock_rounded,
+                    semanticLabel: 'Change limit active',
+                  )
+                : null,
+            labelStyle: const TextStyle(color: Color(0xFFB3A7BC)),
+            hintStyle: const TextStyle(color: Color(0xFF766B80)),
+            helperStyle: const TextStyle(color: Color(0xFF9E92A8)),
+            filled: true,
+            fillColor: const Color(0xFF17101F),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(color: Color(0xFF3B2B48)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(color: Color(0xFF3B2B48)),
+            ),
           ),
         ),
       ),
     );
+  }
+
+  String? _validateDisplayName(String? value) {
+    final trimmed = value?.trim() ?? '';
+    final length = trimmed.runes.length;
+    if (length < 2) return 'Use at least 2 characters.';
+    if (length > 120) return 'Use no more than 120 characters.';
+    if (trimmed.runes.any(_isControlOrFormatCodePoint)) {
+      return 'Remove line breaks or control characters.';
+    }
+    return null;
+  }
+
+  bool _isControlOrFormatCodePoint(int value) {
+    return value <= 0x1F ||
+        (value >= 0x7F && value <= 0x9F) ||
+        value == 0x00AD ||
+        (value >= 0x0600 && value <= 0x0605) ||
+        value == 0x061C ||
+        value == 0x06DD ||
+        value == 0x070F ||
+        (value >= 0x0890 && value <= 0x0891) ||
+        value == 0x08E2 ||
+        value == 0x180E ||
+        (value >= 0x200B && value <= 0x200F) ||
+        (value >= 0x2028 && value <= 0x202E) ||
+        (value >= 0x2060 && value <= 0x206F) ||
+        value == 0xFEFF ||
+        (value >= 0xFFF9 && value <= 0xFFFB) ||
+        value == 0x110BD ||
+        value == 0x110CD ||
+        (value >= 0x13430 && value <= 0x1343F) ||
+        (value >= 0x1BCA0 && value <= 0x1BCA3) ||
+        (value >= 0x1D173 && value <= 0x1D17A) ||
+        value == 0xE0001 ||
+        (value >= 0xE0020 && value <= 0xE007F);
+  }
+
+  String _displayNameHelper(BuildContext context) {
+    if (_displayNameSyncPending) {
+      return 'Name saved. Press Save again to finish account sync.';
+    }
+    final next = _nextDisplayNameChangeAt;
+    if (next != null && _now.isBefore(next)) {
+      return 'You can change this again ${_formatDateTime(context, next)}.';
+    }
+    return 'You can change this once every 30 days.';
+  }
+
+  String _displayNameSemanticLabel(BuildContext context) =>
+      'Display name. ${_displayNameHelper(context)}';
+
+  void _scheduleDisplayNameCooldownRefresh() {
+    _displayNameCooldownTimer?.cancel();
+    final next = _nextDisplayNameChangeAt;
+    if (next == null || !_now.isBefore(next)) return;
+    final delay = next.difference(_now);
+    _displayNameCooldownTimer = Timer(delay, () {
+      if (!mounted) return;
+      setState(() {});
+      // A custom/test clock may not advance in lockstep with Timer. Reschedule
+      // fail-closed if the authoritative boundary is still in the future.
+      _scheduleDisplayNameCooldownRefresh();
+    });
+  }
+
+  String _formatDateTime(BuildContext context, DateTime value) {
+    final local = value.toLocal();
+    final localizations = MaterialLocalizations.of(context);
+    final date = localizations.formatMediumDate(local);
+    final time = localizations.formatTimeOfDay(
+      TimeOfDay.fromDateTime(local),
+      alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+    );
+    return 'on $date at $time';
   }
 }
 

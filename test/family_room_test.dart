@@ -35,9 +35,13 @@ void main() {
     mockUser: MockUser(uid: 'me', email: 'me@yovoice.app', displayName: 'Me'),
   );
 
-  setUp(() {
+  setUp(() async {
     EntitlementService.resetCache();
     db = FakeFirebaseFirestore();
+    await db.collection('users').doc('me').set({
+      'uid': 'me',
+      'displayName': 'Me',
+    });
   });
 
   tearDown(EntitlementService.resetCache);
@@ -563,6 +567,10 @@ void main() {
         storage: MockFirebaseStorage(),
         notificationService: NotificationService(firestore: db, auth: auth()),
       );
+      await db.collection('users').doc('me').set({
+        'uid': 'me',
+        'displayName': 'Me',
+      });
 
       await service.postCheckIn(
         clubId: 'family_me',

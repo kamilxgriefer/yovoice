@@ -37,6 +37,28 @@ for why this architecture was chosen anyway.
   away from any client. Every admin Cloud Function calls a shared
   `requireRole()` helper that reads the claim, not the document — see
   [Backend.md](Backend.md#admin).
+- **An established display name is server authority.** Clients may seed an
+  initial name, but Firestore Rules deny every later direct change and deny all
+  client writes to `displayNameChangedAt`. `updateMyDisplayName` requires
+  `email_verified == true`, an active private account document and one exact
+  input field, then enforces the 30-day boundary in a transaction. A malformed
+  server cooldown fails closed instead of resetting the window. Same-name
+  replay is the only cooldown bypass and is deliberately idempotent so it can
+  repair a transient Firebase Auth mirror failure without granting another
+  change. The Auth sync reads first and writes only on mismatch, limiting the
+  amplification surface while callable App Check enforcement remains off. A
+  separate private transactional fixed-window quota additionally stops locally
+  valid, profile-reaching requests after 10 per uid per server minute. It
+  commits before any profile/Auth read, so a later cooldown or integrity
+  refusal is not a free request; the counter is not client-readable or
+  writable.
+- **A client-authored display-name snapshot must match the private canonical
+  profile.** Broadcast hand raises and Family check-ins are attributed by
+  `request.auth.uid`, but uid pinning alone did not prevent a modified or stale
+  client from supplying another display name. Their create rules now require
+  exact equality with `users/{uid}.displayName`, an exact document schema and
+  `createdAt == request.time`; the app reads that canonical field before the
+  write. No Firebase Auth display-name fallback is accepted.
 
 ## Firestore Security Rules — design principles
 

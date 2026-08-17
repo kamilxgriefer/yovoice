@@ -60,12 +60,16 @@ class RoomExperienceService {
     return user;
   }
 
-  String _name(User user) {
-    final displayName = user.displayName?.trim();
-    if (displayName != null && displayName.isNotEmpty) return displayName;
-    final email = user.email?.trim();
-    if (email != null && email.isNotEmpty) return email.split('@').first;
-    return 'YO Voice user';
+  Future<String> _canonicalDisplayName(User user) async {
+    final snapshot = await _firestore.collection('users').doc(user.uid).get();
+    final displayName = snapshot.data()?['displayName'];
+    if (displayName is String && displayName.trim().isNotEmpty) {
+      // Return the exact stored bytes. Rules compare this presentation
+      // snapshot byte-for-byte with users/{uid}; trimming here would make a
+      // legacy canonical name fail closed until the user normalizes it.
+      return displayName;
+    }
+    throw StateError('Your profile does not have a display name.');
   }
 
   Future<void> configureRoom({
@@ -138,9 +142,10 @@ class RoomExperienceService {
     if (data['handRaisingEnabled'] == false) {
       throw StateError('The host disabled hand raising.');
     }
+    final displayName = await _canonicalDisplayName(user);
 
     await request.set({
-      'displayName': _name(user),
+      'displayName': displayName,
       'photoUrl': user.photoURL,
       'createdAt': FieldValue.serverTimestamp(),
     });

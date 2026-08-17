@@ -235,7 +235,12 @@ class ClubService {
           .doc(user.uid)
           .collection('clubs')
           .doc(clubRef.id);
-      final ownerName = _resolveUserName(user);
+      // Family creation is the remaining client-owned Club bootstrap. Its
+      // root, owner roster row and lounge all carry identity snapshots, so
+      // read the canonical private profile once and use the exact stored
+      // value across the atomic graph. Firebase Auth is only a mirror and may
+      // be stale after a rename.
+      final ownerName = await _canonicalDisplayName(user);
 
       final batch = _firestore.batch();
       batch.set(clubRef, {
@@ -790,8 +795,11 @@ class ClubService {
         .doc(_user.uid)
         .get();
     final userData = userSnapshot.data() ?? const <String, dynamic>{};
-    final displayName = (userData['displayName'] as String?)?.trim();
+    final displayName = userData['displayName'];
     final photoUrl = userData['photoUrl'] as String? ?? _user.photoURL;
+    if (displayName is! String || displayName.trim().isEmpty) {
+      throw StateError('Your profile does not have a display name.');
+    }
 
     await _firestore.runTransaction((transaction) async {
       final clubSnapshot = await transaction.get(clubRef);
@@ -812,9 +820,9 @@ class ClubService {
       final club = Club.fromFirestore(clubSnapshot);
       transaction.set(memberRef, {
         'userId': _user.uid,
-        'displayName': displayName?.isNotEmpty == true
-            ? displayName
-            : _resolveUserName(_user),
+        // Preserve the exact canonical bytes. Rules compare the membership
+        // snapshot directly with users/{uid}.displayName.
+        'displayName': displayName,
         'photoUrl': photoUrl,
         'role': ClubRole.member.name,
         'isOnline': true,
@@ -927,10 +935,11 @@ class ClubService {
     required FamilyCheckInStatus status,
   }) async {
     final user = _user;
+    final displayName = await _canonicalDisplayName(user);
     await _clubs.doc(clubId).collection('checkIns').add({
       'userId': user.uid,
       'clubId': clubId,
-      'displayName': _resolveUserName(user),
+      'displayName': displayName,
       'photoUrl': user.photoURL,
       'status': status.value,
       'createdAt': FieldValue.serverTimestamp(),
@@ -947,12 +956,13 @@ class ClubService {
     await _clubs.doc(clubId).collection('checkIns').doc(checkInId).delete();
   }
 
-  static String _resolveUserName(User user) {
-    final displayName = user.displayName?.trim();
-    if (displayName != null && displayName.isNotEmpty) return displayName;
-    final email = user.email?.trim();
-    if (email != null && email.isNotEmpty) return email.split('@').first;
-    return 'YO Voice user';
+  Future<String> _canonicalDisplayName(User user) async {
+    final snapshot = await _firestore.collection('users').doc(user.uid).get();
+    final displayName = snapshot.data()?['displayName'];
+    if (displayName is String && displayName.trim().isNotEmpty) {
+      return displayName;
+    }
+    throw StateError('Your profile does not have a display name.');
   }
 }
 

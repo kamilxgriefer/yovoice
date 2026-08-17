@@ -53,6 +53,7 @@ class UserProfile {
     required this.unlockedTitleIds,
     required this.unlockedTitleTimestamps,
     required this.createdAt,
+    this.displayNameChangedAt,
   });
 
   final String uid;
@@ -97,6 +98,16 @@ class UserProfile {
   final List<String> unlockedTitleIds;
   final Map<String, DateTime> unlockedTitleTimestamps;
   final DateTime? createdAt;
+
+  /// Canonical server timestamp of the latest display-name change.
+  ///
+  /// This is an informational hint for the owner-facing editor. The Cloud
+  /// Function remains authoritative and re-checks the 30-day window in a
+  /// transaction for every actual change.
+  final DateTime? displayNameChangedAt;
+
+  DateTime? get nextDisplayNameChangeAt =>
+      displayNameChangedAt?.add(const Duration(days: 30));
 
   factory UserProfile.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> document,
@@ -154,6 +165,9 @@ class UserProfile {
               ),
       createdAt: data['createdAt'] is Timestamp
           ? (data['createdAt'] as Timestamp).toDate()
+          : null,
+      displayNameChangedAt: data['displayNameChangedAt'] is Timestamp
+          ? (data['displayNameChangedAt'] as Timestamp).toDate()
           : null,
     );
   }

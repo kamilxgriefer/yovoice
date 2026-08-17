@@ -257,6 +257,7 @@ exports.onClubMemberCreated = onClubMemberCreated;
 */
 
 const { onProfileIdentityChanged } = require("./profile/fanout");
+const { updateMyDisplayName } = require("./profile/display_name");
 const {
   onAuthUserDeleted,
   onUserPrivacySourceChanged,
@@ -264,6 +265,7 @@ const {
 } = require("./profile/public_profiles");
 
 exports.onProfileIdentityChanged = onProfileIdentityChanged;
+exports.updateMyDisplayName = updateMyDisplayName;
 exports.onAuthUserDeleted = onAuthUserDeleted;
 exports.onUserPrivacySourceChanged = onUserPrivacySourceChanged;
 exports.searchPublicProfiles = searchPublicProfiles;

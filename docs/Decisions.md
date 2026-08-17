@@ -63,6 +63,7 @@ given a false-precision date.
 | [059](#adr-059-a-ui-change-is-reviewed-before-it-is-deployed-on-the-same-terms-as-a-rules-change) | A UI change is reviewed before it is deployed, on the same terms as a rules change | Accepted | 2026-08-17 |
 | [060](#adr-060-an-explanatory-comment-is-a-claim-measure-it-or-delete-it) | An explanatory comment is a claim — measure it or delete it | Accepted | 2026-08-17 |
 | [061](#adr-061-a-callable-that-answers-is-the-whole-write-and-its-client-fallback-must-write-the-same-document) | A callable that answers is the whole write, and its client fallback must write the same document | Accepted | 2026-08-17 |
+| [066](#adr-066-display-name-changes-are-server-authoritative-and-use-one-fixed-thirty-day-window) | Display-name changes are server-authoritative and use one fixed thirty-day window | Accepted | 2026-08-17 |
 
 > **The index is incomplete and has been for a while**: rows for ADR-020
 > through ADR-052 were never added, though the records themselves are all
@@ -4335,3 +4336,68 @@ Creator or cleanly follow Premium expiry.
 - Renewing Premium requires an explicit Creator reactivation after downgrade;
   no copied entitlement expiry lives in the pin document.
 - Deploy Functions/triggers and Firestore Rules before the Hosting client.
+
+## ADR-066: Display-name changes are server-authoritative and use one fixed thirty-day window
+
+**Date**: 2026-08-17
+**Status**: Accepted
+
+### Context
+
+Flutter and the website could write `users/{uid}.displayName` directly, and
+the owner update rule explicitly allowed the field. A client-side date or
+disabled text field therefore could not enforce the product limit: a modified,
+stale or second client could rename without it. Identity is also mirrored into
+Firebase Auth and several server projections, so partial failure must not start
+a second cooldown or leave the canonical Firestore record ambiguous.
+
+### Decision
+
+1. `updateMyDisplayName` is the sole post-bootstrap name mutation. It accepts
+   one normalized, bounded visible Unicode string from a verified active
+   account and transactionally updates `users/{uid}`. A private server-time
+   fixed-window record limits each uid to 10 profile-reaching, locally valid
+   requests per minute and commits before any profile/Auth read.
+2. `displayNameChangedAt` is an optional server-only Timestamp. Its absence is
+   legacy state and permits one immediate change. Every actual change starts a
+   fixed 30-day window; exact same-name replay changes neither timestamp.
+3. Firestore Rules allow initial creation, completion of a partial profile and
+   unchanged merged values, but deny an established direct rename and every
+   client mutation of the cooldown field.
+4. Firestore is canonical. Firebase Auth synchronization happens after commit,
+   reads before writing, and can be retried with the same name. A transient Auth
+   error does not roll back or consume another window. Existing triggers own
+   all public/directory/materialized identity fan-out.
+5. The callable returns canonical epoch-millisecond timestamps and structured
+   cooldown/Auth-sync reasons so both clients render the same boundary without
+   inventing local authority.
+6. Its exact success shape is `displayName`, `changed`,
+   `displayNameChangedAtMs`, `nextDisplayNameChangeAtMs`, `canChange`. Distinct
+   `failed-precondition` reasons identify unverified email
+   (`email-verification-required`), malformed server state
+   (`display-name-state-invalid`), cooldown (`display-name-cooldown`) and a
+   missing Auth mirror (`auth-account-missing`); transient mirror repair uses
+   `unavailable` with `auth-display-name-sync-pending`.
+7. Client-authored room identity snapshots are bound to the same Firestore
+   authority: Broadcast hand requests and Family check-ins must carry the exact
+   current `users/{uid}.displayName`. Firebase Auth is a mirror and is not an
+   accepted fallback for either write.
+
+### Reasoning
+
+Rules cannot compare a write against a previous write time that the same client
+is also allowed to alter, and separate client writes cannot atomically claim a
+single window. A transaction on the private canonical document serializes
+concurrent names. Firestore-first ordering lets retryable triggers converge
+public identity even when Auth has a transient outage; idempotent same-name
+retry closes that outage without weakening the limit.
+
+### Consequences
+
+- New clients must use the callable; there is deliberately no direct-write
+  fallback for an established name.
+- Legacy accounts are not retroactively locked for 30 days because they have no
+  trustworthy last-change timestamp.
+- The cooldown is 30 exact 24-hour days, not a calendar-month calculation.
+- Deploy Functions, then Rules, then clients. The Rules step is the authority
+  cutoff; source and production behavior differ until it is deployed.

@@ -81,6 +81,19 @@ service cloud.firestore {
       return isSignedIn() && accountIsActive(request.auth.uid);
     }
 
+    // Identity snapshots written by clients are presentation caches, never a
+    // second identity authority. Bind every such write to the current private
+    // canonical profile so stale Firebase Auth metadata or a modified client
+    // cannot impersonate another display name.
+    function displayNameMatchesCanonical(userId, displayName) {
+      return displayName is string &&
+          displayName.size() > 0 &&
+          exists(/databases/$(database)/documents/users/$(userId)) &&
+          displayName == get(
+            /databases/$(database)/documents/users/$(userId)
+          ).data.get('displayName', '');
+    }
+
     // STAFF COMMUNICATION MUTE — a server-managed restriction, distinct
     // from a personal block (which affects only the acting user) and
     // from a suspension (which disables the account). restrictions/{uid}
@@ -205,6 +218,28 @@ service cloud.firestore {
             .affectedKeys().hasAny(['accountType']) ||
           request.resource.data.accountType == 'personal' ||
           (request.resource.data.accountType == 'creator' && hasCreatorPremium());
+    }
+
+    // displayName becomes server-authoritative after initial profile
+    // bootstrap. updateMyDisplayName owns every later change and stamps the
+    // private displayNameChangedAt cooldown. Existing installs still need to
+    // complete a partial users/{uid} document created first by presence or a
+    // social race, so exactly one missing/empty -> non-empty bootstrap remains
+    // possible. Keeping unchanged displayName in a merge is also harmless:
+    // Firestore diff() does not include equal values.
+    function displayNameChangeAllowed() {
+      return !request.resource.data.diff(resource.data)
+            .affectedKeys().hasAny(['displayName']) ||
+          (
+            (
+              !resource.data.keys().hasAny(['displayName']) ||
+              !(resource.data.displayName is string) ||
+              resource.data.displayName.size() == 0
+            ) &&
+            request.resource.data.displayName is string &&
+            request.resource.data.displayName.size() >= 2 &&
+            request.resource.data.displayName.size() <= 120
+          );
     }
 
     // A user's first client write used to accept ANY fields, which let a new
@@ -407,6 +442,7 @@ service cloud.firestore {
             'isSpeaker', 'isHandRaised', 'joinedAt', 'updatedAt'
           ]) &&
           data.userId == request.auth.uid &&
+          displayNameMatchesCanonical(request.auth.uid, data.displayName) &&
           data.role == expectedRole &&
           data.isSpeaker == expectedSpeaker &&
           data.isHandRaised == false &&
@@ -424,6 +460,7 @@ service cloud.firestore {
             'isSpeaker', 'isHandRaised', 'admittedBy', 'updatedAt'
           ]) &&
           data.userId == participantId &&
+          displayNameMatchesCanonical(participantId, data.displayName) &&
           data.admittedBy == request.auth.uid &&
           data.role in ['listener', 'speaker'] &&
           data.isSpeaker == (data.role == 'speaker') &&
@@ -493,8 +530,7 @@ service cloud.firestore {
             'newcomerFriendly', 'showFormat', 'clubId', 'roomKind'
           ]) &&
           data.hostId == request.auth.uid &&
-          data.hostName is string &&
-          data.hostName.size() > 0 &&
+          displayNameMatchesCanonical(request.auth.uid, data.hostName) &&
           data.name is string &&
           data.name.size() >= 3 &&
           data.name.size() <= 100 &&
@@ -520,6 +556,7 @@ service cloud.firestore {
           ]) &&
           data.userId == request.auth.uid &&
           memberId == request.auth.uid &&
+          displayNameMatchesCanonical(memberId, data.displayName) &&
           data.role == 'owner' &&
           data.joinedAt == request.time;
     }
@@ -829,7 +866,10 @@ service cloud.firestore {
             'joinedAt', 'invitedBy'
           ]) &&
           request.resource.data.userId == memberId &&
-          request.resource.data.displayName is string &&
+          displayNameMatchesCanonical(
+            memberId,
+            request.resource.data.displayName
+          ) &&
           (
             request.resource.data.photoUrl == null ||
             request.resource.data.photoUrl is string
@@ -999,6 +1039,7 @@ service cloud.firestore {
           data.description.size() <= 220 &&
           data.ownerName is string &&
           data.ownerName.size() > 0 &&
+          displayNameMatchesCanonical(request.auth.uid, data.ownerName) &&
           data.defaultLanguage is string &&
           data.defaultLanguage.size() > 0 &&
           data.defaultLanguage.size() <= 64 &&
@@ -1394,6 +1435,7 @@ service cloud.firestore {
                     'achievementsUpdatedAt',
                     'notificationPreferences',
                   ]) && accountTypeChangeAllowed())
+                  && displayNameChangeAllowed()
               : false
           );
 
@@ -2135,6 +2177,10 @@ service cloud.firestore {
               (
                 request.auth.uid == memberId &&
                 request.resource.data.role == resource.data.role &&
+                displayNameMatchesCanonical(
+                  memberId,
+                  request.resource.data.displayName
+                ) &&
                 request.resource.data.diff(resource.data).affectedKeys()
                   .hasOnly([
                     'displayName', 'photoUrl', 'isOnline', 'updatedAt'
@@ -2226,11 +2272,24 @@ service cloud.firestore {
         allow read: if isClubMember(clubId);
         allow create: if isVerified() &&
             isClubMember(clubId) &&
+            request.resource.data.keys().hasAll([
+              'userId', 'clubId', 'displayName', 'photoUrl', 'status',
+              'createdAt'
+            ]) &&
+            request.resource.data.keys().hasOnly([
+              'userId', 'clubId', 'displayName', 'photoUrl', 'status',
+              'createdAt'
+            ]) &&
             request.resource.data.userId == request.auth.uid &&
             request.resource.data.clubId == clubId &&
+            displayNameMatchesCanonical(
+              request.auth.uid,
+              request.resource.data.displayName
+            ) &&
             request.resource.data.status in [
               'home', 'onMyWay', 'allGood', 'callMe'
             ] &&
+            request.resource.data.createdAt == request.time &&
             !('latitude' in request.resource.data) &&
             !('longitude' in request.resource.data) &&
             !('location' in request.resource.data);
@@ -2507,6 +2566,10 @@ service cloud.firestore {
               ) ||
               (
                 request.resource.data.userId == request.auth.uid &&
+                displayNameMatchesCanonical(
+                  memberId,
+                  request.resource.data.displayName
+                ) &&
                 request.resource.data.role == 'member' &&
                 get(
                   /databases/$(database)/documents/rooms/$(roomId)
@@ -2544,6 +2607,10 @@ service cloud.firestore {
               resource.data.get('joinedAt', null) &&
             request.resource.data.diff(resource.data).affectedKeys()
               .hasOnly(['displayName', 'photoUrl', 'updatedAt']) &&
+            displayNameMatchesCanonical(
+              memberId,
+              request.resource.data.displayName
+            ) &&
             (
               isRoomHost(roomId) ||
               request.auth.uid == memberId
@@ -2659,6 +2726,10 @@ service cloud.firestore {
               'displayName', 'photoUrl', 'createdAt'
             ]) &&
             request.resource.data.createdAt == request.time &&
+            displayNameMatchesCanonical(
+              request.auth.uid,
+              request.resource.data.displayName
+            ) &&
             get(
               /databases/$(database)/documents/rooms/$(roomId)
             ).data.experience == 'broadcast' &&

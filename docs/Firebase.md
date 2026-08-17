@@ -64,6 +64,28 @@ Top-level collections (from `firestore.rules`):
 
 Notable fields:
 
+- **Display-name cooldown** — `users/{userId}.displayNameChangedAt` is an
+  optional, server-owned Firestore Timestamp. Its absence means the account is
+  legacy and its first callable change is available immediately; after an
+  actual change, `updateMyDisplayName` refuses another different canonical
+  value for exactly 30 days. Clients cannot create, alter or delete the field.
+  Initial account creation and the one-time completion of a partial profile may
+  seed `displayName`, but an established name is not client-writable. Resending
+  the unchanged value in a merged profile write remains allowed for cached
+  clients because Firestore `diff()` excludes equal values. The public
+  projections contain the canonical name, never the private cooldown timestamp.
+  A hashed `privateRateLimits` record enforces 10 profile-reaching, locally
+  valid requests per fixed server minute before profile/Auth reads; clients can
+  neither read nor reset it.
+
+- **User-authored identity snapshots** — Broadcast
+  `rooms/{roomId}/handRequests/{uid}.displayName` and Family
+  `clubs/{clubId}/checkIns/{id}.displayName` must exactly equal the current
+  canonical `users/{uid}.displayName`. Rules resolve the private owner record
+  directly, so a stale Firebase Auth token/profile or a modified client cannot
+  publish a forged name. Both creates also use an exact field allowlist and a
+  `createdAt` pinned to `request.time`.
+
 - **Creator pinned post** — `creatorPinnedPosts/{creatorId}` has exact schema
   `schemaVersion`, `creatorId`, `momentId`, `pinnedAt`, `updatedAt`. Clients
   may get only a known Creator id while both reader and target are active and

@@ -75,6 +75,55 @@ badge metadata.
   them atomically. Transactional per-user quotas, hard graph caps and
   `MAX + 1` bounded reads prevent unbounded fan-out and oversized-graph oracles.
 
+## Profile identity
+
+`updateMyDisplayName` (`functions/profile/display_name.js`) is the only
+post-bootstrap writer of `users/{uid}.displayName`. It runs in
+`europe-west1`, requires an authenticated, verified, active account and accepts
+exactly `{displayName: string}`. Leading/trailing whitespace is trimmed;
+the result must contain 2–120 Unicode code points and no control, invisible
+format, line-separator or paragraph-separator character.
+
+An actual change transactionally writes the canonical display name,
+server-owned `displayNameChangedAt` and `profileUpdatedAt`. The next actual
+change is refused until exactly `30 * 24 * 60 * 60 * 1000` milliseconds later.
+A legacy profile without `displayNameChangedAt` may change immediately.
+Replaying the exact canonical name is idempotent even during cooldown: it does
+not move either timestamp and returns the existing window.
+
+After the Firestore transaction, the callable mirrors the canonical value to
+Firebase Auth. It first reads the Auth user and skips `updateUser` when the
+mirror is already equal, so an idempotent replay is not a free Auth-write
+amplifier while App Check enforcement is off. A private transactional
+server-time budget permits 10 profile-reaching, locally valid requests per uid
+per fixed minute. It is consumed before profile/Auth reads, including when a
+later profile decision refuses the request. Same-name retries consume that
+budget, and the limit still leaves room for an immediate repair attempt after
+a transient failure. A transient Auth failure never rolls Firestore back; the
+callable returns `unavailable` with
+`reason: auth-display-name-sync-pending`, and replaying the same name safely
+repairs the mirror. Existing profile/directory triggers project the canonical
+Firestore value into `publicProfiles`, `userDirectory` and identity snapshots;
+the callable does not duplicate those fan-outs.
+
+The successful response has exactly `displayName`, `changed`,
+`displayNameChangedAtMs`, `nextDisplayNameChangeAtMs` and `canChange`;
+timestamps are epoch milliseconds or `null` for an untouched legacy name.
+Structured failures keep separate machine-readable meanings:
+`email-verification-required` and `display-name-state-invalid` are
+`failed-precondition`; `display-name-cooldown` additionally returns
+`nextDisplayNameChangeAtMs` and `retryAfterSeconds`;
+`auth-account-missing` and `auth-display-name-sync-pending` return the already
+committed canonical name plus both canonical timestamps. Missing/inactive
+profiles remain `not-found`/`permission-denied`, and the private fixed-window
+budget returns `resource-exhausted`.
+
+Client-authored room attribution never falls back to the Firebase Auth mirror.
+Broadcast `handRequests` and Family `checkIns` must copy the exact current
+`users/{uid}.displayName`; Rules read that canonical private document and deny
+stale or forged snapshots. The Flutter write path reads the same document
+before creating either row.
+
 ## Direct messaging, Moments and achievements
 
 Recent hardening moved these feature writes from client-authored side effects

@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
@@ -18,21 +19,82 @@ export 'package:yovoice/features/profile/data/services/profile_image_rules.dart'
         ProfileImageKind,
         ProfileImageRules;
 
+typedef DisplayNameMutationInvoker =
+    Future<DisplayNameChangeResult> Function(String displayName);
+
+enum DisplayNameChangeFailure {
+  cooldown,
+  authSyncPending,
+  authAccountMissingAfterSave,
+  emailVerificationRequired,
+  invalidName,
+  signedOut,
+  inactiveAccount,
+  missingProfile,
+  tooManyAttempts,
+  unavailable,
+}
+
+class DisplayNameChangeException implements Exception {
+  const DisplayNameChangeException(
+    this.failure,
+    this.message, {
+    this.nextDisplayNameChangeAt,
+    this.canonicalDisplayName,
+    this.displayNameChangedAt,
+  });
+
+  final DisplayNameChangeFailure failure;
+  final String message;
+  final DateTime? nextDisplayNameChangeAt;
+  final String? canonicalDisplayName;
+  final DateTime? displayNameChangedAt;
+
+  @override
+  String toString() => message;
+}
+
+class DisplayNameChangeResult {
+  const DisplayNameChangeResult({
+    required this.displayName,
+    required this.changed,
+    required this.canChange,
+    required this.displayNameChangedAt,
+    required this.nextDisplayNameChangeAt,
+  });
+
+  final String displayName;
+  final bool changed;
+  final bool canChange;
+  final DateTime? displayNameChangedAt;
+  final DateTime? nextDisplayNameChangeAt;
+}
+
 class ProfileService {
   ProfileService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
     FirebaseStorage? storage,
     ImagePicker? picker,
+    FirebaseFunctions? functions,
+    DisplayNameMutationInvoker? displayNameMutationInvoker,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _storageOverride = storage,
-       _picker = picker ?? ImagePicker();
+       _picker = picker ?? ImagePicker(),
+       _functionsOverride = functions,
+       _displayNameMutationInvoker = displayNameMutationInvoker;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final FirebaseStorage? _storageOverride;
   final ImagePicker _picker;
+  final FirebaseFunctions? _functionsOverride;
+  final DisplayNameMutationInvoker? _displayNameMutationInvoker;
+
+  FirebaseFunctions get _functions =>
+      _functionsOverride ??
+      FirebaseFunctions.instanceFor(region: 'europe-west1');
 
   // Resolved lazily rather than in the constructor: FirebaseStorage.instance
   // throws without an initialised Firebase app, which would make every
@@ -204,7 +266,6 @@ class ProfileService {
   }
 
   Future<void> updateProfile({
-    required String displayName,
     required String username,
     required String bio,
     required String country,
@@ -215,18 +276,13 @@ class ProfileService {
     required AccountType accountType,
     String statusMessage = '',
   }) async {
-    final cleanDisplayName = displayName.trim();
     final cleanUsername = username.trim();
 
-    if (cleanDisplayName.length < 2) {
-      throw ArgumentError('Display name must contain at least 2 characters.');
-    }
     if (cleanUsername.length < 2) {
       throw ArgumentError('Username must contain at least 2 characters.');
     }
 
     await _document.set({
-      'displayName': cleanDisplayName,
       'username': cleanUsername,
       'bio': bio.trim(),
       'country': country.trim(),
@@ -238,8 +294,278 @@ class ProfileService {
       'accountType': accountType.name,
       'profileUpdatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+  }
 
-    await _auth.currentUser?.updateDisplayName(cleanDisplayName);
+  /// Changes the signed-in member's display name through the canonical,
+  /// server-authoritative 30-day policy.
+  ///
+  /// There is deliberately no direct Firestore/Auth fallback here: a network
+  /// or deployment failure must fail closed instead of bypassing the limit.
+  Future<DisplayNameChangeResult> updateDisplayName(String displayName) async {
+    final override = _displayNameMutationInvoker;
+    if (override != null) return override(displayName);
+
+    try {
+      final response = await _functions
+          .httpsCallable('updateMyDisplayName')
+          .call<Map<String, dynamic>>({'displayName': displayName});
+      return _parseDisplayNameResult(response.data);
+    } on FirebaseFunctionsException catch (error) {
+      throw _displayNameExceptionFor(error);
+    } on DisplayNameChangeException {
+      rethrow;
+    } catch (_) {
+      throw const DisplayNameChangeException(
+        DisplayNameChangeFailure.unavailable,
+        "We couldn't update your display name. Check your connection and try again.",
+      );
+    }
+  }
+
+  static DisplayNameChangeResult _parseDisplayNameResult(
+    Map<String, dynamic> data,
+  ) {
+    const expectedKeys = <String>{
+      'displayName',
+      'changed',
+      'canChange',
+      'displayNameChangedAtMs',
+      'nextDisplayNameChangeAtMs',
+    };
+    if (data.keys.toSet().length != expectedKeys.length ||
+        !data.keys.toSet().containsAll(expectedKeys)) {
+      throw const DisplayNameChangeException(
+        DisplayNameChangeFailure.unavailable,
+        'The server returned an unexpected display-name update.',
+      );
+    }
+    final displayName = data['displayName'];
+    final changed = data['changed'];
+    final canChange = data['canChange'];
+    if (displayName is! String ||
+        !_isCanonicalDisplayName(displayName) ||
+        changed is! bool ||
+        canChange is! bool) {
+      throw const DisplayNameChangeException(
+        DisplayNameChangeFailure.unavailable,
+        'The server returned an incomplete display-name update.',
+      );
+    }
+
+    DateTime? readMillis(String key) {
+      final value = data[key];
+      if (value == null) return null;
+      if (value is! int || value < 0) {
+        throw const DisplayNameChangeException(
+          DisplayNameChangeFailure.unavailable,
+          'The server returned an invalid display-name timestamp.',
+        );
+      }
+      return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
+    }
+
+    final changedAt = readMillis('displayNameChangedAtMs');
+    final nextChange = readMillis('nextDisplayNameChangeAtMs');
+    final timestampsArePaired = (changedAt == null) == (nextChange == null);
+    final exactWindow =
+        changedAt == null ||
+        nextChange!.difference(changedAt) == const Duration(days: 30);
+    final legacyShape =
+        changedAt == null && !changed && canChange && nextChange == null;
+    if (!timestampsArePaired ||
+        !exactWindow ||
+        (changed && (changedAt == null || canChange)) ||
+        (changedAt == null && !legacyShape)) {
+      throw const DisplayNameChangeException(
+        DisplayNameChangeFailure.unavailable,
+        'The server returned an incomplete display-name update.',
+      );
+    }
+
+    return DisplayNameChangeResult(
+      displayName: displayName,
+      changed: changed,
+      canChange: canChange,
+      displayNameChangedAt: changedAt,
+      nextDisplayNameChangeAt: nextChange,
+    );
+  }
+
+  @visibleForTesting
+  static DisplayNameChangeResult parseDisplayNameResultForTesting(
+    Map<String, dynamic> data,
+  ) => _parseDisplayNameResult(data);
+
+  static DisplayNameChangeException _displayNameExceptionFor(
+    FirebaseFunctionsException error,
+  ) {
+    final details = error.details;
+    DateTime? nextChange;
+    DateTime? changedAt;
+    String? canonicalDisplayName;
+    String? reason;
+    int? retryAfterSeconds;
+    Set<String> detailKeys = const {};
+    if (details is Map) {
+      detailKeys = details.keys.whereType<String>().toSet();
+      final rawReason = details['reason'];
+      if (rawReason is String) reason = rawReason;
+      final rawDisplayName = details['displayName'];
+      if (rawDisplayName is String) canonicalDisplayName = rawDisplayName;
+      final millis = details['nextDisplayNameChangeAtMs'];
+      if (millis is int && millis >= 0) {
+        nextChange = DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true);
+      }
+      final changedAtMillis = details['displayNameChangedAtMs'];
+      if (changedAtMillis is int && changedAtMillis >= 0) {
+        changedAt = DateTime.fromMillisecondsSinceEpoch(
+          changedAtMillis,
+          isUtc: true,
+        );
+      }
+      final rawRetryAfterSeconds = details['retryAfterSeconds'];
+      if (rawRetryAfterSeconds is int && rawRetryAfterSeconds >= 0) {
+        retryAfterSeconds = rawRetryAfterSeconds;
+      }
+    }
+
+    if (error.code == 'unavailable' &&
+        reason == 'auth-display-name-sync-pending' &&
+        detailKeys.length == 4 &&
+        detailKeys.containsAll(const {
+          'reason',
+          'displayName',
+          'displayNameChangedAtMs',
+          'nextDisplayNameChangeAtMs',
+        }) &&
+        canonicalDisplayName != null &&
+        _isCanonicalDisplayName(canonicalDisplayName) &&
+        changedAt != null &&
+        nextChange != null &&
+        nextChange.difference(changedAt) == const Duration(days: 30)) {
+      return DisplayNameChangeException(
+        DisplayNameChangeFailure.authSyncPending,
+        'Your display name was saved, but account sync is still finishing. Press Save to retry.',
+        nextDisplayNameChangeAt: nextChange,
+        canonicalDisplayName: canonicalDisplayName,
+        displayNameChangedAt: changedAt,
+      );
+    }
+
+    if (error.code == 'failed-precondition' &&
+        reason == 'email-verification-required') {
+      return const DisplayNameChangeException(
+        DisplayNameChangeFailure.emailVerificationRequired,
+        'Verify your email address before changing your display name.',
+      );
+    }
+
+    if (error.code == 'failed-precondition' &&
+        reason == 'auth-account-missing' &&
+        detailKeys.length == 4 &&
+        detailKeys.containsAll(const {
+          'reason',
+          'displayName',
+          'displayNameChangedAtMs',
+          'nextDisplayNameChangeAtMs',
+        }) &&
+        canonicalDisplayName != null &&
+        _isCanonicalDisplayName(canonicalDisplayName) &&
+        changedAt != null &&
+        nextChange != null &&
+        nextChange.difference(changedAt) == const Duration(days: 30)) {
+      return DisplayNameChangeException(
+        DisplayNameChangeFailure.authAccountMissingAfterSave,
+        'Your profile name was saved, but the sign-in account could not be found. Please sign in again.',
+        nextDisplayNameChangeAt: nextChange,
+        canonicalDisplayName: canonicalDisplayName,
+        displayNameChangedAt: changedAt,
+      );
+    }
+
+    return switch (error.code) {
+      'failed-precondition'
+          when reason == 'display-name-cooldown' &&
+              detailKeys.length == 3 &&
+              detailKeys.containsAll(const {
+                'reason',
+                'nextDisplayNameChangeAtMs',
+                'retryAfterSeconds',
+              }) &&
+              nextChange != null &&
+              retryAfterSeconds != null =>
+        DisplayNameChangeException(
+          DisplayNameChangeFailure.cooldown,
+          'Your display name can only be changed once every 30 days.',
+          nextDisplayNameChangeAt: nextChange,
+        ),
+      'failed-precondition' => const DisplayNameChangeException(
+        DisplayNameChangeFailure.unavailable,
+        "We couldn't verify your display-name state. Reopen your profile and try again.",
+      ),
+      'invalid-argument' => const DisplayNameChangeException(
+        DisplayNameChangeFailure.invalidName,
+        'Use 2–120 characters and remove line breaks or control characters.',
+      ),
+      'unauthenticated' => const DisplayNameChangeException(
+        DisplayNameChangeFailure.signedOut,
+        'Please sign in again before changing your display name.',
+      ),
+      'permission-denied' => const DisplayNameChangeException(
+        DisplayNameChangeFailure.inactiveAccount,
+        'This account cannot change its display name right now.',
+      ),
+      'not-found' => const DisplayNameChangeException(
+        DisplayNameChangeFailure.missingProfile,
+        'Your profile could not be found. Please reopen the app and try again.',
+      ),
+      'resource-exhausted' => const DisplayNameChangeException(
+        DisplayNameChangeFailure.tooManyAttempts,
+        'Too many display-name attempts. Wait a minute and try again.',
+      ),
+      _ => const DisplayNameChangeException(
+        DisplayNameChangeFailure.unavailable,
+        "We couldn't update your display name. Check your connection and try again.",
+      ),
+    };
+  }
+
+  @visibleForTesting
+  static DisplayNameChangeException displayNameExceptionForTesting(
+    FirebaseFunctionsException error,
+  ) => _displayNameExceptionFor(error);
+
+  static bool _isCanonicalDisplayName(String value) {
+    final runes = value.runes.toList(growable: false);
+    return value == value.trim() &&
+        runes.length >= 2 &&
+        runes.length <= 120 &&
+        !runes.any(_isForbiddenDisplayNameRune);
+  }
+
+  static bool _isForbiddenDisplayNameRune(int value) {
+    return value <= 0x1F ||
+        (value >= 0x7F && value <= 0x9F) ||
+        value == 0x00AD ||
+        (value >= 0x0600 && value <= 0x0605) ||
+        value == 0x061C ||
+        value == 0x06DD ||
+        value == 0x070F ||
+        (value >= 0x0890 && value <= 0x0891) ||
+        value == 0x08E2 ||
+        value == 0x180E ||
+        (value >= 0x200B && value <= 0x200F) ||
+        (value >= 0x2028 && value <= 0x202E) ||
+        (value >= 0x2060 && value <= 0x206F) ||
+        value == 0xFEFF ||
+        (value >= 0xFFF9 && value <= 0xFFFB) ||
+        value == 0x110BD ||
+        value == 0x110CD ||
+        (value >= 0x13430 && value <= 0x1343F) ||
+        (value >= 0x1BCA0 && value <= 0x1BCA3) ||
+        (value >= 0x1D173 && value <= 0x1D17A) ||
+        value == 0xE0001 ||
+        (value >= 0xE0020 && value <= 0xE007F);
   }
 
   /// Opens the gallery and returns validated bytes for [kind], or null when

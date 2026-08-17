@@ -1302,3 +1302,11 @@ permission flags).
   finder saw one. Every other test in that file called `useDesktop`;
   that one did not. Fixed by giving it a viewport, not by changing
   production code.
+- **Fixed: room identity snapshots trusted the Firebase Auth display name.**
+  Broadcast `handRequests` and Family `checkIns` pinned the uid but accepted a
+  client-supplied `displayName`, while the app sourced that value from the Auth
+  mirror. A stale mirror could regress a recent canonical rename and a modified
+  client could forge any label. Both services now read `users/{uid}` and both
+  create rules require byte-for-byte equality with its `displayName`, exact
+  schemas and server-time timestamps; focused Flutter tests and Rules emulator
+  cases cover canonical, stale, forged and missing-profile paths.
