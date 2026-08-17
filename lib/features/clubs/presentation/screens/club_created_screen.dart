@@ -2,7 +2,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
+import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class ClubCreatedScreen extends StatelessWidget {
@@ -11,10 +13,10 @@ class ClubCreatedScreen extends StatelessWidget {
   final Club club;
 
   static const _background = Color(0xFF080711);
-  static const _primary = Color(0xFFA226FF);
-
   @override
   Widget build(BuildContext context) {
+    final isFamily = club.isFamilyRoom;
+    final identity = isFamily ? SpaceIdentity.family : SpaceIdentity.club;
     return Scaffold(
       backgroundColor: _background,
       body: SafeArea(
@@ -36,15 +38,15 @@ class ClubCreatedScreen extends StatelessWidget {
                         width: 112,
                         height: 112,
                         decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFFC14DFF), Color(0xFF6C18E8)],
+                          gradient: LinearGradient(
+                            colors: [identity.accent, identity.primary],
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                           ),
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: _primary.withValues(alpha: .45),
+                              color: identity.primary.withValues(alpha: .45),
                               blurRadius: 34,
                               spreadRadius: 4,
                             ),
@@ -61,8 +63,10 @@ class ClubCreatedScreen extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 28),
-                      const Text(
-                        'Your Club is ready',
+                      Text(
+                        isFamily
+                            ? 'Your Family Room is ready'
+                            : 'Your Club is ready',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: Colors.white,
@@ -74,15 +78,17 @@ class ClubCreatedScreen extends StatelessWidget {
                       Text(
                         club.name,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Color(0xFFC56CFF),
+                        style: TextStyle(
+                          color: identity.accent,
                           fontSize: 21,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
                       const SizedBox(height: 14),
-                      const Text(
-                        'General chat, announcements and Club Lounge have been created. You are the Owner.',
+                      Text(
+                        isFamily
+                            ? 'Family chat, announcements and Family Lounge have been created. You are the Organizer.'
+                            : 'General chat, announcements and Club Lounge have been created. You are the Owner.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: Color(0xFFA69CAF),
@@ -103,19 +109,22 @@ class ClubCreatedScreen extends StatelessWidget {
                             _SummaryRow(
                               icon: Icons.workspace_premium_rounded,
                               label: 'Your role',
-                              value: 'Owner',
+                              value: isFamily ? 'Organizer' : 'Owner',
+                              accent: identity.accent,
                             ),
                             const Divider(color: Color(0xFF35283F), height: 25),
                             _SummaryRow(
                               icon: Icons.language_rounded,
                               label: 'Language',
                               value: club.defaultLanguage,
+                              accent: identity.accent,
                             ),
                             const Divider(color: Color(0xFF35283F), height: 25),
                             _SummaryRow(
                               icon: Icons.lock_outline_rounded,
                               label: 'Privacy',
                               value: _privacyLabel(club.privacy),
+                              accent: identity.accent,
                             ),
                           ],
                         ),
@@ -124,33 +133,33 @@ class ClubCreatedScreen extends StatelessWidget {
                       SizedBox(
                         width: double.infinity,
                         child: FilledButton.icon(
-                          onPressed: () => Navigator.of(
-                            context,
-                          ).popUntil((route) => route.isFirst),
+                          onPressed: () =>
+                              Navigator.of(context).pushReplacement(
+                                MaterialPageRoute<void>(
+                                  builder: (_) =>
+                                      ClubOverviewScreen(clubId: club.id),
+                                ),
+                              ),
                           style: FilledButton.styleFrom(
-                            backgroundColor: _primary,
+                            backgroundColor: identity.primary,
                             minimumSize: const Size.fromHeight(58),
                             padding: const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(19),
                             ),
                           ),
-                          icon: const Icon(Icons.check_circle_rounded),
-                          label: const Text(
-                            'Done',
-                            style: TextStyle(
+                          icon: Icon(
+                            isFamily
+                                ? Icons.family_restroom_rounded
+                                : Icons.arrow_forward_rounded,
+                          ),
+                          label: Text(
+                            isFamily ? 'Open Family Room' : 'Open Club',
+                            style: const TextStyle(
                               fontSize: 17,
                               fontWeight: FontWeight.w900,
                             ),
                           ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      const Text(
-                        'The full Clubs tab arrives in Stage 6.3.',
-                        style: TextStyle(
-                          color: Color(0xFF716679),
-                          fontSize: 12,
                         ),
                       ),
                     ],
@@ -178,17 +187,19 @@ class _SummaryRow extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.value,
+    required this.accent,
   });
 
   final IconData icon;
   final String label;
   final String value;
+  final Color accent;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(icon, color: const Color(0xFFB94DFF), size: 22),
+        Icon(icon, color: accent, size: 22),
         const SizedBox(width: 12),
         Expanded(
           child: Text(label, style: const TextStyle(color: Color(0xFFA69CAF))),

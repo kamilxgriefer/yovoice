@@ -136,6 +136,7 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
               description: _descriptionController.text,
               defaultLanguage: _language,
               avatarFile: _avatarFile,
+              bannerFile: _bannerFile,
             )
           : await _clubService.createClub(
               name: _nameController.text,

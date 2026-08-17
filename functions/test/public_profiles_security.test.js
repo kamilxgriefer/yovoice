@@ -18,6 +18,7 @@ const {
   canonicalUid,
   syncPrivacyProjectionsForUser,
   handleAuthUserDeleted,
+  onAuthUserDeleted,
   onUserPrivacySourceChanged,
   searchPublicProfiles,
   consumeSearchRateLimit,
@@ -234,6 +235,23 @@ describe("privacy projection trigger", () => {
     assert.equal(replay.presence, "absent");
   });
 
+  test("an Auth-disabled account cannot retain or recreate projections", async () => {
+    await db.collection("users").doc(VISIBLE).set({
+      displayName: "Disabled in Auth",
+      banned: false,
+      disabled: false,
+      isOnline: true,
+    });
+    await syncExistingAuthUser(VISIBLE);
+
+    const outcome = await syncPrivacyProjectionsForUser(VISIBLE, {
+      database: db,
+      authUser: { uid: VISIBLE, disabled: true },
+    });
+    assert.equal(outcome.profile, "removed");
+    assert.equal(outcome.presence, "removed");
+  });
+
   test("an older sync cannot overwrite a newer source revision", async () => {
     let markFirstRead;
     const firstRead = new Promise((resolve) => {
@@ -280,6 +298,7 @@ describe("privacy projection trigger", () => {
   });
 
   test("Auth deletion immediately retires every identity projection", async () => {
+    assert.equal(onAuthUserDeleted.__endpoint.eventTrigger.retry, true);
     await db.collection("users").doc(VISIBLE).set({
       displayName: "Deleted Auth account",
       isOnline: true,
@@ -416,6 +435,15 @@ describe("public profile search", () => {
         data: { query: "voice" },
       }),
       (error) => error.code === "permission-denied",
+    );
+    assert.equal(
+      (
+        await db
+          .collection("privateRateLimits")
+          .doc(rateLimitId(`${P}inactive`))
+          .get()
+      ).exists,
+      true,
     );
     await assert.rejects(
       runSearch({ auth: null, data: { query: "voice" } }),
@@ -567,6 +595,46 @@ describe("bounded public-profile backfill", () => {
       fetchAuthUser: async () => null,
     });
     assert.equal(report.authOrphans, 1);
+    assert.equal(
+      (await db.collection("publicProfiles").doc(uid).get()).exists,
+      false,
+    );
+    assert.equal(
+      (await db.collection("socialPresence").doc(uid).get()).exists,
+      false,
+    );
+  });
+
+  test("backfill removes projections for an Auth-disabled account", async () => {
+    const uid = `${P}backfill-a`;
+    await Promise.all([
+      db.collection("users").doc(uid).set({
+        displayName: "Auth disabled source",
+        banned: false,
+        disabled: false,
+      }),
+      db.collection("publicProfiles").doc(uid).set({
+        uid,
+        displayName: "Stale public identity",
+      }),
+      db.collection("socialPresence").doc(uid).set({
+        uid,
+        isOnline: true,
+      }),
+    ]);
+
+    const report = await backfill({
+      db,
+      args: {
+        apply: true,
+        batchSize: 1,
+        maxUsers: 1,
+        startAfter: null,
+        uidPrefix: uid,
+      },
+      fetchAuthUser: async () => ({ uid, disabled: true }),
+    });
+    assert.equal(report.inactiveUsers, 1);
     assert.equal(
       (await db.collection("publicProfiles").doc(uid).get()).exists,
       false,

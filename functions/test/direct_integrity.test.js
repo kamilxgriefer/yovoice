@@ -496,6 +496,52 @@ test("server-time fixed windows stop bursts while replay is free", async () => {
   assert.equal(result.conversationId, canonicalConversationId(A, B));
 });
 
+test("BEFORE migration a legacy root is FORKED, not adopted — which is why the migration RUN is still outstanding", async () => {
+  // Pins the pre-migration behaviour so the cost of not running the
+  // migration is visible in the suite rather than only in production.
+  // With a legacy root at `A_B` and no pair guard, `openDirectConversation`
+  // falls back to the derived `dm_` id and binds THAT — the legacy thread
+  // and its history are left behind untouched, not adopted. Only
+  // `migrateDirectIntegrityConversation` adopts in place (the test
+  // below). See ADR-062.
+  const legacyId = `${A}_${B}`;
+  const legacyRef = db.doc(`conversations/${legacyId}`);
+  await legacyRef.set({
+    participantIds: [A, B],
+    participantNames: { [A]: "Legacy Alice", [B]: "Legacy Bob" },
+    participantPhotoUrls: { [A]: "", [B]: "" },
+    unreadCounts: { [A]: 0, [B]: 1 },
+    typing: {},
+    archivedBy: [],
+    mutedBy: [],
+    lastMessage: "legacy",
+    lastMessageType: "text",
+    lastMessageSenderId: A,
+    createdAt: Timestamp.fromMillis(nowMs - 10_000),
+    updatedAt: Timestamp.fromMillis(nowMs - 5_000),
+  });
+  const legacyBefore = (await legacyRef.get()).data();
+  assert.equal((await db.doc(
+    `directConversationPairs/${canonicalPairKey(A, B)}`,
+  ).get()).exists, false);
+
+  const opened = await open(directService(), A, B, "open-prefork1");
+
+  assert.equal(opened.conversationId, canonicalConversationId(A, B));
+  assert.notEqual(opened.conversationId, legacyId);
+  assert.equal(opened.created, true);
+
+  // The legacy root is untouched — no adoption, no partial rewrite.
+  assert.deepEqual((await legacyRef.get()).data(), legacyBefore);
+  // And the pair is now bound to the NEW id, permanently, unless the
+  // migration is run first.
+  assert.equal(
+    (await db.doc(`directConversationPairs/${canonicalPairKey(A, B)}`).get())
+      .data().conversationId,
+    canonicalConversationId(A, B),
+  );
+});
+
 test("legacy history migrates in place and every guarded operation remains usable", async () => {
   const legacyId = `${A}_${B}`;
   const rootRef = db.doc(`conversations/${legacyId}`);

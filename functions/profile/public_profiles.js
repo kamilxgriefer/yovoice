@@ -249,7 +249,8 @@ async function syncPrivacyProjectionsForUser(
   // account deletion must never recreate a public identity projection.
   const authoritativeAuthUser =
     authUser === undefined ? await fetchAuthUser(cleanUid) : authUser;
-  const authExists = authoritativeAuthUser !== null;
+  const authExists =
+    authoritativeAuthUser !== null && authoritativeAuthUser?.disabled !== true;
 
   const sourceRef = database.collection("users").doc(cleanUid);
   const profileRef = database.collection("publicProfiles").doc(cleanUid);
@@ -331,6 +332,7 @@ async function handleAuthUserDeleted(uid, { database = db } = {}) {
 // that lifecycle gap immediately; the bounded backfill remains the recovery
 // path for accounts deleted before this trigger was deployed.
 const onAuthUserDeleted = functionsV1
+  .runWith({ failurePolicy: true })
   .region(REGION)
   .auth.user()
   .onDelete(async (user) => {
@@ -433,11 +435,11 @@ const searchPublicProfiles = onCall(
   { region: REGION, enforceAppCheck: false },
   async (request) => {
     const auth = requireAuthentication(request);
-    await requireActiveCaller(auth.uid);
     // App Check is not enforced yet. Every invocation — including malformed
     // search attempts — consumes a server-time, transactional quota before it
     // can issue either prefix query, containing both enumeration and cost.
     await consumeSearchRateLimit(auth.uid);
+    await requireActiveCaller(auth.uid);
     if (auth.token?.email_verified !== true) {
       throw new HttpsError(
         "failed-precondition",

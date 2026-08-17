@@ -20,6 +20,23 @@ const { ref, uploadBytes, getBytes, deleteObject } = require("firebase/storage")
 const FIRESTORE_RULES = path.resolve(__dirname, "../firestore.rules");
 const STORAGE_RULES = path.resolve(__dirname, "../storage.rules");
 
+// Keep this suite independent from any emulator already running for the app
+// or another QA worker. The defaults preserve the documented local command;
+// CI and parallel runs can select their own isolated ports.
+const EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_ADDRESS ?? "127.0.0.1";
+const FIRESTORE_PORT = Number(process.env.FIRESTORE_EMULATOR_PORT ?? 8080);
+const STORAGE_HOST = process.env.STORAGE_EMULATOR_ADDRESS ?? EMULATOR_HOST;
+const STORAGE_PORT = Number(process.env.STORAGE_EMULATOR_PORT ?? 9199);
+
+for (const [name, port] of [
+  ["FIRESTORE_EMULATOR_PORT", FIRESTORE_PORT],
+  ["STORAGE_EMULATOR_PORT", STORAGE_PORT],
+]) {
+  if (!Number.isInteger(port) || port <= 0) {
+    throw new Error(`${name} is not a port: ${process.env[name]}`);
+  }
+}
+
 let passed = 0;
 let failed = 0;
 
@@ -55,13 +72,13 @@ async function main() {
     projectId: "demo-yovoice",
     firestore: {
       rules: fs.readFileSync(FIRESTORE_RULES, "utf8"),
-      host: "127.0.0.1",
-      port: 8080,
+      host: EMULATOR_HOST,
+      port: FIRESTORE_PORT,
     },
     storage: {
       rules: fs.readFileSync(STORAGE_RULES, "utf8"),
-      host: "127.0.0.1",
-      port: 9199,
+      host: STORAGE_HOST,
+      port: STORAGE_PORT,
     },
   });
 

@@ -267,24 +267,6 @@ void main() {
       expect((typing[senderId] as Map)['isTyping'], isFalse);
     });
 
-    test('a not-found callable falls back the same way as an '
-        'unimplemented one', () async {
-      final service = MessageService(
-        firestore: db,
-        auth: authFor(senderId),
-        functions: _UnavailableFunctions('not-found'),
-      );
-
-      await service.sendTextMessage(
-        conversationId: conversationId,
-        recipientId: recipientId,
-        text: 'not deployed',
-      );
-
-      expect(await messageDocs(), hasLength(1));
-      expect(await unreadFor(recipientId), 1);
-    });
-
     test('the fallback writes the CANONICAL message shape, so the server '
         'can still edit, delete, react to and reply to it', () async {
       final service = MessageService(
@@ -448,6 +430,75 @@ void main() {
   });
 
   group('the callable refuses', () {
+    test('not-found is a REFUSAL, not an absence — nothing is written '
+        'locally', () async {
+      // This case used to assert the opposite: that `not-found` fell back
+      // "the same way as an unimplemented one". It encoded the defect.
+      // The server throws `not-found` itself, routinely — guards.js:157
+      // when `users/{uid}` is missing, direct_integrity.js:83 and :223.
+      // Treating it as "not deployed" let a user with no profile document
+      // bypass assertNotBlocked, assertNotRestricted and the rate limits
+      // on every messaging callable. The ambiguity is irreducible (an
+      // undeployed callable is HTTP 404 -> NOT_FOUND too), so `not-found`
+      // must fail closed. See ADR-062.
+      final service = MessageService(
+        firestore: db,
+        auth: authFor(senderId),
+        functions: _UnavailableFunctions('not-found'),
+      );
+
+      await expectLater(
+        service.sendTextMessage(
+          conversationId: conversationId,
+          recipientId: recipientId,
+          text: 'not deployed',
+        ),
+        throwsA(isA<FirebaseFunctionsException>()),
+      );
+
+      expect(await messageDocs(), isEmpty);
+      expect(await unreadFor(recipientId), 0);
+      final conversation = await conversationDoc();
+      expect(conversation['lastMessage'], '');
+      expect(conversation['lastMessageSequence'], 0);
+      expect(conversation['lastMessageId'], isNull);
+    });
+
+    test("a not-found carrying the SERVER's own message is not mistaken "
+        'for an undeployed callable', () async {
+      // The reason lives in the test: this is verbatim what
+      // `conversationParticipants` (direct_integrity.js:83) throws when
+      // the conversation document is missing. Nothing about it says
+      // "deploy me".
+      final service = MessageService(
+        firestore: db,
+        auth: authFor(senderId),
+        functions: _UnavailableFunctions(
+          'not-found',
+          message: 'The direct conversation does not exist.',
+        ),
+      );
+
+      await expectLater(
+        service.sendTextMessage(
+          conversationId: conversationId,
+          recipientId: recipientId,
+          text: 'the server said no',
+        ),
+        throwsA(
+          isA<FirebaseFunctionsException>().having(
+            (error) => error.message,
+            'message',
+            'The direct conversation does not exist.',
+          ),
+        ),
+      );
+
+      expect(await messageDocs(), isEmpty);
+      expect(await unreadFor(recipientId), 0);
+      expect((await conversationDoc())['lastMessage'], '');
+    });
+
     test('a rejection propagates and nothing is written locally', () async {
       final service = MessageService(
         firestore: db,
@@ -612,19 +663,22 @@ class _SilentSuccessFunctions implements FirebaseFunctions {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-/// The callable is not deployed — the only reason the client fallback
-/// exists.
+/// Throws a chosen status code. With `unimplemented` that means the
+/// callable is not deployed — the only reason the client fallback exists.
+/// With `not-found` it means the deployed server refused, which is a very
+/// different thing and must NOT fall back (ADR-062).
 class _UnavailableFunctions implements FirebaseFunctions {
-  _UnavailableFunctions(this.code);
+  _UnavailableFunctions(this.code, {this.message = 'The callable is unavailable.'});
 
   final String code;
+  final String message;
 
   @override
   HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
       _CallableStub(
         (_) async => throw FirebaseFunctionsException(
           code: code,
-          message: 'The callable is unavailable.',
+          message: message,
         ),
       );
 

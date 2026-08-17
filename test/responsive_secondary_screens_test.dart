@@ -66,6 +66,25 @@ void main() {
     createdAt: null,
     updatedAt: null,
   );
+  const family = Club(
+    id: 'family-owner',
+    name: 'Our Family',
+    description: 'Our private home.',
+    ownerId: 'owner',
+    ownerName: 'Owner',
+    avatarUrl: null,
+    bannerUrl: null,
+    privacy: ClubPrivacy.inviteOnly,
+    defaultLanguage: 'Polish',
+    memberCount: 1,
+    onlineCount: 1,
+    defaultChatChannelId: 'general',
+    defaultVoiceChannelId: 'lounge',
+    announcementChannelId: 'announcements',
+    createdAt: null,
+    updatedAt: null,
+    type: ClubType.family,
+  );
 
   group('Room type selector responsive composition', () {
     for (final size in sizes) {
@@ -164,7 +183,7 @@ void main() {
         expect(tester.takeException(), isNull);
         expect(find.text('Your Club is ready'), findsOneWidget);
         expect(
-          tester.getSize(find.widgetWithText(FilledButton, 'Done')).width,
+          tester.getSize(find.widgetWithText(FilledButton, 'Open Club')).width,
           lessThanOrEqualTo(560),
         );
       });
@@ -180,12 +199,33 @@ void main() {
         await tester.pump();
 
         expect(tester.takeException(), isNull);
-        await tester.ensureVisible(find.widgetWithText(FilledButton, 'Done'));
+        await tester.ensureVisible(
+          find.widgetWithText(FilledButton, 'Open Club'),
+        );
         await tester.pumpAndSettle();
-        expect(find.widgetWithText(FilledButton, 'Done'), findsOneWidget);
+        expect(find.widgetWithText(FilledButton, 'Open Club'), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets('uses Family copy, identity and a direct open action', (
+      tester,
+    ) async {
+      useSurface(tester, const Size(390, 844));
+      await tester.pumpWidget(host(const ClubCreatedScreen(club: family)));
+      await tester.pump();
+
+      expect(find.text('Your Family Room is ready'), findsOneWidget);
+      expect(find.textContaining('Family Lounge'), findsOneWidget);
+      expect(find.textContaining('Organizer'), findsWidgets);
+      expect(
+        find.widgetWithText(FilledButton, 'Open Family Room'),
+        findsOneWidget,
+      );
+      expect(find.text('Your Club is ready'), findsNothing);
+      expect(find.textContaining('Stage 6.3'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
   });
 
   testWidgets('Club invitation is compact and stacks actions for large text', (

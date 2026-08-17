@@ -162,6 +162,110 @@ permission flags).
 
 ## Data integrity
 
+- **FIXED IN SOURCE 2026-08-17, NOT YET DEPLOYED — a `not-found` from any
+  messaging callable disabled the entire server-side guard set, and a
+  failed conversation open wrote a thread the backend can never touch
+  again.** `MessageService._isCallableUnavailable` counted `not-found` as
+  "the callable is not deployed". The server throws `not-found` itself as
+  an ordinary refusal — `functions/integrity/guards.js:157` when
+  `users/{uid}` is missing, `functions/messaging/direct_integrity.js:83`
+  and `:223`. So a user with no `users` document received `not-found` from
+  **every** messaging callable and the client read each as an absent
+  deployment, silently bypassing `assertNotBlocked`,
+  `assertNotRestricted` and the rate limits across send, edit, delete,
+  react, mark-read and typing. The ambiguity is irreducible — an
+  undeployed callable is HTTP 404 too — so `not-found` now propagates and
+  only `unimplemented` signals absence.
+
+  **The conversation-open path made it a data-integrity bug, not just an
+  authorization one.** On that swallowed error, `openOrCreateConversation`
+  created the conversation root itself. The client cannot write
+  `directConversationPairs/{pairKey}` — no rules match block, by design —
+  so the root has no pair guard, and `validateConversation` refuses it
+  with `data-loss`, "The canonical conversation is missing.", on every
+  later server call, permanently. It also carried 12 keys against the
+  required 18. **This is the same class of defect as the
+  `_publishRecordedMomentLegacy` entry below** — a client fallback writing
+  a document an exact-key server validator will reject forever — with one
+  difference that makes it worse: that one is latent because nothing
+  reaches the path, while this one had a live trigger in production, and
+  the 32 accounts with no public profile
+  ([Roadmap 0a](Roadmap.md#0a-run-the-public-profile-backfill-32-accounts-currently-invisible))
+  are the population most likely to have hit it.
+
+  `openDirectConversation` is now the only production path and its answer
+  stands, success or failure; `conversations` create is `if false` in
+  `firestore.rules` so the invariant holds for installs that will never
+  update; `directConversationPairs` keeps no match block, now a recorded
+  decision
+  ([ADR-062](Decisions.md#adr-062-the-client-never-creates-a-direct-conversation--canonical-binding-is-server-only-and-a-legacy-thread-is-adopted-in-place-not-forked)).
+  Covered by `test/direct_conversation_open_test.dart` (18 cases, all
+  Firestore-level), an inverted case in
+  `test/direct_message_send_test.dart` that previously asserted the
+  defective behaviour outright, and three new checks in
+  `firestore-tests/rules.test.js`.
+
+  **Roots already written this way are stranded and their count is
+  unmeasured.** They are identifiable by a missing `pairKey`/`schemaVersion`
+  on the conversation document, or by the absence of a
+  `directConversationPairs` entry for the pair. They are repairable —
+  unlike the duplicate messages below — because
+  `migrateDirectIntegrityConversation` adopts a legacy root **in place** at
+  its existing id, preserving history. That migration has never been run
+  against production; it is
+  [Roadmap 0m](Roadmap.md#0m-run-the-direct-conversation-migration-there-are-stranded-legacy-roots-in-production).
+  Until it is, `openDirectConversation` **forks**: it derives a fresh
+  `dm_<hash>` id, binds the pair to that, and leaves the legacy thread and
+  its history behind. That fork is pinned by a test in
+  `functions/test/direct_integrity.test.js` so the cost of not running the
+  migration is visible in the suite.
+
+- **FIXED IN SOURCE 2026-08-17 (`8f7aa03`), NOT YET DEPLOYED — every direct
+  message was written to Firestore twice.**
+  `MessageService.sendTextMessage` called the `sendDirectMessage` callable,
+  which creates the canonical message document and updates the conversation
+  summary server-side inside one transaction, and then ran its own client
+  batch write **unconditionally** — the early return existed only on the
+  fallback path. Every send in production therefore produced a second
+  message document under a Firestore auto-id and incremented
+  `unreadCounts.<recipientId>` twice. Both copies render: `watchMessages`
+  orders by `sentAt` with no filter. `sendTextMessage` now returns as soon
+  as the callable answers, and the client write is reached only when it
+  does not
+  ([ADR-061](Decisions.md#adr-061-a-callable-that-answers-is-the-whole-write-and-its-client-fallback-must-write-the-same-document)).
+
+  **It went unnoticed because no test had ever executed that branch.**
+  Every Flutter test injected a `NotificationService`, which sets
+  `_preferLegacyBehaviour` and short-circuits `_tryCallable` to `false`, so
+  the callable-success path was unreachable from the entire suite — a green
+  suite covering exactly one side of the fork that mattered.
+  `test/direct_message_send_test.dart` now asserts at Firestore level on
+  both paths, "exactly one message document" included; against the pre-fix
+  service it fails 10 of its cases, the probe reading being
+  `messages=2 unread[recipient]=2` where 1 and 1 were expected.
+
+  **The duplicates already in production are permanent, and their volume is
+  unmeasured.** They carry 14 keys, not the canonical 16, so `validateMessage`
+  refuses them and the server can never edit, delete, react to, or accept
+  them as a reply target. Identifying them by their missing `schemaVersion`
+  over-selects on its own — it also matches every pre-fix *fallback* write —
+  so a cleanup pass needs that paired with a deploy-date cutoff or a
+  same-sender-and-content twin. Three things reasoned from code and **not
+  yet verified against production data**: read-marking was never poisoned
+  (`markDirectConversationRead` filters on `sequence > N`, and a range
+  filter excludes documents missing the field), inflated `unreadCounts`
+  self-heal on the recipient's next open, and the canonical chain is intact
+  because only the server ever advanced `lastMessageSequence`. Duplicates
+  keep accruing until a client carrying `8f7aa03` ships — no client release
+  is recorded after that commit.
+
+  The same commit closed three messaging failures that were invisible to
+  the user, found while in the file: `toggleReaction`, `setTyping` and the
+  un-archive inside an unawaited handler all swallowed their errors. They
+  now use the shared error mapping, with typing raising at most one
+  snackbar per visit because it fires per keystroke. Covered by
+  `test/messages_silent_failure_test.dart`.
+
 - **FIXED 2026-08-16 — accounts with no public profile were invisible to
   everyone else.** After the ADR-054 rules cutover, `users` became
   owner-`get` only and non-listable, so an account with no
@@ -529,6 +633,19 @@ permission flags).
   a reactive destination guard and the Edit-profile Save recheck all fail
   closed. A visible VIP/Premium badge never authorizes access; existing club
   memberships/invites and Family Rooms remain free.
+
+- **Fixed (2026-08-17): Family Room creation could fail before its batch or
+  strand the one deterministic id.** `createFamilyRoom()` probes
+  `clubs/family_{uid}` before creating it, but the missing-document rules path
+  dereferenced `resource.data`; a first create could therefore stop at its
+  initial read. Conversely, a modified client could create only the root and
+  consume the account's one canonical id without its membership, channels or
+  lounge. The missing self probe is now explicitly allowed, while create is
+  accepted only as the complete seven-write graph. Reopen and concurrent
+  create attempts converge on the canonical winner before upload cleanup, the
+  selected banner is retained, and the success screen opens the actual Family
+  Room with Family-specific copy. Emulator, lifecycle and responsive tests
+  pin all of these paths.
 
 - **Fixed (2026-08-10): the web app's browser tab showed the YO Voice
   mark inside a solid black square** while the landing page's tab showed

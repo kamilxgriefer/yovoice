@@ -16,6 +16,62 @@ someone decide what to pick up next.
 
 ## Done
 
+- **A `not-found` refusal was read as an undeployed callable, disabling
+  every messaging guard and writing conversation roots the backend can
+  never touch again** (2026-08-17, UNCOMMITTED — in the working tree,
+  NOT YET DEPLOYED; fill in the hash on commit):
+  `MessageService._isCallableUnavailable` counted `not-found` as "not
+  deployed", but the server throws it as an ordinary refusal
+  (`functions/integrity/guards.js:157` for a missing `users/{uid}`,
+  `functions/messaging/direct_integrity.js:83` and `:223`). Any user
+  without a `users` document therefore bypassed `assertNotBlocked`,
+  `assertNotRestricted` and the rate limits on send, edit, delete, react,
+  mark-read and typing. On the conversation-open path the swallowed error
+  was worse than a bypass: the client created the conversation root
+  itself, and since it cannot write `directConversationPairs/{pairKey}`,
+  that root fails `validateConversation` with `data-loss` forever.
+  `openDirectConversation` is now the only production path and its answer
+  stands, success or failure; `conversations` create is `if false` in
+  `firestore.rules`; `directConversationPairs` keeps no match block, now a
+  recorded decision.
+  [ADR-062](Decisions.md#adr-062-the-client-never-creates-a-direct-conversation--canonical-binding-is-server-only-and-a-legacy-thread-is-adopted-in-place-not-forked).
+  New `test/direct_conversation_open_test.dart` (18 Firestore-level
+  cases), an inverted case in `test/direct_message_send_test.dart` that
+  had previously asserted the defective behaviour outright, 3 new checks
+  in `firestore-tests/rules.test.js`, and 1 in
+  `functions/test/direct_integrity.test.js` pinning the pre-migration
+  fork. Suites after: Flutter **573 / 59 files**, rules **351**, Functions
+  **564 / 93**; `flutter analyze` clean. **The stranded roots already in
+  production are not repaired by this** — that needs the migration run,
+  tracked as [item 0m](#0m-run-the-direct-conversation-migration-there-are-stranded-legacy-roots-in-production).
+
+- **Every direct message was being written to Firestore twice — the send
+  path now has one writer** (2026-08-17, `8f7aa03`, IN `main`, NOT YET
+  DEPLOYED): `MessageService.sendTextMessage` called the
+  `sendDirectMessage` callable — which creates the canonical message and
+  updates the conversation summary server-side in one transaction — and
+  then ran its own client batch **unconditionally**, the early return
+  sitting only on the fallback path. Every production send left a second
+  message document under a Firestore auto-id and incremented
+  `unreadCounts.<recipientId>` twice, and both copies render because
+  `watchMessages` orders by `sentAt` with no filter. The branch is now
+  inverted: the callable is authoritative when it answers, and the client
+  write is reached only when it does not. The fallback was also writing a
+  document the server refuses — 14 keys against the exact 16-key set
+  `validateMessage` demands, missing `schemaVersion` and `sequence` — so it
+  became a `runTransaction` rather than a `WriteBatch`, deriving `sequence`
+  from the conversation's `lastMessageSequence` and advancing it.
+  [ADR-061](Decisions.md#adr-061-a-callable-that-answers-is-the-whole-write-and-its-client-fallback-must-write-the-same-document).
+  **The coverage hole was as much the bug as the code**: every test
+  injected a `NotificationService`, which forces the legacy path, so the
+  callable-success branch had never executed once.
+  `test/direct_message_send_test.dart` (Firestore-level assertions on both
+  send paths) and `test/messages_silent_failure_test.dart` (error surfacing
+  for reactions, typing presence and un-archive) close it. Suites **546
+  tests / 57 files** (from 521/55); `flutter analyze` clean. The duplicates
+  already in production are permanent and unmutable — scope and cleanup
+  tracked in [Bugs.md](Bugs.md#data-integrity), not here.
+
 - **Voice Moment recording works on the web — until this landed, no
   production user could record one at all** (2026-08-17, `6ef4380` →
   `cefa81a`, DEPLOYED): the recorder called `getTemporaryDirectory()`,
@@ -525,8 +581,13 @@ someone decide what to pick up next.
   Premium-gated), invite-only, and invisible to non-members at the rules
   level. See
   [ADR-044](Decisions.md#adr-044-family-room-is-a-club-with-type-family-pinned-to-a-deterministic-id-with-a-private-read-boundary).
-  Still to build: the family Moments and check-in UI (their rules,
-  Storage path and data boundary are already in place and tested).
+  The creation path is now end-to-end verified: the deterministic missing-id
+  probe, owner membership, user projection, chat, announcements, voice
+  channel and Family Lounge must commit as one seven-write batch; reopen and
+  concurrent retry converge on that one graph, and the selected banner is
+  preserved. Quick check-ins and invitation accept/decline are implemented
+  and tested. Still to build: production Family Moment recording/upload;
+  Storage rules alone are not a shipped user-facing feature.
 - Full documentation system — Vision/Architecture/Features/Roadmap/
   Firebase/Backend/Flutter/UI/Decisions/Bugs plus this evolution pass
   (`02275bd`, `26d11a2`, and this session's commit).
@@ -615,6 +676,60 @@ Closed 2026-08-17 in `c75720a`, deployed and verified against the live
 ruleset. See the Done entry above. Two *other* writes behind
 `canAccessRoom()` remain ungated — tracked as item 0k below, which is a
 different and much smaller problem.
+
+### 0m. Run the direct-conversation migration, there are stranded legacy roots in production
+
+- **Status**: Not started. **There is no record of this migration ever
+  having been run**, which is itself the finding — the callables
+  (`migrateDirectIntegrityConversation`, `scanDirectIntegrityMigration`)
+  have existed and been tested since the Stage B work, and nothing has
+  invoked them against production.
+- **Description**: Two populations of non-canonical conversation roots
+  exist. (1) Threads predating the `directConversationPairs` guard. (2)
+  Roots written by the client fallback that
+  [ADR-062](Decisions.md#adr-062-the-client-never-creates-a-direct-conversation--canonical-binding-is-server-only-and-a-legacy-thread-is-adopted-in-place-not-forked)
+  removed — every one of them created when a `not-found` refusal was
+  misread as an undeployed callable. Both lack the pair guard, so every
+  server call against them fails `data-loss`, "The canonical conversation
+  is missing." **Until they are migrated, `openDirectConversation` forks
+  them**: it derives a fresh `dm_<hash>` id, binds the pair to that, and
+  strands the legacy thread's history. `migrateDirectIntegrityConversation`
+  adopts in place at the existing id, preserving history — so the
+  migration must run *before* the affected users next open those chats.
+- **Dependencies**: Sequenced behind [item 0a](#0a-run-the-public-profile-backfill-32-accounts-currently-invisible).
+  `migrateDirectIntegrityConversation` calls `canonicalPublicProfile` to
+  fill `participantNames`/`participantPhotoUrls`; running it while 32
+  accounts still have no `publicProfiles` document would bake placeholder
+  identities into the canonical roots. Backfill first, then migrate. Also
+  needs owner credentials.
+- **Priority**: **High**, and it grows: every chat opened against a
+  stranded root forks a new thread that then has to be reconciled by hand.
+- **Runbook** (documented, **not run** — this is an owner-credentialed,
+  partly irreversible production operation and is the user's call):
+  1. Confirm item 0a is complete; spot-check that
+     `publicProfiles/{uid}` exists for the accounts in scope.
+  2. Take a Firestore export first. Message and root rewrites are not
+     reversible in place.
+  3. `scanDirectIntegrityMigration` to enumerate candidates and get the
+     count and cursor. Read-only — safe to repeat.
+  4. `migrateDirectIntegrityConversation` with `dryRun: true` on a single
+     known conversation id. Expect `status: "ready"` and verify the root
+     still has `schemaVersion: undefined` afterwards, proving the dry run
+     wrote nothing.
+  5. Same id with `dryRun: false`. Expect `status: "migrated"`; verify
+     `schemaVersion == 2`, `participantEmails` blanked, and that the
+     child messages carry a `sequence`.
+  6. Re-invoke the same id to confirm idempotency — expect
+     `status: "alreadyMigrated"`, not a second rewrite.
+  7. Proceed in pages using the scan cursor, re-running the scan between
+     pages. The migration aborts atomically if a child changes after
+     inspection, so a partial page is safe to retry.
+  8. After each page, open one migrated thread in the app and confirm
+     send/edit/react/mark-read all succeed against it.
+- **Future considerations**: the end-to-end proof already exists in
+  `functions/test/direct_integrity.test.js` ("legacy history migrates in
+  place and every guarded operation remains usable"), and the adjacent
+  test pins the pre-migration fork so the cost of delay stays visible.
 
 ### 0i. Voice Moment recording on Firefox needs a coordinated backend change
 

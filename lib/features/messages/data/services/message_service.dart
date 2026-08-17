@@ -69,12 +69,32 @@ class MessageService {
     return '${DateTime.now().millisecondsSinceEpoch.toRadixString(16)}-$randomPart';
   }
 
+  /// Whether the callable is genuinely ABSENT — as opposed to present and
+  /// refusing.
+  ///
+  /// `not-found` used to count here and must never count again. The server
+  /// itself throws it, routinely, as a legitimate refusal:
+  /// `functions/integrity/guards.js:157` (`activeProfile` — "Your profile
+  /// does not exist."), `functions/messaging/direct_integrity.js:83`
+  /// (`conversationParticipants` — "The direct conversation does not
+  /// exist.") and `functions/messaging/direct_integrity.js:223`
+  /// (`validateMessage`). A user whose `users/{uid}` document was missing
+  /// therefore made every callable answer `not-found`, which the client
+  /// misread as "not deployed" and bypassed — silently — `assertNotBlocked`,
+  /// `assertNotRestricted` and the rate limits, across send, edit, delete,
+  /// react, mark-read and typing.
+  ///
+  /// The ambiguity is irreducible at the wire: an undeployed callable is
+  /// also HTTP 404 -> NOT_FOUND, so `not-found` cannot carry deployment
+  /// meaning in either direction. `unimplemented` (HTTP 501) is thrown by
+  /// no handler in this codebase and stays a safe absence signal. See
+  /// ADR-062.
   bool _isCallableUnavailable(Object error) {
     if (error is FirebaseException && error.code == 'no-app') {
       return true;
     }
     return error is FirebaseFunctionsException &&
-        (error.code == 'unimplemented' || error.code == 'not-found');
+        error.code == 'unimplemented';
   }
 
   bool get _preferLegacyBehaviour => _legacyNotificationService != null;
@@ -222,29 +242,45 @@ class MessageService {
       throw ArgumentError('You cannot start a conversation with yourself.');
     }
 
-    if (!_preferLegacyBehaviour) {
-      final functions = _functions;
-      if (functions != null) {
-        try {
-          final callable = functions.httpsCallable('openDirectConversation');
-          final response = await callable.call<Map<Object?, Object?>>({
-            'targetUserId': otherUserId,
-            'requestId': _newRequestId(),
-          });
-          final data = response.data;
-          final conversationId = data['conversationId'];
-          if (conversationId is String && conversationId.isNotEmpty) {
-            return conversationId;
-          }
-          throw StateError('Malformed server response for opening conversation.');
-        } catch (error) {
-          if (!_isCallableUnavailable(error)) {
-            rethrow;
-          }
-        }
+    // `openDirectConversation` is the ONLY production path, and when it
+    // answers — success OR failure — its answer stands. There is
+    // deliberately no `_isCallableUnavailable` escape here: unlike a
+    // message, a conversation root is not something the client is entitled
+    // to author, so "the server said no" can never mean "write it
+    // yourself". See ADR-062.
+    final functions = _preferLegacyBehaviour ? null : _functions;
+
+    if (functions != null) {
+      final callable = functions.httpsCallable('openDirectConversation');
+      final response = await callable.call<Map<Object?, Object?>>({
+        'targetUserId': otherUserId,
+        'requestId': _newRequestId(),
+      });
+      final conversationId = response.data['conversationId'];
+
+      if (conversationId is String && conversationId.isNotEmpty) {
+        return conversationId;
       }
+
+      throw StateError('Malformed server response for opening conversation.');
     }
 
+    // Reached only when there is no Firebase app at all (unit tests,
+    // previews) or under the legacy notification harness.
+    //
+    // This transaction writes a conversation root the client is NOT
+    // entitled to author, and it may only ever run where no server exists.
+    // Against a real backend it is worse than useless: the client cannot
+    // write `directConversationPairs/{pairKey}` — that collection has no
+    // rules match block, on purpose — so the pair guard is missing, and
+    // `validateConversation` (direct_integrity.js:125) then fails this
+    // root with `data-loss`/"The canonical conversation is missing." on
+    // EVERY subsequent server call, permanently. The document is also
+    // non-canonical by key set (12 keys against the server's 18: no
+    // `pairKey`, `schemaVersion`, `readSequences`, `participantEmails`,
+    // `lastMessageId`, `lastMessageSequence`). Legacy roots already in the
+    // wild are healed in place by `migrateDirectIntegrityConversation`,
+    // never forked — which is why nothing here tries to adopt one.
     final conversationId = buildConversationId(currentUser.uid, otherUserId);
     final reference = _conversations.doc(conversationId);
     final now = Timestamp.now();

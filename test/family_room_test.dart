@@ -1,9 +1,12 @@
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/clubs/data/models/family_check_in.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
@@ -346,6 +349,141 @@ void main() {
       expect(find.text('Family avatar'), findsNothing);
       expect(tester.takeException(), isNull);
     });
+  });
+
+  group('Family creation service', () {
+    test('creates the complete canonical space for a free account, persists '
+        'the selected banner and reopens idempotently', () async {
+      final mockAuth = auth();
+      final service = ClubService(
+        firestore: db,
+        auth: mockAuth,
+        storage: MockFirebaseStorage(),
+        notificationService: NotificationService(firestore: db, auth: mockAuth),
+      );
+      final banner = XFile.fromData(
+        Uint8List.fromList(<int>[137, 80, 78, 71]),
+        name: 'family-banner.png',
+        mimeType: 'image/png',
+      );
+
+      final created = await service.createFamilyRoom(
+        name: 'Our Family',
+        description: 'Our private home',
+        defaultLanguage: 'Polish',
+        bannerFile: banner,
+      );
+
+      expect(created.id, 'family_me');
+      expect(created.type, ClubType.family);
+      expect(created.privacy, ClubPrivacy.inviteOnly);
+      expect(created.bannerUrl, isNotNull);
+      expect(created.bannerUrl, isNotEmpty);
+      expect(
+        (await db.collection('entitlements').doc('me').get()).exists,
+        isFalse,
+        reason: 'Family Rooms are the free exception to Premium Club gating',
+      );
+
+      final root = await db.collection('clubs').doc('family_me').get();
+      expect(root.data()?['ownerId'], 'me');
+      expect(root.data()?['type'], 'family');
+      expect(root.data()?['privacy'], 'inviteOnly');
+      expect(root.data()?['bannerUrl'], created.bannerUrl);
+      expect(root.data()?['loungeRoomId'], 'club_lounge_family_me');
+
+      final member = await db
+          .collection('clubs')
+          .doc('family_me')
+          .collection('members')
+          .doc('me')
+          .get();
+      expect(member.data()?['role'], 'owner');
+      final projection = await db
+          .collection('users')
+          .doc('me')
+          .collection('clubs')
+          .doc('family_me')
+          .get();
+      expect(projection.data()?['role'], 'owner');
+
+      final channels = await db
+          .collection('clubs')
+          .doc('family_me')
+          .collection('channels')
+          .get();
+      expect(channels.docs, hasLength(3));
+      expect(channels.docs.map((doc) => doc.data()['type']).toSet(), <String>{
+        'chat',
+        'announcement',
+        'voice',
+      });
+      final lounge = await db
+          .collection('rooms')
+          .doc('club_lounge_family_me')
+          .get();
+      expect(lounge.data()?['clubId'], 'family_me');
+      expect(lounge.data()?['visibility'], 'private');
+      expect(lounge.data()?['roomKind'], 'clubLounge');
+
+      final reopened = await service.createFamilyRoom(
+        name: 'A different name must not create another room',
+        description: 'Ignored on reopen',
+      );
+      expect(reopened.id, created.id);
+      expect(reopened.name, 'Our Family');
+      expect((await db.collection('clubs').get()).docs, hasLength(1));
+      expect((await db.collection('rooms').get()).docs, hasLength(1));
+    });
+
+    test(
+      'concurrent create attempts converge on one canonical Family Room',
+      () async {
+        final mockAuth = auth();
+        ClubService service() => ClubService(
+          firestore: db,
+          auth: mockAuth,
+          storage: MockFirebaseStorage(),
+          notificationService: NotificationService(
+            firestore: db,
+            auth: mockAuth,
+          ),
+        );
+
+        final results = await Future.wait([
+          service().createFamilyRoom(
+            name: 'Our Family',
+            description: 'First device',
+          ),
+          service().createFamilyRoom(
+            name: 'Our Family',
+            description: 'Second device',
+          ),
+        ]);
+
+        expect(results.map((club) => club.id).toSet(), {'family_me'});
+        expect((await db.collection('clubs').get()).docs, hasLength(1));
+        expect((await db.collection('rooms').get()).docs, hasLength(1));
+        final root = await db.collection('clubs').doc('family_me').get();
+        for (final channelId in [
+          root.data()?['defaultChatChannelId'],
+          root.data()?['announcementChannelId'],
+          root.data()?['defaultVoiceChannelId'],
+        ]) {
+          expect(channelId, isA<String>());
+          expect(
+            (await db
+                    .collection('clubs')
+                    .doc('family_me')
+                    .collection('channels')
+                    .doc(channelId as String)
+                    .get())
+                .exists,
+            isTrue,
+          );
+        }
+      },
+    );
   });
 
   group('Quick check-ins', () {

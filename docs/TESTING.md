@@ -11,11 +11,11 @@ figure is a suite run, not an estimate; file counts are `find`.
 
 | Suite | Command | Count |
 |---|---|---|
-| Firestore rules | `npm --prefix firestore-tests test` | **318** checks |
+| Firestore rules | `npm --prefix firestore-tests test` | **351** checks |
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **46** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
-| Cloud Functions | `npm --prefix functions test` | **510** tests across **82** suites (45 `*.test.js` files) |
-| Flutter | `flutter test` | **521** tests across **55** files |
+| Cloud Functions | `npm --prefix functions test` | **564** tests across **93** suites (47 `*.test.js` files) |
+| Flutter | `flutter test` | **573** tests across **59** files |
 
 > **Correction, 2026-08-16.** These numbers were wrong in several docs for
 > most of a week — TESTING.md claimed 268 rules checks and 43 Storage
@@ -33,11 +33,48 @@ figure is a suite run, not an estimate; file counts are `find`.
 > Storage, family-media and Cloud Functions are unchanged — no
 > `storage.rules` or `functions/` change landed in either round.
 
+> **Movement, 2026-08-17 (ADR-062, the server-only conversation binding).**
+> Every row above was re-measured by running all five suites, and three
+> were stale by more than this change accounts for — the same drift the
+> 2026-08-16 correction was written to stop.
+>
+> - Rules 318 → **347**. Only **3** checks are from this change (the
+>   server-only `conversations` create, the `resource == null` get branch
+>   for old installs, and `directConversationPairs` being default-denied).
+>   The table had missed 318 → 344 from the two commits before it.
+> - Cloud Functions 510/82 → **564/93**. Only **1** test is from this
+>   change (pinning the pre-migration fork in
+>   `functions/test/direct_integrity.test.js`); the baseline was measured
+>   at **563/93** by stashing that one file and re-running, so 510/82 had
+>   been stale for two commits. File count 45 → 47 by `find`.
+> - Flutter 521/55 → **565/58**. **19** tests and 1 file are from this
+>   change: the new `test/direct_conversation_open_test.dart` (18 cases)
+>   plus a net +1 in `test/direct_message_send_test.dart`, where one case
+>   asserting the defective `not-found` fallback was replaced by two
+>   asserting the refusal. The measured baseline was 546/57 — the
+>   `8f7aa03` round, recorded in Roadmap but never carried into this
+>   table.
+> - Storage **46** and family-media **11** re-measured and genuinely
+>   unchanged.
+>
+> If you change a suite, run all five and correct this table in the same
+> commit. Two consecutive rounds have now been reconstructed after the
+> fact instead.
+
+> **Movement, 2026-08-17 (Family Room creation hardening).** All five
+> suites were run again after the Family flow changed. Rules **347 → 351**:
+> the old root-only positive case was replaced by the real seven-write
+> production batch, a missing-canonical-id probe, and negative root-only,
+> incomplete-graph and malformed-channel cases. Flutter **565/58 → 573/59**:
+> five lifecycle cases plus banner, concurrent-create and Family success
+> screen regressions. Cloud Functions **564/93**, Storage **46** and combined
+> family-media **11** were re-measured and remain unchanged.
+
 ## Firestore rules — the most mature coverage in the project
 
 `firestore-tests/` — a standalone Node project running regression and
 attack-scenario checks against `firestore.rules` via
-`@firebase/rules-unit-testing` and the Firestore emulator — **318 checks
+`@firebase/rules-unit-testing` and the Firestore emulator — **351 checks
 passing** — plus `storage.test.js`, the same treatment for `storage.rules`
 against the Storage emulator (46 checks: path ownership, size caps,
 content-type allowlists, read gating, default deny), plus 11 combined
@@ -81,7 +118,7 @@ of the 40 checks exercised that path
 Any rule touching a collection that's ever queried via `collectionGroup()`
 needs a real `collectionGroup()` check, not just a direct-path one.
 
-The current 318-case rules suite also pins the Premium boundary introduced in
+The current 351-case rules suite also pins the Premium boundary introduced in
 ADR-053: a normal full profile bootstrap and a partial presence-first create
 are allowed, forged Creator/Premium/staff first documents are denied, and an
 active subscription with a disabled Creator or Clubs feature flag cannot use
@@ -164,7 +201,7 @@ wrong reason.
 
 ## Cloud Functions — real coverage, unevenly distributed
 
-`functions/test/` — **510 tests across 82 suites in 45 files**, run with
+`functions/test/` — **564 tests across 93 suites in 47 files**, run with
 `node --test test/*.test.js` against the Auth + Firestore emulators, and
 gating the Hosting release in CI like the rules suites do. A separate
 `npm --prefix functions run test:smoke` drives three trigger smoke scripts
@@ -190,7 +227,7 @@ absolute count over a collection your file does not exclusively own.
 
 ## Dart tests — real, but narrow
 
-`test/` — **521 tests across 55 files**, green in local verification,
+`test/` — **573 tests across 59 files**, green in local verification,
 grown mostly
 out of real bugs rather than an even coverage discipline. The
 pattern throughout: fake the Firebase backends
@@ -229,7 +266,9 @@ pattern throughout: fake the Firebase backends
   **`desktop_shell_test.dart`** and **`family_room_test.dart`** — capability
   flags, complimentary-VIP non-access, locked More entries on mobile/desktop,
   navigation/direct-destination guards, save-time Creator expiry, Premium Club
-  creation and the free Family Room exception.
+  creation and the free Family Room exception. `family_room_lifecycle_test.dart`
+  additionally drives the complete create/reopen/invite accept/decline flow and
+  proves that a second create does not fork the deterministic Family graph.
 - **`public_profile_privacy_test.dart`** — self profile reads stay on private
   `users`, foreign identity reads use `publicProfiles`, friend presence joins
   only `socialPresence`, public search goes through its injectable callable and

@@ -110,8 +110,16 @@ class _FriendsScreenState extends State<FriendsScreen> {
       );
     } catch (error) {
       if (!mounted) return;
+      // `openOrCreateConversation` no longer swallows a refusal from
+      // `openDirectConversation` (ADR-062), so a blocked pair, a
+      // communication mute or a rate limit arrives here as a real
+      // FirebaseFunctionsException. Raw exception text must never be what
+      // the user reads.
       _showMessage(
-        error.toString().replaceFirst('Bad state: ', ''),
+        intentionalOrFriendly(
+          error,
+          fallback: 'Could not open this conversation.',
+        ),
         isError: true,
       );
     }

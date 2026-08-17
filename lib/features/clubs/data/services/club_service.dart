@@ -69,9 +69,12 @@ class ClubService {
     required String description,
     String defaultLanguage = 'English',
     XFile? avatarFile,
+    XFile? bannerFile,
   }) async {
-    final existing = await _clubs.doc(Club.familyRoomIdFor(_user.uid)).get();
-    if (existing.exists) return Club.fromFirestore(existing);
+    final user = _user;
+    final familyRef = _clubs.doc(Club.familyRoomIdFor(user.uid));
+    final existing = await _readOwnedFamilyRoom(familyRef, user.uid);
+    if (existing != null) return existing;
 
     return createClub(
       name: name,
@@ -81,9 +84,23 @@ class ClubService {
       privacy: ClubPrivacy.inviteOnly,
       defaultLanguage: defaultLanguage,
       avatarFile: avatarFile,
+      bannerFile: bannerFile,
       type: ClubType.family,
-      documentId: Club.familyRoomIdFor(_user.uid),
+      documentId: familyRef.id,
     );
+  }
+
+  Future<Club?> _readOwnedFamilyRoom(
+    DocumentReference<Map<String, dynamic>> reference,
+    String ownerId,
+  ) async {
+    final snapshot = await reference.get();
+    if (!snapshot.exists) return null;
+    final club = Club.fromFirestore(snapshot);
+    if (club.ownerId != ownerId || club.type != ClubType.family) {
+      throw StateError('The canonical Family Room id contains invalid data.');
+    }
+    return club;
   }
 
   Future<Club> createClub({
@@ -297,7 +314,27 @@ class ClubService {
       await batch.commit();
       final snapshot = await clubRef.get();
       return Club.fromFirestore(snapshot);
-    } catch (_) {
+    } catch (error, stackTrace) {
+      // Two devices can both observe the deterministic Family Room id as
+      // missing, then race the same atomic create. One batch wins; the other
+      // is rejected because its root write is now an update. Recover the
+      // winner instead of surfacing a false error. Do this BEFORE upload
+      // cleanup: deterministic avatar/banner paths may already be referenced
+      // by the committed canonical room and must never be deleted by the
+      // losing retry.
+      if (type == ClubType.family &&
+          clubRef.id == Club.familyRoomIdFor(user.uid)) {
+        try {
+          final recovered = await _readOwnedFamilyRoom(clubRef, user.uid);
+          if (recovered != null) {
+            cleanupUploadsOnFailure = false;
+            return recovered;
+          }
+        } catch (_) {
+          // Preserve the original creation failure when recovery is
+          // inconclusive or the canonical document is malformed.
+        }
+      }
       if (cleanupUploadsOnFailure) {
         for (final reference in uploadedReferences) {
           try {
@@ -307,7 +344,7 @@ class ClubService {
           }
         }
       }
-      rethrow;
+      Error.throwWithStackTrace(error, stackTrace);
     }
   }
 

@@ -3388,6 +3388,148 @@ async function main() {
     },
   );
 
+  // ── Conversation roots are server-only (ADR-062) ─────────────────
+  //
+  // `allow create: if false`. A conversation root asserts three things a
+  // client does not own: the OTHER participant's server-derived display
+  // name and photo (canonicalPublicProfile, ADR-054), BOTH participants'
+  // unreadCounts/readSequences cursors, and — via
+  // directConversationPairs/{pairKey} — which document id is THE thread
+  // for that pair, forever. `openDirectConversation` writes the root and
+  // its pair guard in one transaction; they are two halves of one atomic
+  // binding.
+
+  await check(
+    "SECURITY: even a verified, active, unblocked participant cannot " +
+      "create a conversation root (server-only, ADR-062)",
+    async () => {
+      const db = host.firestore();
+      // Nothing about this caller is wrong: verified, not blocked with
+      // invitee-uid, and named in participantIds. It is denied because
+      // NO client may author a conversation root, not because of who
+      // this one is.
+      await assertFails(
+        setDoc(doc(db, "conversations/host-uid_invitee-uid-fresh"), {
+          participantIds: ["host-uid", "invitee-uid"],
+          createdAt: new Date(),
+        }),
+      );
+      // Nor by writing the full canonical shape the server would write —
+      // the shape was never what made it legitimate.
+      await assertFails(
+        setDoc(doc(db, "conversations/host-uid_invitee-uid-canonical"), {
+          schemaVersion: 2,
+          pairKey: "host-uid_invitee-uid",
+          participantIds: ["host-uid", "invitee-uid"],
+          participantNames: { "host-uid": "Host", "invitee-uid": "Invitee" },
+          participantEmails: { "host-uid": "", "invitee-uid": "" },
+          participantPhotoUrls: { "host-uid": "", "invitee-uid": "" },
+          unreadCounts: { "host-uid": 0, "invitee-uid": 0 },
+          readSequences: { "host-uid": 0, "invitee-uid": 0 },
+          typing: {},
+          archivedBy: [],
+          mutedBy: [],
+          lastMessage: "",
+          lastMessageId: null,
+          lastMessageSequence: 0,
+          lastMessageType: "text",
+          lastMessageSenderId: "",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "old installs fail at CREATE, not at GET — the resource == null get " +
+      "branch still succeeds",
+    async () => {
+      // Builds already in the wild still run transaction.get() on the
+      // deterministic id before attempting the create. Denying that read
+      // would be a rules EVALUATION error, which surfaced on web as the
+      // boxed "Dart exception thrown from converted Future" text. Letting
+      // the get through and failing the create gives those installs a
+      // clean, mappable permission-denied instead.
+      const db = host.firestore();
+      await assertSucceeds(
+        getDoc(doc(db, "conversations/host-uid_someone-else-uid")),
+      );
+      await assertFails(
+        setDoc(doc(db, "conversations/host-uid_someone-else-uid"), {
+          participantIds: ["host-uid", "someone-else-uid"],
+          createdAt: new Date(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: directConversationPairs is default-denied to every client " +
+      "— read AND write, participant or not",
+    async () => {
+      // The absence of a match block for this collection is a DECISION,
+      // not an oversight (ADR-062). The pair guard is what binds a pair
+      // to one conversation id forever; a client able to write it could
+      // pre-bind a victim to a root whose participantNames[victim] the
+      // attacker authored.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), "directConversationPairs/host-uid_invitee-uid"),
+          {
+            schemaVersion: 1,
+            pairKey: "host-uid_invitee-uid",
+            conversationId: "dm_seeded",
+            participantIds: ["host-uid", "invitee-uid"],
+            createdAt: new Date(),
+          },
+        );
+      });
+
+      const pairPath = "directConversationPairs/host-uid_invitee-uid";
+      // A participant of the pair.
+      await assertFails(getDoc(doc(host.firestore(), pairPath)));
+      await assertFails(
+        setDoc(doc(host.firestore(), pairPath), {
+          schemaVersion: 1,
+          pairKey: "host-uid_invitee-uid",
+          conversationId: "dm_hijacked",
+          participantIds: ["host-uid", "invitee-uid"],
+          createdAt: new Date(),
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(host.firestore(), pairPath), {
+          conversationId: "dm_hijacked",
+        }),
+      );
+      await assertFails(deleteDoc(doc(host.firestore(), pairPath)));
+
+      // A non-participant.
+      await assertFails(getDoc(doc(attacker.firestore(), pairPath)));
+      await assertFails(
+        setDoc(
+          doc(attacker.firestore(), "directConversationPairs/attacker-forged"),
+          { conversationId: "dm_forged" },
+        ),
+      );
+
+      // Unauthenticated.
+      const anonymous = testEnv.unauthenticatedContext();
+      await assertFails(getDoc(doc(anonymous.firestore(), pairPath)));
+      await assertFails(
+        setDoc(doc(anonymous.firestore(), pairPath), {
+          conversationId: "dm_forged",
+        }),
+      );
+
+      // And the collection cannot be enumerated to learn who talks to whom.
+      await assertFails(
+        getDocs(collection(host.firestore(), "directConversationPairs")),
+      );
+    },
+  );
+
   // All notification types are now server-derived. A client writing one is,
   // by definition, a forgery; only safe owner acknowledgement remains.
   for (const forged of [
@@ -4906,6 +5048,17 @@ async function main() {
   const outsider = testEnv.authenticatedContext("outsider-uid", {
     email_verified: true,
   });
+  const familyBatchOwner = testEnv.authenticatedContext("family-batch-uid", {
+    email_verified: true,
+  });
+  const familyIncompleteOwner = testEnv.authenticatedContext(
+    "family-incomplete-uid",
+    { email_verified: true },
+  );
+  const familyMalformedOwner = testEnv.authenticatedContext(
+    "family-malformed-uid",
+    { email_verified: true },
+  );
   const FAMILY = "clubs/family_parent-uid";
 
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
@@ -4923,6 +5076,21 @@ async function main() {
       }),
       setDoc(doc(db, "users/outsider-uid"), {
         displayName: "Outsider",
+        banned: false,
+        disabled: false,
+      }),
+      setDoc(doc(db, "users/family-batch-uid"), {
+        displayName: "Batch Parent",
+        banned: false,
+        disabled: false,
+      }),
+      setDoc(doc(db, "users/family-incomplete-uid"), {
+        displayName: "Incomplete Parent",
+        banned: false,
+        disabled: false,
+      }),
+      setDoc(doc(db, "users/family-malformed-uid"), {
+        displayName: "Malformed Parent",
         banned: false,
         disabled: false,
       }),
@@ -4953,13 +5121,263 @@ async function main() {
     };
   }
 
+  function familyGraphBatch(db, uid, options = {}) {
+    const clubId = `family_${uid}`;
+    const roomId = `club_lounge_${clubId}`;
+    const ownerName = options.ownerName ?? "Family Organizer";
+    const omitted = new Set(options.omit ?? []);
+    const refs = {
+      club: doc(db, `clubs/${clubId}`),
+      member: doc(db, `clubs/${clubId}/members/${uid}`),
+      projection: doc(db, `users/${uid}/clubs/${clubId}`),
+      general: doc(db, `clubs/${clubId}/channels/general`),
+      announcements: doc(db, `clubs/${clubId}/channels/announcements`),
+      lounge: doc(db, `clubs/${clubId}/channels/lounge`),
+      room: doc(db, `rooms/${roomId}`),
+    };
+    const batch = writeBatch(db);
+
+    batch.set(refs.club, {
+      name: "Batch Family",
+      description: "Our private home",
+      ownerId: uid,
+      ownerName,
+      avatarUrl: null,
+      bannerUrl: null,
+      privacy: "inviteOnly",
+      type: "family",
+      status: "active",
+      defaultLanguage: "English",
+      memberCount: 1,
+      onlineCount: 1,
+      defaultChatChannelId: "general",
+      defaultVoiceChannelId: "lounge",
+      loungeRoomId: roomId,
+      announcementChannelId: "announcements",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    if (!omitted.has("member")) {
+      batch.set(refs.member, {
+        userId: uid,
+        displayName: ownerName,
+        photoUrl: null,
+        role: "owner",
+        isOnline: true,
+        joinedAt: serverTimestamp(),
+        invitedBy: null,
+      });
+    }
+    if (!omitted.has("projection")) {
+      batch.set(refs.projection, {
+        clubId,
+        name: "Batch Family",
+        avatarUrl: null,
+        role: "owner",
+        joinedAt: serverTimestamp(),
+      });
+    }
+    if (!omitted.has("general")) {
+      batch.set(refs.general, {
+        name: "general",
+        type: options.chatType ?? "chat",
+        position: 0,
+        isPrivate: false,
+        createdBy: options.chatCreatedBy ?? uid,
+        createdAt: serverTimestamp(),
+      });
+    }
+    if (!omitted.has("announcements")) {
+      batch.set(refs.announcements, {
+        name: "announcements",
+        type: options.announcementType ?? "announcement",
+        position: 1,
+        isPrivate: false,
+        createdBy: options.announcementCreatedBy ?? uid,
+        createdAt: serverTimestamp(),
+      });
+    }
+    if (!omitted.has("lounge")) {
+      batch.set(refs.lounge, {
+        name: "Family Lounge",
+        type: options.voiceType ?? "voice",
+        position: 2,
+        isPrivate: false,
+        createdBy: options.voiceCreatedBy ?? uid,
+        roomId: options.voiceRoomId ?? roomId,
+        createdAt: serverTimestamp(),
+      });
+    }
+    if (!omitted.has("room")) {
+      batch.set(refs.room, {
+        hostId: uid,
+        hostName: ownerName,
+        hostPhotoUrl: null,
+        name: "Batch Family Lounge",
+        description: "Our private home",
+        category: "club",
+        visibility: "private",
+        language: "English",
+        maxParticipants: null,
+        participantCount: 0,
+        memberCount: 1,
+        isLive: false,
+        roomType: "community",
+        status: "active",
+        imageUrl: null,
+        approvalRequired: false,
+        slowModeSeconds: 0,
+        autoMuteNewUsers: false,
+        membersCanStartVoice: true,
+        experience: "community",
+        clubId,
+        roomKind: "clubLounge",
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    return { batch, clubId, roomId, refs };
+  }
+
   await check(
-    "FAMILY: a verified user with NO premium can create their own family room",
+    "FAMILY: the client can probe its missing canonical id before creation",
     async () => {
-      // Ordinary clubs need premium (ADR-024); a family space does not.
-      await assertSucceeds(
+      // ClubService.createFamilyRoom() performs this read first so a retry or
+      // reopen returns the existing room without uploading media again. A
+      // missing resource has no resource.data; this exact request used to
+      // fail with a rules null-value evaluation error.
+      const snapshot = await assertSucceeds(
+        getDoc(
+          doc(
+            familyBatchOwner.firestore(),
+            "clubs/family_family-batch-uid",
+          ),
+        ),
+      );
+      assert.equal(snapshot.exists(), false);
+      await assertFails(
+        getDoc(
+          doc(
+            outsider.firestore(),
+            "clubs/family_someone-else-who-does-not-exist",
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "FAMILY: the exact production batch creates root, ownership, channels and lounge",
+    async () => {
+      const db = familyBatchOwner.firestore();
+      const uid = "family-batch-uid";
+      const { batch, clubId, refs } = familyGraphBatch(db, uid, {
+        ownerName: "Batch Parent",
+      });
+
+      await assertSucceeds(batch.commit());
+
+      for (const ref of Object.values(refs)) {
+        const snapshot = await assertSucceeds(getDoc(ref));
+        assert.equal(snapshot.exists(), true, `${ref.path} should exist`);
+      }
+
+      // Reopening is the same canonical read — no second write or Premium
+      // entitlement is needed.
+      const reopened = await assertSucceeds(getDoc(refs.club));
+      assert.equal(reopened.id, clubId);
+      assert.equal(reopened.data().type, "family");
+
+      // This is the losing half of a two-device race. Its root has become an
+      // UPDATE, so the complete atomic batch is rejected and the client must
+      // recover the canonical winner through the read above.
+      const replay = writeBatch(db);
+      replay.set(refs.club, {
+        ...reopened.data(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      await assertFails(replay.commit());
+      assert.equal((await assertSucceeds(getDoc(refs.club))).id, clubId);
+
+      let entitlementExists = true;
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        entitlementExists = (
+          await getDoc(doc(ctx.firestore(), `entitlements/${uid}`))
+        ).exists();
+      });
+      assert.equal(entitlementExists, false);
+    },
+  );
+
+  await check(
+    "FAMILY SECURITY: root-only creation cannot reserve the one canonical id",
+    async () => {
+      // Family remains free, but only through the complete production batch.
+      // A root on its own would make every retry an UPDATE and permanently
+      // strand this account without its owner membership or navigation graph.
+      await assertFails(
         setDoc(doc(parent.firestore(), FAMILY), familyDoc()),
       );
+    },
+  );
+
+  await check(
+    "FAMILY SECURITY: an incomplete graph is rejected atomically",
+    async () => {
+      const { batch, refs } = familyGraphBatch(
+        familyIncompleteOwner.firestore(),
+        "family-incomplete-uid",
+        {
+          ownerName: "Incomplete Parent",
+          omit: ["projection"],
+        },
+      );
+      await assertFails(batch.commit());
+
+      let canonicalExists = true;
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        canonicalExists = (
+          await getDoc(doc(ctx.firestore(), refs.club.path))
+        ).exists();
+      });
+      assert.equal(canonicalExists, false);
+    },
+  );
+
+  await check(
+    "FAMILY SECURITY: malformed default-channel type, author or room binding is rejected",
+    async () => {
+      for (const malformed of [
+        { chatType: "announcement" },
+        { chatCreatedBy: "outsider-uid" },
+        { announcementType: "chat" },
+        { announcementCreatedBy: "outsider-uid" },
+        { voiceType: "chat" },
+        { voiceCreatedBy: "outsider-uid" },
+        { voiceRoomId: "club_lounge_someone-else" },
+      ]) {
+        const { batch } = familyGraphBatch(
+          familyMalformedOwner.firestore(),
+          "family-malformed-uid",
+          {
+            ownerName: "Malformed Parent",
+            ...malformed,
+          },
+        );
+        await assertFails(batch.commit());
+      }
+
+      let canonicalExists = true;
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        canonicalExists = (
+          await getDoc(
+            doc(ctx.firestore(), "clubs/family_family-malformed-uid"),
+          )
+        ).exists();
+      });
+      assert.equal(canonicalExists, false);
     },
   );
 
@@ -5031,6 +5449,11 @@ async function main() {
 
   await check("FAMILY: the owner is a member and can read the space", async () => {
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), FAMILY), {
+        ...familyDoc(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
       await setDoc(doc(ctx.firestore(), `${FAMILY}/members/parent-uid`), {
         userId: "parent-uid",
         displayName: "Parent",

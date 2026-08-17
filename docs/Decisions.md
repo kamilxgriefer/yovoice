@@ -62,6 +62,7 @@ given a false-precision date.
 | [058](#adr-058-one-polite-live-region-per-screen-and-errors-go-out-on-the-assertive-channel) | One polite live region per screen; errors go out on the assertive channel | Accepted | 2026-08-17 |
 | [059](#adr-059-a-ui-change-is-reviewed-before-it-is-deployed-on-the-same-terms-as-a-rules-change) | A UI change is reviewed before it is deployed, on the same terms as a rules change | Accepted | 2026-08-17 |
 | [060](#adr-060-an-explanatory-comment-is-a-claim-measure-it-or-delete-it) | An explanatory comment is a claim — measure it or delete it | Accepted | 2026-08-17 |
+| [061](#adr-061-a-callable-that-answers-is-the-whole-write-and-its-client-fallback-must-write-the-same-document) | A callable that answers is the whole write, and its client fallback must write the same document | Accepted | 2026-08-17 |
 
 > **The index is incomplete and has been for a while**: rows for ADR-020
 > through ADR-052 were never added, though the records themselves are all
@@ -2724,6 +2725,15 @@ The id is deterministic: `family_{uid}`. `firestore.rules` refuses every
 other id for a family-type create, which is what makes one-per-account
 enforceable server-side.
 
+Creation is one atomic seven-document graph, not permission to reserve the
+root alone: the Family root, owner membership, owner's user projection,
+default chat, announcements, voice channel and private Family Lounge must all
+exist after the same batch. Rules bind the channel types and creators and bind
+the voice channel to the lounge room. This prevents a modified or interrupted
+client from creating only `clubs/family_{uid}` and permanently self-denying
+the one deterministic id. The client may read its own missing canonical id so
+reopen and retry can distinguish “not created” from an existing room.
+
 Family creation is exempt from ADR-024's Premium gate; ordinary Club
 creation is not, and its rule is unchanged. `ownerId` and `type` are
 immutable for every club.
@@ -2762,10 +2772,14 @@ existing space and expose its metadata to every signed-in account.
 - Family Moment audio uses a room-scoped Storage path
   `family_moments/{clubId}/{uid}/…` gated on the same membership document
   via `firestore.exists()` from storage.rules.
+- The Storage boundary is preparatory only: production Family Moment
+  recording/upload is not shipped and must not be advertised until its
+  complete client and lifecycle exist.
 - **No end-to-end encryption is claimed or implemented.** Family content
   is protected by Firestore rules and Storage rules, nothing stronger.
-- 16 new emulator cases in `firestore-tests/rules.test.js` cover the
-  boundary; the 173 pre-existing cases still pass unchanged.
+- Emulator regressions cover the private boundary and the real seven-write
+  creation batch. Root-only, incomplete and malformed channel graphs are
+  denied, while the full free-account batch, reopen and invite lifecycle pass.
 
 ## ADR-045: One authoritative identity-badge system — owner-guarded derivation, a batched client repository, and a single family of badge widgets
 
@@ -3923,3 +3937,252 @@ to do.
   entries follow that shape deliberately.
 - A claim that cannot be cheaply measured should be labelled UNVERIFIED
   rather than dropped. The goal is calibration, not silence.
+
+## ADR-061: A callable that answers is the whole write, and its client fallback must write the same document
+
+**Status**: Accepted
+**Date**: 2026-08-17
+
+### Context
+
+`MessageService.sendTextMessage` called the `sendDirectMessage` callable
+and then ran its own client batch write **unconditionally**. The callable
+is not a notification hook — it performs the entire send inside one server
+transaction: the canonical message document, the conversation summary, the
+unread counts and the typing state. The client batch that followed it
+wrote a **second** message document under a Firestore auto-id and
+incremented `unreadCounts.<recipientId>` a second time. Every direct
+message in production was duplicated, and both copies render, because
+`watchMessages` orders by `sentAt` with no filter. The early return the
+code did have sat on the *fallback* path, where returning early was
+harmless.
+
+Two structural facts made this survivable for as long as it lasted. The
+suite never executed the branch: every Flutter test injected a
+`NotificationService`, which sets `_preferLegacyBehaviour` and
+short-circuits `_tryCallable` to `false`. And the duplicate's most visible
+symptom was suppressed by the same flag — the legacy notification twin
+could never fire on the callable-success path, since `called == true`
+implies no legacy notification service.
+
+Re-reading the fallback surfaced a second, independent defect. Its
+document was 14 keys; `validateMessage` in
+`functions/messaging/direct_integrity.js` compares an **exact** 16-key set
+and rejects anything else with `data-loss`. `schemaVersion` and `sequence`
+were missing, and the conversation update omitted `lastMessageId` and
+`lastMessageSequence`. This is the same latent shape as
+`_publishRecordedMomentLegacy` (backlog item 0j).
+
+### Decision
+
+**1. When the callable answers, it is the whole write.** The client write
+is the fallback for when the callable does *not* answer — never a
+follow-up to when it does. The control flow returns early on success
+rather than gating a later block on a flag, so the two paths are visibly
+exclusive at the point where the branch is taken.
+
+**2. A fallback must produce a document the server would have produced.**
+The client path is now a `runTransaction`, not a `WriteBatch`,
+specifically so it can read `lastMessageSequence` off the conversation and
+derive `sequence` from it. It writes the full canonical 16-key shape,
+advances `lastMessageId` and `lastMessageSequence`, and clamps
+`replyToContent` to the server's 240 characters rather than the client
+preview's 2000.
+
+### Reasoning
+
+A batch cannot read, and `sequence` has to come from the conversation
+document — so "batch or transaction" was never a style question here; the
+batch was the reason the shape was wrong. Choosing the cheaper primitive
+had quietly decided the schema.
+
+The shape parity matters more than the duplicate does. A duplicate is a
+visible defect someone will report. A fallback-written message looks
+completely normal in the app and is **permanently unmutable**: edit,
+delete, react and reply-to all fail `data-loss` against it, forever, with
+no client-side signal at write time that anything is wrong. An exact-key
+validator makes every writer of that collection a schema author, so a
+second writer that is "close enough" is a data-loss generator, not a
+degraded mode.
+
+On the coverage hole: it was as much the bug as the code was. Injecting a
+`NotificationService` to get a test double also flipped the production
+branch under test, so the suite grew to 521 tests while one side of the
+send fork stayed unexecuted. The new tests inject through `functions:`
+instead, with a double that performs the server's writes into the fake
+Firestore — which is what makes "exactly one message document" a real
+assertion rather than a call count.
+
+### Consequences
+
+- **The callable-answered path and the fallback path are now separately
+  testable, and both are tested.** `test/direct_message_send_test.dart`
+  asserts at Firestore level on each. Against the pre-fix service the
+  suite fails 10 cases; the probe reading was `messages=2
+  unread[recipient]=2` where 1 and 1 were expected.
+- **Any future callable added to `MessageService` inherits this shape.**
+  If a callable performs the write, the client returns; if a client
+  fallback exists for it, that fallback owes the same document the server
+  writes, key for key.
+- **A test double that flips a production branch is a coverage hole, not a
+  convenience.** Prefer injecting at the seam the production path actually
+  uses. Worth checking wherever `_preferLegacyBehaviour` still gates
+  behavior.
+- The fallback is more expensive than it was — a transaction reads the
+  conversation before writing, where the batch read nothing. It runs only
+  when the callable is unavailable, so the cost lands on the degraded path
+  by design.
+- This does not repair the duplicates already in production. They are
+  permanent and unmutable; scope, identification and any cleanup are
+  tracked in [Bugs.md](Bugs.md#data-integrity).
+
+---
+
+## ADR-062: The client never creates a direct conversation — canonical binding is server-only, and a legacy thread is adopted in place, not forked
+
+**Status**: Accepted
+**Date**: 2026-08-17
+
+### Context
+
+[ADR-061](#adr-061-a-callable-that-answers-is-the-whole-write-and-its-client-fallback-must-write-the-same-document)
+established that a callable which answers has performed the whole write.
+`openOrCreateConversation` had the same fork and had it wrong in a
+different, worse way: it called `openDirectConversation`, and on **any**
+error `_isCallableUnavailable` recognized, it silently fell through to a
+client transaction that created a conversation root itself.
+
+`_isCallableUnavailable` counted `not-found` as "the callable is not
+deployed". The server throws `not-found` itself, routinely, as a
+legitimate refusal — `functions/integrity/guards.js:157` (`activeProfile`,
+"Your profile does not exist."), `functions/messaging/direct_integrity.js:83`
+(`conversationParticipants`, "The direct conversation does not exist.")
+and `functions/messaging/direct_integrity.js:223` (`validateMessage`). A
+user whose `users/{uid}` document was missing therefore got `not-found`
+from **every** messaging callable, and the client read each one as an
+absent deployment. That silently bypassed `assertNotBlocked`,
+`assertNotRestricted` and the rate limits across send, edit, delete,
+react, mark-read and typing — the entire server-authoritative guard set,
+disabled by a missing profile document. The 32 accounts with no public
+profile in [Roadmap 0a](Roadmap.md#0a-run-the-public-profile-backfill-32-accounts-currently-invisible)
+are the population most likely to have been in exactly that state.
+
+The conversation root it then wrote is not merely non-canonical, it is
+unrepairable from the client. `validateConversation`
+(`functions/messaging/direct_integrity.js:125-146`) demands an exact
+18-key set; the client wrote 12, missing `pairKey`, `schemaVersion`,
+`readSequences`, `participantEmails`, `lastMessageId` and
+`lastMessageSequence`. The decisive omission is not a field at all:
+`directConversationPairs/{pairKey}`, the guard binding a pair to one
+conversation id, which no client can write because that collection has no
+rules match block. A root without its guard fails every subsequent server
+call with `data-loss`, "The canonical conversation is missing.", forever.
+
+### Decision
+
+The client never creates a direct conversation, at either layer.
+
+1. `_isCallableUnavailable` recognizes only `unimplemented` (and the
+   `FirebaseException 'no-app'` case, which is a genuinely appless
+   client). `not-found` is a refusal and propagates.
+2. `openOrCreateConversation` keeps `openDirectConversation` as its only
+   production path, with **no** `_isCallableUnavailable` check at all.
+   When the callable answers — success or failure — its answer stands. The
+   legacy transaction is reachable only when there is no Firebase app
+   (unit tests, previews) or under the legacy `notificationService:`
+   harness.
+3. `firestore.rules` makes `conversations` create `if false`, so the
+   invariant also holds for installs that will never update.
+4. `directConversationPairs` keeps **no** match block.
+5. Legacy threads are healed by the migration callable that already
+   exists, `migrateDirectIntegrityConversation` — adopted in place at
+   their legacy id, never forked. No adoption logic is added to the hot
+   path.
+
+### Reasoning
+
+**The asymmetry between a message and a conversation root is the whole
+decision, and it is what makes this look like a contradiction of ADR-061
+when it is not.** ADR-061 was right that `_sendTextMessageDirectly` should
+write the exact 16-key canonical message shape. A canonical MESSAGE
+asserts only what the client legitimately owns: its own `senderId` and its
+own content. A client that writes one is stating true things about itself.
+
+A conversation ROOT asserts three things the client does not own and
+cannot be trusted to state:
+
+- **The other participant's display name and photo.** The server derives
+  these from the target's public profile via `canonicalPublicProfile`
+  ([ADR-054](#adr-054-private-account-records-are-split-from-exact-server-owned-public-profiles)).
+  A client-authored root puts up to 80 characters of *attacker-chosen*
+  text into `participantNames[victim]`, rendered in the victim's own chat
+  list — reopening precisely the boundary ADR-054 closed.
+- **Both participants' `unreadCounts` and `readSequences` cursors**,
+  including the other party's.
+- **Which document id is THE thread for that pair, forever**, through
+  `directConversationPairs/{pairKey}`.
+
+So the shape was never what made the client's message write legitimate;
+ownership was. Anyone reading only ADR-061 will be tempted to "fix" this
+path by making the fallback write the canonical 18 keys. That cannot work
+and is not the point: the missing piece is the pair guard, which is
+default-denied to every client by design, and the reason it is denied is
+that the root asserts facts about someone else.
+
+**The `not-found` ambiguity is irreducible at the wire.** A genuinely
+undeployed callable returns HTTP 404 → `NOT_FOUND`, and so does a deployed
+handler refusing a missing profile. No client-side inspection separates
+them. Given a status code that cannot carry deployment meaning, the only
+safe reading is the one that fails closed. `unimplemented` (HTTP 501) is
+thrown by no handler in this codebase, so it remains an unambiguous
+absence signal.
+
+**In-place adoption over forking.** Before migration, a legacy root at
+`uidA_uidB` with no pair guard is not adopted by `openDirectConversation`
+— it derives `dm_<hash>`, binds the pair to that, and leaves the legacy
+thread and its whole history stranded. Adding adoption to the hot path
+would put a second, rarely-exercised branch inside the transaction that
+every chat open runs. `migrateDirectIntegrityConversation` already does
+this correctly and idempotently, at the legacy id, and it is the right
+place for it.
+
+**Keeping the `resource == null` get branch.** Installs already in the
+wild still run `transaction.get` on `uidA_uidB` before attempting a
+create. Denying that read would be a rules *evaluation* error, which is
+what surfaced on web as the boxed "Dart exception thrown from converted
+Future" text. Letting the get succeed and the create fail hands those
+installs a clean, mappable `permission-denied` instead.
+
+### Consequences
+
+- **`directConversationPairs` having no match block is now a recorded
+  decision, not an oversight.** Any future reader who "notices the gap"
+  and adds a participant-scoped rule reopens the impersonation vector
+  described above. `firestore-tests/rules.test.js` now asserts the
+  collection is denied read *and* write for a participant, a
+  non-participant and an unauthenticated caller, and that it cannot be
+  enumerated.
+- **A missing `users/{uid}` document no longer disables the messaging
+  guard set.** This is the mechanism that made the defect exploitable and
+  it is worth naming twice: `not-found` was read as "not deployed", and
+  every server-side block, restriction and rate-limit check was skipped
+  for anyone the server could not find. That is now a hard failure.
+- **Refusals reach the user.** `openDirectConversation` errors used to be
+  swallowed into a local write; they now propagate.
+  `friends_screen.dart` and `friend_profile_screen.dart` route them
+  through `intentionalOrFriendly`, matching `messages_screen.dart` and
+  `profile_preview_sheet.dart`, so no raw exception text reaches the UI.
+- **Roots already written by the old fallback are stranded until
+  migrated.** They have no pair guard, so every callable refuses them with
+  `data-loss`. The migration run is
+  [Roadmap 0m](Roadmap.md#0m-run-the-direct-conversation-migration-there-are-stranded-legacy-roots-in-production)
+  and has **not** been run.
+- **A client with no Firebase app still creates a local root**, and that
+  is deliberate — it is what `test/public_profile_privacy_test.dart` and
+  the preview harness depend on. `test/direct_conversation_open_test.dart`
+  pins it as a strict subset of the canonical 18 keys that is *not equal*
+  to them, so the document states in the suite itself that it is
+  non-canonical on purpose and may only exist where no server does.
+- `functions/test/direct_integrity.test.js` pins the pre-migration fork
+  behaviour, so the cost of not running the migration is visible in the
+  suite rather than only in production.

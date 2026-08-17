@@ -157,10 +157,16 @@ async function planPage({ db, users, report, fetchAuthUser }) {
     const user = users.docs[index];
     const source = user.data() ?? {};
     const uid = user.id;
-    const authoritativeSource = authUsers[index] === null ? null : source;
+    const authActive =
+      authUsers[index] !== null && authUsers[index]?.disabled !== true;
+    const authoritativeSource = authActive ? source : null;
     report.scannedUsers += 1;
     if (authUsers[index] === null) report.authOrphans += 1;
-    if (source.banned === true || source.disabled === true) {
+    if (
+      source.banned === true ||
+      source.disabled === true ||
+      authUsers[index]?.disabled === true
+    ) {
       report.inactiveUsers += 1;
     }
     addPlan({

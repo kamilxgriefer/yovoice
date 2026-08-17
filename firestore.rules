@@ -951,49 +951,79 @@ service cloud.firestore {
     }
 
     function familyClubCreateAllowed(clubId) {
-      return request.resource.data.keys().hasOnly([
+      let data = request.resource.data;
+      let ownerMemberPath = /databases/$(database)/documents/clubs/$(clubId)/members/$(request.auth.uid);
+      let ownerProjectionPath = /databases/$(database)/documents/users/$(request.auth.uid)/clubs/$(clubId);
+      let chatChannelPath = /databases/$(database)/documents/clubs/$(clubId)/channels/$(data.defaultChatChannelId);
+      let announcementChannelPath = /databases/$(database)/documents/clubs/$(clubId)/channels/$(data.announcementChannelId);
+      let voiceChannelPath = /databases/$(database)/documents/clubs/$(clubId)/channels/$(data.defaultVoiceChannelId);
+      let loungeRoomPath = /databases/$(database)/documents/rooms/$(data.loungeRoomId);
+      return data.keys().hasOnly([
             'name', 'description', 'ownerId', 'ownerName', 'avatarUrl',
             'bannerUrl', 'privacy', 'type', 'status', 'defaultLanguage',
             'memberCount', 'onlineCount', 'defaultChatChannelId',
             'defaultVoiceChannelId', 'loungeRoomId',
             'announcementChannelId', 'createdAt', 'updatedAt'
           ]) &&
-          request.resource.data.keys().hasAll([
+          data.keys().hasAll([
             'name', 'description', 'ownerId', 'ownerName', 'avatarUrl',
             'bannerUrl', 'privacy', 'type', 'status', 'defaultLanguage',
             'memberCount', 'onlineCount', 'defaultChatChannelId',
             'defaultVoiceChannelId', 'loungeRoomId',
             'announcementChannelId', 'createdAt', 'updatedAt'
           ]) &&
-          request.resource.data.ownerId == request.auth.uid &&
-          request.resource.data.type == 'family' &&
-          request.resource.data.status == 'active' &&
-          request.resource.data.privacy == 'inviteOnly' &&
-          request.resource.data.name is string &&
-          request.resource.data.name.size() >= 3 &&
-          request.resource.data.name.size() <= 40 &&
-          request.resource.data.description is string &&
-          request.resource.data.description.size() <= 220 &&
-          request.resource.data.ownerName is string &&
-          request.resource.data.ownerName.size() > 0 &&
-          request.resource.data.defaultLanguage is string &&
-          request.resource.data.defaultLanguage.size() > 0 &&
-          request.resource.data.defaultLanguage.size() <= 64 &&
-          (request.resource.data.avatarUrl == null ||
-            request.resource.data.avatarUrl is string) &&
-          (request.resource.data.bannerUrl == null ||
-            request.resource.data.bannerUrl is string) &&
-          request.resource.data.memberCount == 1 &&
-          request.resource.data.onlineCount == 1 &&
-          request.resource.data.defaultChatChannelId is string &&
-          request.resource.data.defaultChatChannelId.size() > 0 &&
-          request.resource.data.defaultVoiceChannelId is string &&
-          request.resource.data.defaultVoiceChannelId.size() > 0 &&
-          request.resource.data.announcementChannelId is string &&
-          request.resource.data.announcementChannelId.size() > 0 &&
-          request.resource.data.loungeRoomId == 'club_lounge_' + clubId &&
-          request.resource.data.createdAt == request.time &&
-          request.resource.data.updatedAt == request.time;
+          data.ownerId == request.auth.uid &&
+          data.type == 'family' &&
+          data.status == 'active' &&
+          data.privacy == 'inviteOnly' &&
+          data.name is string &&
+          data.name.size() >= 3 &&
+          data.name.size() <= 40 &&
+          data.description is string &&
+          data.description.size() <= 220 &&
+          data.ownerName is string &&
+          data.ownerName.size() > 0 &&
+          data.defaultLanguage is string &&
+          data.defaultLanguage.size() > 0 &&
+          data.defaultLanguage.size() <= 64 &&
+          (data.avatarUrl == null || data.avatarUrl is string) &&
+          (data.bannerUrl == null || data.bannerUrl is string) &&
+          data.memberCount == 1 &&
+          data.onlineCount == 1 &&
+          data.defaultChatChannelId is string &&
+          data.defaultChatChannelId.size() > 0 &&
+          data.defaultVoiceChannelId is string &&
+          data.defaultVoiceChannelId.size() > 0 &&
+          data.announcementChannelId is string &&
+          data.announcementChannelId.size() > 0 &&
+          data.loungeRoomId == 'club_lounge_' + clubId &&
+          data.createdAt == request.time &&
+          data.updatedAt == request.time &&
+          // A canonical Family root without its ownership and navigation
+          // graph cannot be repaired by the client: every later create sees
+          // an existing deterministic root. Require the entire production
+          // graph in this same atomic batch so a modified or interrupted
+          // client cannot permanently reserve the one allowed id.
+          existsAfter(ownerMemberPath) &&
+          getAfter(ownerMemberPath).data.userId == request.auth.uid &&
+          getAfter(ownerMemberPath).data.role == 'owner' &&
+          existsAfter(ownerProjectionPath) &&
+          getAfter(ownerProjectionPath).data.clubId == clubId &&
+          getAfter(ownerProjectionPath).data.role == 'owner' &&
+          existsAfter(chatChannelPath) &&
+          getAfter(chatChannelPath).data.type == 'chat' &&
+          getAfter(chatChannelPath).data.createdBy == request.auth.uid &&
+          existsAfter(announcementChannelPath) &&
+          getAfter(announcementChannelPath).data.type == 'announcement' &&
+          getAfter(announcementChannelPath).data.createdBy == request.auth.uid &&
+          existsAfter(voiceChannelPath) &&
+          getAfter(voiceChannelPath).data.type == 'voice' &&
+          getAfter(voiceChannelPath).data.createdBy == request.auth.uid &&
+          getAfter(voiceChannelPath).data.roomId == data.loungeRoomId &&
+          existsAfter(loungeRoomPath) &&
+          getAfter(loungeRoomPath).data.clubId == clubId &&
+          getAfter(loungeRoomPath).data.hostId == request.auth.uid &&
+          getAfter(loungeRoomPath).data.roomKind == 'clubLounge';
     }
 
     function clubRole(clubId) {
@@ -1386,14 +1416,18 @@ service cloud.firestore {
     }
 
     match /conversations/{conversationId} {
-      // get is split from list because openOrCreateConversation runs a
-      // transaction.get() on a conversation that may not exist yet (the
-      // first chat between two people). The old single read rule
-      // dereferenced resource.data on that missing doc — a rule
-      // evaluation error, so the get was DENIED and starting any brand
-      // new chat failed (surfacing on web as the boxed "Dart exception
-      // thrown from converted Future" text). For missing docs the get is
-      // allowed only when the deterministic id (uidA_uidB, sorted)
+      // get is split from list to keep the missing-doc read working for
+      // INSTALLS ALREADY IN THE WILD. Current clients never take this
+      // path — openOrCreateConversation now always goes through
+      // `openDirectConversation` (ADR-062) — but older builds still run a
+      // transaction.get() on `uidA_uidB` before attempting the create.
+      // A single read rule that dereferenced resource.data on that
+      // missing doc was a rule EVALUATION ERROR, and those surfaced on
+      // web as the boxed "Dart exception thrown from converted Future"
+      // text rather than anything a user could act on. Letting the get
+      // succeed and the create below fail gives those old installs a
+      // clean, mappable `permission-denied` instead. For missing docs the
+      // get is allowed only when the deterministic id (uidA_uidB, sorted)
       // contains the caller's own uid — so nobody can probe whether two
       // OTHER users have ever talked.
       allow get: if isSignedIn() &&
@@ -1407,15 +1441,29 @@ service cloud.firestore {
       allow list: if isSignedIn() &&
           request.auth.uid in resource.data.participantIds;
 
-      allow create: if isVerified() &&
-          canCommunicate() &&
-          request.resource.data.participantIds is list &&
-          request.resource.data.participantIds.size() == 2 &&
-          request.auth.uid in request.resource.data.participantIds &&
-          !isBlockedPair(
-            request.resource.data.participantIds[0],
-            request.resource.data.participantIds[1]
-          );
+      // Server-only, permanently. A conversation ROOT asserts three
+      // things the client does not own and cannot be trusted to state:
+      //   1. the OTHER participant's display name and photo, which are
+      //      server-derived from their public profile
+      //      (`canonicalPublicProfile`, ADR-054) — a client-authored root
+      //      would put up to 80 characters of attacker-chosen text into
+      //      `participantNames[victim]`, rendered in the victim's own chat
+      //      list, reopening exactly the boundary ADR-054 closed;
+      //   2. BOTH participants' `unreadCounts` and `readSequences`
+      //      cursors, including the other party's;
+      //   3. which document id is THE thread for that pair, forever, via
+      //      `directConversationPairs/{pairKey}`.
+      // `openDirectConversation` (functions/messaging/direct_integrity.js:
+      // 421-453) is the sole writer of the root AND of its
+      // `directConversationPairs` twin, creating both in one transaction.
+      // They are two halves of one atomic binding, which is why one cannot
+      // be client-writable while the other is default-denied: a root
+      // without its guard is a thread the server refuses forever
+      // (`data-loss`, "The canonical conversation is missing."). Legacy
+      // roots predating the guard are adopted IN PLACE at their existing
+      // id by `migrateDirectIntegrityConversation`, never forked. See
+      // ADR-062.
+      allow create: if false;
 
       allow update: if isSignedIn() &&
           request.auth.uid in resource.data.participantIds &&
@@ -1868,7 +1916,19 @@ service cloud.firestore {
       // member count are private to the people in it and to anyone
       // holding a live invitation. The `!= 'family'` test short-circuits
       // first, so ordinary club reads perform no extra document lookups.
+      // createFamilyRoom() first probes the caller's ONE deterministic id so
+      // retry/reopen can return the existing space without uploading media or
+      // attempting a second batch. A missing document has no resource.data;
+      // evaluating the ordinary branch against it used to throw a rules null
+      // error and deny every first Family Room creation before it began. The
+      // missing-doc exception is deliberately scoped to `family_{caller}`.
+      // Once a document exists, the normal family membership/invite boundary
+      // below applies, even at that id.
       allow get: if isSignedIn() && (
+            (
+              clubId == 'family_' + request.auth.uid &&
+              !exists(/databases/$(database)/documents/clubs/$(clubId))
+            ) ||
             resource.data.get('type', 'community') != 'family' ||
             isClubMember(clubId) ||
             hasPendingClubInvite(clubId, request.auth.uid)

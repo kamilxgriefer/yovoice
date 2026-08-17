@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
@@ -94,7 +95,16 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
         ),
       );
     } catch (error) {
-      if (mounted) _showError(error.toString());
+      // See ADR-062: a refusal from `openDirectConversation` now reaches
+      // this handler instead of being swallowed into a client-side write.
+      if (mounted) {
+        _showError(
+          intentionalOrFriendly(
+            error,
+            fallback: 'Could not open this conversation.',
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _openingChat = false);
     }

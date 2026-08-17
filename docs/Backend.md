@@ -88,10 +88,35 @@ to server-authoritative callables:
   `deleteMoment`, `setMomentLike`.
 - `selectMyAchievementTitle`.
 
-All of these are attempted from the Flutter clients first via callable;
-when a callable is unavailable (tests/emulator-only execution or pre-warm local
-environment), the client falls back to a bounded local transaction path that keeps
-invariants, preserves counters and avoids partial writes.
+All of these are attempted from the Flutter clients first via callable.
+When a callable is genuinely **absent** — no Firebase app, or
+`unimplemented` — some of them fall back to a bounded local transaction.
+
+Two limits on that sentence, both learned the hard way:
+
+**A fallback is for an ABSENT callable, never a refusing one.** Only
+`unimplemented` and the appless `no-app` case count as absence. `not-found`
+does **not**, however much it looks like "no such function": the server
+throws it itself for a missing profile (`functions/integrity/guards.js:157`)
+or a missing conversation (`functions/messaging/direct_integrity.js:83`,
+`:223`). Treating it as absence meant a user with no `users/{uid}` document
+bypassed `assertNotBlocked`, `assertNotRestricted` and the rate limits on
+every messaging callable. The HTTP status cannot distinguish the two cases,
+so it fails closed
+([ADR-062](Decisions.md#adr-062-the-client-never-creates-a-direct-conversation--canonical-binding-is-server-only-and-a-legacy-thread-is-adopted-in-place-not-forked)).
+
+**`openDirectConversation` has no fallback at all, and the claim that a
+fallback "keeps invariants" was false for it.** The client cannot write
+`directConversationPairs/{pairKey}` — that collection is default-denied on
+purpose — so a conversation root created locally is missing the guard that
+binds the pair, and `validateConversation` then refuses it with `data-loss`,
+"The canonical conversation is missing.", on every later server call,
+permanently. It also writes 12 of the required 18 keys. That is the exact
+opposite of preserving invariants: it manufactures a thread the backend can
+never touch again. `conversations` create is `if false` in `firestore.rules`
+for the same reason. Where a fallback *does* exist, it owes the server's
+document key for key
+([ADR-061](Decisions.md#adr-061-a-callable-that-answers-is-the-whole-write-and-its-client-fallback-must-write-the-same-document)).
 
 ## Clubs
 
