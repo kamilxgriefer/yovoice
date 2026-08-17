@@ -21,6 +21,8 @@ import 'package:yovoice/features/profile/presentation/widgets/profile_journey_ca
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
+import 'package:yovoice/features/creator/presentation/widgets/creator_pinned_moment_card.dart';
+import 'package:yovoice/features/creator/presentation/screens/creator_pinned_moment_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -298,6 +300,16 @@ class _ProfileContent extends StatelessWidget {
               ),
               const SizedBox(height: 14),
               _VoiceIdentity(profile: profile),
+              if (profile.accountType != AccountType.personal)
+                CreatorPinnedMomentCard(
+                  creatorId: profile.uid,
+                  outerPadding: const EdgeInsets.only(top: 14),
+                  onOpen: (moment) => Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => CreatorPinnedMomentScreen(moment: moment),
+                    ),
+                  ),
+                ),
               const SizedBox(height: 14),
               ProfileJourneyCard(
                 communitiesCount: communities.length + clubs.length,

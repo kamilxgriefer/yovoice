@@ -67,27 +67,37 @@ void main() {
     'Creator Studio horizontal modules grow safely at 320px and 200% text',
     (tester) async {
       _useNarrowPhone(tester);
+      var analyticsOpened = 0;
+      var pinnedOpened = 0;
 
       await tester.pumpWidget(
         _host(
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(
-              children: [
-                CreatorStudioStatStrip(
-                  items: const [
-                    CreatorStudioStatItem(value: '123456', label: 'Followers'),
-                    CreatorStudioStatItem(
-                      value: '987654',
-                      label: 'Speaking time',
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                const CreatorStudioUpcomingToolsRow(),
-                const SizedBox(height: 12),
-                CreatorStudioRoomsList(rooms: [_room('creator-room')]),
-              ],
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  CreatorStudioStatStrip(
+                    items: const [
+                      CreatorStudioStatItem(
+                        value: '123456',
+                        label: 'Followers',
+                      ),
+                      CreatorStudioStatItem(
+                        value: '987654',
+                        label: 'Speaking time',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  CreatorStudioToolsRow(
+                    onAnalytics: () => analyticsOpened += 1,
+                    onPinnedPosts: () => pinnedOpened += 1,
+                  ),
+                  const SizedBox(height: 12),
+                  CreatorStudioRoomsList(rooms: [_room('creator-room')]),
+                ],
+              ),
             ),
           ),
         ),
@@ -99,7 +109,7 @@ void main() {
         greaterThan(62),
       );
       expect(
-        tester.getSize(find.byType(CreatorStudioUpcomingToolsRow)).height,
+        tester.getSize(find.byType(CreatorStudioToolsRow)).height,
         greaterThan(108),
       );
       expect(
@@ -107,6 +117,13 @@ void main() {
         greaterThan(96),
       );
       expect(find.textContaining(_longRoomName), findsOneWidget);
+      expect(find.text('Monetization'), findsNothing);
+      await tester.ensureVisible(find.text('Analytics'));
+      await tester.tap(find.text('Analytics'));
+      await tester.ensureVisible(find.text('Pinned post'));
+      await tester.tap(find.text('Pinned post'));
+      expect(analyticsOpened, 1);
+      expect(pinnedOpened, 1);
       expect(tester.takeException(), isNull);
     },
   );

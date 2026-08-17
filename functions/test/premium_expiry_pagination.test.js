@@ -19,7 +19,7 @@ function fixture(count) {
 }
 
 describe("Premium expiry pagination", () => {
-  test("451 expiries are committed as bounded 200/200/51 pages", async () => {
+  test("451 expiries are committed in three-write-safe bounded pages", async () => {
     const pending = fixture(451);
     const queriedLimits = [];
     const writeCounts = [];
@@ -31,7 +31,7 @@ describe("Premium expiry pagination", () => {
         return pending.slice(0, limit);
       },
       commitPage: async (documents) => {
-        writeCounts.push(documents.length * 2);
+        writeCounts.push(documents.length * 3);
         pending.splice(0, documents.length);
         return documents.length;
       },
@@ -39,11 +39,11 @@ describe("Premium expiry pagination", () => {
 
     assert.deepEqual(outcome, {
       expiredCount: 451,
-      pages: 3,
+      pages: 4,
       truncated: false,
     });
-    assert.deepEqual(queriedLimits, [200, 200, 200]);
-    assert.deepEqual(writeCounts, [400, 400, 102]);
+    assert.deepEqual(queriedLimits, [150, 150, 150, 150]);
+    assert.deepEqual(writeCounts, [450, 450, 450, 3]);
     assert.ok(writeCounts.every((writes) => writes < 500));
     assert.equal(pending.length, 0);
   });
@@ -69,7 +69,7 @@ describe("Premium expiry pagination", () => {
     assert.equal(pending.length, 1);
   });
 
-  test("page size cannot exceed the two-writes-per-entitlement budget", async () => {
+  test("page size cannot exceed the three-writes-per-entitlement budget", async () => {
     await assert.rejects(
       () => expirePremiumIdentityPages({
         pageSize: PREMIUM_EXPIRY_PAGE_SIZE + 1,

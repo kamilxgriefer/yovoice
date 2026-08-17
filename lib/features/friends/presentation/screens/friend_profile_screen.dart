@@ -6,6 +6,8 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
+import 'package:yovoice/features/creator/presentation/widgets/creator_pinned_moment_card.dart';
+import 'package:yovoice/features/creator/presentation/screens/creator_pinned_moment_screen.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
@@ -322,6 +324,21 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                               _mutualFriends(),
                               const SizedBox(height: 18),
                               _profileActions(isFollowing),
+                              if (profile != null &&
+                                  profile.accountType != AccountType.personal)
+                                CreatorPinnedMomentCard(
+                                  creatorId: widget.friend.id,
+                                  outerPadding: const EdgeInsets.only(top: 14),
+                                  onOpen: (moment) =>
+                                      Navigator.of(context).push<void>(
+                                        MaterialPageRoute<void>(
+                                          builder: (_) =>
+                                              CreatorPinnedMomentScreen(
+                                                moment: moment,
+                                              ),
+                                        ),
+                                      ),
+                                ),
                               const SizedBox(height: 14),
                               _voiceIdentity(profile),
                               const SizedBox(height: 26),

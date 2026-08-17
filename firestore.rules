@@ -181,6 +181,20 @@ service cloud.firestore {
             .data.get('creatorEnabled', false) == true;
     }
 
+    function userHasCreatorPremium(userId) {
+      return exists(/databases/$(database)/documents/entitlements/$(userId)) &&
+          get(/databases/$(database)/documents/entitlements/$(userId))
+            .data.status in ['active', 'trialing', 'grace'] &&
+          get(/databases/$(database)/documents/entitlements/$(userId))
+            .data.get('isPremium', false) == true &&
+          get(/databases/$(database)/documents/entitlements/$(userId))
+            .data.get('premiumIdentityEnabled', false) == true &&
+          get(/databases/$(database)/documents/entitlements/$(userId))
+            .data.get('creatorEnabled', false) == true &&
+          request.time < get(/databases/$(database)/documents/entitlements/$(userId))
+            .data.currentPeriodEnd;
+    }
+
     // accountType is client-writable ONLY within these transitions:
     // keeping it unchanged, or setting 'personal' (always allowed), or
     // setting 'creator' with active Premium. 'official' is never
@@ -1609,6 +1623,38 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // One server-owned pointer to a creator's canonical published Voice
+    // Moment. Public profile surfaces know the creator uid and may fetch that
+    // exact document; collection scans would expose an unnecessary global
+    // creator activity directory. setCreatorPinnedPost revalidates Premium,
+    // Creator identity and Moment ownership in one Admin transaction.
+    match /creatorPinnedPosts/{creatorId} {
+      allow get: if isActiveAccount() && accountIsActive(creatorId) &&
+          get(/databases/$(database)/documents/users/$(creatorId))
+            .data.get('accountType', 'personal') in ['creator', 'official'] &&
+          get(/databases/$(database)/documents/users/$(creatorId))
+            .data.get('deleted', false) != true &&
+          get(/databases/$(database)/documents/users/$(creatorId))
+            .data.get('status', '') != 'deleted' &&
+          userHasCreatorPremium(creatorId) &&
+          resource.data.keys().hasAll([
+            'schemaVersion', 'creatorId', 'momentId', 'pinnedAt',
+            'updatedAt'
+          ]) &&
+          resource.data.keys().hasOnly([
+            'schemaVersion', 'creatorId', 'momentId', 'pinnedAt',
+            'updatedAt'
+          ]) &&
+          resource.data.schemaVersion == 1 &&
+          resource.data.creatorId == creatorId &&
+          resource.data.momentId is string &&
+          resource.data.momentId.matches('^[A-Za-z0-9_-]{1,128}$') &&
+          resource.data.pinnedAt is timestamp &&
+          resource.data.updatedAt is timestamp;
+      allow list: if false;
+      allow write: if false;
+    }
+
     // Server-only serialization locks for community Club ownership changes.
     // createCommunityClub and ownership-transfer callables touch these while
     // counting canonical Club roots in a transaction; no client value is an
@@ -2643,7 +2689,10 @@ service cloud.firestore {
       // or a plain +1 for a new comment.
       allow update: if isSignedIn() &&
           (
-            resource.data.authorId == request.auth.uid ||
+            (
+              resource.data.authorId == request.auth.uid &&
+              request.resource.data.authorId == resource.data.authorId
+            ) ||
             (
               request.resource.data.diff(resource.data).affectedKeys()
                   .hasOnly(['likeCount', 'updatedAt']) &&

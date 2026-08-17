@@ -60,8 +60,18 @@ Top-level collections (from `firestore.rules`):
 | `clubs/{clubId}` | `members`, `invites`, `channels` → `messages` |
 | `rooms/{roomId}` | `participants`, `roomMembers`, `messages`, `handRequests` |
 | `voiceMoments/{momentId}` | `likes`, `comments` |
+| `creatorPinnedPosts/{creatorId}` (server-owned exact pointer) | — |
 
 Notable fields:
+
+- **Creator pinned post** — `creatorPinnedPosts/{creatorId}` has exact schema
+  `schemaVersion`, `creatorId`, `momentId`, `pinnedAt`, `updatedAt`. Clients
+  may get only a known Creator id while both reader and target are active and
+  the target still has canonical Premium Creator authority. Listing and every
+  client write are denied. `setCreatorPinnedPost` owns the mutation and
+  revalidates the published schema-v2 Voice Moment in one transaction.
+  Cleanup runs on Moment eligibility, Creator profile and entitlement changes;
+  subscription state is never copied into the public pin document.
 
 - **Public-profile projection** — the safe `publicProfiles/{userId}` schema is
   `uid`, `displayName`, `username`, normalized name/username search keys,

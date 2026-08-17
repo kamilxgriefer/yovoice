@@ -4295,3 +4295,43 @@ would therefore have advertised privacy the backend could not enforce.
   acceptable shortcut.
 - This change requires a coordinated Hosting, Functions, Firestore Rules and
   Storage Rules release. Emulator success describes source, not production.
+
+## ADR-065: Creator tools expose truthful snapshots and pin one canonical Voice Moment
+
+**Date**: 2026-08-17
+**Status**: Accepted
+
+### Context
+
+Creator Studio advertised Analytics, Pinned posts and Monetization as disabled
+future cards. Analytics could provide useful current totals from data already
+loaded by the Studio, but the product has no event ledger for listens, unique
+reach, historical attendance or trends. A pinned post had no canonical model,
+and adding `isPinned` to arbitrary Voice Moments could not enforce one pin per
+Creator or cleanly follow Premium expiry.
+
+### Decision
+
+1. Analytics is computed only from the current canonical profile, owned rooms,
+   owned Clubs and published Voice Moments captured when the screen opens. Its
+   copy says it is a snapshot; load failures are errors, never zeroes.
+2. A Creator may pin exactly one canonical published schema-v2 Voice Moment.
+   `creatorPinnedPosts/{creatorId}` is an exact, server-owned pointer written
+   only by `setCreatorPinnedPost`. Clients may get a known id under active
+   account and canonical Premium Creator checks, but cannot list or write.
+3. Moment, profile and entitlement triggers remove a stale pointer. Firestore
+   Rules repeat the target/account/entitlement checks so trigger delay cannot
+   expose a deleted, downgraded or expired Creator pin.
+4. The pin appears on both self and foreign full-profile surfaces and streams
+   the referenced Moment, so unpublish/delete/re-pin changes fail closed in an
+   already-open profile.
+5. Monetization remains absent from Creator Studio until a real payment,
+   settlement and dispute model exists.
+
+### Consequences
+
+- The Studio has two working tools without presenting invented metrics or a
+  dead payment affordance.
+- Renewing Premium requires an explicit Creator reactivation after downgrade;
+  no copied entitlement expiry lives in the pin document.
+- Deploy Functions/triggers and Firestore Rules before the Hosting client.

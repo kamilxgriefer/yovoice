@@ -950,6 +950,15 @@ async function main() {
     await assertFails(updateDoc(ref, { likeCount: 9999 }));
   });
 
+  await check(
+    "moment owner can edit content but cannot transfer authorId",
+    async () => {
+      const ref = doc(host.firestore(), "voiceMoments/moment1");
+      await assertSucceeds(updateDoc(ref, { caption: "Owner edit" }));
+      await assertFails(updateDoc(ref, { authorId: "attacker-uid" }));
+    },
+  );
+
   // --- room messages visibility (#9) ---
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     await setDoc(doc(ctx.firestore(), "rooms/publicRoom"), {
@@ -1953,6 +1962,194 @@ async function main() {
           likeCount: 0,
           commentCount: 0,
         }),
+      );
+    },
+  );
+
+  // ── Creator pinned posts ───────────────────────────────────────────
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await Promise.all([
+      setDoc(doc(db, "users/host-uid"), {
+        accountType: "creator",
+        banned: false,
+        disabled: false,
+      }, { merge: true }),
+      setDoc(doc(db, "entitlements/host-uid"), {
+        status: "active",
+        isPremium: true,
+        creatorEnabled: true,
+        premiumIdentityEnabled: true,
+        currentPeriodEnd: new Date(Date.now() + 86400000),
+      }),
+      setDoc(doc(db, "creatorPinnedPosts/host-uid"), {
+        schemaVersion: 1,
+        creatorId: "host-uid",
+        momentId: "moment1",
+        pinnedAt: new Date(),
+        updatedAt: new Date(),
+      }),
+    ]);
+  });
+
+  await check(
+    "creator pinned post is readable only as an exact known-id get",
+    async () => {
+      await assertSucceeds(
+        getDoc(doc(attacker.firestore(), "creatorPinnedPosts/host-uid")),
+      );
+      await assertFails(
+        getDocs(collection(attacker.firestore(), "creatorPinnedPosts")),
+      );
+      await assertFails(
+        getDoc(
+          doc(
+            testEnv.unauthenticatedContext().firestore(),
+            "creatorPinnedPosts/host-uid",
+          ),
+        ),
+      );
+    },
+  );
+
+  const pinnedPost = () =>
+    doc(attacker.firestore(), "creatorPinnedPosts/host-uid");
+  const restorePinnedAuthority = async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await Promise.all([
+        setDoc(doc(db, "creatorPinnedPosts/host-uid"), {
+          schemaVersion: 1,
+          creatorId: "host-uid",
+          momentId: "moment1",
+          pinnedAt: new Date(),
+          updatedAt: new Date(),
+        }),
+        setDoc(doc(db, "entitlements/host-uid"), {
+          status: "active",
+          isPremium: true,
+          creatorEnabled: true,
+          premiumIdentityEnabled: true,
+          currentPeriodEnd: new Date(Date.now() + 86400000),
+        }),
+        setDoc(doc(db, "users/host-uid"), {
+          accountType: "creator",
+          banned: false,
+          deleted: false,
+          disabled: false,
+          status: "active",
+        }, { merge: true }),
+        setDoc(doc(db, "users/attacker-uid"), {
+          banned: false,
+          deleted: false,
+          disabled: false,
+          status: "active",
+        }, { merge: true }),
+      ]);
+    });
+  };
+
+  await check("pinned post denies a mismatched creatorId", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), "creatorPinnedPosts/host-uid"), {
+        creatorId: "attacker-uid",
+      });
+    });
+    await assertFails(getDoc(pinnedPost()));
+    await restorePinnedAuthority();
+  });
+
+  await check("pinned post denies an inexact server projection", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), "creatorPinnedPosts/host-uid"), {
+        unexpected: true,
+      });
+    });
+    await assertFails(getDoc(pinnedPost()));
+    await restorePinnedAuthority();
+  });
+
+  for (const unsafeMomentId of ["bad/path", "unicode-ę"]) {
+    await check(
+      `pinned post denies unsafe Moment id ${JSON.stringify(unsafeMomentId)}`,
+      async () => {
+        await testEnv.withSecurityRulesDisabled(async (ctx) => {
+          await updateDoc(doc(ctx.firestore(), "creatorPinnedPosts/host-uid"), {
+            momentId: unsafeMomentId,
+          });
+        });
+        await assertFails(getDoc(pinnedPost()));
+        await restorePinnedAuthority();
+      },
+    );
+  }
+
+  await check("pinned post denies an expired creator entitlement", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), "entitlements/host-uid"), {
+        currentPeriodEnd: new Date(0),
+      });
+    });
+    await assertFails(getDoc(pinnedPost()));
+    await restorePinnedAuthority();
+  });
+
+  await check("pinned post denies a banned reader", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), "users/attacker-uid"), {
+        banned: true,
+      });
+    });
+    await assertFails(getDoc(pinnedPost()));
+    await restorePinnedAuthority();
+  });
+
+  await check("pinned post denies a target with deleted true", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), "users/host-uid"), {
+        deleted: true,
+        status: "active",
+      });
+    });
+    await assertFails(getDoc(pinnedPost()));
+    await restorePinnedAuthority();
+  });
+
+  await check("pinned post denies a target with deleted status", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await updateDoc(doc(ctx.firestore(), "users/host-uid"), {
+        deleted: false,
+        status: "deleted",
+      });
+    });
+    await assertFails(getDoc(pinnedPost()));
+    await restorePinnedAuthority();
+  });
+
+  await check(
+    "SECURITY: clients cannot create, replace, update, or delete creator pins",
+    async () => {
+      const db = host.firestore();
+      await assertFails(
+        setDoc(doc(db, "creatorPinnedPosts/new-creator"), {
+          creatorId: "host-uid",
+          momentId: "moment1",
+        }),
+      );
+      await assertFails(
+        setDoc(doc(db, "creatorPinnedPosts/host-uid"), {
+          creatorId: "host-uid",
+          momentId: "attacker-choice",
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(db, "creatorPinnedPosts/host-uid"), {
+          momentId: "attacker-choice",
+        }),
+      );
+      await assertFails(
+        deleteDoc(doc(db, "creatorPinnedPosts/host-uid")),
       );
     },
   );

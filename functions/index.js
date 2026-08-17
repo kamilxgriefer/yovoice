@@ -395,6 +395,21 @@ exports.adminSetPremiumEntitlements = adminSetPremiumEntitlements;
 exports.verifyPurchase = verifyPurchase;
 exports.expirePremiumIdentity = expirePremiumIdentity;
 
+// Creator Studio pinned posts are references to canonical, published Voice
+// Moments. The callable is the only writer; the trigger removes a pin as soon
+// as its Moment becomes ineligible or is deleted.
+const {
+  onPinnedCreatorEntitlementChanged,
+  onPinnedCreatorProfileChanged,
+  onPinnedMomentEligibilityChanged,
+  setCreatorPinnedPost,
+} = require("./creator/pinned_posts");
+
+exports.setCreatorPinnedPost = setCreatorPinnedPost;
+exports.onPinnedMomentEligibilityChanged = onPinnedMomentEligibilityChanged;
+exports.onPinnedCreatorEntitlementChanged = onPinnedCreatorEntitlementChanged;
+exports.onPinnedCreatorProfileChanged = onPinnedCreatorProfileChanged;
+
 const stageBFunctions = createStageBFunctions();
 Object.assign(exports, stageBFunctions);
 

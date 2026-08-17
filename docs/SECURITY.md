@@ -507,6 +507,18 @@ revoked during Auth deletion, permanent Club deletion and both ownership
 transfer paths so a recreated identity or a new owner cannot inherit an old
 public grant.
 
+## Creator pinned-post boundary
+
+`creatorPinnedPosts/{creatorId}` is a server-owned, known-id projection, not a
+public activity directory. Firestore denies collection queries and every
+client write. An exact get requires an active reader, active non-deleted
+Creator target, canonical Premium Creator entitlement and an exact document
+shape bound to the path id. The callable accepts no caption, author, billing
+field or URL from the client; it points only to an already-published canonical
+Voice Moment owned by the caller. Entitlement, profile and Moment triggers
+remove stale pointers, while rules independently fail closed during trigger
+delay.
+
 ## If you find a security issue
 
 This is currently a solo project with no formal disclosure program.

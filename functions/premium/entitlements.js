@@ -20,10 +20,10 @@ const PLANS = Object.freeze({
 const ACTIVE_STATUSES = Object.freeze(["active", "trialing", "grace"]);
 
 const DEFAULT_MAX_OWNED_CLUBS = 3;
-// Each expired entitlement produces two writes (entitlement + public user
-// mirror). 200 keeps every transaction comfortably below Firestore's
-// 500-write ceiling while still amortising query overhead.
-const PREMIUM_EXPIRY_PAGE_SIZE = 200;
+// Each expired entitlement produces three writes (entitlement + public user
+// mirror + removal of a Creator pin). 150 keeps every transaction below
+// Firestore's 500-write ceiling while still amortising query overhead.
+const PREMIUM_EXPIRY_PAGE_SIZE = 150;
 const MAX_PREMIUM_EXPIRY_PAGES = 50;
 
 /**
@@ -59,6 +59,7 @@ async function applyEntitlements(uid, { plan, status, currentPeriodEnd, source }
 
   const entitlementRef = db.collection("entitlements").doc(uid);
   const userRef = db.collection("users").doc(uid);
+  const pinnedPostRef = db.collection("creatorPinnedPosts").doc(uid);
   await db.runTransaction(async (transaction) => {
     const userSnapshot = await transaction.get(userRef);
     const user = userSnapshot.data() ?? {};
@@ -76,6 +77,7 @@ async function applyEntitlements(uid, { plan, status, currentPeriodEnd, source }
       },
       { merge: true },
     );
+    if (!premiumActive) transaction.delete(pinnedPostRef);
   });
 
   logger.info("entitlements applied", { uid, plan, status, premiumActive });
@@ -216,6 +218,9 @@ async function commitExpiredPremiumPage(documents, { now }) {
           updatedAt: FieldValue.serverTimestamp(),
         },
         { merge: true },
+      );
+      transaction.delete(
+        db.collection("creatorPinnedPosts").doc(document.id),
       );
       const user = currentUsers[index]?.data() ?? {};
       transaction.set(

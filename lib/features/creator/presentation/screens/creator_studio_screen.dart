@@ -9,6 +9,8 @@ import 'package:share_plus/share_plus.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/create_club_screen.dart';
+import 'package:yovoice/features/creator/presentation/screens/creator_analytics_screen.dart';
+import 'package:yovoice/features/creator/presentation/screens/creator_pinned_posts_screen.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
@@ -87,16 +89,46 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
               return StreamBuilder<List<VoiceRoom>>(
                 stream: _rooms,
                 builder: (context, roomsSnapshot) {
-                  final rooms = roomsSnapshot.data ?? const <VoiceRoom>[];
+                  if (roomsSnapshot.hasError) {
+                    return const _ErrorBody(
+                      message: 'Your room data could not be loaded.',
+                    );
+                  }
+                  if (!roomsSnapshot.hasData) {
+                    return const Center(
+                      child: CircularProgressIndicator(color: _accent),
+                    );
+                  }
+                  final rooms = roomsSnapshot.data!;
                   return StreamBuilder<List<Club>>(
                     stream: _clubs,
                     builder: (context, clubsSnapshot) {
-                      final clubs = clubsSnapshot.data ?? const <Club>[];
+                      if (clubsSnapshot.hasError) {
+                        return const _ErrorBody(
+                          message: 'Your club data could not be loaded.',
+                        );
+                      }
+                      if (!clubsSnapshot.hasData) {
+                        return const Center(
+                          child: CircularProgressIndicator(color: _accent),
+                        );
+                      }
+                      final clubs = clubsSnapshot.data!;
                       return StreamBuilder<List<VoiceMoment>>(
                         stream: _moments,
                         builder: (context, momentsSnapshot) {
-                          final moments =
-                              momentsSnapshot.data ?? const <VoiceMoment>[];
+                          if (momentsSnapshot.hasError) {
+                            return const _ErrorBody(
+                              message:
+                                  'Your Voice Moments could not be loaded.',
+                            );
+                          }
+                          if (!momentsSnapshot.hasData) {
+                            return const Center(
+                              child: CircularProgressIndicator(color: _accent),
+                            );
+                          }
+                          final moments = momentsSnapshot.data!;
                           return _CreatorStudioContent(
                             profile: profile,
                             rooms: rooms,
@@ -297,9 +329,25 @@ class _CreatorStudioContent extends StatelessWidget {
         _RecentActivityCard(rooms: rooms, moments: moments),
         const SizedBox(height: 26),
 
-        const _SectionLabel("What's next"),
+        const _SectionLabel('Creator tools'),
         const SizedBox(height: 10),
-        const CreatorStudioUpcomingToolsRow(),
+        CreatorStudioToolsRow(
+          onAnalytics: () => Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => CreatorAnalyticsScreen(
+                profile: profile,
+                rooms: rooms,
+                clubs: clubs,
+                moments: moments,
+              ),
+            ),
+          ),
+          onPinnedPosts: () => Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => const CreatorPinnedPostsScreen(),
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -744,114 +792,140 @@ class _EmptySection extends StatelessWidget {
   }
 }
 
-class _UpcomingTool {
-  const _UpcomingTool(this.icon, this.title, this.subtitle);
+class _CreatorTool {
+  const _CreatorTool(this.icon, this.title, this.subtitle, this.onTap);
   final IconData icon;
   final String title;
   final String subtitle;
+  final VoidCallback onTap;
 }
 
-const _upcomingTools = [
-  _UpcomingTool(
-    Icons.bar_chart_rounded,
-    'Analytics',
-    'Audience and engagement insights',
-  ),
-  _UpcomingTool(
-    Icons.campaign_rounded,
-    'Pinned posts',
-    'Pin an update for your followers',
-  ),
-  _UpcomingTool(
-    Icons.payments_rounded,
-    'Monetization',
-    'Tipping and subscriptions',
-  ),
-];
+/// Compact access to the Creator tools that actually exist. The cards use
+/// the same responsive geometry on desktop and mobile and never advertise
+/// unavailable features as if they were interactive.
+class CreatorStudioToolsRow extends StatelessWidget {
+  const CreatorStudioToolsRow({
+    required this.onAnalytics,
+    required this.onPinnedPosts,
+    super.key,
+  });
 
-/// A compact, honestly-labeled preview row instead of three full-width
-/// cards competing with real content for attention -- see ADR-012 for why
-/// this project shows unbuilt features as disabled previews, never fake
-/// data or dead buttons.
-class CreatorStudioUpcomingToolsRow extends StatelessWidget {
-  const CreatorStudioUpcomingToolsRow({super.key});
+  final VoidCallback onAnalytics;
+  final VoidCallback onPinnedPosts;
 
   @override
   Widget build(BuildContext context) {
     final textScale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
+    final tools = [
+      _CreatorTool(
+        Icons.bar_chart_rounded,
+        'Analytics',
+        'See honest snapshots from your rooms, clubs and Voice Moments.',
+        onAnalytics,
+      ),
+      _CreatorTool(
+        Icons.push_pin_rounded,
+        'Pinned post',
+        'Put one published Voice Moment at the top of your profile.',
+        onPinnedPosts,
+      ),
+    ];
 
-    return SizedBox(
-      height: 108 + ((textScale - 1) * 92),
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: _upcomingTools.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 10),
-        itemBuilder: (context, index) {
-          final tool = _upcomingTools[index];
-          return Opacity(
-            opacity: .6,
-            child: Container(
-              width: 150 + ((textScale - 1) * 70),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: _surface,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: _border),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = 12.0;
+        final columns = constraints.maxWidth >= 680 ? 2 : 1;
+        final cardWidth =
+            (constraints.maxWidth - spacing * (columns - 1)) / columns;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final tool in tools)
+              SizedBox(
+                width: cardWidth,
+                child: _CreatorToolCard(
+                  tool: tool,
+                  minHeight: 112 + ((textScale - 1) * 54),
+                ),
               ),
-              child: Column(
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _CreatorToolCard extends StatelessWidget {
+  const _CreatorToolCard({required this.tool, required this.minHeight});
+
+  final _CreatorTool tool;
+  final double minHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Open ${tool.title}',
+      child: Material(
+        color: _surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: const BorderSide(color: _border),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: tool.onTap,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: minHeight),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Icon(tool.icon, color: _muted, size: 18),
-                      const Spacer(),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF241B2A),
-                          borderRadius: BorderRadius.circular(99),
-                          border: Border.all(color: _border),
-                        ),
-                        child: const Text(
-                          'SOON',
-                          style: TextStyle(
-                            color: _muted,
-                            fontSize: 8.5,
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: _accent.withValues(alpha: .13),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: _accent.withValues(alpha: .38)),
+                    ),
+                    child: Icon(tool.icon, color: _accent, size: 22),
+                  ),
+                  const SizedBox(width: 13),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          tool.title,
+                          style: const TextStyle(
+                            color: Colors.white,
                             fontWeight: FontWeight.w900,
-                            letterSpacing: .4,
+                            fontSize: 15,
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const Spacer(),
-                  Text(
-                    tool.title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 13,
+                        const SizedBox(height: 5),
+                        Text(
+                          tool.subtitle,
+                          style: const TextStyle(
+                            color: _muted,
+                            fontSize: 12,
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    tool.subtitle,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: _muted,
-                      fontSize: 10.5,
-                      height: 1.3,
-                    ),
-                  ),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.chevron_right_rounded, color: _muted),
                 ],
               ),
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }

@@ -137,6 +137,23 @@ bucket override environment variables.
 - `transferClubOwnershipSelf` — self-service ownership transfer (owner
   hands off to another member).
 
+## Creator Studio
+
+- `setCreatorPinnedPost` — authenticated, verified Creator callable that
+  accepts only `{momentId}` (or `null` to unpin), rechecks active account,
+  canonical Premium Creator entitlement, ownership and published schema-v2
+  Moment state, then writes one server-owned pointer.
+- `onPinnedMomentEligibilityChanged` — removes a pointer when its Moment is
+  deleted, unpublished, moved out of the canonical published state or changes
+  author.
+- `onPinnedCreatorEntitlementChanged` / `onPinnedCreatorProfileChanged` —
+  remove pins after Premium/Creator/account eligibility changes. The profile
+  trigger filters harmless presence/counter writes before doing Firestore
+  work.
+
+Creator Analytics has no backend endpoint: it is a clearly labelled snapshot
+computed from the already loaded canonical profile/room/Club/Moment streams.
+
 ## Admin
 
 **Deployment status (verified against `firebase functions:list`,

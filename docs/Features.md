@@ -136,9 +136,20 @@ create-room/create-club/record-moment flows and a share-based invite flow.
 Creator Studio requires the trusted Creator capability; More shows the locked
 state to free users and the destination independently rechecks entitlement,
 including expiry while it is open.
-**Analytics, monetization, and audience-growth charts are intentionally
-not built** — shown as visible, disabled "Coming soon" cards rather than
-hidden or faked.
+
+The Studio now includes two working tools:
+
+- **Analytics** is an honest snapshot of already-canonical data: followers,
+  owned/live rooms and current participant counters, owned clubs, and
+  published Voice Moment likes/comments/audio duration. It does not claim
+  historical reach, listens, growth or attendance because no such event
+  model exists yet.
+- **Pinned post** lets an eligible Premium Creator select exactly one of
+  their canonical published Voice Moments. The server-owned pointer is shown
+  on both the Creator's own and public profile and is removed when the Moment,
+  Creator identity or Premium entitlement stops being eligible.
+
+Monetization remains unbuilt and is intentionally absent from the Studio UI.
 
 ## Premium entitlements
 

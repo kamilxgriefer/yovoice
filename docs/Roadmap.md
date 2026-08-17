@@ -561,7 +561,8 @@ someone decide what to pick up next.
   filters, and a real (not fabricated) "recent unlocks" feed backed by
   per-achievement unlock timestamps (`6cfd208`, [ADR-010](Decisions.md#adr-010-real-per-achievement-unlock-timestamps)).
 - Creator Studio — real dashboard over owned rooms/clubs/Voice Moments with
-  working quick actions (`6cfd208`).
+  working quick actions, truthful snapshot Analytics, and one server-verified
+  pinned published Voice Moment shown on profiles (`6cfd208`, ADR-065).
 - Settings — full account/privacy/security/notifications/permissions/
   storage/legal/danger-zone screen, backed by real Firebase Auth,
   `permission_handler`, and image-cache stats (`6cfd208`).
@@ -946,14 +947,16 @@ regression test pinning the contract.
 
 ### 3. Creator analytics
 
-- **Status**: Not started — Creator Studio currently shows this as an
-  honest, disabled "Coming soon" card.
-- **Description**: Real audience/engagement insights for creators
-  (listens, room attendance trends, follower activity).
-- **Dependencies**: A real analytics/event data model doesn't exist yet —
-  this needs schema design, not just a UI. Overlaps conceptually with
-  Audience growth tracking (below); worth designing both together rather
-  than as two unrelated data models.
+- **Status**: Partially complete — Creator Studio has a working snapshot over
+  current canonical profile, room, Club and published Voice Moment totals.
+  It explicitly labels the capture time semantics and never substitutes a
+  load failure with zero.
+- **Remaining scope**: listens, unique reach, historical attendance, follower
+  activity and trend charts. Those metrics still require a real server-owned
+  event/rollup model and must not be inferred from current counters.
+- **Dependencies**: schema and retention design for the remaining historical
+  metrics. The snapshot implementation deliberately creates no analytics
+  collection and therefore cannot be mistaken for that future model.
 - **Priority**: Low-Medium — a genuine creator-facing feature, but no
   urgency signal (no creators currently asking for it) and real design
   work needed before any code.
@@ -975,6 +978,8 @@ regression test pinning the contract.
   ones).
 - **Priority**: Low — largest lift on this list, no immediate product
   need identified.
+- **UI**: hidden from Creator Studio until a real payment product and trusted
+  settlement model exist; there is no disabled/dead Monetization card.
 - **Future considerations**: Whatever processor is chosen, payment state
   should never be client-writable even indirectly; treat this the same
   way `createLiveKitToken` treats secrets — computed and verified

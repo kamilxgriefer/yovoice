@@ -13,6 +13,9 @@ class VoiceMoment {
     required this.commentCount,
     required this.isPublished,
     required this.createdAt,
+    this.schemaVersion = 0,
+    this.status = 'legacy',
+    this.isDeleted = false,
   });
 
   final String id;
@@ -26,6 +29,12 @@ class VoiceMoment {
   final int commentCount;
   final bool isPublished;
   final DateTime? createdAt;
+  final int schemaVersion;
+  final String status;
+  final bool isDeleted;
+
+  bool get isCanonicalPublished =>
+      schemaVersion == 2 && status == 'published' && isPublished && !isDeleted;
 
   factory VoiceMoment.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> document,
@@ -44,6 +53,9 @@ class VoiceMoment {
       commentCount: (data['commentCount'] as num?)?.toInt() ?? 0,
       isPublished: data['isPublished'] as bool? ?? false,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
+      schemaVersion: (data['schemaVersion'] as num?)?.toInt() ?? 0,
+      status: data['status'] as String? ?? 'legacy',
+      isDeleted: data['isDeleted'] as bool? ?? false,
     );
   }
 
