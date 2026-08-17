@@ -596,6 +596,66 @@ service cloud.firestore {
           request.resource.data.updatedAt == request.time;
     }
 
+    // ROOM RECENCY — the room-root `updatedAt` bump that follows every chat
+    // message.
+    //
+    // sendRoomMessage() (room_service.dart) writes the message and then bumps
+    // the room root's `updatedAt`, because that field is what
+    // watchPublicRooms() and watchMyCommunities() sort the Home feeds on. The
+    // HOST branch has always accepted a bare `updatedAt`: it sits in
+    // hostRoomUpdateAllowed()'s metadata allowlist and `changed.hasOnly`
+    // passes on a single key. The non-host branch accepted no such transition
+    // at all — not a join, not a leave, not a voice start — so every non-host
+    // message landed and THEN was refused, and room ordering never advanced
+    // from anyone's conversation but the host's. The defect was the
+    // ASYMMETRY, not the transition; this restores the missing half.
+    //
+    // WHO MAY BUMP is deliberately the same expression that decides who may
+    // POST, copied verbatim from `match /messages`'s create rule below so the
+    // two cannot drift: if you may add a message to this room's chat, you may
+    // move the marker that says the chat moved. That is strictly LESS
+    // authority than posting. The message is content every other member
+    // reads; `updatedAt` is a derived ordering hint, and no rule in this file
+    // reads it as a precondition for anything — which is the ADR-056 lesson
+    // (never let a room-root field a participant can write become a gate) and
+    // must stay true. isRoomHost() is retained in the disjunction even though
+    // the ternary selector routes hosts elsewhere, precisely so this stays a
+    // character-for-character copy of the create rule.
+    //
+    // ACCOUNT STATUS IS RE-STATED HERE, not inherited. docs/SECURITY.md
+    // principle 9: a branch selector is an authorization condition and does
+    // not inherit its helpers' checks. canCommunicate() calls
+    // isActiveAccount(), so a banned, disabled or communication-muted account
+    // cannot bump for exactly the same reason it cannot post, and isVerified()
+    // mirrors the create rule's own gate.
+    //
+    // hasOnly(['updatedAt']) is what keeps this from becoming a lever: no
+    // counter, no visibility flip, no isLive, no hostId can ride along. The
+    // remaining room preconditions are copied from hostRoomUpdateAllowed()'s
+    // metadata branch, so a host and a participant reach this transition under
+    // identical room conditions — which is the symmetry the fix is about.
+    //
+    // Evaluated FIRST in the non-host disjunction on purpose. Its opening
+    // affectedKeys() test is field-only, so a join/leave/voice-start write
+    // (which always moves a counter or isLive too) falls through at zero
+    // document-access cost, and a bump short-circuits before the four
+    // transition helpers spend reads on paths it does not need.
+    function roomActivityTouchAllowed(roomId) {
+      return request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['updatedAt']) &&
+          request.resource.data.updatedAt == request.time &&
+          resource.data.get('status', 'active') in
+            ['active', 'closed', 'archived'] &&
+          resource.data.get('deletionInProgress', false) != true &&
+          isVerified() &&
+          canCommunicate() &&
+          (
+            (isRoomParticipant(roomId) && canAccessRoom(roomId)) ||
+            isRoomMember(roomId) ||
+            isRoomHost(roomId)
+          );
+    }
+
     function roomVoiceStartAllowed(roomId) {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return resource.data.get('status', 'active') == 'active' &&
@@ -2049,6 +2109,7 @@ service cloud.firestore {
             resource.data.hostId == request.auth.uid
               ? hostRoomUpdateAllowed(roomId)
               : (
+                  roomActivityTouchAllowed(roomId) ||
                   roomParticipantJoinTransitionAllowed(roomId) ||
                   roomParticipantLeaveTransitionAllowed(roomId) ||
                   roomMemberJoinTransitionAllowed(roomId) ||

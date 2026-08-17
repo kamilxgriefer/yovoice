@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
@@ -649,9 +650,42 @@ class RoomService {
       'createdAt': FieldValue.serverTimestamp(),
       'reactions': <String, List<String>>{},
     });
-    await _rooms.doc(roomId).update({
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
+    await _touchRoomActivity(roomId);
+  }
+
+  /// Advances the room root's `updatedAt`, which is the field
+  /// [watchPublicRooms] and [watchMyCommunities] sort the Home feeds on.
+  ///
+  /// This is a DENORMALIZED ORDERING HINT, not part of sending. By the time
+  /// it runs the message has already committed, so its failure must never be
+  /// reported as "your message didn't send" — that was the live defect: the
+  /// non-host branch of the room-root update rule accepted no bare
+  /// `updatedAt`, so every non-host message landed and then raised
+  /// permission-denied, which the chat sheet surfaced as a send failure and
+  /// which left the composer uncleared, inviting a duplicate send.
+  ///
+  /// Deliberately NOT batched with the message. Fusing them would make chat
+  /// hostage to a recency rule: a refused bump would roll the message back,
+  /// turning a cosmetic ordering defect into message loss. Separate writes
+  /// mean the worst case is a room that sorts stale.
+  ///
+  /// firestore.rules now permits this for anyone the message create rule
+  /// permits to post, so the swallow below should no longer fire in normal
+  /// use. It stays because the conditions that can still refuse it — a room
+  /// frozen or torn down between the two writes, a suspension landing
+  /// mid-send — are all cases where the message is already sent and the user
+  /// has nothing to act on.
+  Future<void> _touchRoomActivity(String roomId) async {
+    try {
+      await _rooms.doc(roomId).update({
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } on FirebaseException catch (error) {
+      debugPrint(
+        'Room recency bump skipped for $roomId: ${error.code}. '
+        'The message itself was already committed.',
+      );
+    }
   }
 
   Future<void> setMuted({required String roomId, required bool isMuted}) async {

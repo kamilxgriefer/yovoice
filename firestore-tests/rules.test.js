@@ -7,6 +7,7 @@ const {
   assertFails,
 } = require("@firebase/rules-unit-testing");
 const {
+  addDoc,
   doc,
   getDoc,
   getDocs,
@@ -2587,6 +2588,543 @@ async function main() {
       await assertSucceeds(
         deleteDoc(doc(roomHost.firestore(), "rooms/chat-room/messages/m1")),
       );
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // ROOM RECENCY: the room-root `updatedAt` bump that sendRoomMessage()
+  // issues after every message.
+  //
+  // These run the PRODUCTION SHAPE of room_service.dart's sendRoomMessage():
+  // an addDoc() into rooms/{id}/messages followed by a separate
+  // updateDoc(rooms/{id}, {updatedAt: serverTimestamp()}). The two are not
+  // batched in the client and are deliberately not batched here — the whole
+  // point of the defect is that the first write landed and the second was
+  // refused, so a test that fused them would prove the wrong thing.
+  // ------------------------------------------------------------------
+  await check(
+    "room recency: a non-host PARTICIPANT's message lands AND the room-root updatedAt bump that follows it is allowed",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, "rooms/recency-room"), {
+          hostId: "recency-host",
+          hostName: "Recency Host",
+          name: "Recency Room",
+          description: "",
+          category: "general",
+          visibility: "public",
+          language: "English",
+          maxParticipants: null,
+          participantCount: 2,
+          memberCount: 1,
+          isLive: true,
+          roomType: "community",
+          status: "active",
+          approvalRequired: false,
+          slowModeSeconds: 0,
+          autoMuteNewUsers: true,
+          membersCanStartVoice: false,
+          createdAt: Timestamp.fromMillis(1_700_000_000_000),
+          updatedAt: Timestamp.fromMillis(1_700_000_000_000),
+        });
+        for (const uid of [
+          "recency-host",
+          "recency-speaker",
+          "recency-member",
+          "recency-outsider",
+          "recency-unverified",
+        ]) {
+          await setDoc(doc(db, `users/${uid}`), {
+            uid,
+            displayName: uid,
+            banned: false,
+          });
+        }
+        // A banned account that still holds a participant row — the exact
+        // state a suspension mid-session leaves behind.
+        await setDoc(doc(db, "users/recency-banned"), {
+          uid: "recency-banned",
+          displayName: "Banned",
+          banned: true,
+        });
+        // A communication-muted account: active, but silenced by staff.
+        await setDoc(doc(db, "users/recency-muted"), {
+          uid: "recency-muted",
+          displayName: "Muted",
+          banned: false,
+        });
+        await setDoc(doc(db, "restrictions/recency-muted"), {
+          type: "communicationMute",
+          expiresAt: null,
+        });
+        for (const uid of [
+          "recency-speaker",
+          "recency-banned",
+          "recency-muted",
+          "recency-unverified",
+        ]) {
+          await setDoc(doc(db, `rooms/recency-room/participants/${uid}`), {
+            userId: uid,
+            displayName: uid,
+            role: "listener",
+            isMuted: false,
+            isSpeaker: false,
+            isHandRaised: false,
+          });
+        }
+        await setDoc(doc(db, "rooms/recency-room/roomMembers/recency-member"), {
+          userId: "recency-member",
+          displayName: "Member",
+          role: "member",
+        });
+      });
+
+      const speaker = testEnv.authenticatedContext("recency-speaker", {
+        email_verified: true,
+      });
+      const db = speaker.firestore();
+
+      // Exactly what sendRoomMessage() writes, in the same order.
+      await assertSucceeds(
+        addDoc(collection(db, "rooms/recency-room/messages"), {
+          senderId: "recency-speaker",
+          senderName: "Speaker",
+          senderPhotoUrl: null,
+          text: "hello from a non-host",
+          createdAt: serverTimestamp(),
+          reactions: {},
+        }),
+      );
+      // THIS is the write that was denied before the fix. The message above
+      // has already committed at this point, which is why the failure was
+      // user-visible rather than a clean rejection.
+      await assertSucceeds(
+        updateDoc(doc(db, "rooms/recency-room"), {
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "room recency: a Community roomMember with no participant row may bump too — watchMyCommunities() orders on the same field",
+    async () => {
+      const member = testEnv.authenticatedContext("recency-member", {
+        email_verified: true,
+      });
+      const db = member.firestore();
+      await assertSucceeds(
+        addDoc(collection(db, "rooms/recency-room/messages"), {
+          senderId: "recency-member",
+          senderName: "Member",
+          senderPhotoUrl: null,
+          text: "member chatter",
+          createdAt: serverTimestamp(),
+          reactions: {},
+        }),
+      );
+      await assertSucceeds(
+        updateDoc(doc(db, "rooms/recency-room"), {
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "room recency: the host still bumps (regression — the host branch already allowed a bare updatedAt and must keep doing so)",
+    async () => {
+      const roomHost = testEnv.authenticatedContext("recency-host", {
+        email_verified: true,
+      });
+      await assertSucceeds(
+        updateDoc(doc(roomHost.firestore(), "rooms/recency-room"), {
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "room recency BOUNDARY: may-bump is exactly may-post — a signed-in stranger in a PUBLIC room can do neither",
+    async () => {
+      const outsider = testEnv.authenticatedContext("recency-outsider", {
+        email_verified: true,
+      });
+      const db = outsider.firestore();
+      // No participant row, no membership: the create rule refuses the post…
+      await assertFails(
+        addDoc(collection(db, "rooms/recency-room/messages"), {
+          senderId: "recency-outsider",
+          senderName: "Outsider",
+          text: "not in this room",
+          createdAt: serverTimestamp(),
+          reactions: {},
+        }),
+      );
+      // …so the recency bump has to be refused on the same terms. A public
+      // room is READABLE by anyone signed in; that must not become a way to
+      // push it to the top of Discover without saying anything in it.
+      await assertFails(
+        updateDoc(doc(db, "rooms/recency-room"), {
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "room recency BOUNDARY: a BANNED participant cannot bump — the status check is re-stated inside the branch, not inherited (SECURITY.md principle 9)",
+    async () => {
+      const banned = testEnv.authenticatedContext("recency-banned", {
+        email_verified: true,
+      });
+      const db = banned.firestore();
+      await assertFails(
+        addDoc(collection(db, "rooms/recency-room/messages"), {
+          senderId: "recency-banned",
+          senderName: "Banned",
+          text: "still here",
+          createdAt: serverTimestamp(),
+          reactions: {},
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(db, "rooms/recency-room"), {
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "room recency BOUNDARY: a communication-muted participant cannot bump, matching canCommunicate() on the create rule",
+    async () => {
+      const muted = testEnv.authenticatedContext("recency-muted", {
+        email_verified: true,
+      });
+      const db = muted.firestore();
+      await assertFails(
+        addDoc(collection(db, "rooms/recency-room/messages"), {
+          senderId: "recency-muted",
+          senderName: "Muted",
+          text: "muted chatter",
+          createdAt: serverTimestamp(),
+          reactions: {},
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(db, "rooms/recency-room"), {
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "room recency BOUNDARY: an UNVERIFIED participant cannot bump, matching isVerified() on the create rule",
+    async () => {
+      const unverifiedMember = testEnv.authenticatedContext(
+        "recency-unverified",
+        { email_verified: false },
+      );
+      const db = unverifiedMember.firestore();
+      await assertFails(
+        addDoc(collection(db, "rooms/recency-room/messages"), {
+          senderId: "recency-unverified",
+          senderName: "Unverified",
+          text: "unverified chatter",
+          createdAt: serverTimestamp(),
+          reactions: {},
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(db, "rooms/recency-room"), {
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "room recency BOUNDARY: the bump carries NOTHING else — no counter, no visibility flip, no isLive, no host takeover can ride along with updatedAt",
+    async () => {
+      const speaker = testEnv.authenticatedContext("recency-speaker", {
+        email_verified: true,
+      });
+      const db = speaker.firestore();
+      const room = doc(db, "rooms/recency-room");
+      // Each of these is `updatedAt` plus one extra key. hasOnly(['updatedAt'])
+      // is the only thing standing between a recency marker and a lever.
+      await assertFails(
+        updateDoc(room, { updatedAt: serverTimestamp(), visibility: "private" }),
+      );
+      await assertFails(
+        updateDoc(room, { updatedAt: serverTimestamp(), memberCount: 99 }),
+      );
+      await assertFails(
+        updateDoc(room, { updatedAt: serverTimestamp(), participantCount: 99 }),
+      );
+      await assertFails(
+        updateDoc(room, { updatedAt: serverTimestamp(), isLive: false }),
+      );
+      await assertFails(
+        updateDoc(room, {
+          updatedAt: serverTimestamp(),
+          hostId: "recency-speaker",
+        }),
+      );
+      await assertFails(
+        updateDoc(room, { updatedAt: serverTimestamp(), maxParticipants: 1 }),
+      );
+      await assertFails(
+        updateDoc(room, {
+          updatedAt: serverTimestamp(),
+          membersCanStartVoice: true,
+        }),
+      );
+      await assertFails(
+        updateDoc(room, { updatedAt: serverTimestamp(), name: "Hijacked" }),
+      );
+      // And the timestamp itself is pinned to the server clock, so the bump
+      // cannot be backdated or pushed into the future to game the sort.
+      await assertFails(
+        updateDoc(room, { updatedAt: Timestamp.fromMillis(4_100_000_000_000) }),
+      );
+    },
+  );
+
+  await check(
+    "room recency BOUNDARY: a room being torn down refuses the bump, matching hostRoomUpdateAllowed()'s own deletionInProgress guard",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, "rooms/recency-deleting"), {
+          hostId: "recency-host",
+          name: "Closing Room",
+          visibility: "public",
+          roomType: "community",
+          status: "active",
+          isLive: true,
+          participantCount: 1,
+          memberCount: 0,
+          deletionInProgress: true,
+          updatedAt: Timestamp.fromMillis(1_700_000_000_000),
+        });
+        await setDoc(
+          doc(db, "rooms/recency-deleting/participants/recency-speaker"),
+          { userId: "recency-speaker", role: "listener", isSpeaker: false },
+        );
+      });
+      const speaker = testEnv.authenticatedContext("recency-speaker", {
+        email_verified: true,
+      });
+      await assertFails(
+        updateDoc(doc(speaker.firestore(), "rooms/recency-deleting"), {
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "room recency BOUNDARY: a private room a participant was never admitted to stays unbumpable — canAccessRoom() still gates the participant branch",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, "rooms/recency-private"), {
+          hostId: "recency-host",
+          name: "Private Room",
+          visibility: "private",
+          roomType: "temporary",
+          status: "active",
+          isLive: true,
+          participantCount: 1,
+          memberCount: 0,
+          updatedAt: Timestamp.fromMillis(1_700_000_000_000),
+        });
+        // A self-forged participant row with no admittedBy — exactly what
+        // isHostAdmittedRoomParticipant() exists to refuse.
+        await setDoc(
+          doc(db, "rooms/recency-private/participants/recency-speaker"),
+          { userId: "recency-speaker", role: "listener", isSpeaker: false },
+        );
+      });
+      const speaker = testEnv.authenticatedContext("recency-speaker", {
+        email_verified: true,
+      });
+      await assertFails(
+        updateDoc(doc(speaker.firestore(), "rooms/recency-private"), {
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "room recency ANTI-REGRESSION: the join, leave and voice-start transitions still work with the new disjunct evaluated ahead of them",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, "rooms/recency-transitions"), {
+          hostId: "recency-host",
+          name: "Transitions",
+          visibility: "public",
+          roomType: "community",
+          status: "active",
+          isLive: false,
+          approvalRequired: false,
+          membersCanStartVoice: true,
+          participantCount: 0,
+          memberCount: 0,
+          maxParticipants: null,
+          updatedAt: Timestamp.fromMillis(1_700_000_000_000),
+        });
+      });
+      const joiner = testEnv.authenticatedContext("recency-member", {
+        email_verified: true,
+      });
+      const db = joiner.firestore();
+
+      // joinCommunity(): membership row + memberCount, one transaction.
+      await assertSucceeds(
+        runTransaction(db, async (tx) => {
+          tx.set(doc(db, "rooms/recency-transitions/roomMembers/recency-member"), {
+            userId: "recency-member",
+            displayName: "Member",
+            photoUrl: null,
+            role: "member",
+            joinedAt: serverTimestamp(),
+          });
+          tx.update(doc(db, "rooms/recency-transitions"), {
+            memberCount: 1,
+            updatedAt: serverTimestamp(),
+          });
+        }),
+      );
+
+      // startCommunityVoice(): membersCanStartVoice lets a member flip isLive.
+      await assertSucceeds(
+        updateDoc(doc(db, "rooms/recency-transitions"), {
+          isLive: true,
+          updatedAt: serverTimestamp(),
+          endedAt: deleteField(),
+        }),
+      );
+
+      // joinRoom(): participant row + participantCount, one transaction.
+      await assertSucceeds(
+        runTransaction(db, async (tx) => {
+          tx.set(
+            doc(db, "rooms/recency-transitions/participants/recency-member"),
+            {
+              userId: "recency-member",
+              displayName: "Member",
+              photoUrl: null,
+              role: "listener",
+              isMuted: true,
+              isSpeaker: false,
+              isHandRaised: false,
+              joinedAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            },
+          );
+          tx.update(doc(db, "rooms/recency-transitions"), {
+            participantCount: 1,
+            updatedAt: serverTimestamp(),
+          });
+        }),
+      );
+
+      // leave: membership row goes, memberCount follows it down.
+      await assertSucceeds(
+        runTransaction(db, async (tx) => {
+          tx.delete(
+            doc(db, "rooms/recency-transitions/roomMembers/recency-member"),
+          );
+          tx.update(doc(db, "rooms/recency-transitions"), {
+            memberCount: 0,
+            updatedAt: serverTimestamp(),
+          });
+        }),
+      );
+    },
+  );
+
+  await check(
+    "room recency ADR-007: the whole watchMyCommunities() path — a real collectionGroup('roomMembers') query, then the rooms/{id} hydration get, then the bump — still works end to end after a member chats",
+    async () => {
+      // ADR-007: the rule touched here is the rooms/{id} ROOT update, which no
+      // collectionGroup query authorizes — the top-level
+      // `match /{path=**}/roomMembers/{memberId}` wildcard is untouched. But
+      // the feed this fix exists to serve IS a collectionGroup query, and
+      // SECURITY.md principle 3 says getting that wildcard wrong fails OPEN,
+      // so the claim "ordering now advances" is only proven by running the
+      // query the client actually runs rather than a direct-path get().
+      const member = testEnv.authenticatedContext("recency-member", {
+        email_verified: true,
+      });
+      const db = member.firestore();
+
+      // 1. The exact query in watchMyCommunities().
+      const snapshot = await assertSucceeds(
+        getDocs(
+          query(
+            collectionGroup(db, "roomMembers"),
+            where("userId", "==", "recency-member"),
+          ),
+        ),
+      );
+      const roomIds = snapshot.docs
+        .map((d) => d.ref.parent.parent && d.ref.parent.parent.id)
+        .filter(Boolean);
+      if (!roomIds.includes("recency-room")) {
+        throw new Error(
+          `expected recency-room in the collectionGroup feed, got ${roomIds}`,
+        );
+      }
+
+      // 2. The Future.wait hydration that follows it. One unreadable room
+      //    empties the whole Communities tab, so every id must resolve.
+      const before = await Promise.all(
+        roomIds.map((id) => assertSucceeds(getDoc(doc(db, `rooms/${id}`)))),
+      );
+      const stamp = (snap) => {
+        const value = snap.data().updatedAt;
+        return value ? value.toMillis() : 0;
+      };
+      const beforeStamp = stamp(
+        before[roomIds.indexOf("recency-room")],
+      );
+
+      // 3. Chat, then the bump — and the ordering field must actually move,
+      //    which is the whole user-visible point. A permitted write that did
+      //    not advance updatedAt would leave the feed just as stale.
+      await assertSucceeds(
+        addDoc(collection(db, "rooms/recency-room/messages"), {
+          senderId: "recency-member",
+          senderName: "Member",
+          senderPhotoUrl: null,
+          text: "does this room look active yet",
+          createdAt: serverTimestamp(),
+          reactions: {},
+        }),
+      );
+      await assertSucceeds(
+        updateDoc(doc(db, "rooms/recency-room"), {
+          updatedAt: serverTimestamp(),
+        }),
+      );
+
+      const after = await assertSucceeds(
+        getDoc(doc(db, "rooms/recency-room")),
+      );
+      if (stamp(after) <= beforeStamp) {
+        throw new Error(
+          `updatedAt did not advance: ${beforeStamp} -> ${stamp(after)}`,
+        );
+      }
     },
   );
 
