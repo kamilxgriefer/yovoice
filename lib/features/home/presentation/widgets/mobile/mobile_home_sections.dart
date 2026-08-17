@@ -821,14 +821,12 @@ class MobileTopCreators extends StatelessWidget {
     required this.creators,
     required this.onOpenCreator,
     required this.onViewAll,
-    required this.onDiscover,
     super.key,
   });
 
   final List<FollowUser> creators;
   final ValueChanged<FollowUser> onOpenCreator;
   final VoidCallback onViewAll;
-  final VoidCallback onDiscover;
 
   @override
   Widget build(BuildContext context) {
@@ -878,27 +876,6 @@ class MobileTopCreators extends StatelessWidget {
             const Text(
               'You are not following anyone yet.',
               style: TextStyle(color: Color(0xFF7E7895), fontSize: 11.5),
-            ),
-            const SizedBox(height: 10),
-            OutlinedButton(
-              onPressed: onDiscover,
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(
-                  color: AppColors.primary.withValues(alpha: .45),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                minimumSize: const Size(140, 44),
-              ),
-              child: const Text(
-                'Discover creators',
-                style: TextStyle(
-                  color: Color(0xFFD3A5FF),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
             ),
           ] else
             for (final creator in creators.take(4))

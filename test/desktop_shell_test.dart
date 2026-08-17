@@ -808,7 +808,6 @@ void main() {
       FakeFirebaseFirestore db, {
       void Function(FollowUser)? onOpenCreator,
       VoidCallback? onViewAll,
-      VoidCallback? onDiscover,
     }) {
       final auth = authFor(db);
       return host(
@@ -818,7 +817,6 @@ void main() {
             currentUserId: uid,
             onOpenCreator: onOpenCreator ?? (_) {},
             onViewAll: onViewAll ?? () {},
-            onDiscover: onDiscover ?? () {},
             followService: FollowService(firestore: db, auth: auth),
             feedService: HomeFeedService(firestore: db, auth: auth),
             roomService: RoomService(firestore: db, auth: auth),
@@ -865,13 +863,12 @@ void main() {
       expect(find.textContaining('followers'), findsNothing);
     });
 
-    testWidgets('following nobody: a premium empty state with one Discover '
-        'action — never substituted with suggested people', (tester) async {
+    testWidgets('following nobody: a compact empty state without a duplicate '
+        'creator-discovery action', (tester) async {
       useDesktopWindow(tester);
       final db = FakeFirebaseFirestore();
-      var discover = 0;
 
-      await tester.pumpWidget(card(db, onDiscover: () => discover++));
+      await tester.pumpWidget(card(db));
       await tester.pump(const Duration(milliseconds: 120));
 
       expect(find.text('Top creators you follow'), findsOneWidget);
@@ -881,10 +878,8 @@ void main() {
       );
       // No list, and no "View all" pointing at an empty list.
       expect(find.text('View all'), findsNothing);
-
-      await tester.tap(find.text('Discover creators'));
-      await tester.pump();
-      expect(discover, 1);
+      expect(find.text('Discover creators'), findsNothing);
+      expect(find.text('Find creators'), findsNothing);
     });
 
     testWidgets('a row opens that creator and View all opens the following '

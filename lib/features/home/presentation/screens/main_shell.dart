@@ -810,8 +810,6 @@ class _MainShellState extends State<MainShell>
         ),
       ),
       onSeeAll: () => unawaited(_openMoreDestination(MoreDestination.discover)),
-      onFindCreators: () =>
-          unawaited(_openMoreDestination(MoreDestination.findCreators)),
       onCheckPlans: () => unawaited(
         Navigator.of(context).push<void>(
           MaterialPageRoute<void>(builder: (_) => const PremiumScreen()),
@@ -955,7 +953,6 @@ class _DesktopHomeExtras extends StatelessWidget {
     required this.currentUserId,
     required this.onOpenRoom,
     required this.onSeeAll,
-    required this.onFindCreators,
     required this.onCheckPlans,
     required this.onOpenCreator,
     required this.onViewAllCreators,
@@ -964,7 +961,6 @@ class _DesktopHomeExtras extends StatelessWidget {
   final String currentUserId;
   final ValueChanged<VoiceRoom> onOpenRoom;
   final VoidCallback onSeeAll;
-  final VoidCallback onFindCreators;
   final VoidCallback onCheckPlans;
   final ValueChanged<FollowUser> onOpenCreator;
   final VoidCallback onViewAllCreators;
@@ -980,7 +976,6 @@ class _DesktopHomeExtras extends StatelessWidget {
           currentUserId: currentUserId,
           onOpenCreator: onOpenCreator,
           onViewAll: onViewAllCreators,
-          onDiscover: onFindCreators,
         ),
         const SizedBox(height: 16),
         VoiceTrendingCard(onOpenRoom: onOpenRoom, onSeeAll: onSeeAll),

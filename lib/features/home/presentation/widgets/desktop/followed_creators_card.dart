@@ -18,8 +18,9 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 /// Trending is about what is loud right now across the product, this is
 /// about the specific people this account already chose to follow. It
 /// never falls back to suggested people — an account that follows nobody
-/// gets an empty state and one way to go find someone, so the two ideas
-/// stay separate.
+/// gets an honest empty state. Creator discovery remains available through
+/// the primary Moments action and the fixed Find creators destination, so
+/// this supporting card does not repeat the same call to action.
 ///
 /// DATA:
 ///  - who → [FollowService.watchFollowing] for the signed-in uid, i.e.
@@ -43,7 +44,6 @@ class FollowedCreatorsCard extends StatefulWidget {
     required this.currentUserId,
     required this.onOpenCreator,
     required this.onViewAll,
-    required this.onDiscover,
     this.followService,
     this.feedService,
     this.roomService,
@@ -57,9 +57,6 @@ class FollowedCreatorsCard extends StatefulWidget {
 
   /// The existing Following list for this account.
   final VoidCallback onViewAll;
-
-  /// Discover, in the fixed desktop shell's content slot.
-  final VoidCallback onDiscover;
 
   final FollowService? followService;
   final HomeFeedService? feedService;
@@ -174,7 +171,7 @@ class _FollowedCreatorsCardState extends State<FollowedCreatorsCard> {
                       ),
                       const SizedBox(height: 10),
                       if (creators.isEmpty)
-                        _NoCreatorsState(onDiscover: widget.onDiscover)
+                        const _NoCreatorsState()
                       else
                         for (final creator in ranked.take(
                           FollowedCreatorsCard.visibleRows,
@@ -428,12 +425,10 @@ class _LiveSignal extends StatelessWidget {
   }
 }
 
-/// Follows nobody yet. Says so, says what will appear here, and offers
-/// the one existing way to fix it — no substituted "people you may know".
+/// Follows nobody yet. Says what will appear here without duplicating the
+/// primary Find creators action or substituting "people you may know".
 class _NoCreatorsState extends StatelessWidget {
-  const _NoCreatorsState({required this.onDiscover});
-
-  final VoidCallback onDiscover;
+  const _NoCreatorsState();
 
   @override
   Widget build(BuildContext context) {
@@ -456,27 +451,6 @@ class _NoCreatorsState extends StatelessWidget {
               color: Color(0xFF9A90AC),
               fontSize: 12.5,
               height: 1.4,
-            ),
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton(
-            onPressed: onDiscover,
-            style: OutlinedButton.styleFrom(
-              side: BorderSide(color: AppColors.primary.withValues(alpha: .45)),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(999),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            child: const Text(
-              'Discover creators',
-              style: TextStyle(
-                color: Color(0xFFD3A5FF),
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
             ),
           ),
         ],

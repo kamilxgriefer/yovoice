@@ -444,7 +444,6 @@ class _PreviewApp extends StatelessWidget {
           currentUserId: _uid,
           onOpenCreator: (_) {},
           onViewAll: () {},
-          onDiscover: () {},
           followService: FollowService(firestore: db, auth: auth),
           feedService: HomeFeedService(firestore: db, auth: auth),
           roomService: rooms,
