@@ -178,7 +178,9 @@ void main() {
       await tester.tap(find.text('Back'));
       await settle(tester);
       expect(
-        tester.widget<TextFormField>(find.byType(TextFormField).first).controller
+        tester
+            .widget<TextFormField>(find.byType(TextFormField).first)
+            .controller
             ?.text,
         'Evening Talk',
       );
@@ -334,8 +336,10 @@ void main() {
       await settle(tester);
       await tester.tap(find.text('Professionals'));
       await settle(tester);
-      await tester.enterText(find.widgetWithText(TextFormField, 'Add a tag'),
-          'dart');
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Add a tag'),
+        'dart',
+      );
       await tester.tap(find.text('Add'));
       await settle(tester);
       await tester.tap(find.text('Continue'));
@@ -352,6 +356,11 @@ void main() {
       // concern, not this one's — consume it and assert what was written.
       tester.takeException();
       final data = (await db.collection('rooms').get()).docs.single.data();
+      expect(data['experience'], 'community');
+      expect(data['topic'], '');
+      expect(data['audienceCanSpeak'], isTrue);
+      expect(data['handRaisingEnabled'], isFalse);
+      expect(data['stageLimit'], isNull);
       expect(data['targetAudience'], 'professionals');
       expect(data['topicTags'], ['dart']);
       expect(data['conversationStyle'], 'focused');
@@ -387,16 +396,22 @@ void main() {
       // concern, not this one's — consume it and assert what was written.
       tester.takeException();
       final data = (await db.collection('rooms').get()).docs.single.data();
+      expect(data['experience'], 'broadcast');
+      expect(data['topic'], 'Episode one');
+      expect(data['audienceCanSpeak'], isFalse);
+      expect(data['handRaisingEnabled'], isTrue);
+      expect(data['stageLimit'], 8);
       expect(data['showFormat'], 'interview');
       expect(data.containsKey('conversationStyle'), isFalse);
       expect(data.containsKey('newcomerFriendly'), isFalse);
     });
 
     test('tag normalisation matches what rules will accept', () {
-      expect(
-        RoomMetadataLimits.normalizeTags(['a', 'b', 'c', 'd']),
-        ['a', 'b', 'c'],
-      );
+      expect(RoomMetadataLimits.normalizeTags(['a', 'b', 'c', 'd']), [
+        'a',
+        'b',
+        'c',
+      ]);
       expect(RoomMetadataLimits.normalizeTags(['x', 'X', ' x ']), ['x']);
       expect(RoomMetadataLimits.normalizeTags(['', '   ']), isEmpty);
       expect(

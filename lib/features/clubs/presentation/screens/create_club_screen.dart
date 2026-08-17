@@ -135,8 +135,6 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
               name: _nameController.text,
               description: _descriptionController.text,
               defaultLanguage: _language,
-              avatarFile: _avatarFile,
-              bannerFile: _bannerFile,
             )
           : await _clubService.createClub(
               name: _nameController.text,
@@ -171,13 +169,13 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
         .replaceFirst('Bad state: ', '')
         .replaceFirst('Invalid argument(s): ', '');
     if (message.contains('permission-denied')) {
-      return 'Firestore or Storage permission denied. Deploy the new rules from this stage.';
+      return 'Your account is not allowed to create this space right now. Refresh your session and try again.';
     }
     if (message.contains('object-not-found')) {
       return 'The uploaded image could not be found.';
     }
     if (message.contains('unauthorized')) {
-      return 'Storage rejected the upload. Deploy storage.rules.';
+      return 'The image upload was not authorized. Refresh your session and try again.';
     }
     return message;
   }
@@ -227,46 +225,48 @@ class _CreateClubScreenState extends State<CreateClubScreen> {
                     : 'Give your people a place they will recognize.',
               ),
               const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: _MediaPickerCard(
-                      icon: Icons.groups_2_rounded,
-                      label: widget.isFamily ? 'Family avatar' : 'Club avatar',
-                      helper: _avatarBytes == null
-                          ? 'Choose image'
-                          : 'Tap to replace',
-                      bytes: _avatarBytes,
-                      circularPreview: true,
-                      onTap: () => _pickImage(avatar: true),
-                      onRemove: _avatarBytes == null
-                          ? null
-                          : () => setState(() {
-                              _avatarFile = null;
-                              _avatarBytes = null;
-                            }),
+              if (!widget.isFamily)
+                Row(
+                  children: [
+                    Expanded(
+                      child: _MediaPickerCard(
+                        icon: Icons.groups_2_rounded,
+                        label: 'Club avatar',
+                        helper: _avatarBytes == null
+                            ? 'Choose image'
+                            : 'Tap to replace',
+                        bytes: _avatarBytes,
+                        circularPreview: true,
+                        onTap: () => _pickImage(avatar: true),
+                        onRemove: _avatarBytes == null
+                            ? null
+                            : () => setState(() {
+                                _avatarFile = null;
+                                _avatarBytes = null;
+                              }),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _MediaPickerCard(
-                      icon: Icons.image_rounded,
-                      label: widget.isFamily ? 'Family banner' : 'Club banner',
-                      helper: _bannerBytes == null
-                          ? 'Choose image'
-                          : 'Tap to replace',
-                      bytes: _bannerBytes,
-                      onTap: () => _pickImage(avatar: false),
-                      onRemove: _bannerBytes == null
-                          ? null
-                          : () => setState(() {
-                              _bannerFile = null;
-                              _bannerBytes = null;
-                            }),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _MediaPickerCard(
+                        icon: Icons.image_rounded,
+                        label: 'Club banner',
+                        helper: _bannerBytes == null
+                            ? 'Choose image'
+                            : 'Tap to replace',
+                        bytes: _bannerBytes,
+                        onTap: () => _pickImage(avatar: false),
+                        onRemove: _bannerBytes == null
+                            ? null
+                            : () => setState(() {
+                                _bannerFile = null;
+                                _bannerBytes = null;
+                              }),
+                      ),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
+              if (widget.isFamily) const _PrivateFamilyMediaNotice(),
               const SizedBox(height: 16),
               _Field(
                 controller: _nameController,
@@ -474,6 +474,35 @@ class _HeroCard extends StatelessWidget {
                   style: TextStyle(color: Color(0xFFD1C4DA), height: 1.42),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PrivateFamilyMediaNotice extends StatelessWidget {
+  const _PrivateFamilyMediaNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF12271F),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF2E7D5A)),
+      ),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.lock_rounded, color: Color(0xFF35D58A)),
+          SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'Family Rooms use private initials for now. Photos stay unavailable until they can be loaded through authenticated private media.',
+              style: TextStyle(color: Colors.white70, height: 1.4),
             ),
           ),
         ],

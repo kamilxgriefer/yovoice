@@ -553,6 +553,20 @@ permission flags).
 
 ## UI
 
+- **Fixed in source (deployment pending): room creation failures and four
+  unrelated-looking room interiors.** Podcast creation was denied because
+  `showFormat` arrived before its `experience`; Family creation could fail on
+  a missing deterministic-root pre-read against the deployed rules; Club
+  artwork was uploaded before a canonical Club existed and surfaced a false
+  "deploy rules" instruction. Podcast now writes its immutable type
+  atomically, Family lets the create batch remain authoritative, and ordinary
+  Club media is root-first with a generation-pinned server finalizer. All
+  four interiors use the shared stage with purple Community, coral Podcast,
+  gold Club and emerald Family identity. Family artwork is intentionally
+  disabled: the previous public/token URL model could not revoke access when
+  a member left. The fix is verified locally but does not affect production
+  until Hosting, Functions and both rulesets are released.
+
 - **Fixed (2026-08-17, this revision): photo and microphone actions in a
   direct chat were placeholders.** Both buttons only displayed “prepared in
   the interface” notices. They now run a real private-media flow: gallery

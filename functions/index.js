@@ -93,7 +93,10 @@ const {
 |--------------------------------------------------------------------------
 */
 
-const { createCommunityClub } = require("./clubs/creation");
+const {
+  createCommunityClub,
+  finalizeClubMedia,
+} = require("./clubs/creation");
 const { removeClubMemberSelf } = require("./clubs/members");
 const { transferClubOwnershipSelf } = require("./clubs/ownership");
 const {
@@ -221,6 +224,7 @@ exports.setUserBlock = setUserBlock;
 
 exports.transferClubOwnershipSelf = transferClubOwnershipSelf;
 exports.createCommunityClub = createCommunityClub;
+exports.finalizeClubMedia = finalizeClubMedia;
 exports.removeClubMemberSelf = removeClubMemberSelf;
 exports.removeRoomParticipantSelf = removeRoomParticipantSelf;
 exports.setOwnRoomParticipantMute = setOwnRoomParticipantMute;

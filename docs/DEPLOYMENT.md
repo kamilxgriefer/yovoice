@@ -79,6 +79,38 @@ Reversing steps 1–3 exposes working-looking attachment buttons to a client
 whose trusted backend or Storage contract is not live yet. Firestore rules and
 indexes are unchanged by this particular media rollout.
 
+### Room creation and Club media rollout order
+
+This revision changes all four layers at once: Podcast/Family creation in the
+Flutter client and Firestore Rules, ordinary Club creation/finalization in
+Cloud Functions, and root-first Club/Family privacy in Storage Rules. It also
+intentionally rejects the old pre-root Club upload flow. Treat it as a
+coordinated cutover, not four independent deploys.
+
+1. Verify the exact revision with all five emulator suites, `flutter test`,
+   `flutter analyze` and `flutter build web --release`.
+2. Release the verified Hosting client first. During this short compatibility
+   window the new client can create a Club root even if finalization is not
+   live yet; artwork may wait for retry, but the Club remains usable. Do not
+   leave this window open longer than the deployment session.
+3. Deploy all Cloud Functions and verify `createCommunityClub` and
+   `finalizeClubMedia` are ACTIVE in `europe-west1`.
+4. Deploy `firestore.rules`, then `storage.rules`. The Firestore release fixes
+   deterministic Family missing-document probing and pins Family media null;
+   the Storage release closes pre-root orphan uploads and all Family artwork
+   access.
+5. Invalidate/refresh the PWA and smoke-test with real accounts: create one
+   Community room, one Podcast, one ordinary Club with JPG/PNG/WebP artwork,
+   and one Family Room without artwork; reopen each and join from a second
+   authorized account. Confirm an anonymous request cannot fetch seeded
+   Family artwork.
+
+Old cached clients are not compatible with the final root-first Storage rule.
+If the product cannot force a minimum web version, keep the cutover window
+brief and instruct open sessions to refresh. Do not restore the pre-root
+exception as a compatibility fix: it is an orphan-storage abuse path. Do not
+restore Family download-token URLs: they bypass membership revocation.
+
 ## Why rules/functions are tested but not auto-deployed
 
 Auto-deploying `firestore.rules` on every push to `main` would mean a

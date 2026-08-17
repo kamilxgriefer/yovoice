@@ -14,6 +14,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
 
 void main() => runApp(const _PreviewApp());
@@ -28,10 +29,25 @@ class _PreviewApp extends StatefulWidget {
 class _PreviewAppState extends State<_PreviewApp> {
   int _total = 10;
   bool _someoneSpeaking = true;
+  SpaceIdentity _identity = SpaceIdentity.community;
 
   static const _names = [
-    'Ada', 'Griefer', 'Sieeema', 'Noor', 'Kai', 'Luna', 'Mateo', 'Zoe',
-    'Iris', 'Theo', 'Mila', 'Odin', 'Nova', 'Remy', 'Sage', 'Vera',
+    'Ada',
+    'Griefer',
+    'Sieeema',
+    'Noor',
+    'Kai',
+    'Luna',
+    'Mateo',
+    'Zoe',
+    'Iris',
+    'Theo',
+    'Mila',
+    'Odin',
+    'Nova',
+    'Remy',
+    'Sage',
+    'Vera',
   ];
 
   List<StageSpeaker> _speakers(int total) {
@@ -70,7 +86,14 @@ class _PreviewAppState extends State<_PreviewApp> {
                 padding: const EdgeInsets.all(12),
                 child: Wrap(
                   spacing: 8,
+                  runSpacing: 8,
                   children: [
+                    for (final identity in SpaceIdentity.all)
+                      ChoiceChip(
+                        selected: identical(_identity, identity),
+                        label: Text(identity.kind.name),
+                        onSelected: (_) => setState(() => _identity = identity),
+                      ),
                     for (final size in const [2, 10, 50, 500])
                       ChoiceChip(
                         selected: _total == size,
@@ -80,39 +103,43 @@ class _PreviewAppState extends State<_PreviewApp> {
                     FilterChip(
                       selected: _someoneSpeaking,
                       label: const Text('speaking'),
-                      onSelected: (v) =>
-                          setState(() => _someoneSpeaking = v),
+                      onSelected: (v) => setState(() => _someoneSpeaking = v),
                     ),
                   ],
                 ),
               ),
               Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
-                  children: [
-                    RoomIdentityCard(
-                      roomName: 'Midnight Tech Talk',
-                      topic:
-                          'Late-night conversations about building things '
-                          'that matter.',
-                      accent: const Color(0xFF9D20FF),
-                      quiet: !_someoneSpeaking,
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1040),
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
+                      children: [
+                        RoomIdentityCard(
+                          roomName: 'Midnight Tech Talk',
+                          topic:
+                              'Late-night conversations about building things '
+                              'that matter.',
+                          identity: _identity,
+                          quiet: !_someoneSpeaking,
+                        ),
+                        const SizedBox(height: 14),
+                        RoomStagePanel(
+                          speakers: speakers,
+                          identity: _identity,
+                          onOverflowTap: () {},
+                        ),
+                        const SizedBox(height: 12),
+                        ListenersStrip(
+                          count: max(0, listeners),
+                          identity: _identity,
+                          onTap: () {},
+                          previewNames: _names.take(4).toList(),
+                          previewPhotoUrls: const [null, null, null, null],
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 14),
-                    StageGrid(
-                      speakers: speakers,
-                      accent: const Color(0xFF9D20FF),
-                      onOverflowTap: () {},
-                    ),
-                    const SizedBox(height: 12),
-                    ListenersStrip(
-                      count: max(0, listeners),
-                      accent: const Color(0xFF9D20FF),
-                      onTap: () {},
-                      previewNames: _names.take(4).toList(),
-                      previewPhotoUrls: const [null, null, null, null],
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ],

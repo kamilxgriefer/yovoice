@@ -303,8 +303,6 @@ void main() {
       for (final familyCopy in const [
         'Create Family Room',
         'A private, invite-only space for the people closest to you.',
-        'Family avatar',
-        'Family banner',
         'Family name',
         'Primary family language',
         'Family chat',
@@ -312,6 +310,7 @@ void main() {
         'Family Lounge',
         'Quick check-ins',
         'Organizer role and membership',
+        'Family Rooms use private initials for now. Photos stay unavailable until they can be loaded through authenticated private media.',
       ]) {
         expect(find.text(familyCopy), findsWidgets, reason: familyCopy);
       }
@@ -352,33 +351,27 @@ void main() {
   });
 
   group('Family creation service', () {
-    test('creates the complete canonical space for a free account, persists '
-        'the selected banner and reopens idempotently', () async {
+    test('creates the complete canonical space for a free account with '
+        'private media disabled and reopens idempotently', () async {
       final mockAuth = auth();
+      final storage = MockFirebaseStorage();
       final service = ClubService(
         firestore: db,
         auth: mockAuth,
-        storage: MockFirebaseStorage(),
+        storage: storage,
         notificationService: NotificationService(firestore: db, auth: mockAuth),
       );
-      final banner = XFile.fromData(
-        Uint8List.fromList(<int>[137, 80, 78, 71]),
-        name: 'family-banner.png',
-        mimeType: 'image/png',
-      );
-
       final created = await service.createFamilyRoom(
         name: 'Our Family',
         description: 'Our private home',
         defaultLanguage: 'Polish',
-        bannerFile: banner,
       );
 
       expect(created.id, 'family_me');
       expect(created.type, ClubType.family);
       expect(created.privacy, ClubPrivacy.inviteOnly);
-      expect(created.bannerUrl, isNotNull);
-      expect(created.bannerUrl, isNotEmpty);
+      expect(created.avatarUrl, isNull);
+      expect(created.bannerUrl, isNull);
       expect(
         (await db.collection('entitlements').doc('me').get()).exists,
         isFalse,
@@ -389,7 +382,8 @@ void main() {
       expect(root.data()?['ownerId'], 'me');
       expect(root.data()?['type'], 'family');
       expect(root.data()?['privacy'], 'inviteOnly');
-      expect(root.data()?['bannerUrl'], created.bannerUrl);
+      expect(root.data()?['avatarUrl'], isNull);
+      expect(root.data()?['bannerUrl'], isNull);
       expect(root.data()?['loungeRoomId'], 'club_lounge_family_me');
 
       final member = await db
@@ -406,6 +400,7 @@ void main() {
           .doc('family_me')
           .get();
       expect(projection.data()?['role'], 'owner');
+      expect(projection.data()?['avatarUrl'], isNull);
 
       final channels = await db
           .collection('clubs')
@@ -425,6 +420,7 @@ void main() {
       expect(lounge.data()?['clubId'], 'family_me');
       expect(lounge.data()?['visibility'], 'private');
       expect(lounge.data()?['roomKind'], 'clubLounge');
+      expect(lounge.data()?['imageUrl'], isNull);
 
       final reopened = await service.createFamilyRoom(
         name: 'A different name must not create another room',
@@ -434,6 +430,38 @@ void main() {
       expect(reopened.name, 'Our Family');
       expect((await db.collection('clubs').get()).docs, hasLength(1));
       expect((await db.collection('rooms').get()).docs, hasLength(1));
+    });
+
+    test('rejects every Family image before creating or uploading', () async {
+      final mockAuth = auth();
+      final storage = MockFirebaseStorage();
+      final service = ClubService(
+        firestore: db,
+        auth: mockAuth,
+        storage: storage,
+        notificationService: NotificationService(firestore: db, auth: mockAuth),
+      );
+      final image = XFile.fromData(
+        Uint8List.fromList(List<int>.filled(256, 0)),
+        name: 'family-banner.png',
+        mimeType: 'image/png',
+      );
+
+      await expectLater(
+        service.createFamilyRoom(
+          name: 'Our Family',
+          description: 'Private',
+          bannerFile: image,
+        ),
+        throwsA(
+          isA<ArgumentError>().having(
+            (error) => error.message,
+            'message',
+            contains('private authenticated media'),
+          ),
+        ),
+      );
+      expect((await db.collection('clubs').get()).docs, isEmpty);
     });
 
     test(

@@ -216,7 +216,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
         SnackBar(
           content: Text(
             message.contains('permission-denied')
-                ? 'Firestore permission denied. Deploy the included rules.'
+                ? 'Your account is not allowed to do that right now.'
                 : 'Something went wrong. Please try again.',
           ),
           behavior: SnackBarBehavior.floating,

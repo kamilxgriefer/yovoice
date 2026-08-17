@@ -34,4 +34,67 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets(
+    'foreground notification stays above a scaled voice-room control dock',
+    (tester) async {
+      const size = Size(320, 844);
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = size;
+      addTearDown(tester.view.reset);
+
+      final messengerKey = GlobalKey<ScaffoldMessengerState>();
+      const dockKey = ValueKey('scaled-room-control-dock');
+      await tester.pumpWidget(
+        MaterialApp(
+          scaffoldMessengerKey: messengerKey,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: const Scaffold(
+            body: Stack(
+              children: [
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: 160,
+                  child: ColoredBox(key: dockKey, color: Color(0xFF120A19)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      messengerKey.currentState!.showSnackBar(
+        buildForegroundNotificationBanner(
+          title: 'Achievement unlocked: Room Opener',
+          body: 'Tap to open YO Voice',
+          type: NotificationType.achievementUnlocked,
+          targetId: 'room-opener',
+          actorId: null,
+          bottomClearance: foregroundNotificationBottomClearance(
+            const TextScaler.linear(2),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final dockRect = tester.getRect(find.byKey(dockKey));
+      final titleRect = tester.getRect(
+        find.text('Achievement unlocked: Room Opener'),
+      );
+      final actionRect = tester.getRect(find.text('Open'));
+      final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
+      expect(snackBar.margin, const EdgeInsets.fromLTRB(16, 16, 16, 176));
+      expect(titleRect.overlaps(dockRect), isFalse);
+      expect(actionRect.overlaps(dockRect), isFalse);
+      expect(titleRect.bottom, lessThanOrEqualTo(dockRect.top));
+      expect(actionRect.bottom, lessThanOrEqualTo(dockRect.top));
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

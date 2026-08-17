@@ -1,0 +1,280 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:yovoice/core/theme/space_identity.dart';
+import 'package:yovoice/features/clubs/data/models/club.dart';
+import 'package:yovoice/features/rooms/data/models/voice_room.dart';
+import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_bottom_controls.dart';
+import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_stage.dart';
+import 'package:yovoice/features/rooms/presentation/voice_room_identity.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
+
+VoiceRoom _room({String experience = 'community', String? clubId}) => VoiceRoom(
+  id: 'room',
+  hostId: 'host',
+  hostName: 'Host',
+  hostPhotoUrl: null,
+  name: 'A room with a genuinely long title',
+  description: 'A welcoming conversation with enough copy to wrap safely.',
+  category: 'talk',
+  visibility: 'public',
+  language: 'English',
+  maxParticipants: 25,
+  participantCount: 3,
+  memberCount: 3,
+  isLive: true,
+  roomType: RoomType.temporary,
+  status: RoomStatus.active,
+  imageUrl: null,
+  approvalRequired: false,
+  slowModeSeconds: 0,
+  autoMuteNewUsers: false,
+  membersCanStartVoice: false,
+  createdAt: null,
+  updatedAt: null,
+  experience: experience,
+  clubId: clubId,
+);
+
+Club _club(ClubType type) => Club(
+  id: 'club',
+  name: 'Club',
+  description: 'Description',
+  ownerId: 'host',
+  ownerName: 'Host',
+  avatarUrl: null,
+  bannerUrl: null,
+  privacy: ClubPrivacy.private,
+  defaultLanguage: 'English',
+  memberCount: 3,
+  onlineCount: 1,
+  defaultChatChannelId: 'chat',
+  defaultVoiceChannelId: 'voice',
+  announcementChannelId: 'announcements',
+  createdAt: null,
+  updatedAt: null,
+  type: type,
+);
+
+Widget _scene(SpaceIdentity identity) => MaterialApp(
+  theme: ThemeData.dark(useMaterial3: true),
+  builder: (context, child) => MediaQuery(
+    data: MediaQuery.of(
+      context,
+    ).copyWith(textScaler: const TextScaler.linear(2)),
+    child: child!,
+  ),
+  home: Scaffold(
+    backgroundColor: const Color(0xFF05030A),
+    body: SafeArea(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1040),
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              RoomIdentityCard(
+                roomName: 'Late night voices that bring people together',
+                topic:
+                    'A welcoming conversation with enough copy to wrap safely.',
+                identity: identity,
+                quiet: true,
+              ),
+              const SizedBox(height: 14),
+              RoomStagePanel(
+                identity: identity,
+                speakers: const [
+                  StageSpeaker(
+                    userId: 'host',
+                    displayName: 'Alexandra Longname',
+                    photoUrl: null,
+                    isHost: true,
+                    isSpeaking: true,
+                    audioLevel: .72,
+                  ),
+                  StageSpeaker(
+                    userId: 'speaker',
+                    displayName: 'Maya',
+                    photoUrl: null,
+                    isMuted: true,
+                  ),
+                  StageSpeaker(
+                    userId: 'speaker-2',
+                    displayName: 'Noah',
+                    photoUrl: null,
+                  ),
+                ],
+                onOverflowTap: () {},
+                onSpeakerTap: (_) {},
+              ),
+              const SizedBox(height: 12),
+              ListenersStrip(count: 842, identity: identity, onTap: () {}),
+            ],
+          ),
+        ),
+      ),
+    ),
+  ),
+);
+
+void main() {
+  test('authoritative models resolve all four room identities', () {
+    expect(voiceRoomIdentity(_room()), same(SpaceIdentity.community));
+    expect(
+      voiceRoomIdentity(_room(experience: 'broadcast')),
+      same(SpaceIdentity.podcast),
+    );
+    expect(
+      voiceRoomIdentity(_room(clubId: 'club'), club: _club(ClubType.community)),
+      same(SpaceIdentity.club),
+    );
+    expect(
+      voiceRoomIdentity(_room(clubId: 'family'), club: _club(ClubType.family)),
+      same(SpaceIdentity.family),
+    );
+  });
+
+  for (final identity in SpaceIdentity.all) {
+    for (final viewport in const [
+      (320.0, 844.0),
+      (390.0, 844.0),
+      (768.0, 1024.0),
+      (1100.0, 800.0),
+      (1440.0, 900.0),
+    ]) {
+      testWidgets(
+        '${identity.label} stage fits ${viewport.$1.toInt()}px at 200% text',
+        (tester) async {
+          tester.view.devicePixelRatio = 1;
+          tester.view.physicalSize = Size(viewport.$1, viewport.$2);
+          addTearDown(tester.view.reset);
+
+          await tester.pumpWidget(_scene(identity));
+          await tester.pump();
+
+          expect(find.text(identity.label.toUpperCase()), findsOneWidget);
+          expect(find.text('On stage'), findsOneWidget);
+          expect(
+            tester
+                .getSize(
+                  find.byKey(ValueKey('room-stage-${identity.kind.name}')),
+                )
+                .width,
+            lessThanOrEqualTo(1040),
+          );
+          await tester.drag(find.byType(ListView), const Offset(0, -1200));
+          await tester.pump();
+          expect(find.text('842 listening'), findsOneWidget);
+          expect(
+            tester
+                .getSize(
+                  find.byKey(ValueKey('room-listeners-${identity.kind.name}')),
+                )
+                .height,
+            greaterThanOrEqualTo(44),
+          );
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
+  testWidgets('desktop speaker tiles are centered inside the bounded stage', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1440, 900);
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_scene(SpaceIdentity.community));
+    await tester.pump();
+
+    final panelRect = tester.getRect(
+      find.byKey(const ValueKey('room-stage-community')),
+    );
+    final tiles = find.byType(SpeakerTile);
+    expect(tiles, findsNWidgets(3));
+    final tileRects = [
+      for (var index = 0; index < 3; index++) tester.getRect(tiles.at(index)),
+    ];
+    final groupLeft = tileRects
+        .map((rect) => rect.left)
+        .reduce((a, b) => a < b ? a : b);
+    final groupRight = tileRects
+        .map((rect) => rect.right)
+        .reduce((a, b) => a > b ? a : b);
+    final groupCenter = (groupLeft + groupRight) / 2;
+
+    expect((groupCenter - panelRect.center.dx).abs(), lessThanOrEqualTo(1));
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final viewport in const [
+    (320.0, 844.0),
+    (390.0, 844.0),
+    (768.0, 1024.0),
+    (1100.0, 800.0),
+    (1440.0, 900.0),
+  ]) {
+    testWidgets(
+      'podcast header and control dock fit ${viewport.$1.toInt()}px at 200%',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = Size(viewport.$1, viewport.$2);
+        addTearDown(tester.view.reset);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData.dark(useMaterial3: true),
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: child!,
+            ),
+            home: Scaffold(
+              backgroundColor: const Color(0xFF05030A),
+              body: Column(
+                children: [
+                  BroadcastTopBar(
+                    title: 'A podcast with a long room title',
+                    count: 842,
+                    isHost: true,
+                    onBack: () {},
+                    onPeople: () {},
+                    onMenu: () {},
+                    onShare: () {},
+                  ),
+                  const Spacer(),
+                  BroadcastBottomControls(
+                    isHost: true,
+                    ending: false,
+                    connected: true,
+                    micMuted: false,
+                    micBusy: false,
+                    canSpeak: true,
+                    handRaised: false,
+                    canRaiseHand: false,
+                    onMic: () {},
+                    onRaiseHand: () {},
+                    onShare: () {},
+                    onParticipants: () {},
+                    onEnd: () {},
+                    onLeave: () {},
+                    onChat: () {},
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(find.text('PODCAST ROOM'), findsOneWidget);
+        expect(find.text('End'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+}

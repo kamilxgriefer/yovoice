@@ -4240,3 +4240,58 @@ lost upload or callable response must not create duplicates.
 - Functions and Storage rules must be deployed before the Hosting client.
 - Automated browser/native seams and emulator rules are release gates; a real
   iPhone Safari publish remains a required post-deploy smoke test.
+
+## ADR-064: Room identity shares one stage; creation type is atomic; Club media is root-first
+
+**Date**: 2026-08-17
+**Status**: Accepted
+
+### Context
+
+The four voice-space products had drifted into different visual structures,
+while their creation failures had three unrelated causes. Podcast wrote its
+authorization-relevant `experience` only after the initial room create;
+Family probed a deterministic missing document against an older deployed
+ruleset; and ordinary Clubs uploaded artwork before a Premium/quota-bound
+Club root existed. The last flow both produced misleading Storage errors and
+allowed a modified client to create unbounded orphan objects.
+
+Family artwork also had a more serious privacy problem. Its deterministic
+Storage path was publicly readable and a Firebase download-token URL would
+continue bypassing membership rules after removal. A green-colored picker
+would therefore have advertised privacy the backend could not enforce.
+
+### Decision
+
+1. Community, Podcast, Club Lounge and Family Lounge share one bounded stage
+   composition: identity hero, On stage grid, listener strip and adaptive
+   controls. Product behavior stays separate. Identity comes only from
+   canonical data: room `experience` for Podcast and immutable Club `type`
+   for Club versus Family. Palettes are purple, coral/red, gold and emerald.
+2. A room writes `experience`, topic, audience policy, hand raising and stage
+   limit in the same create as every type-scoped field. `experience` is
+   immutable after creation.
+3. An ordinary Club is created with null media first. Only its active owner
+   may upload deterministic `avatar`/`banner` objects. The callable
+   `finalizeClubMedia` rechecks account, owner membership, Club lifecycle,
+   projection and lounge; verifies the exact Storage path, generation, MIME
+   and size; then atomically mirrors the generation-pinned URL.
+4. Family Room artwork is disabled in this release. Its root, owner
+   projection and lounge image must remain null, and Storage denies every
+   client read/write of Family artwork, including legacy objects. Family
+   chat, invitations, check-ins and Lounge remain available.
+5. Production errors never instruct users to deploy rules. Those are release
+   diagnostics, not actionable UX.
+
+### Consequences
+
+- The four rooms feel like one product without merging their lifecycle or
+  authorization models.
+- Podcast creation cannot be misclassified as Community by Security Rules.
+- Club upload retries are bounded to two canonical objects and cannot mint
+  pre-root orphans or attach caller-supplied external URLs.
+- Family artwork returns only after an authenticated media resolver and
+  synchronous revocation model exist; permanent bearer URLs are not an
+  acceptable shortcut.
+- This change requires a coordinated Hosting, Functions, Firestore Rules and
+  Storage Rules release. Emulator success describes source, not production.

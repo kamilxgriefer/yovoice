@@ -1,5 +1,6 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { FieldValue } = require("firebase-admin/firestore");
+const { getStorage } = require("firebase-admin/storage");
 
 const { requireAuthentication } = require("../utils/auth");
 const { db, normalizeText } = require("../utils/firestore");
@@ -12,6 +13,9 @@ const {
 const REGION = "europe-west1";
 const SAFE_DOCUMENT_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 const CLUB_PRIVACY = new Set(["public", "private", "inviteOnly"]);
+const CLUB_MEDIA_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const CLUB_MEDIA_MIN_BYTES = 128;
+const CLUB_MEDIA_MAX_BYTES = 8 * 1024 * 1024;
 
 function optionalHttpsUrl(value, fieldName) {
   if (value === null || value === undefined || value === "") return null;
@@ -56,6 +60,13 @@ function validatedCreationInput(data) {
   if (!CLUB_PRIVACY.has(privacy)) {
     throw new HttpsError("invalid-argument", "The Club privacy is invalid.");
   }
+  if (data?.avatarUrl !== null && data?.avatarUrl !== undefined ||
+      data?.bannerUrl !== null && data?.bannerUrl !== undefined) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Club media must be finalized from verified Storage objects.",
+    );
+  }
 
   return {
     clubId,
@@ -63,8 +74,8 @@ function validatedCreationInput(data) {
     description,
     privacy,
     defaultLanguage,
-    avatarUrl: optionalHttpsUrl(data?.avatarUrl, "avatarUrl"),
-    bannerUrl: optionalHttpsUrl(data?.bannerUrl, "bannerUrl"),
+    avatarUrl: null,
+    bannerUrl: null,
   };
 }
 
@@ -254,9 +265,238 @@ const createCommunityClub = onCall(
   },
 );
 
+function plainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function validatedMediaDescriptor(value, kind, uid, clubId) {
+  if (value === null || value === undefined) return null;
+  if (!plainObject(value) ||
+      Object.keys(value).sort().join(",") !== "generation,path") {
+    throw new HttpsError("invalid-argument", `${kind} upload is invalid.`);
+  }
+  const expectedPath = `clubs/${uid}/${clubId}/${kind}`;
+  if (value.path !== expectedPath ||
+      typeof value.generation !== "string" ||
+      !/^[1-9][0-9]*$/u.test(value.generation)) {
+    throw new HttpsError("invalid-argument", `${kind} upload is invalid.`);
+  }
+  return { path: expectedPath, generation: value.generation };
+}
+
+function metadataCustomFields(metadata) {
+  const custom = metadata?.metadata ?? metadata?.customMetadata ?? {};
+  return plainObject(custom) ? custom : {};
+}
+
+async function verifiedClubMedia(bucket, descriptor, kind) {
+  if (descriptor === null) return null;
+  let metadata;
+  try {
+    [metadata] = await bucket.file(descriptor.path).getMetadata();
+  } catch (error) {
+    if (error?.code === 404 || error?.code === 5) {
+      throw new HttpsError("failed-precondition", `${kind} upload is missing.`);
+    }
+    throw error;
+  }
+  const size = Number(metadata?.size);
+  const generation = String(metadata?.generation ?? "");
+  if (!Number.isSafeInteger(size) ||
+      size < CLUB_MEDIA_MIN_BYTES ||
+      size > CLUB_MEDIA_MAX_BYTES ||
+      !CLUB_MEDIA_TYPES.has(metadata?.contentType) ||
+      generation !== descriptor.generation) {
+    throw new HttpsError(
+      "failed-precondition",
+      `${kind} upload could not be verified.`,
+    );
+  }
+  const tokenValue = metadataCustomFields(metadata).firebaseStorageDownloadTokens;
+  const token = typeof tokenValue === "string"
+    ? tokenValue.split(",").map((value) => value.trim()).find(Boolean)
+    : null;
+  if (!token || typeof bucket.name !== "string" || !bucket.name) {
+    throw new HttpsError(
+      "failed-precondition",
+      `${kind} upload has no canonical download token.`,
+    );
+  }
+  return {
+    generation,
+    path: descriptor.path,
+    url: `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(
+      bucket.name,
+    )}/o/${encodeURIComponent(descriptor.path)}?alt=media&generation=${encodeURIComponent(
+      generation,
+    )}&token=${encodeURIComponent(token)}`,
+  };
+}
+
+function createFinalizeClubMediaHandler({ firestore = db, bucket } = {}) {
+  return async (request) => {
+    const auth = requireAuthentication(request);
+    if (auth.token?.email_verified !== true) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Verify your email before adding Club media.",
+      );
+    }
+    if (!plainObject(request.data) ||
+        Object.keys(request.data).sort().join(",") !== "avatar,banner,clubId") {
+      throw new HttpsError("invalid-argument", "Club media input is invalid.");
+    }
+    const clubId = normalizeText(request.data.clubId, 128);
+    if (!SAFE_DOCUMENT_ID.test(clubId)) {
+      throw new HttpsError("invalid-argument", "The Club id is invalid.");
+    }
+    const avatarDescriptor = validatedMediaDescriptor(
+      request.data.avatar,
+      "avatar",
+      auth.uid,
+      clubId,
+    );
+    const bannerDescriptor = validatedMediaDescriptor(
+      request.data.banner,
+      "banner",
+      auth.uid,
+      clubId,
+    );
+    if (avatarDescriptor === null && bannerDescriptor === null) {
+      throw new HttpsError("invalid-argument", "No Club media was provided.");
+    }
+
+    const clubReference = firestore.collection("clubs").doc(clubId);
+    const memberReference = clubReference.collection("members").doc(auth.uid);
+    const profileReference = firestore.collection("users").doc(auth.uid);
+    const projectionReference = profileReference.collection("clubs").doc(clubId);
+
+    function requireCurrentAuthority(
+      clubSnapshot,
+      memberSnapshot,
+      profileSnapshot,
+    ) {
+      const club = clubSnapshot.data() ?? {};
+      const member = memberSnapshot.data() ?? {};
+      const profile = profileSnapshot.data() ?? {};
+      if (!clubSnapshot.exists ||
+          club.ownerId !== auth.uid ||
+          club.type !== "community" ||
+          club.status !== "active" ||
+          club.deletionInProgress === true ||
+          !memberSnapshot.exists ||
+          member.userId !== auth.uid ||
+          member.role !== "owner" ||
+          member.banned === true ||
+          !profileSnapshot.exists ||
+          profile.banned === true ||
+          profile.disabled === true) {
+        throw new HttpsError(
+          "permission-denied",
+          "Only the active Club owner can finalize its media.",
+        );
+      }
+      return club;
+    }
+
+    // Authorize before touching Storage so arbitrary callers cannot use this
+    // callable as an object-existence or metadata oracle.
+    const [preflightClub, preflightMember, preflightProfile] = await Promise.all([
+      clubReference.get(),
+      memberReference.get(),
+      profileReference.get(),
+    ]);
+    requireCurrentAuthority(preflightClub, preflightMember, preflightProfile);
+    const storageBucket = bucket ?? getStorage().bucket();
+
+    const finalized = await firestore.runTransaction(async (transaction) => {
+      const [clubSnapshot, memberSnapshot, profileSnapshot, projectionSnapshot] =
+        await transaction.getAll(
+          clubReference,
+          memberReference,
+          profileReference,
+          projectionReference,
+        );
+      const club = requireCurrentAuthority(
+        clubSnapshot,
+        memberSnapshot,
+        profileSnapshot,
+      );
+      if (!projectionSnapshot.exists ||
+          projectionSnapshot.data()?.clubId !== clubId ||
+          projectionSnapshot.data()?.role !== "owner") {
+        throw new HttpsError("data-loss", "The Club owner projection is invalid.");
+      }
+
+      // Re-verify the exact generation within every Firestore transaction
+      // attempt. The canonical URL also pins that generation, so a concurrent
+      // overwrite cannot silently change the bytes behind the new pointer.
+      const [avatar, banner] = await Promise.all([
+        verifiedClubMedia(storageBucket, avatarDescriptor, "avatar"),
+        verifiedClubMedia(storageBucket, bannerDescriptor, "banner"),
+      ]);
+
+      let loungeReference = null;
+      if (avatar !== null) {
+        const loungeRoomId = normalizeText(club.loungeRoomId, 128);
+        if (!SAFE_DOCUMENT_ID.test(loungeRoomId)) {
+          throw new HttpsError("data-loss", "The Club lounge is invalid.");
+        }
+        loungeReference = firestore.collection("rooms").doc(loungeRoomId);
+        const loungeSnapshot = await transaction.get(loungeReference);
+        const lounge = loungeSnapshot.data() ?? {};
+        if (!loungeSnapshot.exists ||
+            lounge.clubId !== clubId ||
+            lounge.hostId !== auth.uid ||
+            lounge.roomKind !== "clubLounge") {
+          throw new HttpsError("data-loss", "The Club lounge is invalid.");
+        }
+      }
+
+      transaction.update(clubReference, {
+        ...(avatar === null ? {} : {
+          avatarUrl: avatar.url,
+          avatarGeneration: avatar.generation,
+        }),
+        ...(banner === null ? {} : {
+          bannerUrl: banner.url,
+          bannerGeneration: banner.generation,
+        }),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      if (avatar !== null) {
+        transaction.update(projectionReference, { avatarUrl: avatar.url });
+        transaction.update(loungeReference, {
+          imageUrl: avatar.url,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+      return { avatar, banner };
+    });
+
+    const { avatar, banner } = finalized;
+
+    return {
+      clubId,
+      avatarUrl: avatar?.url ?? null,
+      avatarGeneration: avatar?.generation ?? null,
+      bannerUrl: banner?.url ?? null,
+      bannerGeneration: banner?.generation ?? null,
+    };
+  };
+}
+
+const finalizeClubMedia = onCall(
+  { region: REGION, enforceAppCheck: false },
+  (request) => createFinalizeClubMediaHandler()(request),
+);
+
 module.exports = {
   createCommunityClub,
+  createFinalizeClubMediaHandler,
+  finalizeClubMedia,
   optionalHttpsUrl,
   profileName,
+  verifiedClubMedia,
   validatedCreationInput,
 };

@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -12,7 +13,6 @@ import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broad
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_bottom_controls.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_owner_controls.dart';
-import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_roster.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_stage.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/owner_menu_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/participants_sheet.dart';
@@ -20,7 +20,9 @@ import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheet
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/share_room_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 
 class BroadcastRoomScreen extends StatefulWidget {
   const BroadcastRoomScreen({required this.room, super.key});
@@ -31,8 +33,7 @@ class BroadcastRoomScreen extends StatefulWidget {
   State<BroadcastRoomScreen> createState() => _BroadcastRoomScreenState();
 }
 
-class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
-    with SingleTickerProviderStateMixin {
+class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   final RoomService _rooms = RoomService();
   // Live audio is part of the room, not a second screen: entering the
   // broadcast connects you (listen-only until promoted — publish rights
@@ -40,7 +41,6 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
   // old flow pushed a separate PodcastVoiceCallScreen with its own
   // duplicate stage; that screen is gone.
   final VoiceCallService _voice = VoiceCallService.instance;
-  late final AnimationController _pulse;
 
   // Created once instead of inline in build() -- StreamBuilder resubscribes
   // whenever its `stream` argument is a new instance, and every setState()
@@ -65,10 +65,6 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
   @override
   void initState() {
     super.initState();
-    _pulse = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1250),
-    )..repeat(reverse: true);
     _voice.addListener(_refreshVoice);
     _participants = _rooms.watchParticipants(widget.room.id);
     _participantsWatch = _participants.listen(_handleParticipantsUpdate);
@@ -77,7 +73,6 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
 
   @override
   void dispose() {
-    _pulse.dispose();
     _voice.removeListener(_refreshVoice);
     unawaited(_participantsWatch?.cancel());
     // Deliberately NOT disconnecting here: backing out minimizes the
@@ -567,6 +562,45 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
                 .where((p) => p.isHandRaised)
                 .toList(growable: false);
             final me = participants.where((p) => p.userId == _uid).firstOrNull;
+            final voiceByIdentity = {
+              for (final participant in _voice.participants)
+                participant.identity: participant,
+            };
+            final hostParticipant = host;
+            final stageSpeakers = <StageSpeaker>[
+              StageSpeaker(
+                userId: hostParticipant?.userId ?? widget.room.hostId,
+                displayName:
+                    hostParticipant?.displayName ?? widget.room.hostName,
+                photoUrl: hostParticipant?.photoUrl ?? widget.room.hostPhotoUrl,
+                isHost: true,
+                isMuted: hostParticipant?.isMuted ?? false,
+                isSpeaking:
+                    voiceByIdentity[hostParticipant?.userId ??
+                            widget.room.hostId]
+                        ?.isSpeaking ??
+                    false,
+                audioLevel:
+                    voiceByIdentity[hostParticipant?.userId ??
+                            widget.room.hostId]
+                        ?.audioLevel ??
+                    0,
+              ),
+              for (final participant in speakers)
+                StageSpeaker(
+                  userId: participant.userId,
+                  displayName: participant.displayName,
+                  photoUrl: participant.photoUrl,
+                  isMuted: participant.isMuted,
+                  isSpeaking:
+                      voiceByIdentity[participant.userId]?.isSpeaking ?? false,
+                  audioLevel:
+                      voiceByIdentity[participant.userId]?.audioLevel ?? 0,
+                ),
+            ];
+            final anyoneSpeaking = stageSpeakers.any(
+              (speaker) => speaker.isSpeaking,
+            );
 
             return Stack(
               children: [
@@ -575,7 +609,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
                   children: [
                     Center(
                       child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 1200),
+                        constraints: const BoxConstraints(maxWidth: 1040),
                         child: BroadcastTopBar(
                           title: widget.room.name,
                           count: participants.length,
@@ -590,16 +624,21 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
                     Expanded(
                       child: Center(
                         child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 1200),
+                          constraints: const BoxConstraints(maxWidth: 1040),
                           child: ListView(
                             padding: const EdgeInsets.fromLTRB(18, 12, 18, 22),
                             children: [
-                              BroadcastLiveBadge(isLive: widget.room.isLive),
-                              const SizedBox(height: 18),
-                              BroadcastHostStage(
-                                participant: host,
-                                fallbackName: widget.room.hostName,
-                                pulse: _pulse,
+                              RoomIdentityCard(
+                                roomName: widget.room.name,
+                                topic: widget.room.description.trim().isNotEmpty
+                                    ? widget.room.description
+                                    : widget.room.category,
+                                identity: SpaceIdentity.podcast,
+                                imageUrl: widget.room.imageUrl,
+                                quiet: !anyoneSpeaking,
+                                trailing: BroadcastLiveBadge(
+                                  isLive: widget.room.isLive,
+                                ),
                               ),
                               if (_isHost) ...[
                                 const SizedBox(height: 16),
@@ -615,63 +654,37 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen>
                                   onShare: _openShareSheet,
                                 ),
                               ],
-                              const SizedBox(height: 22),
-                              BroadcastClickableStats(
-                                speakers: 1 + speakers.length,
-                                listeners: listeners.length,
-                                raisedHands: raised.length,
-                                onSpeakers: () => _openParticipants(
+                              const SizedBox(height: 14),
+                              RoomStagePanel(
+                                speakers: stageSpeakers,
+                                identity: SpaceIdentity.podcast,
+                                onOverflowTap: () => _openParticipants(
                                   participants,
                                   initialFilter: 'speakers',
                                 ),
-                                onListeners: () => _openParticipants(
-                                  participants,
-                                  initialFilter: 'listeners',
+                                onSpeakerTap: (speaker) => showProfilePreview(
+                                  context,
+                                  userId: speaker.userId,
+                                  displayName: speaker.displayName,
+                                  photoUrl: speaker.photoUrl,
                                 ),
-                                onHands: () => _openParticipants(
-                                  participants,
-                                  initialFilter: 'hands',
-                                ),
-                              ),
-                              const SizedBox(height: 22),
-                              BroadcastSectionHeader(
-                                title: 'On stage',
-                                subtitle: 'Host and approved speakers',
-                                count: speakers.length + 1,
                               ),
                               const SizedBox(height: 12),
-                              if (speakers.isEmpty)
-                                const BroadcastEmptyStage()
-                              else
-                                Wrap(
-                                  spacing: 12,
-                                  runSpacing: 12,
-                                  children: speakers
-                                      .map(
-                                        (speaker) => BroadcastSpeakerTile(
-                                          participant: speaker,
-                                          isHostView: _isHost,
-                                          onManage: () => _openParticipants(
-                                            participants,
-                                            initialFilter: 'speakers',
-                                          ),
-                                        ),
-                                      )
-                                      .toList(growable: false),
-                                ),
-                              const SizedBox(height: 24),
-                              BroadcastSectionHeader(
-                                title: 'Audience',
-                                subtitle: 'Listeners can request the stage',
+                              ListenersStrip(
                                 count: listeners.length,
-                              ),
-                              const SizedBox(height: 12),
-                              BroadcastAudiencePreview(
-                                listeners: listeners,
-                                onOpen: () => _openParticipants(
+                                identity: SpaceIdentity.podcast,
+                                onTap: () => _openParticipants(
                                   participants,
                                   initialFilter: 'listeners',
                                 ),
+                                previewPhotoUrls: [
+                                  for (final listener in listeners.take(4))
+                                    listener.photoUrl,
+                                ],
+                                previewNames: [
+                                  for (final listener in listeners.take(4))
+                                    listener.displayName,
+                                ],
                               ),
                             ],
                           ),

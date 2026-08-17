@@ -16,6 +16,19 @@ someone decide what to pick up next.
 
 ## Done
 
+- **One responsive stage for all room identities and reliable creation**
+  (2026-08-17, this revision — NOT YET DEPLOYED): Community, Podcast, Club
+  Lounge and Family Lounge now share the same bounded, responsive interior
+  with purple, coral/red, gold and emerald identity respectively. Podcast
+  writes its immutable authorization type atomically; ordinary Club artwork
+  is root-first and generation-pinned by `finalizeClubMedia`; Family creation
+  tolerates the older missing-root probe while its complete graph remains the
+  authority. Family artwork is intentionally disabled until authenticated
+  reads and synchronous revocation replace public bearer-token URLs. See
+  ADR-064. Release gates: Flutter **620/620**, Firestore rules **353/353**,
+  Storage rules **52/52**, Family media **11/11**, Cloud Functions **579/579**,
+  `flutter analyze` clean and the release web build successful.
+
 - **Private photo/voice DMs and reliable Safari Voice Moment uploads**
   (2026-08-17, this revision — NOT YET DEPLOYED): the two chat attachment
   actions were placeholders; they now use server-reserved immutable private

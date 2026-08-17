@@ -12,7 +12,10 @@ const { getFirestore, Timestamp } = require("firebase-admin/firestore");
 
 if (getApps().length === 0) initializeApp();
 
-const { createCommunityClub } = require("../clubs/creation");
+const {
+  createCommunityClub,
+  createFinalizeClubMediaHandler,
+} = require("../clubs/creation");
 
 const db = getFirestore();
 const run = createCommunityClub.run ?? createCommunityClub;
@@ -23,6 +26,8 @@ const OWNERS = [
   `${P}legacy`,
   `${P}denied`,
   `${P}banned`,
+  `${P}media-owner`,
+  `${P}media-attacker`,
 ];
 
 function request(uid, clubId, overrides = {}) {
@@ -59,6 +64,56 @@ function entitlement(overrides = {}) {
   };
 }
 
+function mediaRequest(uid, clubId, overrides = {}) {
+  return {
+    auth: {
+      uid,
+      token: {
+        email_verified: true,
+        email: `${uid}@example.invalid`,
+      },
+    },
+    data: {
+      clubId,
+      avatar: {
+        path: `clubs/${uid}/${clubId}/avatar`,
+        generation: "1001",
+      },
+      banner: null,
+      ...overrides,
+    },
+  };
+}
+
+function fakeMediaBucket(objects = {}) {
+  return {
+    name: "yovoice-test.firebasestorage.app",
+    file(path) {
+      return {
+        async getMetadata() {
+          const metadata = objects[path];
+          if (!metadata) {
+            const error = new Error("missing");
+            error.code = 404;
+            throw error;
+          }
+          return [metadata];
+        },
+      };
+    },
+  };
+}
+
+function validMedia(generation = "1001", overrides = {}) {
+  return {
+    size: "4096",
+    contentType: "image/jpeg",
+    generation,
+    metadata: { firebaseStorageDownloadTokens: "server-token" },
+    ...overrides,
+  };
+}
+
 async function deleteClub(document) {
   if (typeof db.recursiveDelete === "function") {
     await db.recursiveDelete(document.ref ?? document);
@@ -74,7 +129,7 @@ async function wipeOwn() {
     const rooms = await db.collection("rooms").where("hostId", "==", owner).get();
     await Promise.all(rooms.docs.map(deleteClub));
     await Promise.all([
-      db.collection("users").doc(owner).delete(),
+      deleteClub(db.collection("users").doc(owner)),
       db.collection("entitlements").doc(owner).delete(),
       db.collection("clubOwnershipGuards").doc(owner).delete(),
     ]);
@@ -248,6 +303,188 @@ describe("createCommunityClub", () => {
     input.auth.token.email_verified = false;
     await assert.rejects(
       () => run(input),
+      (error) => error?.code === "failed-precondition",
+    );
+  });
+
+  test("creation cannot inject arbitrary media URLs around finalize", async () => {
+    const uid = `${P}owner`;
+    await seedOwner(uid);
+    await assert.rejects(
+      () => run(request(uid, `${P}url-injection`, {
+        avatarUrl: "https://evil.invalid/avatar.jpg",
+      })),
+      (error) => error?.code === "invalid-argument",
+    );
+  });
+});
+
+describe("finalizeClubMedia", () => {
+  const uid = `${P}media-owner`;
+  const attacker = `${P}media-attacker`;
+  const clubId = `${P}media-club`;
+
+  async function seedMediaClub() {
+    await seedOwner(uid);
+    await seedOwner(attacker);
+    await run(request(uid, clubId));
+  }
+
+  function handler(metadataByPath) {
+    return createFinalizeClubMediaHandler({
+      firestore: db,
+      bucket: fakeMediaBucket(metadataByPath),
+    });
+  }
+
+  test("server verifies and atomically mirrors canonical media", async () => {
+    await seedMediaClub();
+    const path = `clubs/${uid}/${clubId}/avatar`;
+    const finalize = handler({ [path]: validMedia() });
+
+    const first = await finalize(mediaRequest(uid, clubId));
+    const replay = await finalize(mediaRequest(uid, clubId));
+    assert.equal(first.avatarGeneration, "1001");
+    assert.equal(replay.avatarUrl, first.avatarUrl);
+    assert.match(first.avatarUrl, /yovoice-test\.firebasestorage\.app/u);
+
+    const [club, projection, lounge] = await Promise.all([
+      db.collection("clubs").doc(clubId).get(),
+      db.collection("users").doc(uid).collection("clubs").doc(clubId).get(),
+      db.collection("rooms").doc(`club_lounge_${clubId}`).get(),
+    ]);
+    assert.equal(club.data().avatarUrl, first.avatarUrl);
+    assert.equal(club.data().avatarGeneration, "1001");
+    assert.equal(projection.data().avatarUrl, first.avatarUrl);
+    assert.equal(lounge.data().imageUrl, first.avatarUrl);
+  });
+
+  test("rejects forged descriptors, URLs, generation and missing objects", async () => {
+    await seedMediaClub();
+    const path = `clubs/${uid}/${clubId}/avatar`;
+    const finalize = handler({ [path]: validMedia() });
+    for (const forged of [
+      mediaRequest(uid, clubId, {
+        avatar: { path: `clubs/${uid}/other/avatar`, generation: "1001" },
+      }),
+      mediaRequest(uid, clubId, {
+        avatar: { path, generation: "1001", url: "https://evil.invalid/x" },
+      }),
+      {
+        ...mediaRequest(uid, clubId),
+        data: {
+          ...mediaRequest(uid, clubId).data,
+          downloadUrl:
+            "https://firebasestorage.googleapis.com/v0/b/yovoice-test.firebasestorage.app/o/wrong",
+        },
+      },
+      mediaRequest(uid, clubId, {
+        avatar: { path, generation: "1002" },
+      }),
+    ]) {
+      await assert.rejects(() => finalize(forged));
+    }
+    const missing = handler({});
+    await assert.rejects(
+      () => missing(mediaRequest(uid, clubId)),
+      (error) => error?.code === "failed-precondition",
+    );
+  });
+
+  test("rejects invalid MIME, size and missing canonical token", async () => {
+    await seedMediaClub();
+    const path = `clubs/${uid}/${clubId}/avatar`;
+    for (const metadata of [
+      validMedia("1001", { contentType: "image/gif" }),
+      validMedia("1001", { size: "127" }),
+      validMedia("1001", { size: String(8 * 1024 * 1024 + 1) }),
+      validMedia("1001", { metadata: {} }),
+    ]) {
+      const finalize = handler({ [path]: metadata });
+      await assert.rejects(
+        () => finalize(mediaRequest(uid, clubId)),
+        (error) => error?.code === "failed-precondition",
+      );
+    }
+  });
+
+  test("rejects non-owner, Family, inactive and deleting roots", async () => {
+    await seedMediaClub();
+    const ownerPath = `clubs/${uid}/${clubId}/avatar`;
+    const attackerPath = `clubs/${attacker}/${clubId}/avatar`;
+    const finalize = handler({
+      [ownerPath]: validMedia(),
+      [attackerPath]: validMedia(),
+    });
+    await assert.rejects(
+      () => finalize(mediaRequest(attacker, clubId)),
+      (error) => error?.code === "permission-denied",
+    );
+
+    const club = db.collection("clubs").doc(clubId);
+    for (const patch of [
+      { type: "family", status: "active", deletionInProgress: false },
+      { type: "community", status: "suspended", deletionInProgress: false },
+      { type: "community", status: "active", deletionInProgress: true },
+    ]) {
+      await club.update(patch);
+      await assert.rejects(
+        () => finalize(mediaRequest(uid, clubId)),
+        (error) => error?.code === "permission-denied",
+      );
+    }
+  });
+
+  test("rejects sanctioned identity, role drift and malformed graph", async () => {
+    await seedMediaClub();
+    const path = `clubs/${uid}/${clubId}/avatar`;
+    const finalize = handler({ [path]: validMedia() });
+    const profile = db.collection("users").doc(uid);
+    await profile.update({ banned: true });
+    await assert.rejects(() => finalize(mediaRequest(uid, clubId)));
+    await profile.update({ banned: false, disabled: true });
+    await assert.rejects(() => finalize(mediaRequest(uid, clubId)));
+    await profile.update({ disabled: false });
+    await profile.delete();
+    await assert.rejects(
+      () => finalize(mediaRequest(uid, clubId)),
+      (error) => error?.code === "permission-denied",
+    );
+    await profile.set({ displayName: "Club Owner", banned: false, disabled: false });
+
+    const member = db.collection("clubs").doc(clubId).collection("members").doc(uid);
+    await member.update({ role: "admin" });
+    await assert.rejects(() => finalize(mediaRequest(uid, clubId)));
+    await member.update({ role: "owner" });
+
+    const projection = profile.collection("clubs").doc(clubId);
+    await projection.delete();
+    await assert.rejects(
+      () => finalize(mediaRequest(uid, clubId)),
+      (error) => error?.code === "data-loss",
+    );
+    await projection.set({ clubId, role: "owner" });
+    await db.collection("rooms").doc(`club_lounge_${clubId}`).update({
+      clubId: "wrong-club",
+    });
+    await assert.rejects(
+      () => finalize(mediaRequest(uid, clubId)),
+      (error) => error?.code === "data-loss",
+    );
+  });
+
+  test("rejects unauthenticated and unverified callers before Storage", async () => {
+    await seedMediaClub();
+    const path = `clubs/${uid}/${clubId}/avatar`;
+    const finalize = handler({ [path]: validMedia() });
+    await assert.rejects(
+      () => finalize({ auth: null, data: mediaRequest(uid, clubId).data }),
+      (error) => error?.code === "unauthenticated",
+    );
+    const unverified = mediaRequest(uid, clubId);
+    unverified.auth.token.email_verified = false;
+    await assert.rejects(
+      () => finalize(unverified),
       (error) => error?.code === "failed-precondition",
     );
   });

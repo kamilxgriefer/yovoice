@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
@@ -11,6 +11,7 @@ import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/rooms/presentation/voice_room_identity.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/recent_room_messages.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
@@ -62,9 +63,11 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   bool get _isHost => _uid == widget.room.hostId;
   bool get _isClubRoom => widget.room.isClubRoom;
 
-  /// Club rooms carry the club-teal identity the room cards introduced;
-  /// plain community rooms keep their purple.
-  Color get _accent => _isClubRoom ? AppColors.accent : const Color(0xFF9D20FF);
+  Club? _latestClub;
+
+  SpaceIdentity get _identity {
+    return voiceRoomIdentity(widget.room, club: _latestClub);
+  }
 
   @override
   void initState() {
@@ -247,6 +250,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   /// on the stage — a room with 500 listeners paints the same number of
   /// widgets as a room with 5.
   Widget _buildStage(List<RoomParticipant> roomParticipants, Club? club) {
+    final identity = voiceRoomIdentity(widget.room, club: club);
     final voiceByIdentity = {
       for (final v in _voice.participants) v.identity: v,
     };
@@ -268,28 +272,35 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
         .toList(growable: false);
     final anyoneSpeaking = stageSpeakers.any((s) => s.isSpeaking);
 
+    final horizontal = MediaQuery.sizeOf(context).width >= 600 ? 24.0 : 16.0;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 92),
+      padding: EdgeInsets.fromLTRB(horizontal, 12, horizontal, 104),
       children: [
-        // Club rooms lead with the club's identity (board screen 6);
-        // the generic room identity card stays for plain rooms — and as
-        // the graceful fallback while the club document loads.
-        if (club != null)
-          _ClubBanner(club: club, onTap: _openClubOverview)
-        else
-          RoomIdentityCard(
-            roomName: widget.room.name,
-            topic: widget.room.description.trim().isNotEmpty
-                ? widget.room.description
-                : widget.room.category,
-            accent: _accent,
-            imageUrl: widget.room.imageUrl,
-            quiet: !anyoneSpeaking,
-          ),
+        RoomIdentityCard(
+          roomName: widget.room.name,
+          topic: widget.room.description.trim().isNotEmpty
+              ? widget.room.description
+              : club?.description.trim().isNotEmpty == true
+              ? club!.description
+              : widget.room.category,
+          identity: identity,
+          imageUrl: widget.room.imageUrl ?? club?.bannerUrl,
+          quiet: !anyoneSpeaking,
+          trailing: club == null
+              ? null
+              : IconButton(
+                  tooltip: club.isFamilyRoom
+                      ? 'Open family space'
+                      : 'Open club',
+                  onPressed: _openClubOverview,
+                  color: identity.accent,
+                  icon: const Icon(Icons.arrow_outward_rounded, size: 20),
+                ),
+        ),
         const SizedBox(height: 14),
-        StageGrid(
+        RoomStagePanel(
           speakers: stageSpeakers,
-          accent: _accent,
+          identity: identity,
           onOverflowTap: () => _openParticipants(_latestParticipants),
           onSpeakerTap: (speaker) => showProfilePreview(
             context,
@@ -301,7 +312,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
         const SizedBox(height: 12),
         ListenersStrip(
           count: listeners.length,
-          accent: _accent,
+          identity: identity,
           onTap: () => _openParticipants(_latestParticipants),
           previewPhotoUrls: [for (final l in listeners.take(4)) l.photoUrl],
           previewNames: [for (final l in listeners.take(4)) l.displayName],
@@ -313,7 +324,12 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   List<RoomParticipant> _latestParticipants = const [];
 
   void _openChat() {
-    showRoomChatSheet(context, roomId: widget.room.id, isHost: _isHost);
+    showRoomChatSheet(
+      context,
+      roomId: widget.room.id,
+      isHost: _isHost,
+      accent: _identity.primary,
+    );
   }
 
   @override
@@ -327,6 +343,8 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   }
 
   Widget _buildRoom(Club? club) {
+    _latestClub = club;
+    final identity = voiceRoomIdentity(widget.room, club: club);
     return StreamBuilder<List<RoomParticipant>>(
       stream: _participants,
       builder: (context, snapshot) {
@@ -346,68 +364,99 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
 
         return Scaffold(
           backgroundColor: _background,
-          body: SafeArea(
-            child: Column(
-              children: [
-                Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1200),
-                    child: _TopBar(
-                      roomName: club?.name ?? widget.room.name,
-                      subtitle: _isClubRoom ? 'Club Room' : null,
-                      avatarUrl: club?.avatarUrl,
-                      avatarName: club?.name,
-                      status: _voice.status,
-                      speaking: speaking,
-                      listeners: listeners,
-                      onBack: () => Navigator.of(context).pop(),
-                      onSpeakingTap: () => _openParticipants(roomParticipants),
-                      onListenersTap: () => _openParticipants(roomParticipants),
+          body: Stack(
+            children: [
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: const Alignment(0, -1.05),
+                      radius: 1.15,
+                      colors: [
+                        identity.primary.withValues(alpha: .13),
+                        _background,
+                      ],
+                      stops: const [0, .72],
                     ),
                   ),
                 ),
-                Expanded(
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 1200),
-                            child: _buildStage(roomParticipants, club),
-                          ),
+              ),
+              SafeArea(
+                child: Column(
+                  children: [
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 1040),
+                        child: _TopBar(
+                          roomName: club?.name ?? widget.room.name,
+                          subtitle: club?.isFamilyRoom == true
+                              ? 'FAMILY ROOM'
+                              : _isClubRoom
+                              ? 'CLUB ROOM'
+                              : null,
+                          avatarUrl: club?.avatarUrl,
+                          avatarName: club?.name,
+                          identity: identity,
+                          status: _voice.status,
+                          speaking: speaking,
+                          listeners: listeners,
+                          onBack: () => Navigator.of(context).pop(),
+                          onSpeakingTap: () =>
+                              _openParticipants(roomParticipants),
+                          onListenersTap: () =>
+                              _openParticipants(roomParticipants),
                         ),
                       ),
-                      // Board screens 2/6: the newest chat floats over
-                      // the stage so talk stays visible mid-room.
-                      Positioned(
-                        left: 16,
-                        right: 16,
-                        bottom: 8,
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 880),
-                            child: RecentRoomMessages(
-                              roomId: widget.room.id,
-                              service: _rooms,
-                              onOpenChat: _openChat,
+                    ),
+                    Expanded(
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: Center(
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(
+                                  maxWidth: 1040,
+                                ),
+                                child: _buildStage(roomParticipants, club),
+                              ),
                             ),
                           ),
-                        ),
+                          // Board screens 2/6: the newest chat floats over
+                          // the stage so talk stays visible mid-room.
+                          Positioned(
+                            left: 16,
+                            right: 16,
+                            bottom: 8,
+                            child: Center(
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(
+                                  maxWidth: 880,
+                                ),
+                                child: RecentRoomMessages(
+                                  roomId: widget.room.id,
+                                  service: _rooms,
+                                  onOpenChat: _openChat,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                    _BottomControls(
+                      identity: identity,
+                      micState: _voice.micState,
+                      busy: _voice.muteChangeInProgress,
+                      onMute: _toggleMute,
+                      onLeave: _leave,
+                      onMicBlocked: _explainMicState,
+                      onChat: _openChat,
+                      onPeople: () => _openParticipants(_latestParticipants),
+                    ),
+                  ],
                 ),
-                _BottomControls(
-                  micState: _voice.micState,
-                  busy: _voice.muteChangeInProgress,
-                  onMute: _toggleMute,
-                  onLeave: _leave,
-                  onMicBlocked: _explainMicState,
-                  onChat: _openChat,
-                  onPeople: () => _openParticipants(_latestParticipants),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       },
@@ -424,6 +473,7 @@ class _TopBar extends StatelessWidget {
     required this.onBack,
     required this.onSpeakingTap,
     required this.onListenersTap,
+    required this.identity,
     this.subtitle,
     this.avatarUrl,
     this.avatarName,
@@ -436,6 +486,7 @@ class _TopBar extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback onSpeakingTap;
   final VoidCallback onListenersTap;
+  final SpaceIdentity identity;
 
   /// Club rooms label themselves ("Club Room") instead of the generic
   /// connection status line.
@@ -445,63 +496,100 @@ class _TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 10, 14, 6),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: onBack,
-            icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 32),
-            color: Colors.white,
-          ),
-          if (avatarName != null) ...[
-            UserAvatar(
-              radius: 17,
-              photoUrl: avatarUrl,
-              displayName: avatarName,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow = constraints.maxWidth < 520;
+        final identityRow = Row(
+          children: [
+            IconButton(
+              onPressed: onBack,
+              icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 32),
+              color: Colors.white,
             ),
-            const SizedBox(width: 10),
+            if (avatarName != null) ...[
+              UserAvatar(
+                radius: 17,
+                photoUrl: avatarUrl,
+                displayName: avatarName,
+              ),
+              const SizedBox(width: 10),
+            ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    roomName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  Text(
+                    subtitle ?? _statusText(status),
+                    style: TextStyle(
+                      color: identity.accent,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (!narrow) ...[
+              _CounterPill(
+                label: 'Speaking',
+                value: speaking,
+                identity: identity,
+                onTap: onSpeakingTap,
+              ),
+              const SizedBox(width: 8),
+              _CounterPill(
+                label: 'Listeners',
+                value: listeners,
+                identity: identity,
+                onTap: onListenersTap,
+              ),
+            ],
           ],
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  roomName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                Text(
-                  subtitle ?? _statusText(status),
-                  style: TextStyle(
-                    color: subtitle == null
-                        ? const Color(0xFFB6A9C2)
-                        : AppColors.accent,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
+        );
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(8, 8, 12, 6),
+          child: Column(
+            children: [
+              identityRow,
+              if (narrow) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    const SizedBox(width: 48),
+                    Expanded(
+                      child: _CounterPill(
+                        label: 'Speaking',
+                        value: speaking,
+                        identity: identity,
+                        onTap: onSpeakingTap,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _CounterPill(
+                        label: 'Listeners',
+                        value: listeners,
+                        identity: identity,
+                        onTap: onListenersTap,
+                      ),
+                    ),
+                  ],
                 ),
               ],
-            ),
+            ],
           ),
-          _CounterPill(
-            label: 'Speaking',
-            value: speaking,
-            onTap: onSpeakingTap,
-          ),
-          const SizedBox(width: 8),
-          _CounterPill(
-            label: 'Listeners',
-            value: listeners,
-            onTap: onListenersTap,
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -514,89 +602,18 @@ class _TopBar extends StatelessWidget {
   };
 }
 
-/// The club identity card leading a club room's stage (board screen 6):
-/// club art, name, member line and a chevron into the club overview.
-class _ClubBanner extends StatelessWidget {
-  const _ClubBanner({required this.club, required this.onTap});
-
-  final Club club;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final line = club.description.trim().isNotEmpty
-        ? club.description.trim()
-        : '${club.memberCount} members';
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          gradient: LinearGradient(
-            colors: [
-              const Color(0xFF10202A),
-              const Color(0xFF0B111E).withValues(alpha: .9),
-            ],
-          ),
-          border: Border.all(color: AppColors.accent.withValues(alpha: .35)),
-        ),
-        child: Row(
-          children: [
-            UserAvatar(
-              radius: 24,
-              photoUrl: club.avatarUrl,
-              displayName: club.name,
-              backgroundColor: const Color(0xFF123A44),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    club.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15.5,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    line,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFF9FB6BE),
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(Icons.chevron_right_rounded, color: Color(0xFF9FB6BE)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _CounterPill extends StatelessWidget {
   const _CounterPill({
     required this.label,
     required this.value,
     required this.onTap,
+    required this.identity,
   });
 
   final String label;
   final int value;
   final VoidCallback onTap;
+  final SpaceIdentity identity;
 
   @override
   Widget build(BuildContext context) {
@@ -608,7 +625,7 @@ class _CounterPill extends StatelessWidget {
         decoration: BoxDecoration(
           color: const Color(0xFF171020).withValues(alpha: .86),
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFF4B315F)),
+          border: Border.all(color: identity.outline),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -645,6 +662,7 @@ class _BottomControls extends StatelessWidget {
     required this.onMicBlocked,
     required this.onChat,
     required this.onPeople,
+    required this.identity,
   });
 
   final MicState micState;
@@ -653,6 +671,7 @@ class _BottomControls extends StatelessWidget {
   final Future<void> Function() onLeave;
   final VoidCallback onChat;
   final VoidCallback onPeople;
+  final SpaceIdentity identity;
 
   /// Tapping the mic while it genuinely can't publish explains WHY
   /// instead of silently doing nothing.
@@ -712,6 +731,7 @@ class _BottomControls extends StatelessWidget {
                   label: label,
                   enabled: tappable && !busy,
                   micStyle: style,
+                  identity: identity,
                   showSpinner: micState == MicState.connecting,
                   onTap: micState == MicState.on || micState == MicState.muted
                       ? onMute
@@ -725,6 +745,7 @@ class _BottomControls extends StatelessWidget {
                   label: 'Chat',
                   enabled: true,
                   micStyle: _MicStyle.info,
+                  identity: identity,
                   onTap: () async => onChat(),
                 ),
               ),
@@ -735,6 +756,7 @@ class _BottomControls extends StatelessWidget {
                   label: 'People',
                   enabled: true,
                   micStyle: _MicStyle.waiting,
+                  identity: identity,
                   onTap: () async => onPeople(),
                 ),
               ),
@@ -745,6 +767,7 @@ class _BottomControls extends StatelessWidget {
                   label: 'Leave',
                   enabled: true,
                   micStyle: _MicStyle.danger,
+                  identity: identity,
                   onTap: onLeave,
                 ),
               ),
@@ -765,6 +788,7 @@ class _RoundControl extends StatelessWidget {
     required this.enabled,
     required this.onTap,
     required this.micStyle,
+    required this.identity,
     this.showSpinner = false,
   });
 
@@ -773,6 +797,7 @@ class _RoundControl extends StatelessWidget {
   final bool enabled;
   final Future<void> Function() onTap;
   final _MicStyle micStyle;
+  final SpaceIdentity identity;
   final bool showSpinner;
 
   @override
@@ -780,7 +805,7 @@ class _RoundControl extends StatelessWidget {
     // Muted is a bright, obviously-tappable amber — never the old
     // near-background dark that read as a disabled button.
     final color = switch (micStyle) {
-      _MicStyle.live => const Color(0xFFB62CFF),
+      _MicStyle.live => identity.primary,
       _MicStyle.muted => const Color(0xFFB3801A),
       _MicStyle.waiting => const Color(0xFF3A2C49),
       _MicStyle.info => const Color(0xFF2A5A8A),

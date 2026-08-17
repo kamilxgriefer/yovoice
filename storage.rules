@@ -111,15 +111,6 @@ service firebase.storage {
         return /databases/(default)/documents/clubs/$(clubId)/members/$(request.auth.uid);
       }
 
-      function isPreRootCreator() {
-        // Check the Club first. For an existing Club this short-circuits
-        // before the user lookup, leaving the two-document budget to the
-        // canonical Club + membership authorization below.
-        return !firestore.exists(clubPath()) &&
-            request.auth.uid == userId &&
-            isActiveUser(userId);
-      }
-
       // Authority comes from the live Club root and membership, never from
       // the historical uid embedded in the object path. This closes the
       // former-owner overwrite after an ownership transfer.
@@ -139,13 +130,10 @@ service firebase.storage {
             );
       }
 
-      // Two accepted object names, on purpose. The client build live in
-      // production uploads `{kind}_{millisecondsSinceEpoch}.{ext}`; the build
-      // in this tree uploads the deterministic `{kind}` so a retried creation
-      // overwrites instead of leaking an object per tap. A rules deploy
-      // precedes a client deploy, and both builds are in users' hands during
-      // the rollout, so accepting only one of the two names breaks Club
-      // avatar/banner uploads for real people either way.
+      // Two object-name shapes remain recognizable on purpose. New object
+      // allocation below accepts only deterministic `avatar|banner`; the
+      // timestamped shape is retained solely so already-existing objects from
+      // older clients can still be replaced or deleted during migration.
       //
       // The timestamped form is validated exactly like the profile path it
       // borrows its shape from: a fixed kind, a numeric suffix, an image
@@ -163,34 +151,44 @@ service firebase.storage {
             isValidImagePayload(8 * 1024 * 1024);
       }
 
-      allow read: if true;
-      // Creation uploads are pre-root today. Keep that narrow two-name
-      // exception for idempotent retry/cleanup; existing Club authority comes
-      // from its live root and membership instead of the historical path uid.
-      // Cloud Storage classifies writes to object contents (including a
-      // replacement) as `create`; `update` is metadata-only. Existing
-      // resource state therefore selects retry/replacement authority here.
+      function isOrdinaryClubMedia() {
+        return firestore.exists(clubPath()) &&
+            firestore.get(clubPath()).data.get('type', 'community') != 'family';
+      }
+
+      // Ordinary Club artwork is public product media. Family roots are a
+      // private membership boundary and deliberately have NO media access in
+      // this release: Firebase download-token URLs bypass Storage Rules after
+      // leaking, while the UI does not yet have an authenticated media
+      // resolver. Missing roots fail closed too, so pre-root objects cannot be
+      // enumerated or used as an anonymous orphan store.
+      allow read: if isOrdinaryClubMedia();
+
+      // A Premium/quota-bound Club root and canonical owner membership must
+      // exist before the first byte can be stored. First creation is limited
+      // to the two deterministic object names; historical timestamped objects
+      // may be replaced/deleted but new ones cannot be minted indefinitely.
+      // Cloud Storage classifies content replacement as `create`, hence the
+      // explicit resource split.
       allow create: if isVerified() &&
           validClubImageUpload() &&
+          isOrdinaryClubMedia() &&
           (
             (
               resource == null &&
-              (
-                isPreRootCreator() ||
-                (
-                  canManageExistingClub() &&
-                  userId == firestore.get(clubPath()).data.ownerId
-                )
-              )
+              fileName in ['avatar', 'banner'] &&
+              canManageExistingClub() &&
+              userId == firestore.get(clubPath()).data.ownerId
             ) ||
             (
               resource != null &&
-              (isPreRootCreator() || canManageExistingClub())
+              canManageExistingClub()
             )
           );
       allow update: if false;
       allow delete: if isVerified() &&
-          (isPreRootCreator() || canManageExistingClub());
+          isOrdinaryClubMedia() &&
+          canManageExistingClub();
     }
 
     // No shipping client currently implements Family Moment uploads. Keep

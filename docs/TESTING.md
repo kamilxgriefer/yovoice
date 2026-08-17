@@ -11,11 +11,11 @@ figure is a suite run, not an estimate; file counts are `find`.
 
 | Suite | Command | Count |
 |---|---|---|
-| Firestore rules | `npm --prefix firestore-tests test` | **351** checks |
-| Storage rules | `npm --prefix firestore-tests run test:storage` | **53** checks |
+| Firestore rules | `npm --prefix firestore-tests test` | **353** checks |
+| Storage rules | `npm --prefix firestore-tests run test:storage` | **52** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
-| Cloud Functions | `npm --prefix functions test` | **572** tests across **93** suites (48 `*.test.js` files) |
-| Flutter | `flutter test` | **591** tests across **63** files |
+| Cloud Functions | `npm --prefix functions test` | **579** tests across **94** suites (48 `*.test.js` files) |
+| Flutter | `flutter test` | **620** tests across **64** files |
 
 > **Correction, 2026-08-16.** These numbers were wrong in several docs for
 > most of a week — TESTING.md claimed 268 rules checks and 43 Storage
@@ -81,13 +81,24 @@ figure is a suite run, not an estimate; file counts are `find`.
 > narrow-screen layout and browser/native audio seam coverage. Firestore rules
 > **351** and combined family-media **11** were re-run and remain unchanged.
 
+> **Movement, 2026-08-17 (room creation reliability and shared stage).**
+> Firestore **351 → 353** adds an immutable room-experience transition and
+> the fail-closed Family artwork graph. Storage is **52/52** after replacing
+> the pre-root upload permission with root-first Club media tests and explicit
+> Family artwork denial. Functions **572/93 → 579/94** adds the
+> generation-pinned `finalizeClubMedia` contract and its attack cases. Flutter
+> **591/63 → 620/64** adds the four-identity stage matrix, atomic Podcast
+> creation, Family no-media behavior and notification/dock clearance. The
+> combined Family media suite remains **11/11**. `flutter analyze` and
+> `flutter build web --release` also passed in the same final verification.
+
 ## Firestore rules — the most mature coverage in the project
 
 `firestore-tests/` — a standalone Node project running regression and
 attack-scenario checks against `firestore.rules` via
-`@firebase/rules-unit-testing` and the Firestore emulator — **351 checks
+`@firebase/rules-unit-testing` and the Firestore emulator — **353 checks
 passing** — plus `storage.test.js`, the same treatment for `storage.rules`
-against the Storage emulator (53 checks: path ownership, size caps,
+against the Storage emulator (52 checks: path ownership, size caps,
 content-type allowlists, read gating, default deny), plus 11 combined
 family-media checks. All three run in CI on every push to `main` and gate
 the Hosting release (see [DEPLOYMENT.md](DEPLOYMENT.md)). Full workflow in
@@ -212,7 +223,7 @@ wrong reason.
 
 ## Cloud Functions — real coverage, unevenly distributed
 
-`functions/test/` — **572 tests across 93 suites in 48 files**, run with
+`functions/test/` — **579 tests across 94 suites in 48 files**, run with
 `node --test test/*.test.js` against the Auth + Firestore emulators, and
 gating the Hosting release in CI like the rules suites do. A separate
 `npm --prefix functions run test:smoke` drives three trigger smoke scripts
@@ -238,7 +249,7 @@ absolute count over a collection your file does not exclusively own.
 
 ## Dart tests — real, but narrow
 
-`test/` — **591 tests across 63 files**, green in local verification,
+`test/` — **620 tests across 64 files**, green in local verification,
 grown mostly
 out of real bugs rather than an even coverage discipline. The
 pattern throughout: fake the Firebase backends

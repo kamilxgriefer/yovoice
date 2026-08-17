@@ -59,9 +59,6 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   late final RoomService _roomService = widget.roomService ?? RoomService();
   late final RoomImageService _imageService =
       widget.imageService ?? RoomImageService();
-  late final RoomExperienceService _experienceService =
-      widget.experienceService ?? RoomExperienceService();
-
   _Step _step = _Step.identity;
 
   String _category = 'talk';
@@ -219,6 +216,10 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         conversationStyle: _isBroadcast ? null : _conversationStyle,
         newcomerFriendly: _isBroadcast ? false : _newcomerFriendly,
         showFormat: _isBroadcast ? _showFormat : null,
+        experience: widget.experience,
+        topic: _isBroadcast ? _topic.text : '',
+        audienceCanSpeak: !_isBroadcast,
+        handRaisingEnabled: _isBroadcast && _handRaisingEnabled,
       );
 
       // The cover is uploaded AFTER the room exists, because the Storage
@@ -250,14 +251,6 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
           if (mounted) setState(() => _uploadProgress = null);
         }
       }
-
-      await _experienceService.configureRoom(
-        roomId: room.id,
-        experience: widget.experience,
-        topic: _isBroadcast ? _topic.text : '',
-        audienceCanSpeak: !_isBroadcast,
-        handRaisingEnabled: _isBroadcast && _handRaisingEnabled,
-      );
 
       if (!mounted) return;
       await Navigator.of(context).pushReplacement(

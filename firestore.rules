@@ -710,7 +710,7 @@ service cloud.firestore {
         'name', 'description', 'category', 'visibility', 'language',
         'maxParticipants', 'approvalRequired', 'slowModeSeconds',
         'autoMuteNewUsers', 'membersCanStartVoice', 'imageUrl',
-        'experience', 'topic', 'audienceCanSpeak', 'handRaisingEnabled',
+        'topic', 'audienceCanSpeak', 'handRaisingEnabled',
         'stageLimit', 'targetAudience', 'topicTags', 'roomGuidelines',
         'conversationStyle', 'newcomerFriendly', 'showFormat', 'updatedAt'
       ]) &&
@@ -733,6 +733,8 @@ service cloud.firestore {
             resource.data.get('clubId', '') &&
           request.resource.data.get('roomKind', '') ==
             resource.data.get('roomKind', '') &&
+          request.resource.data.get('experience', 'community') ==
+            resource.data.get('experience', 'community') &&
           (
             metadata || start ||
             hostParticipantJoinTransitionAllowed(roomId)
@@ -986,8 +988,8 @@ service cloud.firestore {
           data.defaultLanguage is string &&
           data.defaultLanguage.size() > 0 &&
           data.defaultLanguage.size() <= 64 &&
-          (data.avatarUrl == null || data.avatarUrl is string) &&
-          (data.bannerUrl == null || data.bannerUrl is string) &&
+          data.avatarUrl == null &&
+          data.bannerUrl == null &&
           data.memberCount == 1 &&
           data.onlineCount == 1 &&
           data.defaultChatChannelId is string &&
@@ -1010,6 +1012,7 @@ service cloud.firestore {
           existsAfter(ownerProjectionPath) &&
           getAfter(ownerProjectionPath).data.clubId == clubId &&
           getAfter(ownerProjectionPath).data.role == 'owner' &&
+          getAfter(ownerProjectionPath).data.avatarUrl == null &&
           existsAfter(chatChannelPath) &&
           getAfter(chatChannelPath).data.type == 'chat' &&
           getAfter(chatChannelPath).data.createdBy == request.auth.uid &&
@@ -1023,6 +1026,7 @@ service cloud.firestore {
           existsAfter(loungeRoomPath) &&
           getAfter(loungeRoomPath).data.clubId == clubId &&
           getAfter(loungeRoomPath).data.hostId == request.auth.uid &&
+          getAfter(loungeRoomPath).data.imageUrl == null &&
           getAfter(loungeRoomPath).data.roomKind == 'clubLounge';
     }
 

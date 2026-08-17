@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 
 import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
+import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 
@@ -77,6 +78,10 @@ class RoomService {
     ConversationStyle? conversationStyle,
     bool newcomerFriendly = false,
     ShowFormat? showFormat,
+    RoomExperience experience = RoomExperience.community,
+    String topic = '',
+    bool audienceCanSpeak = true,
+    bool handRaisingEnabled = false,
   }) async {
     final user = _user;
     final normalizedName = name.trim();
@@ -122,6 +127,15 @@ class RoomService {
         'conversationStyle': conversationStyle.value,
       if (newcomerFriendly) 'newcomerFriendly': true,
       if (showFormat != null) 'showFormat': showFormat.value,
+      // The room type is authorization-relevant while metadata is being
+      // validated. Persist it in the SAME atomic create as showFormat or
+      // conversationStyle; a later configure update is too late for rules to
+      // decide which type-scoped fields the initial document may contain.
+      'experience': experience.firestoreValue,
+      'topic': topic.trim(),
+      'audienceCanSpeak': audienceCanSpeak,
+      'handRaisingEnabled': handRaisingEnabled,
+      'stageLimit': experience == RoomExperience.broadcast ? 8 : null,
       'approvalRequired': false,
       'slowModeSeconds': 0,
       'autoMuteNewUsers': true,

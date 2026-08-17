@@ -8,16 +8,22 @@ import 'package:yovoice/features/notifications/data/services/push_notification_s
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/presentation/notification_router.dart';
 
+double foregroundNotificationBottomClearance(TextScaler textScaler) {
+  final textScale = textScaler.scale(1);
+  return 104.0 + 72.0 * ((textScale - 1.0).clamp(0.0, 1.0));
+}
+
 SnackBar buildForegroundNotificationBanner({
   required String title,
   required String? body,
   required NotificationType type,
   required String? targetId,
   required String? actorId,
+  double bottomClearance = 104,
 }) {
   return SnackBar(
     behavior: SnackBarBehavior.floating,
-    margin: const EdgeInsets.fromLTRB(16, 16, 16, 104),
+    margin: EdgeInsets.fromLTRB(16, 16, 16, bottomClearance),
     duration: const Duration(seconds: 5),
     backgroundColor: const Color(0xFF241132),
     shape: RoundedRectangleBorder(
@@ -100,6 +106,15 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
           SystemSound.play(SystemSoundType.alert);
           final messenger = _messengerKey.currentState;
           if (messenger == null) return;
+          final navigatorContext = notificationNavigatorKey.currentContext;
+          // Voice-room control docks grow with accessibility text scaling.
+          // Keep foreground notifications above them instead of covering the
+          // microphone, people, chat or leave actions.
+          final bottomClearance = foregroundNotificationBottomClearance(
+            navigatorContext == null
+                ? TextScaler.noScaling
+                : MediaQuery.textScalerOf(navigatorContext),
+          );
           messenger
             ..hideCurrentSnackBar()
             ..showSnackBar(
@@ -109,6 +124,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
                 type: type,
                 targetId: targetId,
                 actorId: actorId,
+                bottomClearance: bottomClearance,
               ),
             );
         };

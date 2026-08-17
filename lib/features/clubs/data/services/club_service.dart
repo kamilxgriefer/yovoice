@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -10,6 +12,16 @@ import 'package:yovoice/features/clubs/data/models/club_invite.dart';
 import 'package:yovoice/features/clubs/data/models/club_member.dart';
 import 'package:yovoice/features/clubs/data/models/family_check_in.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+
+enum _ClubImageFormat {
+  jpeg('image/jpeg'),
+  png('image/png'),
+  webp('image/webp');
+
+  const _ClubImageFormat(this.mimeType);
+
+  final String mimeType;
+}
 
 class ClubService {
   ClubService({
@@ -71,10 +83,17 @@ class ClubService {
     XFile? avatarFile,
     XFile? bannerFile,
   }) async {
+    if (avatarFile != null || bannerFile != null) {
+      throw ArgumentError(
+        'Family Room images are not supported until private authenticated media is available.',
+      );
+    }
     final user = _user;
     final familyRef = _clubs.doc(Club.familyRoomIdFor(user.uid));
     final existing = await _readOwnedFamilyRoom(familyRef, user.uid);
-    if (existing != null) return existing;
+    if (existing != null) {
+      return existing;
+    }
 
     return createClub(
       name: name,
@@ -83,8 +102,8 @@ class ClubService {
       // is no public variant of it to choose.
       privacy: ClubPrivacy.inviteOnly,
       defaultLanguage: defaultLanguage,
-      avatarFile: avatarFile,
-      bannerFile: bannerFile,
+      avatarFile: null,
+      bannerFile: null,
       type: ClubType.family,
       documentId: familyRef.id,
     );
@@ -94,7 +113,22 @@ class ClubService {
     DocumentReference<Map<String, dynamic>> reference,
     String ownerId,
   ) async {
-    final snapshot = await reference.get();
+    late final DocumentSnapshot<Map<String, dynamic>> snapshot;
+    try {
+      snapshot = await reference.get();
+    } on FirebaseException catch (error) {
+      // The first shipping Family ruleset evaluated resource.data while this
+      // deterministic document was still missing. Rules turn that null
+      // dereference into permission-denied, before the create batch even has
+      // a chance to run. Current rules explicitly allow this one missing-doc
+      // probe, but older deployed rules and cached clients can overlap during
+      // rollout. Treat only this inconclusive PRE-READ as "not found" and let
+      // the atomic create rules remain the authority. If a document actually
+      // exists or the caller is unauthorized, the subsequent create is an
+      // update and still fails closed.
+      if (error.code == 'permission-denied') return null;
+      rethrow;
+    }
     if (!snapshot.exists) return null;
     final club = Club.fromFirestore(snapshot);
     if (club.ownerId != ownerId || club.type != ClubType.family) {
@@ -131,31 +165,18 @@ class ClubService {
     }
 
     final clubRef = documentId == null ? _clubs.doc() : _clubs.doc(documentId);
-    String? avatarUrl;
-    String? bannerUrl;
-    final uploadedReferences = <Reference>[];
-    var cleanupUploadsOnFailure = true;
+    // Validate and canonicalize media before creating anything, but do not
+    // upload yet. Storage authorizes Club media from a real active root and
+    // membership; uploading to arbitrary pre-root ids creates an unbounded
+    // orphan-object surface.
+    final preparedAvatar = avatarFile == null
+        ? null
+        : await _prepareClubImage(avatarFile);
+    final preparedBanner = bannerFile == null
+        ? null
+        : await _prepareClubImage(bannerFile);
 
     try {
-      if (avatarFile != null) {
-        final result = await _uploadClubImage(
-          clubId: clubRef.id,
-          file: avatarFile,
-          kind: 'avatar',
-        );
-        avatarUrl = result.url;
-        uploadedReferences.add(result.reference);
-      }
-      if (bannerFile != null) {
-        final result = await _uploadClubImage(
-          clubId: clubRef.id,
-          file: bannerFile,
-          kind: 'banner',
-        );
-        bannerUrl = result.url;
-        uploadedReferences.add(result.reference);
-      }
-
       // Community Club creation is privileged server work: the callable
       // verifies the trusted entitlement, serializes concurrent sessions per
       // owner, counts canonical Club roots (including legacy documents) and
@@ -163,13 +184,6 @@ class ClubService {
       // Family Rooms remain on the direct, free deterministic-id path.
       if (type == ClubType.community) {
         final callable = _functions.httpsCallable('createCommunityClub');
-        // Once the request leaves the device, a transport timeout is
-        // ambiguous: the server transaction may already have committed. Do
-        // not delete images that a committed Club now references. First
-        // recover idempotently through the same locally generated Club id;
-        // clean up only for explicit server rejections that happen before a
-        // commit (quota/entitlement/input/auth).
-        cleanupUploadsOnFailure = false;
         try {
           await callable.call<Map<Object?, Object?>>({
             'clubId': clubRef.id,
@@ -177,34 +191,36 @@ class ClubService {
             'description': normalizedDescription,
             'privacy': privacy.name,
             'defaultLanguage': normalizedLanguage,
-            'avatarUrl': avatarUrl,
-            'bannerUrl': bannerUrl,
+            // Media is attached only after the callable has established the
+            // Premium/quota-bound root and owner membership.
+            'avatarUrl': null,
+            'bannerUrl': null,
           });
-        } on FirebaseFunctionsException catch (error) {
+        } on FirebaseFunctionsException catch (_) {
           try {
             final recovered = await clubRef.get();
             if (recovered.exists && recovered.data()?['ownerId'] == user.uid) {
-              return Club.fromFirestore(recovered);
+              return _attachClubMedia(
+                clubRef: clubRef,
+                avatar: preparedAvatar,
+                banner: preparedBanner,
+              );
             }
           } catch (_) {
-            // The read is inconclusive too; preserve the uploads because the
-            // callable can still have committed.
+            // The read is inconclusive too; preserve the original callable
+            // error. No media exists yet, so there is nothing to orphan.
           }
-          cleanupUploadsOnFailure = const {
-            'already-exists',
-            'failed-precondition',
-            'invalid-argument',
-            'permission-denied',
-            'resource-exhausted',
-            'unauthenticated',
-          }.contains(error.code);
           rethrow;
         }
         final snapshot = await clubRef.get();
         if (!snapshot.exists) {
           throw StateError('The Club was not created. Please try again.');
         }
-        return Club.fromFirestore(snapshot);
+        return _attachClubMedia(
+          clubRef: clubRef,
+          avatar: preparedAvatar,
+          banner: preparedBanner,
+        );
       }
 
       final generalRef = clubRef.collection('channels').doc();
@@ -227,8 +243,8 @@ class ClubService {
         'description': normalizedDescription,
         'ownerId': user.uid,
         'ownerName': ownerName,
-        'avatarUrl': avatarUrl,
-        'bannerUrl': bannerUrl,
+        'avatarUrl': null,
+        'bannerUrl': null,
         'privacy': privacy.name,
         'type': type.name,
         'status': 'active',
@@ -254,7 +270,7 @@ class ClubService {
       batch.set(userClubRef, {
         'clubId': clubRef.id,
         'name': normalizedName,
-        'avatarUrl': avatarUrl,
+        'avatarUrl': null,
         'role': ClubRole.owner.name,
         'joinedAt': FieldValue.serverTimestamp(),
       });
@@ -300,7 +316,7 @@ class ClubService {
         'isLive': false,
         'roomType': 'community',
         'status': 'active',
-        'imageUrl': avatarUrl,
+        'imageUrl': null,
         'approvalRequired': false,
         'slowModeSeconds': 0,
         'autoMuteNewUsers': false,
@@ -312,22 +328,22 @@ class ClubService {
         'updatedAt': FieldValue.serverTimestamp(),
       });
       await batch.commit();
-      final snapshot = await clubRef.get();
-      return Club.fromFirestore(snapshot);
+      return _attachClubMedia(
+        clubRef: clubRef,
+        avatar: preparedAvatar,
+        banner: preparedBanner,
+      );
     } catch (error, stackTrace) {
       // Two devices can both observe the deterministic Family Room id as
       // missing, then race the same atomic create. One batch wins; the other
       // is rejected because its root write is now an update. Recover the
-      // winner instead of surfacing a false error. Do this BEFORE upload
-      // cleanup: deterministic avatar/banner paths may already be referenced
-      // by the committed canonical room and must never be deleted by the
-      // losing retry.
+      // winner instead of surfacing a false error. Family media is disabled,
+      // so this recovery never uploads or attaches a bearer-token URL.
       if (type == ClubType.family &&
           clubRef.id == Club.familyRoomIdFor(user.uid)) {
         try {
           final recovered = await _readOwnedFamilyRoom(clubRef, user.uid);
           if (recovered != null) {
-            cleanupUploadsOnFailure = false;
             return recovered;
           }
         } catch (_) {
@@ -335,12 +351,162 @@ class ClubService {
           // inconclusive or the canonical document is malformed.
         }
       }
-      if (cleanupUploadsOnFailure) {
-        for (final reference in uploadedReferences) {
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  Future<_PreparedClubImage> _prepareClubImage(XFile file) async {
+    final bytes = await file.readAsBytes();
+    if (bytes.length < 128) {
+      throw StateError('The selected image is empty or damaged.');
+    }
+    if (bytes.length > 8 * 1024 * 1024) {
+      throw StateError('The selected image must be smaller than 8 MB.');
+    }
+
+    // Pickers do not provide a trustworthy MIME on every platform. Web can
+    // report image/jpg, image/x-png or application/octet-stream for perfectly
+    // valid images, while a renamed HEIC may claim image/jpeg. Storage rules
+    // intentionally accept only formats every supported client renders, so
+    // sniff the bytes and send one canonical MIME instead of trusting the
+    // declaration. This prevents a valid JPG/PNG/WebP from being rejected as
+    // `storage/unauthorized` and gives unsupported files a useful local error.
+    final format = _detectClubImageFormat(bytes);
+    if (format == null) {
+      throw StateError(
+        'That file type is not supported. Use a JPG, PNG or WebP image.',
+      );
+    }
+    return _PreparedClubImage(bytes: bytes, format: format);
+  }
+
+  Future<_UploadedClubImage> _uploadClubImage({
+    required String clubId,
+    required _PreparedClubImage image,
+    required String kind,
+  }) async {
+    // The object name is deterministic for a Club/idempotency key. Retrying a
+    // timed-out creation overwrites the same two objects instead of leaking a
+    // new timestamped upload on every tap. Content type remains explicit, so
+    // an extension is not needed for serving the object.
+    final reference = _storage.ref().child('clubs/${_user.uid}/$clubId/$kind');
+    final metadata = SettableMetadata(
+      contentType: image.format.mimeType,
+      cacheControl: 'public,max-age=31536000',
+    );
+    final snapshot = await reference.putData(image.bytes, metadata);
+    final generation = snapshot.metadata?.generation?.trim().isNotEmpty == true
+        ? snapshot.metadata!.generation!.trim()
+        : (await reference.getMetadata()).generation?.trim();
+    if (generation == null || generation.isEmpty) {
+      throw StateError('The uploaded image could not be verified.');
+    }
+    return _UploadedClubImage(reference: reference, generation: generation);
+  }
+
+  Future<Club> _attachClubMedia({
+    required DocumentReference<Map<String, dynamic>> clubRef,
+    required _PreparedClubImage? avatar,
+    required _PreparedClubImage? banner,
+  }) async {
+    if (avatar == null && banner == null) {
+      return Club.fromFirestore(await clubRef.get());
+    }
+
+    final initialSnapshot = await clubRef.get();
+    final initial = initialSnapshot.data();
+    if (initial == null || initial['ownerId'] != _user.uid) {
+      throw StateError('Only the Club owner can attach creation media.');
+    }
+    // Defense in depth for non-UI callers. Family roots must never gain a
+    // bearer-token media URL: those URLs bypass Storage Rules after leaking.
+    if (initial['type'] == ClubType.family.name) {
+      throw StateError(
+        'Family Room images are not available yet. Create the room without an image.',
+      );
+    }
+
+    final pendingAvatar =
+        initial['avatarUrl'] is String &&
+            (initial['avatarUrl'] as String).isNotEmpty &&
+            initial['avatarGeneration'] is String
+        ? null
+        : avatar;
+    final pendingBanner =
+        initial['bannerUrl'] is String &&
+            (initial['bannerUrl'] as String).isNotEmpty &&
+            initial['bannerGeneration'] is String
+        ? null
+        : banner;
+    if (pendingAvatar == null && pendingBanner == null) {
+      return Club.fromFirestore(initialSnapshot);
+    }
+
+    final uploaded = <_UploadedClubImage>[];
+    var finalizeAttempted = false;
+    try {
+      final avatarUpload = pendingAvatar == null
+          ? null
+          : await _uploadClubImage(
+              clubId: clubRef.id,
+              image: pendingAvatar,
+              kind: 'avatar',
+            );
+      if (avatarUpload != null) uploaded.add(avatarUpload);
+      final bannerUpload = pendingBanner == null
+          ? null
+          : await _uploadClubImage(
+              clubId: clubRef.id,
+              image: pendingBanner,
+              kind: 'banner',
+            );
+      if (bannerUpload != null) uploaded.add(bannerUpload);
+
+      final callable = _functions.httpsCallable('finalizeClubMedia');
+      finalizeAttempted = true;
+      await callable.call<Map<Object?, Object?>>({
+        'clubId': clubRef.id,
+        'avatar': avatarUpload?.callableDescriptor,
+        'banner': bannerUpload?.callableDescriptor,
+      });
+      return Club.fromFirestore(await clubRef.get());
+    } catch (error, stackTrace) {
+      // A callable response can be lost after its transaction commits. Bind
+      // recovery to the exact object generations; a URL/path comparison alone
+      // would accept a stale replay after an overwrite.
+      try {
+        final recovered = await clubRef.get();
+        final data = recovered.data();
+        final committed =
+            data != null &&
+            uploaded.every((image) {
+              final kind = image.reference.name;
+              return data['${kind}Generation'] == image.generation;
+            });
+        if (committed) return Club.fromFirestore(recovered);
+      } catch (_) {
+        // Preserve the original finalize error and perform best-effort cleanup.
+      }
+      final explicitPreCommitRejection =
+          error is FirebaseFunctionsException &&
+          const {
+            'invalid-argument',
+            'failed-precondition',
+            'permission-denied',
+            'unauthenticated',
+            'data-loss',
+          }.contains(error.code);
+      // Never delete after an ambiguous callable failure: its Admin
+      // transaction may have committed even when this client could not read
+      // the generation mirror yet. Deterministic names bound orphan growth to
+      // at most avatar+banner per canonical Club and a later retry can safely
+      // recover them.
+      if (!finalizeAttempted || explicitPreCommitRejection) {
+        for (final image in uploaded) {
           try {
-            await reference.delete();
+            await image.reference.delete();
           } catch (_) {
-            // Best-effort cleanup only.
+            // The Club remains valid without media; cleanup is best effort.
           }
         }
       }
@@ -348,53 +514,31 @@ class ClubService {
     }
   }
 
-  Future<_UploadedClubImage> _uploadClubImage({
-    required String clubId,
-    required XFile file,
-    required String kind,
-  }) async {
-    final bytes = await file.readAsBytes();
-    if (bytes.isEmpty) throw StateError('The selected image is empty.');
-    if (bytes.length > 8 * 1024 * 1024) {
-      throw StateError('The selected image must be smaller than 8 MB.');
+  static _ClubImageFormat? _detectClubImageFormat(Uint8List bytes) {
+    if (bytes.length < 12) return null;
+    if (bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) {
+      return _ClubImageFormat.jpeg;
     }
-
-    final extension = _fileExtension(file.name);
-    // The object name is deterministic for a Club/idempotency key. Retrying a
-    // timed-out creation overwrites the same two objects instead of leaking a
-    // new timestamped upload on every tap. Content type remains explicit, so
-    // an extension is not needed for serving the object.
-    final reference = _storage.ref().child('clubs/${_user.uid}/$clubId/$kind');
-    final metadata = SettableMetadata(
-      contentType: file.mimeType ?? _contentTypeForExtension(extension),
-      cacheControl: 'public,max-age=31536000',
-    );
-    await reference.putData(bytes, metadata);
-    return _UploadedClubImage(
-      reference: reference,
-      url: await reference.getDownloadURL(),
-    );
-  }
-
-  static String _fileExtension(String name) {
-    final normalized = name.toLowerCase();
-    final dot = normalized.lastIndexOf('.');
-    if (dot == -1 || dot == normalized.length - 1) return 'jpg';
-    final value = normalized.substring(dot + 1);
-    return value == 'jpeg' ||
-            value == 'jpg' ||
-            value == 'png' ||
-            value == 'webp'
-        ? value
-        : 'jpg';
-  }
-
-  static String _contentTypeForExtension(String extension) {
-    return switch (extension) {
-      'png' => 'image/png',
-      'webp' => 'image/webp',
-      _ => 'image/jpeg',
-    };
+    const png = <int>[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    var isPng = true;
+    for (var index = 0; index < png.length; index++) {
+      if (bytes[index] != png[index]) {
+        isPng = false;
+        break;
+      }
+    }
+    if (isPng) return _ClubImageFormat.png;
+    if (bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50) {
+      return _ClubImageFormat.webp;
+    }
+    return null;
   }
 
   Stream<List<Club>> watchMyClubs() {
@@ -813,7 +957,19 @@ class ClubService {
 }
 
 class _UploadedClubImage {
-  const _UploadedClubImage({required this.reference, required this.url});
+  const _UploadedClubImage({required this.reference, required this.generation});
   final Reference reference;
-  final String url;
+  final String generation;
+
+  Map<String, Object> get callableDescriptor => {
+    'path': reference.fullPath,
+    'generation': generation,
+  };
+}
+
+class _PreparedClubImage {
+  const _PreparedClubImage({required this.bytes, required this.format});
+
+  final Uint8List bytes;
+  final _ClubImageFormat format;
 }

@@ -5059,6 +5059,9 @@ async function main() {
     "family-malformed-uid",
     { email_verified: true },
   );
+  const familyMediaOwner = testEnv.authenticatedContext("family-media-uid", {
+    email_verified: true,
+  });
   const FAMILY = "clubs/family_parent-uid";
 
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
@@ -5091,6 +5094,11 @@ async function main() {
       }),
       setDoc(doc(db, "users/family-malformed-uid"), {
         displayName: "Malformed Parent",
+        banned: false,
+        disabled: false,
+      }),
+      setDoc(doc(db, "users/family-media-uid"), {
+        displayName: "Private Media Parent",
         banned: false,
         disabled: false,
       }),
@@ -5142,8 +5150,8 @@ async function main() {
       description: "Our private home",
       ownerId: uid,
       ownerName,
-      avatarUrl: null,
-      bannerUrl: null,
+      avatarUrl: options.rootAvatarUrl ?? null,
+      bannerUrl: options.rootBannerUrl ?? null,
       privacy: "inviteOnly",
       type: "family",
       status: "active",
@@ -5172,7 +5180,7 @@ async function main() {
       batch.set(refs.projection, {
         clubId,
         name: "Batch Family",
-        avatarUrl: null,
+        avatarUrl: options.projectionAvatarUrl ?? null,
         role: "owner",
         joinedAt: serverTimestamp(),
       });
@@ -5224,7 +5232,7 @@ async function main() {
         isLive: false,
         roomType: "community",
         status: "active",
-        imageUrl: null,
+        imageUrl: options.roomImageUrl ?? null,
         approvalRequired: false,
         slowModeSeconds: 0,
         autoMuteNewUsers: false,
@@ -5308,6 +5316,29 @@ async function main() {
         ).exists();
       });
       assert.equal(entitlementExists, false);
+    },
+  );
+
+  await check(
+    "FAMILY SECURITY: root, projection and lounge media stay null atomically",
+    async () => {
+      const db = familyMediaOwner.firestore();
+      const uid = "family-media-uid";
+      for (const forged of [
+        { rootAvatarUrl: "https://evil.invalid/root.jpg" },
+        { rootBannerUrl: "https://evil.invalid/banner.jpg" },
+        { projectionAvatarUrl: "https://evil.invalid/projection.jpg" },
+        { roomImageUrl: "https://evil.invalid/lounge.jpg" },
+      ]) {
+        const { batch } = familyGraphBatch(db, uid, forged);
+        await assertFails(batch.commit());
+      }
+      const { batch, refs } = familyGraphBatch(db, uid);
+      await assertSucceeds(batch.commit());
+      assert.equal((await getDoc(refs.club)).data().avatarUrl, null);
+      assert.equal((await getDoc(refs.club)).data().bannerUrl, null);
+      assert.equal((await getDoc(refs.projection)).data().avatarUrl, null);
+      assert.equal((await getDoc(refs.room)).data().imageUrl, null);
     },
   );
 
@@ -5770,12 +5801,57 @@ async function main() {
         "meta-podcast",
         {
           experience: "broadcast",
+          topic: "Episode one",
+          audienceCanSpeak: false,
+          handRaisingEnabled: true,
+          stageLimit: 8,
           targetAudience: "professionals",
           topicTags: ["interview"],
           showFormat: "panel",
         },
       ),
     ),
+  );
+
+  await check(
+    "ROOM META SECURITY: experience is immutable after atomic creation",
+    async () => {
+      const db = host.firestore();
+      await createMetadataRoom("meta-immutable-community");
+      await assertFails(
+        updateDoc(doc(db, "rooms/meta-immutable-community"), {
+          experience: "broadcast",
+          topic: "Forged broadcast",
+          audienceCanSpeak: false,
+          handRaisingEnabled: true,
+          stageLimit: 8,
+          showFormat: "panel",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+
+      await createMetadataRoom("meta-immutable-broadcast", {
+        experience: "broadcast",
+        topic: "Original episode",
+        audienceCanSpeak: false,
+        handRaisingEnabled: true,
+        stageLimit: 8,
+        showFormat: "panel",
+      });
+      await assertFails(
+        updateDoc(doc(db, "rooms/meta-immutable-broadcast"), {
+          experience: "community",
+          showFormat: deleteField(),
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await assertSucceeds(
+        updateDoc(doc(db, "rooms/meta-immutable-broadcast"), {
+          topic: "Edited episode title",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
   );
 
   await check(

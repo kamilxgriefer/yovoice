@@ -160,6 +160,22 @@ async function seed(testEnv) {
       userId: ALICE,
       role: "owner",
     });
+    await setDoc(doc(db, `clubs/family_${ALICE}`), {
+      ownerId: ALICE,
+      type: "family",
+      status: "active",
+      deletionInProgress: false,
+    });
+    await setDoc(doc(db, `clubs/family_${ALICE}/members/${ALICE}`), {
+      userId: ALICE,
+      role: "owner",
+      banned: false,
+    });
+    await setDoc(doc(db, `clubs/family_${ALICE}/members/${BOB}`), {
+      userId: BOB,
+      role: "member",
+      banned: false,
+    });
 
     await setDoc(doc(db, `voiceMoments/${MOMENT}`), {
       authorId: ALICE,
@@ -545,17 +561,19 @@ async function main() {
     assertSucceeds(deleteObject(ref(alice, roomImage))),
   );
 
-  // --- Club: narrow pre-root flow, live canonical authority after root. ---
+  // --- Club: root-first bounded upload, live canonical authority. ---
   const preRootAvatar = `clubs/${ALICE}/new-club/avatar`;
-  await check("verified active creator can upload deterministic pre-root media", () =>
-    assertSucceeds(uploadBytes(ref(alice, preRootAvatar), smallImage, jpeg)),
-  );
-  await check("pre-root retry may replace the same deterministic object", () =>
-    assertSucceeds(uploadBytes(ref(alice, preRootAvatar), smallImage, jpeg)),
-  );
-  await check("pre-root creator can clean up a failed create", () =>
-    assertSucceeds(deleteObject(ref(alice, preRootAvatar))),
-  );
+  await check("pre-root Club media cannot create orphan objects", async () => {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await assertFails(uploadBytes(
+        ref(alice, `clubs/${ALICE}/unreserved-${attempt}/avatar`),
+        smallImage,
+        jpeg,
+      ));
+    }
+    await assertFails(uploadBytes(ref(alice, preRootAvatar), smallImage, jpeg));
+    await assertFails(deleteObject(ref(alice, preRootAvatar)));
+  });
   await check("pre-root upload is limited to own path and avatar/banner names", async () => {
     await assertFails(uploadBytes(
       ref(mallory, `clubs/${ALICE}/other-new-club/avatar`), smallImage, jpeg,
@@ -569,6 +587,7 @@ async function main() {
   const transferredAvatar = `clubs/${ALICE}/transferred-club/avatar`;
   await check("current owner can create and update canonical Club media", async () => {
     await assertSucceeds(uploadBytes(ref(alice, ownedAvatar), smallImage, jpeg));
+    await assertSucceeds(getBytes(ref(anon, ownedAvatar)));
     await assertSucceeds(uploadBytes(ref(alice, ownedAvatar), smallImage, png));
   });
   await check("current admin can update and delete existing Club media", async () => {
@@ -623,28 +642,39 @@ async function main() {
   // the deterministic `{kind}`. The deploy sequence has a window where both
   // are talking to the same ruleset, so both names have to be accepted —
   // with the same name/MIME pairing the profile path already enforces.
-  await check("deployed client's timestamped Club media name is accepted", async () => {
-    await assertSucceeds(uploadBytes(
+  await check("new timestamped Club objects are rejected to bound object count", async () => {
+    await assertFails(uploadBytes(
       ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000000.jpg`),
       smallImage, jpeg,
     ));
-    await assertSucceeds(uploadBytes(
+    await assertFails(uploadBytes(
       ref(alice, `clubs/${ALICE}/club-owned/banner_1755300000001.png`),
       smallImage, png,
     ));
-    await assertSucceeds(uploadBytes(
+    await assertFails(uploadBytes(
       ref(alice, `clubs/${ALICE}/club-owned/avatar_1755300000002.webp`),
       smallImage, webp,
     ));
-    await assertSucceeds(uploadBytes(
+    await assertFails(uploadBytes(
       ref(alice, `clubs/${ALICE}/club-owned/banner_1755300000003.jpeg`),
       smallImage, jpeg,
     ));
   });
-  await check("deployed client's timestamped pre-root Club media is accepted", async () => {
+  await check("timestamped pre-root Club media is rejected", async () => {
     const preRootTimestamped = `clubs/${ALICE}/new-club-2/banner_1755300000004.jpg`;
-    await assertSucceeds(uploadBytes(ref(alice, preRootTimestamped), smallImage, jpeg));
-    await assertSucceeds(deleteObject(ref(alice, preRootTimestamped)));
+    await assertFails(uploadBytes(ref(alice, preRootTimestamped), smallImage, jpeg));
+  });
+  const familyAvatar = `clubs/${ALICE}/family_${ALICE}/avatar`;
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await uploadBytes(ref(ctx.storage(), familyAvatar), smallImage, jpeg);
+  });
+  await check("Family media is private-by-absence for every client", async () => {
+    for (const client of [anon, alice, bob, mallory]) {
+      await assertFails(getBytes(ref(client, familyAvatar)));
+    }
+    await assertFails(uploadBytes(ref(alice, familyAvatar), smallImage, jpeg));
+    await assertFails(uploadBytes(ref(bob, familyAvatar), smallImage, jpeg));
+    await assertFails(deleteObject(ref(alice, familyAvatar)));
   });
   await check("timestamped Club media keeps every other Club guarantee", async () => {
     // Not a Club manager.
