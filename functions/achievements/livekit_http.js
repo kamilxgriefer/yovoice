@@ -1,5 +1,6 @@
 const { createHash } = require("node:crypto");
 
+const { logger } = require("firebase-functions/v2");
 const { defineSecret } = require("firebase-functions/params");
 const { onRequest } = require("firebase-functions/v2/https");
 
@@ -20,6 +21,16 @@ const {
 } = require("./voice_webhook");
 
 const REGION = "europe-west1";
+// This endpoint is unauthenticated and internet-reachable, so every rejection
+// has to be cheaper than the work it declines. A LiveKit voice webhook carries
+// one room and at most one participant; observed bodies are well under 4 KiB.
+// Anything past this bound is refused before the body is hashed, and 413 is
+// deliberately not a 5xx so the sender stops rather than retrying forever.
+const MAX_WEBHOOK_BODY_BYTES = 128 * 1024;
+// A public endpoint with no App Check in front of it can be driven as hard as
+// an attacker likes. Concurrency is capped so a flood costs bounded instances
+// and bounded Firestore contention instead of an open-ended bill.
+const MAX_WEBHOOK_INSTANCES = 10;
 const VOICE_SESSION_SCHEMA_VERSION = 1;
 const VOICE_DAY_SCHEMA_VERSION = 1;
 const MAX_ROOM_FINISH_SESSIONS = 500;
@@ -566,6 +577,12 @@ function authorizationHeader(request) {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
 }
 
+function rawBodyByteLength(rawBody) {
+  if (Buffer.isBuffer(rawBody)) return rawBody.byteLength;
+  if (typeof rawBody === "string") return Buffer.byteLength(rawBody, "utf8");
+  return null;
+}
+
 function createLiveKitAchievementWebhookHandler({
   apiKeyProvider,
   apiSecretProvider,
@@ -581,6 +598,13 @@ function createLiveKitAchievementWebhookHandler({
     if (request?.method !== "POST") {
       response.set("Allow", "POST");
       response.status(405).send("Method Not Allowed");
+      return;
+    }
+    const bodyBytes = rawBodyByteLength(request?.rawBody);
+    if (bodyBytes !== null && bodyBytes > MAX_WEBHOOK_BODY_BYTES) {
+      // Refused before the SHA-256 over the body and before any signature
+      // work, so an oversized payload cannot buy CPU from an anonymous caller.
+      response.status(413).json({ accepted: false, error: "payload-too-large" });
       return;
     }
     let webhook;
@@ -608,22 +632,50 @@ function createLiveKitAchievementWebhookHandler({
     }
     try {
       const result = await store.handle(webhook);
+      // `type` and `outcome` are both closed sets of server-authored constants.
+      // No uid, room id, room/participant SID, event id or session id is ever
+      // logged: this endpoint's observability must not become a second copy of
+      // the participant list.
+      logger.info("livekit achievement webhook accepted", {
+        eventType: webhook.type,
+        outcome: result.outcome,
+      });
       response.status(202).json({ accepted: true, outcome: result.outcome });
     } catch (error) {
       if (error instanceof VoiceAchievementStoreError ||
           error instanceof VoiceWebhookValidationError) {
+        // Both classes carry static, non-interpolated messages by
+        // construction, so the message names the failed invariant without
+        // naming the account or room it failed for.
+        logger.warn("livekit achievement webhook rejected a signed event", {
+          eventType: webhook.type,
+          reason: error.message,
+        });
         response.status(400).json({ accepted: false, error: "invalid-source" });
         return;
       }
       // A transient persistence failure must remain retryable for LiveKit.
+      // Only the error's class and code are logged — a Firestore error message
+      // can quote a document path, and those paths contain uids.
+      logger.error("livekit achievement webhook could not persist", {
+        eventType: webhook.type,
+        errorName: error?.name ?? null,
+        errorCode: error?.code ?? null,
+      });
       response.status(503).json({ accepted: false, error: "temporarily-unavailable" });
     }
   };
 }
 
+// Deliberately public: LiveKit's SFU signs each delivery with the shared API
+// secret and cannot present a Firebase ID token or an App Check token. The
+// HMAC over the exact raw body IS the authentication boundary here — see
+// receiveSignedLiveKitWebhook — so `invoker` is stated rather than inherited.
 const receiveLiveKitAchievementWebhook = onRequest({
   region: REGION,
   cors: false,
+  invoker: "public",
+  maxInstances: MAX_WEBHOOK_INSTANCES,
   timeoutSeconds: 60,
   secrets: [livekitAchievementApiKey, livekitAchievementApiSecret],
 }, createLiveKitAchievementWebhookHandler({
@@ -635,6 +687,8 @@ module.exports = {
   AWAITING_JOIN_TTL_MS,
   FirestoreVoiceAchievementStore,
   MAX_ROOM_FINISH_SESSIONS,
+  MAX_WEBHOOK_BODY_BYTES,
+  MAX_WEBHOOK_INSTANCES,
   REGION,
   SESSION_RETENTION_MS,
   VOICE_DAY_SCHEMA_VERSION,

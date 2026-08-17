@@ -366,6 +366,14 @@ const {
 } = require("./achievements/triggers");
 const { selectMyAchievementTitle } = require("./achievements/callables");
 const { reconcileAchievementsV1 } = require("./achievements/migration");
+// The only writer of connected voice time. Until this was exported the whole
+// AchievementCategory.voice group and the Creator Studio speaking/hosting
+// tiles were permanently zero: nothing else in the project produces a
+// voiceSeconds or hostSeconds event. Signed LiveKit deliveries only — see
+// achievements/livekit_http.js for the authentication boundary.
+const {
+  receiveLiveKitAchievementWebhook,
+} = require("./achievements/livekit_http");
 
 exports.adminSetPremiumEntitlements = adminSetPremiumEntitlements;
 exports.verifyPurchase = verifyPurchase;
@@ -388,3 +396,4 @@ exports.onAchievementRoomMessageCreated = onAchievementRoomMessageCreated;
 exports.onAchievementUserSocialCountersChanged =
   onAchievementUserSocialCountersChanged;
 exports.reconcileAchievementsV1 = reconcileAchievementsV1;
+exports.receiveLiveKitAchievementWebhook = receiveLiveKitAchievementWebhook;
