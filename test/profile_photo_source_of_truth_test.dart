@@ -207,6 +207,35 @@ void main() {
     });
 
     test(
+      'createUserProfile completes a partial auth-gate document without rewriting create-only fields',
+      () async {
+        final db = FakeFirebaseFirestore();
+        await db.collection('users').doc('new-google-user').set({
+          'isOnline': true,
+          'lastSeen': Timestamp.fromMillisecondsSinceEpoch(1),
+        });
+
+        await FirestoreService(firestore: db).createUserProfile(
+          AppUser(
+            uid: 'new-google-user',
+            email: 'New.Google@Example.com',
+            username: 'New Google User',
+            createdAt: DateTime(2026, 8, 18),
+          ),
+        );
+
+        final data = (await db.collection('users').doc('new-google-user').get())
+            .data()!;
+        expect(data['uid'], 'new-google-user');
+        expect(data['email'], 'new.google@example.com');
+        expect(data['displayName'], 'New Google User');
+        expect(data['username'], 'New Google User');
+        expect(data['isOnline'], isTrue);
+        expect(data.containsKey('createdAt'), isFalse);
+      },
+    );
+
+    test(
       'two ProfileService instances share one reactive profile stream',
       () async {
         final db = FakeFirebaseFirestore();

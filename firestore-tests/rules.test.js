@@ -833,8 +833,26 @@ async function main() {
         });
       });
       const ref = doc(profile.firestore(), `users/${uid}`);
+      // The social-auth provisioner must treat a presence-first document as
+      // an update. `createdAt` is deliberately create-only, so the old blind
+      // merge was denied and deleted the freshly authenticated Google user.
+      await assertFails(
+        updateDoc(ref, {
+          uid,
+          email: "bootstrap@example.com",
+          displayName: "Bootstrap Voice",
+          username: "Bootstrap Voice",
+          createdAt: serverTimestamp(),
+        }),
+      );
       await assertSucceeds(
-        updateDoc(ref, { displayName: "Bootstrap Voice" }),
+        updateDoc(ref, {
+          uid,
+          email: "bootstrap@example.com",
+          displayName: "Bootstrap Voice",
+          username: "Bootstrap Voice",
+          lastSeen: serverTimestamp(),
+        }),
       );
       await assertFails(
         updateDoc(ref, { displayName: "Second Bootstrap" }),
