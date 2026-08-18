@@ -252,6 +252,18 @@ exports.onClubMemberCreated = onClubMemberCreated;
 
 /*
 |--------------------------------------------------------------------------
+| Account sessions
+|--------------------------------------------------------------------------
+*/
+
+const {
+  revokeMyRefreshTokens,
+} = require("./auth/session_management");
+
+exports.revokeMyRefreshTokens = revokeMyRefreshTokens;
+
+/*
+|--------------------------------------------------------------------------
 | Profile
 |--------------------------------------------------------------------------
 */

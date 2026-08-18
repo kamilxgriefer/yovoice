@@ -110,6 +110,20 @@ same draft, request id and object generation. Browser/native seams and the
 complete reservation/rules contract are automated, but a real post-deploy
 iPhone Safari publish remains a release verification step.
 
+**Offline playback is implemented in source and not deployed as of
+2026-08-18.** Published, non-deleted Voice Moments can be downloaded on the
+current device. Offline audio is account-isolated and local:
+native clients store files in their application-support directory and play
+them directly from the file path; web uses the browser's Cache Storage and
+materializes bytes only for the selected playback. A compact local manifest
+backs the real count, byte total, play, per-item removal and Remove all
+controls. Limits are 12 MB per item and 250 MB per account on each device.
+There is no Firestore collection, server database or cross-device sync for
+downloads. Browser/site-data eviction, app removal or OS storage cleanup can
+remove a local copy; the UI reconciles a missing object rather than pretending
+it is still available. See
+[ADR-074](Decisions.md#adr-074-offline-voice-moments-are-bounded-account-isolated-device-storage-not-a-server-database).
+
 ## Achievements / Awards
 
 `lib/features/achievements/`: a 100-title catalog (`AchievementCatalog`)
@@ -181,8 +195,31 @@ built yet. Profile visibility, recipient-controlled direct-message privacy
 and authenticator-app two-factor authentication are implemented in source and
 covered by responsive/security tests; they require their coordinated Firebase
 configuration, Functions/Rules and client rollout before being called live.
-Multi-device session management and app UI language switching remain disabled
-until their real platform/data contracts exist.
+
+The following Settings additions are implemented in source and not deployed as
+of 2026-08-18. Appearance and app language have real device-local contracts.
+Appearance
+offers System, Dark and Light Beta; Language offers System, English and Polish
+Beta. Both persist through `shared_preferences`, update the root
+`MaterialApp`, and fall back to Dark/English when stored state is missing,
+malformed or unavailable so legacy installs do not enter a Beta implicitly.
+The Beta labels are material: the shared
+theme, navigation, authentication, Settings and framework controls participate,
+while legacy screens with inline dark colors or English literals are still
+being migrated. These preferences do not create Firestore data and do not sync
+between devices. See
+[ADR-072](Decisions.md#adr-072-appearance-and-ui-language-are-device-local-preferences-with-explicit-beta-boundaries).
+
+Devices & sessions shows the current Firebase token session and offers one
+real remote-security action: account-wide refresh-token revocation followed by
+local push-token removal and sign-out. Firebase Auth exposes neither a
+trustworthy per-device session list nor individual refresh-token revocation, so
+the app does not fabricate one from FCM registrations. The action requires a
+verified `auth_time` no older than ten minutes. Already-issued stateless ID
+tokens can remain valid for at most about one hour, which the screen states
+explicitly. Downloaded audio is managed locally with the Voice Moment limits
+and platform behavior described above. See
+[ADR-073](Decisions.md#adr-073-firebase-session-management-exposes-account-wide-revocation-never-a-fabricated-device-list).
 
 ## Notifications
 

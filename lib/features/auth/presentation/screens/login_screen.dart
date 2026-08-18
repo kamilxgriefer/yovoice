@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/widgets/check_inbox_sheet.dart';
 import 'package:yovoice/features/auth/presentation/screens/totp_challenge_screen.dart';
@@ -236,6 +237,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Scaffold(
       body: Stack(
         children: [
@@ -335,7 +337,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 42),
                         _LoginAuthField(
                           controller: _emailController,
-                          hintText: 'Email',
+                          hintText: copy.email,
                           keyboardType: TextInputType.emailAddress,
                           textInputAction: TextInputAction.next,
                           autofillHints: const [
@@ -347,7 +349,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 16),
                         _LoginAuthField(
                           controller: _passwordController,
-                          hintText: 'Password',
+                          hintText: copy.password,
                           obscureText: _obscurePassword,
                           textInputAction: TextInputAction.done,
                           autofillHints: const [AutofillHints.password],
@@ -368,7 +370,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(height: 24),
                         _LoginPrimaryButton(
-                          label: 'LOG IN',
+                          label: copy.logIn,
                           isLoading: _isLoading,
                           onPressed: _isAuthenticationLoading ? null : _login,
                         ),
@@ -402,7 +404,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(height: 24),
                         _LoginSocialButton(
-                          label: 'Continue with Google',
+                          label: copy.continueWithGoogle,
                           svgIconPath: 'assets/icons/icon_google_g.svg',
                           isLoading: _isGoogleLoading,
                           onPressed: _isAuthenticationLoading
@@ -419,7 +421,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                     AppleSignInAvailability
                                         .temporarilyUnavailable
                               ? 'Continue with Apple — Unavailable'
-                              : 'Continue with Apple',
+                              : copy.continueWithApple,
                           materialIcon: Icons.apple,
                           iconSize: 34,
                           isLoading:
@@ -436,10 +438,10 @@ class _LoginScreenState extends State<LoginScreen> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Flexible(
+                            Flexible(
                               child: Text(
-                                "Don't have an account? ",
-                                style: TextStyle(
+                                '${copy.noAccount} ',
+                                style: const TextStyle(
                                   color: Color(0xFFB8B1C8),
                                   fontSize: 16,
                                 ),
@@ -511,9 +513,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                                 ),
                               ),
-                              child: const Text(
-                                'Sign up',
-                                style: TextStyle(
+                              child: Text(
+                                copy.signUp,
+                                style: const TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w700,
                                 ),
@@ -563,9 +565,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                       color: Color(0xFFA02BFF),
                                     ),
                                   )
-                                : const Text(
-                                    'Forgot password?',
-                                    style: TextStyle(
+                                : Text(
+                                    copy.forgotPassword,
+                                    style: const TextStyle(
                                       color: Color(0xFFA02BFF),
                                       fontSize: 16.5,
                                       fontWeight: FontWeight.w600,

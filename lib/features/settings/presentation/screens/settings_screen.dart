@@ -21,7 +21,10 @@ import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/profile_visibility_screen.dart';
+import 'package:yovoice/features/settings/presentation/screens/downloaded_audio_screen.dart';
+import 'package:yovoice/features/settings/presentation/screens/device_sessions_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/two_factor_authentication_screen.dart';
+import 'package:yovoice/features/settings/presentation/widgets/appearance_language_settings_section.dart';
 import 'package:yovoice/features/settings/presentation/widgets/message_privacy_settings_tile.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
@@ -643,37 +646,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const SizedBox(height: 22),
 
-        const _GroupLabel('Appearance'),
-        _SettingsGroup(
-          children: const [
-            _SettingsTile(
-              icon: Icons.dark_mode_rounded,
-              title: 'Theme',
-              subtitle: 'Dark — matches YO Voice\'s design',
-              trailing: Icon(Icons.check_circle_rounded, color: _success),
-            ),
-            _SettingsTile(
-              icon: Icons.light_mode_outlined,
-              title: 'Light mode',
-              subtitle: 'A bright theme for daytime use',
-              comingSoon: true,
-            ),
-          ],
-        ),
-        const SizedBox(height: 22),
-
-        const _GroupLabel('Language'),
-        _SettingsGroup(
-          children: const [
-            _SettingsTile(
-              icon: Icons.translate_rounded,
-              title: 'App language',
-              subtitle: 'English — more languages are on the way',
-              comingSoon: true,
-            ),
-          ],
-        ),
-        const SizedBox(height: 22),
+        const AppearanceLanguageSettingsSection(),
 
         const _GroupLabel('Devices'),
         _SettingsGroup(
@@ -684,11 +657,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: _deviceLabel(),
               trailing: const Icon(Icons.check_circle_rounded, color: _success),
             ),
-            const _SettingsTile(
+            _SettingsTile(
               icon: Icons.important_devices_outlined,
-              title: 'Manage other devices',
-              subtitle: 'See and sign out of other sessions',
-              comingSoon: true,
+              title: 'Devices & sessions',
+              subtitle: 'Review this device or sign out everywhere',
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const DeviceSessionsScreen(),
+                ),
+              ),
             ),
           ],
         ),
@@ -708,11 +685,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   : const Icon(Icons.chevron_right_rounded, color: _muted),
               onTap: _clearingCache ? null : _clearImageCache,
             ),
-            const _SettingsTile(
+            _SettingsTile(
               icon: Icons.download_for_offline_outlined,
               title: 'Downloaded audio',
               subtitle: 'Manage offline Voice Moments',
-              comingSoon: true,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const DownloadedAudioScreen(),
+                ),
+              ),
             ),
           ],
         ),
@@ -1091,7 +1072,6 @@ class _SettingsTile extends StatelessWidget {
     this.subtitle,
     this.trailing,
     this.onTap,
-    this.comingSoon = false,
     this.danger = false,
   });
 
@@ -1100,7 +1080,6 @@ class _SettingsTile extends StatelessWidget {
   final String? subtitle;
   final Widget? trailing;
   final VoidCallback? onTap;
-  final bool comingSoon;
   final bool danger;
 
   @override
@@ -1108,69 +1087,39 @@ class _SettingsTile extends StatelessWidget {
     final iconColor = danger ? _danger : _primary;
     final titleColor = danger ? _danger : Colors.white;
 
-    return Opacity(
-      opacity: comingSoon ? .55 : 1,
-      child: ListTile(
-        enabled: !comingSoon,
-        onTap: comingSoon ? null : onTap,
-        leading: Container(
-          width: 38,
-          height: 38,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: iconColor.withValues(alpha: .14),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(icon, color: iconColor, size: 20),
+    return ListTile(
+      onTap: onTap,
+      leading: Container(
+        width: 38,
+        height: 38,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: iconColor.withValues(alpha: .14),
+          borderRadius: BorderRadius.circular(12),
         ),
-        title: Text(
-          title,
-          style: TextStyle(
-            color: titleColor,
-            fontWeight: FontWeight.w700,
-            fontSize: 14.5,
-          ),
-        ),
-        subtitle: subtitle == null
-            ? null
-            : Text(
-                subtitle!,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: _muted, fontSize: 12),
-              ),
-        trailing: comingSoon
-            ? const _ComingSoonBadge()
-            : (trailing ??
-                  (onTap != null
-                      ? const Icon(Icons.chevron_right_rounded, color: _muted)
-                      : null)),
+        child: Icon(icon, color: iconColor, size: 20),
       ),
-    );
-  }
-}
-
-class _ComingSoonBadge extends StatelessWidget {
-  const _ComingSoonBadge();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-        color: const Color(0xFF241B2A),
-        borderRadius: BorderRadius.circular(99),
-        border: Border.all(color: _border),
-      ),
-      child: const Text(
-        'COMING SOON',
+      title: Text(
+        title,
         style: TextStyle(
-          color: _muted,
-          fontSize: 9.5,
-          fontWeight: FontWeight.w900,
-          letterSpacing: .4,
+          color: titleColor,
+          fontWeight: FontWeight.w700,
+          fontSize: 14.5,
         ),
       ),
+      subtitle: subtitle == null
+          ? null
+          : Text(
+              subtitle!,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: _muted, fontSize: 12),
+            ),
+      trailing:
+          trailing ??
+          (onTap != null
+              ? const Icon(Icons.chevron_right_rounded, color: _muted)
+              : null),
     );
   }
 }

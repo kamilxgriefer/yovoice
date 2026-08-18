@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/auth/presentation/screens/auth_gate.dart';
@@ -81,7 +84,9 @@ SnackBar buildForegroundNotificationBanner({
 }
 
 class YoVoiceApp extends StatefulWidget {
-  const YoVoiceApp({super.key});
+  const YoVoiceApp({this.preferencesController, super.key});
+
+  final AppPreferencesController? preferencesController;
 
   @override
   State<YoVoiceApp> createState() => _YoVoiceAppState();
@@ -132,13 +137,31 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: notificationNavigatorKey,
-      scaffoldMessengerKey: _messengerKey,
-      debugShowCheckedModeBanner: false,
-      title: 'YO Voice',
-      theme: AppTheme.darkTheme,
-      home: const PresenceLifecycle(child: AuthGate()),
+    final controller =
+        widget.preferencesController ?? AppPreferencesController.instance;
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) => AppPreferencesScope(
+        controller: controller,
+        child: MaterialApp(
+          navigatorKey: notificationNavigatorKey,
+          scaffoldMessengerKey: _messengerKey,
+          debugShowCheckedModeBanner: false,
+          title: 'YO Voice',
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: controller.value.theme.themeMode,
+          locale: controller.value.language.locale,
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: const [
+            AppLocalizationsDelegate(),
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          home: const PresenceLifecycle(child: AuthGate()),
+        ),
+      ),
     );
   }
 }

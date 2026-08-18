@@ -16,6 +16,29 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Device-local Appearance, Polish Beta and offline Voice Moment playback**
+  (2026-08-18, this revision — NOT YET DEPLOYED): Appearance now offers
+  System/Dark/Light Beta and app language offers System/English/Polish Beta,
+  persisted locally with backward-compatible Dark/English fallbacks. Coverage is intentionally
+  bounded to the shared theme plus migrated navigation, auth, Settings and
+  framework controls; remaining inline-dark/English screens are still tracked
+  work, not silently described as translated. Published Voice Moments can be
+  downloaded into account-isolated storage on the current device, with a
+  12 MB item cap, 250 MB device/account cap, real usage display, direct native
+  file playback, web Cache Storage playback and removal controls. Neither
+  feature creates a server database or pretends to synchronize between
+  devices. See ADR-072 and ADR-074.
+
+- **Truthful account-wide session revocation** (2026-08-18, this revision —
+  NOT YET DEPLOYED): Devices & sessions shows the current Firebase token
+  session and can revoke all refresh tokens for the caller after a recent-auth
+  check, unregister the current push token and sign out locally. It does not
+  label FCM registrations as login sessions or fabricate a per-device list:
+  Firebase exposes neither individual refresh-token enumeration nor
+  per-device revoke. The screen discloses that already-issued ID tokens can
+  remain valid for up to one hour. See ADR-073 and
+  [ACCOUNT_SESSIONS.md](ACCOUNT_SESSIONS.md).
+
 - **One responsive stage for all room identities and reliable creation**
   (2026-08-17, this revision — NOT YET DEPLOYED): Community, Podcast, Club
   Lounge and Family Lounge now share the same bounded, responsive interior
@@ -626,14 +649,15 @@ someone decide what to pick up next.
 
 ### App-wide theme migration
 
-- **Status**: In progress — foundation complete, per-feature-area passes
-  ongoing.
+- **Status**: In progress — the root System/Dark/Light Beta switch and shared
+  light/dark themes are complete in source; per-feature-area passes remain.
 - **Description**: `lib/core/theme/` (`AppColors`, `AppTypography`, etc.)
   and `lib/shared/widgets/` (`YoButton`, `YoCard`, the `Yo*State` widgets)
   exist as the intended long-term design system, but most screens still
   define their own consistent-but-duplicated inline hex color constants
-  instead of importing them — see [UI.md](UI.md) for the two systems in
-  detail.
+  instead of importing them. The new root Light mode cannot override those
+  literals, which is why it remains explicitly Beta — see [UI.md](UI.md) for
+  the two systems in detail and ADR-072 for the preference boundary.
 - **Dependencies**: None technical — this is pure migration effort, one
   feature area at a time (home/friends/notifications/messages; discover/
   clubs/profile/achievements; auth screens; rooms; messages/moments/
@@ -1042,16 +1066,23 @@ regression test pinning the contract.
 
 ### 8. Multi-device session management
 
-- **Status**: Not started — Settings currently shows only "this device."
-- **Description**: List and revoke active sessions across devices.
-- **Dependencies**: A session/device registry data model doesn't exist —
-  Firebase Auth doesn't expose this out of the box the way it exposes the
-  current user.
-- **Priority**: Medium — a real security/trust feature, no urgency signal.
-- **Future considerations**: Revoking a session likely means invalidating
-  a refresh token or forcing a re-auth — check what Firebase Auth actually
-  supports here before designing the data model, rather than assuming
-  arbitrary remote sign-out is possible.
+- **Status**: Honest Firebase-bounded implementation complete in source on
+  2026-08-18; Cloud Function and client are not deployed.
+- **Description**: Settings shows the current token session and provides
+  account-wide sign-out by revoking the authenticated caller's refresh tokens.
+  It deliberately does not list or revoke an individual remote device because
+  Firebase Auth exposes neither capability. Already-issued ID tokens can live
+  for up to one hour.
+- **Dependencies**: Deploy `revokeMyRefreshTokens` before the compatible
+  client. The action requires `auth_time` within ten minutes; restricted
+  accounts retain this recovery action.
+- **Priority**: The truthful account-wide security control is complete. A
+  real individual-device product is deferred unless the authentication
+  architecture changes.
+- **Future considerations**: A cosmetic device registry is not sufficient.
+  True single-device revoke would require a server-issued session identifier
+  and enforcement at every Firestore, Storage and callable boundary. See
+  ADR-073.
 
 ### 9. Self-serve account deletion
 
@@ -1078,19 +1109,22 @@ regression test pinning the contract.
 
 ### 10. App language switcher
 
-- **Status**: Not started — app is English-only today.
-- **Description**: A UI-language switcher, distinct from the per-user
-  spoken/native *content* language fields that already exist on
-  `UserProfile` (those describe the user, not the app's UI).
-- **Dependencies**: No i18n/localization framework is wired up yet
-  (`flutter_localizations` + `.arb` files, or an equivalent) — this is
-  infrastructure work before it's a feature.
-- **Priority**: Low — no urgency signal, meaningful upfront lift to wire
-  up the framework even before the first translation exists.
-- **Future considerations**: Once the framework exists, decide a process
-  for keeping translations in sync with new UI copy as it ships — a
-  language switcher with stale translations for half the app is worse
-  than not having one.
+- **Status**: Foundation and bounded Polish Beta complete in source on
+  2026-08-18; not deployed. System, English and Polish Beta are selectable and
+  saved on the current device.
+- **Description**: This controls UI language, distinct from a user's
+  spoken/native content-language fields. `flutter_localizations` supplies
+  framework delegates and the YO Voice delegate covers migrated navigation,
+  authentication and Settings copy. The interface states that other product
+  screens remain English while migration continues.
+- **Dependencies**: No backend or Firestore schema. Completing Polish requires
+  moving remaining raw English literals into the localization contract and
+  performing linguistic/visual QA at every breakpoint.
+- **Priority**: Low-Medium continuation. The switcher and honest Beta are
+  usable; complete-app translation is still substantial work.
+- **Future considerations**: Add a translation-maintenance workflow before
+  declaring Polish stable, then evaluate ARB/code generation if the catalog
+  grows beyond the deliberately small delegate. See ADR-072.
 
 ### 11. Value-level counter validation
 

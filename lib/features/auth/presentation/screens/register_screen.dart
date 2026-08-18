@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
 import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
@@ -173,6 +174,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     return Scaffold(
       body: Stack(
         children: [
@@ -244,10 +246,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text(
-                            'CREATE ACCOUNT',
+                          Text(
+                            copy.createAccount,
                             textAlign: TextAlign.center,
-                            style: TextStyle(
+                            style: const TextStyle(
                               color: Colors.white,
                               fontSize: 30,
                               fontWeight: FontWeight.w800,
@@ -255,10 +257,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ),
                           ),
                           const SizedBox(height: 10),
-                          const Text(
-                            'Join YO Voice and start connecting.',
+                          Text(
+                            copy.text(
+                              'Join YO Voice and start connecting.',
+                              'Dołącz do YO Voice i zacznij poznawać ludzi.',
+                            ),
                             textAlign: TextAlign.center,
-                            style: TextStyle(
+                            style: const TextStyle(
                               color: Color(0xFFB8B1C8),
                               fontSize: 15,
                               fontWeight: FontWeight.w500,
@@ -268,7 +273,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           const SizedBox(height: 34),
                           _RegisterField(
                             controller: _usernameController,
-                            hintText: 'Username',
+                            hintText: copy.username,
                             prefixIcon: Icons.person_outline_rounded,
                             textInputAction: TextInputAction.next,
                             autofillHints: const [AutofillHints.newUsername],
@@ -283,7 +288,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           const SizedBox(height: 16),
                           _RegisterField(
                             controller: _emailController,
-                            hintText: 'Email',
+                            hintText: copy.email,
                             prefixIcon: Icons.email_outlined,
                             keyboardType: TextInputType.emailAddress,
                             textInputAction: TextInputAction.next,
@@ -293,7 +298,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           const SizedBox(height: 16),
                           _RegisterField(
                             controller: _passwordController,
-                            hintText: 'Password',
+                            hintText: copy.password,
                             prefixIcon: Icons.lock_outline_rounded,
                             obscureText: _obscurePassword,
                             textInputAction: TextInputAction.next,
@@ -311,7 +316,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           const SizedBox(height: 16),
                           _RegisterField(
                             controller: _confirmPasswordController,
-                            hintText: 'Confirm password',
+                            hintText: copy.confirmPassword,
                             prefixIcon: Icons.lock_reset_outlined,
                             obscureText: _obscureConfirmation,
                             textInputAction: TextInputAction.done,
@@ -332,13 +337,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             validator: _validatePasswordConfirmation,
                           ),
                           const SizedBox(height: 12),
-                          const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 4),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
                             child: Text(
-                              'Use at least 8 characters, including an '
-                              'uppercase letter, a lowercase letter, and a '
-                              'number.',
-                              style: TextStyle(
+                              copy.text(
+                                'Use at least 8 characters, including an uppercase letter, a lowercase letter, and a number.',
+                                'Użyj co najmniej 8 znaków, w tym wielkiej i małej litery oraz cyfry.',
+                              ),
+                              style: const TextStyle(
                                 color: Color(0xFF9189A6),
                                 fontSize: 13,
                                 height: 1.4,
@@ -347,7 +353,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           ),
                           const SizedBox(height: 26),
                           _RegisterPrimaryButton(
-                            label: 'CREATE ACCOUNT',
+                            label: copy.createAccount,
                             isLoading: _isLoading,
                             onPressed: _isLoading ? null : _register,
                           ),
@@ -355,10 +361,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Flexible(
+                              Flexible(
                                 child: Text(
-                                  'Already have an account? ',
-                                  style: TextStyle(
+                                  '${copy.alreadyHaveAccount} ',
+                                  style: const TextStyle(
                                     color: Color(0xFFB8B1C8),
                                     fontSize: 16,
                                   ),
@@ -410,9 +416,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                         return Colors.transparent;
                                       }),
                                 ),
-                                child: const Text(
-                                  'Log in',
-                                  style: TextStyle(
+                                child: Text(
+                                  copy.text('Log in', 'Zaloguj się'),
+                                  style: const TextStyle(
                                     fontSize: 16,
                                     fontWeight: FontWeight.w700,
                                   ),

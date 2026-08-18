@@ -553,6 +553,43 @@ permission flags).
 
 ## UI
 
+- **OPEN migration limit — Light mode is a working Beta, not yet a complete
+  app-wide light theme.** The root `MaterialApp` now follows System/Dark/Light
+  and migrated surfaces use the light color scheme, but many legacy screens
+  still own inline dark colors. Those screens can remain visually dark or have
+  local contrast defects when Light is selected. The picker states this
+  limitation and the remaining wholesale migration is tracked under
+  [App-wide theme migration](Roadmap.md#app-wide-theme-migration); do not remove
+  the Beta label based only on the root theme switch working.
+
+- **OPEN migration limit — Polish is a bounded Beta, not a claim of complete
+  localization.** Framework controls plus migrated navigation,
+  authentication and Settings copy switch between English and Polish, while
+  product screens with raw English literals remain English. The language
+  screen discloses the mixed-language state. A complete translation still
+  needs catalog extraction, Polish linguistic QA, long-copy wrapping and
+  accessibility verification at every breakpoint.
+
+- **Known platform limitation in the not-yet-deployed source implementation —
+  downloaded audio is durable only for as long as this device keeps app/site
+  data.** Native files live in the application
+  support directory; web copies live in browser Cache Storage, which a browser
+  may evict or a user may clear. YO Voice filters a missing object from its
+  manifest-backed list and asks for a fresh download; it cannot promise
+  permanent browser storage. Server deletion or unpublishing also cannot
+  recall a public audio file already downloaded to a user's device. Limits are
+  12 MB per item and 250 MB per account/device to bound storage and download
+  memory.
+
+- **Not a bug — Devices & sessions does not enumerate or individually revoke
+  Firebase logins.** Firebase Auth's Admin SDK supports account-wide refresh-
+  token revocation, not a trustworthy device/session list or one-token revoke.
+  FCM registrations are push endpoints, not login sessions. The implemented
+  control therefore shows the current token session and signs out everywhere;
+  it explicitly warns that already-issued stateless ID tokens can continue for
+  up to about one hour. See ADR-073 and
+  [ACCOUNT_SESSIONS.md](ACCOUNT_SESSIONS.md).
+
 - **Fixed in source (deployment pending): room creation failures and four
   unrelated-looking room interiors.** Podcast creation was denied because
   `showFormat` arrived before its `experience`; Family creation could fail on

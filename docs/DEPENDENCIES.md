@@ -72,7 +72,25 @@ delivery channel.
   them blank, and both were worse than one new dependency each.
 - **`image_picker`, `record`, `audioplayers`, `path_provider`** — media
   capture/playback for profile photos, room images, and Voice Moments'
-  audio recording pipeline.
+  audio recording pipeline. `path_provider` also supplies the native
+  application-support directory for account-isolated offline Voice Moment
+  files; `audioplayers` receives the local file path directly so ordinary
+  native playback does not duplicate the whole file in Dart memory. Web uses
+  the browser's Cache Storage API instead of adding another persistence
+  package.
+
+## Local preferences and localization
+
+- **`shared_preferences`** — persists the non-sensitive Appearance and app
+  language enum on the current browser/device. These are presentation
+  preferences, not account authority, so a Firestore document and cross-device
+  synchronization would add latency, privacy surface and schema without a
+  product benefit. Unknown or unreadable values fall back to System.
+- **`flutter_localizations`** (Flutter SDK) — installs the Material, Widgets
+  and Cupertino localization delegates used by framework controls. YO Voice's
+  own small delegate currently covers English and a bounded Polish Beta across
+  navigation, authentication and Settings. It is infrastructure for gradual
+  migration, not a claim that every legacy English literal has been translated.
 
 ## Firebase Cloud Messaging / local notifications
 

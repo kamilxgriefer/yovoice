@@ -64,6 +64,9 @@ given a false-precision date.
 | [060](#adr-060-an-explanatory-comment-is-a-claim-measure-it-or-delete-it) | An explanatory comment is a claim — measure it or delete it | Accepted | 2026-08-17 |
 | [061](#adr-061-a-callable-that-answers-is-the-whole-write-and-its-client-fallback-must-write-the-same-document) | A callable that answers is the whole write, and its client fallback must write the same document | Accepted | 2026-08-17 |
 | [066](#adr-066-display-name-changes-are-server-authoritative-and-use-one-fixed-thirty-day-window) | Display-name changes are server-authoritative and use one fixed thirty-day window | Accepted | 2026-08-17 |
+| [072](#adr-072-appearance-and-ui-language-are-device-local-preferences-with-explicit-beta-boundaries) | Appearance and UI language are device-local preferences with explicit Beta boundaries | Accepted in source | 2026-08-18 |
+| [073](#adr-073-firebase-session-management-exposes-account-wide-revocation-never-a-fabricated-device-list) | Firebase session management exposes account-wide revocation, never a fabricated device list | Accepted in source | 2026-08-18 |
+| [074](#adr-074-offline-voice-moments-are-bounded-account-isolated-device-storage-not-a-server-database) | Offline Voice Moments are bounded, account-isolated device storage, not a server database | Accepted in source | 2026-08-18 |
 
 > **The index is incomplete and has been for a while**: rows for ADR-020
 > through ADR-052 were never added, though the records themselves are all
@@ -4547,3 +4550,175 @@ and the UI must not claim it is live while the project provider is disabled.
 SMS MFA remains out of scope because of SIM-swap risk, per-message cost and the
 additional phone-data surface. Recovery codes and support recovery require a
 separate decision.
+
+## ADR-072: Appearance and UI language are device-local preferences with explicit Beta boundaries
+
+**Status:** Accepted in source, not deployed (2026-08-18).
+
+### Context
+
+Settings exposed Light mode and app language as disabled future rows. The app
+also contained two different kinds of legacy surface: widgets already driven
+by the shared Material theme, and screens that still own inline dark colors or
+English text. A root theme/locale switch can make the first group respond
+immediately, but describing the whole product as light-themed or translated
+would fabricate coverage in the second group. These are presentation choices,
+not account authority or social data.
+
+### Decision
+
+1. Appearance has three exact values: `system`, `dark`, and `light`.
+   Language has three exact values: `system`, `english`, and `polish`.
+   System language resolves to Polish only for a Polish device locale and to
+   English otherwise.
+2. Both values are non-sensitive, device-local preferences persisted with
+   `shared_preferences`. They do not create a Firestore document and do not
+   synchronize across devices.
+3. The root `MaterialApp` owns `theme`, `darkTheme`, `themeMode`, `locale`,
+   supported locales and the YO Voice plus Material/Widgets/Cupertino
+   delegates. A persisted selection therefore changes framework controls and
+   every migrated surface from one source rather than screen-local flags.
+4. Light and Polish are explicitly labelled **Beta**. Current Polish coverage
+   is bounded to migrated navigation, authentication, Settings and framework
+   controls. Current Light coverage is bounded by the shared theme migration;
+   a legacy inline-dark screen is not implied to support it.
+5. Missing, malformed or unreadable state falls back to Dark and English so an
+   existing installation never opts itself into an incomplete Beta because of
+   the device's system settings. Startup logs a preferences-store failure and
+   continues to authentication. A failed save rolls the optimistic selection
+   back and gives the user a retryable error.
+
+### Reasoning
+
+Putting visual/language preferences in Firestore would add a network and
+privacy dependency to application startup for state that needs no server
+authority. Persisting the exact enums locally makes switching immediate and
+works offline. The Beta boundary lets the useful infrastructure ship without
+violating the project's rule against presenting unfinished coverage as
+complete.
+
+### Consequences
+
+- A user selects Appearance and language separately on each browser/device.
+- The preference read adds a small local startup operation but cannot block
+  sign-in when it fails.
+- Full Light and Polish coverage remain migration work; the Beta labels stay
+  until rendered, linguistic and accessibility verification covers the full
+  app at narrow, medium and wide breakpoints.
+- `flutter_localizations` and `shared_preferences` are maintained dependencies;
+  the latter must remain limited to non-secret presentation state.
+
+## ADR-073: Firebase session management exposes account-wide revocation, never a fabricated device list
+
+**Status:** Accepted in source, not deployed (2026-08-18).
+
+### Context
+
+Settings showed only a static current-device row. Firebase Auth can return the
+current user's token/provider data and the Admin SDK can revoke every refresh
+token for one uid. It does not enumerate each web/mobile refresh token and
+does not revoke one token by device. FCM token documents identify push
+destinations, not authenticated sessions. Treating those documents as a device
+login list would create a security control that appears precise and is not.
+
+### Decision
+
+1. Devices & sessions displays only data Firebase can prove for the current
+   token: local platform label, primary providers and `auth_time`.
+2. `revokeMyRefreshTokens` accepts no client fields and derives its only target
+   from the authenticated caller. It requires `auth_time` within ten minutes
+   and calls Admin Auth `revokeRefreshTokens(caller.uid)`.
+3. Suspended, banned or disabled-looking profile state does not block this
+   owner recovery action. Authentication and recent-auth remain mandatory.
+4. After the server confirms revocation, the client unregisters its current
+   FCM token and signs out locally. Admin SDK detail is redacted from failures.
+5. The UI does not promise immediate eviction: a stateless Firebase ID token
+   already issued before revocation can remain valid until its normal expiry,
+   at most about one hour.
+6. No Firestore device/session registry is added. Per-device revoke remains
+   unsupported rather than being simulated with push-token deletion.
+7. App Check enforcement follows the project's existing monitored rollout and
+   remains off for this callable. Authenticated uid binding, empty input,
+   recent-auth and Admin SDK targeting are mandatory independently.
+
+### Reasoning
+
+Account-wide refresh-token revocation is the strongest truthful primitive the
+current authentication authority supplies and is useful after loss or suspected
+compromise. A cosmetic registry would not affect a token already accepted by
+Firestore, Storage or a callable. True single-device revocation would require
+a server-issued session identifier and enforcement of that identifier at every
+authorization boundary, which is a different architecture rather than a UI
+extension.
+
+### Consequences
+
+- Users gain a real "sign out everywhere" recovery action, including from a
+  restricted account, after recent authentication.
+- Individual device enumeration and revoke are intentionally absent.
+- Functions must be deployed before the compatible client; until then the
+  source implementation is not a live capability.
+- Revocation is account-wide and disruptive by design: the initiating device
+  also signs out, and every device must authenticate again after existing ID
+  tokens expire.
+
+## ADR-074: Offline Voice Moments are bounded, account-isolated device storage, not a server database
+
+**Status:** Accepted in source, not deployed (2026-08-18).
+
+### Context
+
+Settings advertised Downloaded audio without a storage contract. Voice Moments
+already use public HTTPS audio for published posts, but making offline copies a
+Firestore/Storage feature would duplicate public media, add sync and cleanup
+cost, and still not guarantee that bytes exist on the listening device. An
+unbounded byte cache would also risk application storage growth and memory
+spikes, especially on web.
+
+### Decision
+
+1. Only a published, non-deleted Voice Moment with a valid HTTPS audio URL,
+   canonical author metadata and duration from 1 through 60 seconds can be
+   downloaded. A file must be at least 1 KB and at most 12 MB. Total offline
+   audio is capped at 250 MB per account on each device.
+2. Account directory/cache names use a SHA-256 key of the UTF-8 Firebase uid;
+   audio object names use a SHA-256 key of the validated Moment id. A different
+   signed-in account cannot list, play or delete the previous account's local
+   objects through the service.
+3. Native platforms store the manifest and audio under the application-support
+   directory using temporary-file replacement. Playback gives `audioplayers`
+   the device path directly instead of reading the full file into Dart memory.
+4. Web stores the same account-scoped manifest and audio in Cache Storage. It
+   reads bytes only for the selected playback. Browser eviction or cleared
+   site data is expected; list reconciliation hides a manifest row whose audio
+   object no longer exists.
+5. Downloads use a 25-second connection/response-header timeout, stream into a
+   byte accumulator and abort beyond the item cap. Mutating operations are
+   serialized so concurrent download/delete/clear actions cannot race manifest
+   writes.
+6. The manager shows the real local count and bytes and supports offline play,
+   one-item removal and Remove all. The Moments card supplies the download
+   action. There is no Firestore collection, server-side database, cross-device
+   sync or fabricated usage counter.
+
+### Reasoning
+
+Offline playback is fundamentally a device capability. Local persistence keeps
+it usable without network access and avoids turning a cache into canonical
+backend state. Exact file and total limits bound disk use, the streamed item
+limit bounds download memory, serialized writes protect the manifest, and
+direct-path native playback avoids a second in-memory copy during listening.
+
+### Consequences
+
+- Downloads consume no Firestore documents or duplicate Firebase Storage
+  objects and do not appear on another device.
+- A browser, OS cleanup or app uninstall can remove local copies. The product
+  reports that state rather than promising permanent storage.
+- Server unpublish/delete cannot recall a public file already copied to a
+  user's device; the user removes it locally. This is the ordinary consequence
+  of offering downloads and must not be described as remote revocation.
+- Cache Storage playback materializes only the selected web item, still bounded
+  by 12 MB; native playback stays path-based.
+- Raising either quota requires a performance/storage review rather than only a
+  copy change.

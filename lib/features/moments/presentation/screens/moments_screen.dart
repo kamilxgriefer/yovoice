@@ -6,6 +6,7 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
+import 'package:yovoice/features/moments/data/services/offline_voice_moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
@@ -221,12 +222,14 @@ class MomentCard extends StatefulWidget {
     required this.moment,
     required this.onComments,
     this.isOwn = false,
+    this.offlineService,
     super.key,
   });
 
   final VoiceMoment moment;
   final VoidCallback onComments;
   final bool isOwn;
+  final OfflineVoiceMomentService? offlineService;
 
   @override
   State<MomentCard> createState() => _MomentCardState();
@@ -234,7 +237,43 @@ class MomentCard extends StatefulWidget {
 
 class _MomentCardState extends State<MomentCard> {
   final AudioPlayer _player = AudioPlayer();
+  late final OfflineVoiceMomentService _offline =
+      widget.offlineService ?? OfflineVoiceMomentService.instance;
   bool _playing = false;
+  bool _downloaded = false;
+  bool _downloading = false;
+  int _downloadLookupGeneration = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshDownloadState();
+  }
+
+  @override
+  void didUpdateWidget(covariant MomentCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.moment.id != widget.moment.id) {
+      _downloaded = false;
+      _refreshDownloadState();
+    }
+  }
+
+  Future<void> _refreshDownloadState() async {
+    final generation = ++_downloadLookupGeneration;
+    final momentId = widget.moment.id;
+    try {
+      final downloaded = await _offline.isDownloaded(momentId);
+      if (mounted &&
+          generation == _downloadLookupGeneration &&
+          widget.moment.id == momentId) {
+        setState(() => _downloaded = downloaded);
+      }
+    } catch (_) {
+      // The parent screen is authenticated, but a concurrent logout can race
+      // this lightweight local lookup. It must not make the feed fail.
+    }
+  }
 
   @override
   void dispose() {
@@ -248,9 +287,65 @@ class _MomentCardState extends State<MomentCard> {
     if (_playing) {
       await _player.pause();
     } else {
-      await _player.play(UrlSource(url));
+      final offline = _downloaded
+          ? await _offline.readPlayback(widget.moment.id)
+          : null;
+      if (_downloaded && offline == null && mounted) {
+        setState(() => _downloaded = false);
+      }
+      final source = offline?.deviceFilePath != null
+          ? DeviceFileSource(offline!.deviceFilePath!)
+          : offline?.bytes != null
+          ? BytesSource(offline!.bytes!)
+          : UrlSource(url);
+      await _player.play(source);
     }
     if (mounted) setState(() => _playing = !_playing);
+  }
+
+  Future<void> _toggleDownload() async {
+    if (_downloading) return;
+    final momentId = widget.moment.id;
+    final removing = _downloaded;
+    setState(() => _downloading = true);
+    try {
+      if (removing) {
+        await _offline.delete(momentId);
+      } else {
+        await _offline.download(widget.moment);
+      }
+      if (!mounted || widget.moment.id != momentId) return;
+      setState(() => _downloaded = !removing);
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text(
+              _downloaded
+                  ? 'Voice Moment downloaded for offline listening.'
+                  : 'Offline download removed.',
+            ),
+          ),
+        );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Theme.of(context).colorScheme.errorContainer,
+            content: Text(
+              error is OfflineAudioException
+                  ? error.message
+                  : 'The Voice Moment could not be downloaded.',
+            ),
+          ),
+        );
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
   }
 
   String _age(DateTime? createdAt) {
@@ -403,6 +498,30 @@ class _MomentCardState extends State<MomentCard> {
                   ),
                 ),
               ),
+              const Spacer(),
+              if (playable && moment.isPublished && !moment.isDeleted)
+                IconButton(
+                  key: ValueKey('download-moment-${moment.id}'),
+                  constraints: const BoxConstraints.tightFor(
+                    width: 44,
+                    height: 44,
+                  ),
+                  tooltip: _downloaded
+                      ? 'Remove offline download'
+                      : 'Download for offline listening',
+                  onPressed: _downloading ? null : _toggleDownload,
+                  icon: _downloading
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(
+                          _downloaded
+                              ? Icons.download_done_rounded
+                              : Icons.download_for_offline_outlined,
+                          color: const Color(0xFFD3A5FF),
+                        ),
+                ),
             ],
           ),
         ],

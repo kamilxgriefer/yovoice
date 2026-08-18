@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/sidebar_clock.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
@@ -70,12 +71,14 @@ class DesktopSidebar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
+    final colors = Theme.of(context).colorScheme;
     return Container(
       width: width,
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 18),
-      decoration: const BoxDecoration(
-        color: Color(0xFF0C0814),
-        border: Border(right: BorderSide(color: Color(0xFF241A33))),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        border: Border(right: BorderSide(color: colors.outlineVariant)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -94,28 +97,28 @@ class DesktopSidebar extends StatelessWidget {
                   _NavTile(
                     item: DesktopNavItem.home,
                     icon: Icons.home_rounded,
-                    label: 'Home',
+                    label: copy.home,
                     active: active == DesktopNavItem.home,
                     onTap: onSelect,
                   ),
                   _NavTile(
                     item: DesktopNavItem.discover,
                     icon: Icons.explore_outlined,
-                    label: 'Discover',
+                    label: copy.discover,
                     active: active == DesktopNavItem.discover,
                     onTap: onSelect,
                   ),
                   _NavTile(
                     item: DesktopNavItem.findCreators,
                     icon: Icons.person_search_outlined,
-                    label: 'Find creators',
+                    label: copy.findCreators,
                     active: active == DesktopNavItem.findCreators,
                     onTap: onSelect,
                   ),
                   _NavTile(
                     item: DesktopNavItem.chats,
                     icon: Icons.chat_bubble_outline_rounded,
-                    label: 'Chats',
+                    label: copy.chats,
                     badge: unreadConversationCount,
                     active: active == DesktopNavItem.chats,
                     onTap: onSelect,
@@ -123,7 +126,7 @@ class DesktopSidebar extends StatelessWidget {
                   _NavTile(
                     item: DesktopNavItem.notifications,
                     icon: Icons.notifications_none_rounded,
-                    label: 'Notifications',
+                    label: copy.notifications,
                     badge: unreadNotificationCount,
                     active: active == DesktopNavItem.notifications,
                     onTap: onSelect,
@@ -131,7 +134,7 @@ class DesktopSidebar extends StatelessWidget {
                   _NavTile(
                     item: DesktopNavItem.friends,
                     icon: Icons.people_alt_outlined,
-                    label: 'Friends',
+                    label: copy.friends,
                     active: active == DesktopNavItem.friends,
                     onTap: onSelect,
                   ),
@@ -139,7 +142,7 @@ class DesktopSidebar extends StatelessWidget {
                     key: moreItemKey,
                     item: DesktopNavItem.more,
                     icon: Icons.more_horiz_rounded,
-                    label: 'More',
+                    label: copy.more,
                     active: active == DesktopNavItem.more,
                     onTap: onSelect,
                   ),
@@ -188,10 +191,10 @@ class _Wordmark extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          const Text(
+          Text(
             'YO Voice',
             style: TextStyle(
-              color: Colors.white,
+              color: Theme.of(context).colorScheme.onSurface,
               fontSize: 18,
               fontWeight: FontWeight.w800,
             ),
@@ -230,6 +233,7 @@ class _NavTileState extends State<_NavTile> {
   @override
   Widget build(BuildContext context) {
     final active = widget.active;
+    final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Material(
@@ -248,7 +252,7 @@ class _NavTileState extends State<_NavTile> {
               color: active
                   ? AppColors.primary.withValues(alpha: .20)
                   : _hovered
-                  ? Colors.white.withValues(alpha: .04)
+                  ? colors.onSurface.withValues(alpha: .05)
                   : Colors.transparent,
               border: Border.all(
                 color: active
@@ -261,14 +265,16 @@ class _NavTileState extends State<_NavTile> {
                 Icon(
                   widget.icon,
                   size: 20,
-                  color: active ? Colors.white : const Color(0xFF9A90AC),
+                  color: active ? colors.onSurface : colors.onSurfaceVariant,
                 ),
                 const SizedBox(width: 13),
                 Expanded(
                   child: Text(
                     widget.label,
                     style: TextStyle(
-                      color: active ? Colors.white : const Color(0xFFC5BCD2),
+                      color: active
+                          ? colors.onSurface
+                          : colors.onSurfaceVariant,
                       fontSize: 14.5,
                       fontWeight: active ? FontWeight.w800 : FontWeight.w600,
                     ),
@@ -340,15 +346,17 @@ class _CreateRoomButton extends StatelessWidget {
           child: InkWell(
             borderRadius: BorderRadius.circular(16),
             onTap: onTap,
-            child: const Center(
+            child: Center(
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(Icons.add_rounded, color: Colors.white, size: 20),
                   SizedBox(width: 8),
                   Text(
-                    'Create Room',
-                    style: TextStyle(
+                    AppLocalizations.of(
+                      context,
+                    ).text('Create Room', 'Utwórz pokój'),
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 15,
                       fontWeight: FontWeight.w800,
@@ -384,6 +392,7 @@ class _CreateMomentButtonState extends State<_CreateMomentButton> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Material(
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(14),
@@ -399,15 +408,15 @@ class _CreateMomentButtonState extends State<_CreateMomentButton> {
             borderRadius: BorderRadius.circular(14),
             color: _hovered
                 ? AppColors.primary.withValues(alpha: .16)
-                : Colors.white.withValues(alpha: .03),
+                : colors.onSurface.withValues(alpha: .035),
             border: Border.all(
               color: _hovered
                   ? AppColors.primary.withValues(alpha: .55)
-                  : const Color(0xFF2E2140),
+                  : colors.outlineVariant,
             ),
           ),
           padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: const Center(
+          child: Center(
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -422,10 +431,12 @@ class _CreateMomentButtonState extends State<_CreateMomentButton> {
                 // the 264px this is designed against.
                 Flexible(
                   child: Text(
-                    'Create Voice Moment',
+                    AppLocalizations.of(
+                      context,
+                    ).text('Create Voice Moment', 'Nagraj Voice Moment'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
+                    style: const TextStyle(
                       color: Color(0xFFD3A5FF),
                       fontSize: 13.5,
                       fontWeight: FontWeight.w700,
@@ -469,12 +480,13 @@ class _ProfileCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 11, 8, 11),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        color: Colors.white.withValues(alpha: .03),
-        border: Border.all(color: const Color(0xFF2E2140)),
+        color: colors.onSurface.withValues(alpha: .035),
+        border: Border.all(color: colors.outlineVariant),
       ),
       child: StreamBuilder<UserProfile>(
         stream: _profileStream(),
@@ -504,8 +516,8 @@ class _ProfileCard extends StatelessWidget {
                               profile?.displayName ?? 'Your profile',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: colors.onSurface,
                                 fontSize: 13.5,
                                 fontWeight: FontWeight.w800,
                               ),
@@ -525,8 +537,8 @@ class _ProfileCard extends StatelessWidget {
                                 '@${profile.username.replaceAll(' ', '').toLowerCase()}',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Color(0xFF9A90AC),
+                                style: TextStyle(
+                                  color: colors.onSurfaceVariant,
                                   fontSize: 11.5,
                                 ),
                               ),

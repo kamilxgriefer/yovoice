@@ -9,10 +9,13 @@ import 'app_typography.dart';
 class AppTheme {
   AppTheme._();
 
-  /// Subtle, on-brand tap/hover feedback shared by every button theme below
-  /// and by raw InkWell/InkResponse usage across the app. Previously this
-  /// was fully transparent app-wide, so every unmigrated Material button
-  /// (still the majority of the app) had zero pressed-state feedback.
+  static const _lightBackground = Color(0xFFF8F5FC);
+  static const _lightSurface = Color(0xFFFFFFFF);
+  static const _lightSurfaceVariant = Color(0xFFF0EAF6);
+  static const _lightBorder = Color(0xFFD8CDE2);
+  static const _lightText = Color(0xFF21172A);
+  static const _lightMuted = Color(0xFF685B72);
+
   static WidgetStateProperty<Color?> get _overlayColor =>
       WidgetStateProperty.resolveWith<Color?>((Set<WidgetState> states) {
         if (states.contains(WidgetState.pressed)) {
@@ -27,35 +30,78 @@ class AppTheme {
         return null;
       });
 
-  static ThemeData get darkTheme {
+  static ThemeData get darkTheme => _buildTheme(
+    brightness: Brightness.dark,
+    background: AppColors.background,
+    surface: AppColors.surface,
+    surfaceVariant: AppColors.surfaceLight,
+    border: AppColors.border,
+    divider: AppColors.divider,
+    text: AppColors.textPrimary,
+    muted: AppColors.textSecondary,
+    hint: AppColors.textHint,
+  );
+
+  static ThemeData get lightTheme => _buildTheme(
+    brightness: Brightness.light,
+    background: _lightBackground,
+    surface: _lightSurface,
+    surfaceVariant: _lightSurfaceVariant,
+    border: _lightBorder,
+    divider: const Color(0xFFE5DCEB),
+    text: _lightText,
+    muted: _lightMuted,
+    hint: const Color(0xFF897B92),
+  );
+
+  static ThemeData _buildTheme({
+    required Brightness brightness,
+    required Color background,
+    required Color surface,
+    required Color surfaceVariant,
+    required Color border,
+    required Color divider,
+    required Color text,
+    required Color muted,
+    required Color hint,
+  }) {
+    final isDark = brightness == Brightness.dark;
+    final baseTextTheme = AppTypography.textTheme.apply(
+      bodyColor: text,
+      displayColor: text,
+      decorationColor: text,
+    );
+    final colorScheme =
+        ColorScheme.fromSeed(
+          seedColor: AppColors.primary,
+          brightness: brightness,
+          primary: AppColors.primary,
+          secondary: AppColors.secondary,
+          surface: surface,
+          error: AppColors.error,
+        ).copyWith(
+          onPrimary: Colors.white,
+          onSecondary: Colors.white,
+          onSurface: text,
+          outline: border,
+          outlineVariant: divider,
+          surfaceContainer: surface,
+          surfaceContainerLow: background,
+          surfaceContainerHigh: surfaceVariant,
+        );
+
     return ThemeData(
       useMaterial3: true,
-      brightness: Brightness.dark,
+      brightness: brightness,
       fontFamily: AppTypography.fontFamily,
-      scaffoldBackgroundColor: AppColors.background,
-
-      colorScheme: const ColorScheme.dark(
-        primary: AppColors.primary,
-        secondary: AppColors.secondary,
-        surface: AppColors.surface,
-        error: AppColors.error,
-        onPrimary: AppColors.white,
-        onSecondary: AppColors.white,
-        onSurface: AppColors.textPrimary,
-        onError: AppColors.white,
-      ),
-
-      textTheme: AppTypography.textTheme,
-
-      dividerColor: AppColors.divider,
-      cardColor: AppColors.surface,
-
+      scaffoldBackgroundColor: background,
+      colorScheme: colorScheme,
+      textTheme: baseTextTheme,
+      dividerColor: divider,
+      cardColor: surface,
+      canvasColor: background,
       splashColor: AppColors.primary.withValues(alpha: 0.12),
       highlightColor: AppColors.primary.withValues(alpha: 0.06),
-
-      // Explicit rather than relying on platform defaults — guarantees the
-      // same smooth, native-feeling push transition on iOS and Android
-      // instead of leaving it to whatever the host platform happens to be.
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: <TargetPlatform, PageTransitionsBuilder>{
           TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
@@ -63,7 +109,6 @@ class AppTheme {
           TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
         },
       ),
-
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ButtonStyle(overlayColor: _overlayColor),
       ),
@@ -79,54 +124,50 @@ class AppTheme {
       iconButtonTheme: IconButtonThemeData(
         style: ButtonStyle(overlayColor: _overlayColor),
       ),
-
       dialogTheme: DialogThemeData(
-        backgroundColor: AppColors.surface,
-        surfaceTintColor: AppColors.transparent,
+        backgroundColor: surface,
+        surfaceTintColor: Colors.transparent,
         elevation: 24,
-        shadowColor: AppColors.black.withValues(alpha: 0.5),
+        shadowColor: Colors.black.withValues(alpha: isDark ? 0.5 : 0.18),
         shape: const RoundedRectangleBorder(borderRadius: AppRadius.lg),
-        titleTextStyle: AppTypography.headlineSmall,
-        contentTextStyle: AppTypography.bodyMedium,
+        titleTextStyle: baseTextTheme.headlineSmall,
+        contentTextStyle: baseTextTheme.bodyMedium?.copyWith(color: muted),
       ),
-
-      bottomSheetTheme: const BottomSheetThemeData(
-        backgroundColor: AppColors.surface,
-        surfaceTintColor: AppColors.transparent,
-        modalBackgroundColor: AppColors.surface,
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: surface,
+        surfaceTintColor: Colors.transparent,
+        modalBackgroundColor: surface,
         modalElevation: 0,
         elevation: 0,
         clipBehavior: Clip.antiAlias,
         showDragHandle: true,
-        dragHandleColor: AppColors.border,
-        shape: RoundedRectangleBorder(
+        dragHandleColor: border,
+        shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         ),
       ),
-
-      appBarTheme: const AppBarTheme(
+      appBarTheme: AppBarTheme(
         elevation: 0,
         centerTitle: false,
-        backgroundColor: AppColors.transparent,
-        foregroundColor: AppColors.textPrimary,
-        surfaceTintColor: AppColors.transparent,
-        titleTextStyle: AppTypography.titleLarge,
+        backgroundColor: Colors.transparent,
+        foregroundColor: text,
+        surfaceTintColor: Colors.transparent,
+        titleTextStyle: baseTextTheme.titleLarge,
       ),
-
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: AppColors.surface,
-        hintStyle: AppTypography.bodyMedium.copyWith(color: AppColors.textHint),
-        labelStyle: AppTypography.bodyMedium,
-        prefixIconColor: AppColors.textSecondary,
-        suffixIconColor: AppColors.textSecondary,
+        fillColor: surface,
+        hintStyle: baseTextTheme.bodyMedium?.copyWith(color: hint),
+        labelStyle: baseTextTheme.bodyMedium?.copyWith(color: muted),
+        prefixIconColor: muted,
+        suffixIconColor: muted,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.lg,
           vertical: AppSpacing.md,
         ),
-        enabledBorder: const OutlineInputBorder(
+        enabledBorder: OutlineInputBorder(
           borderRadius: AppRadius.md,
-          borderSide: BorderSide(color: AppColors.border),
+          borderSide: BorderSide(color: border),
         ),
         focusedBorder: const OutlineInputBorder(
           borderRadius: AppRadius.md,
@@ -141,18 +182,35 @@ class AppTheme {
           borderSide: BorderSide(color: AppColors.error, width: 2),
         ),
       ),
-
       textSelectionTheme: const TextSelectionThemeData(
         cursorColor: AppColors.primary,
         selectionColor: Color(0x667B2FF7),
         selectionHandleColor: AppColors.primary,
       ),
-
-      snackBarTheme: const SnackBarThemeData(
-        backgroundColor: AppColors.surfaceLight,
-        contentTextStyle: AppTypography.bodyMedium,
+      snackBarTheme: SnackBarThemeData(
+        backgroundColor: surfaceVariant,
+        contentTextStyle: baseTextTheme.bodyMedium?.copyWith(color: text),
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: AppRadius.md),
+        shape: const RoundedRectangleBorder(borderRadius: AppRadius.md),
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: surface,
+        indicatorColor: AppColors.primary.withValues(alpha: .18),
+        labelTextStyle: WidgetStatePropertyAll(
+          baseTextTheme.labelMedium?.copyWith(color: text),
+        ),
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          return IconThemeData(
+            color: states.contains(WidgetState.selected)
+                ? AppColors.primary
+                : muted,
+          );
+        }),
+      ),
+      listTileTheme: ListTileThemeData(
+        iconColor: muted,
+        textColor: text,
+        subtitleTextStyle: baseTextTheme.bodySmall?.copyWith(color: muted),
       ),
     );
   }

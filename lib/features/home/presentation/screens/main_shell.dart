@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/localization/app_localizations.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
@@ -82,9 +83,7 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell>
     with SingleTickerProviderStateMixin {
   static const Color _background = Color(0xFF080711);
-  static const Color _navigationBackground = Color(0xFF151020);
   static const Color _primary = Color(0xFF9D20FF);
-  static const Color _inactive = Color(0xFF8B8299);
 
   final MessageService _messageService = MessageService();
   final RoomService _roomService = RoomService();
@@ -850,7 +849,7 @@ class _MainShellState extends State<MainShell>
 
     if (isDesktop) {
       return Scaffold(
-        backgroundColor: _background,
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         body: Column(
           children: [
             if (_showVerificationBanner)
@@ -914,7 +913,7 @@ class _MainShellState extends State<MainShell>
     }
 
     return Scaffold(
-      backgroundColor: _background,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Column(
         children: [
           if (_showVerificationBanner)
@@ -1349,7 +1348,10 @@ class _BottomNavigation extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final copy = AppLocalizations.of(context);
     final safeBottom = MediaQuery.paddingOf(context).bottom;
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     // Floating dock: detached from the screen edges, soft surface, thin
     // border, ambient shadow — navigation as part of the identity, not
@@ -1360,16 +1362,19 @@ class _BottomNavigation extends StatelessWidget {
       child: Container(
         height: 76,
         decoration: BoxDecoration(
-          color: const Color(0xF7161022),
+          color: colors.surface.withValues(alpha: .97),
           borderRadius: BorderRadius.circular(30),
-          border: Border.all(color: const Color(0xFF2E2440)),
-          boxShadow: const [
+          border: Border.all(color: colors.outlineVariant),
+          boxShadow: [
             BoxShadow(
-              color: Color(0x66000000),
+              color: Colors.black.withValues(alpha: isDark ? .4 : .14),
               blurRadius: 28,
-              offset: Offset(0, 10),
+              offset: const Offset(0, 10),
             ),
-            BoxShadow(color: Color(0x229D20FF), blurRadius: 40),
+            BoxShadow(
+              color: _MainShellState._primary.withValues(alpha: .13),
+              blurRadius: 40,
+            ),
           ],
         ),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
@@ -1401,7 +1406,7 @@ class _BottomNavigation extends StatelessWidget {
                   child: _NavigationItem(
                     icon: Icons.home_outlined,
                     selectedIcon: Icons.home_rounded,
-                    label: 'Home',
+                    label: copy.home,
                     isSelected: selectedIndex == 0,
                     onPressed: () => onDestinationSelected(0),
                   ),
@@ -1410,7 +1415,7 @@ class _BottomNavigation extends StatelessWidget {
                   child: _NavigationItem(
                     icon: Icons.chat_bubble_outline_rounded,
                     selectedIcon: Icons.chat_bubble_rounded,
-                    label: 'Chats',
+                    label: copy.chats,
                     badgeCount: unreadConversationCount,
                     isSelected: selectedIndex == 1,
                     onPressed: () => onDestinationSelected(1),
@@ -1421,7 +1426,7 @@ class _BottomNavigation extends StatelessWidget {
                   child: _NavigationItem(
                     icon: Icons.people_outline_rounded,
                     selectedIcon: Icons.people_rounded,
-                    label: 'Friends',
+                    label: copy.friends,
                     isSelected: selectedIndex == 2,
                     onPressed: () => onDestinationSelected(2),
                   ),
@@ -1430,7 +1435,7 @@ class _BottomNavigation extends StatelessWidget {
                   child: _NavigationItem(
                     icon: Icons.grid_view_rounded,
                     selectedIcon: Icons.grid_view_rounded,
-                    label: 'More',
+                    label: copy.more,
                     isSelected: false,
                     onPressed: onMorePressed,
                   ),
@@ -1463,7 +1468,8 @@ class _NavigationItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color color = isSelected ? Colors.white : _MainShellState._inactive;
+    final colors = Theme.of(context).colorScheme;
+    final Color color = isSelected ? colors.onSurface : colors.onSurfaceVariant;
 
     return Semantics(
       button: true,
@@ -1524,7 +1530,7 @@ class _NavigationItem extends StatelessWidget {
                               color: const Color(0xFFFF3F72),
                               borderRadius: BorderRadius.circular(12),
                               border: Border.all(
-                                color: _MainShellState._navigationBackground,
+                                color: colors.surface,
                                 width: 2,
                               ),
                               boxShadow: const [

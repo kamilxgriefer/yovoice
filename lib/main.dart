@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:yovoice/app/app.dart';
+import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/firebase_options.dart';
 
@@ -19,6 +20,15 @@ Future<void> main() async {
   _installCrashReporting();
   await _activateAppCheck();
   _registerBackgroundMessageHandler();
+
+  try {
+    await AppPreferencesController.instance.load();
+  } catch (error, stackTrace) {
+    // A damaged browser/device preferences store must not block sign-in.
+    // The controller keeps its safe system defaults for this launch.
+    debugPrint('App preferences could not be loaded: $error');
+    debugPrintStack(stackTrace: stackTrace);
+  }
 
   runApp(const ProviderScope(child: YoVoiceApp()));
 }
