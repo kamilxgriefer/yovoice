@@ -384,10 +384,15 @@ class AuthService {
     try {
       await _firestoreService.createUserProfile(appUser);
     } catch (_) {
+      // Keep the Firebase Auth identity intact. A transient Firestore failure
+      // must never delete a successfully authenticated Google/Apple account:
+      // the next sign-in and AuthGate.ensureProfile() can safely retry the
+      // idempotent profile bootstrap. Deleting here caused the visible
+      // one-second login followed by an immediate return to Login.
       try {
-        await user.delete();
-      } catch (_) {
         await _firebaseAuth.signOut();
+      } catch (_) {
+        // Preserve the original provisioning error below.
       }
 
       throw AuthServiceException(

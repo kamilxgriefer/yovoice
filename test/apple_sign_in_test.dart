@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/services/firestore_service.dart';
+import 'package:yovoice/shared/models/app_user.dart';
 
 class _AdditionalUserInfo extends AdditionalUserInfo {
   _AdditionalUserInfo({required super.isNewUser})
@@ -32,6 +33,7 @@ class _RecordingFirebaseAuth extends MockFirebaseAuth {
   AuthProvider? provider;
   int popupCalls = 0;
   int nativeCalls = 0;
+  int signOutCalls = 0;
 
   @override
   Future<UserCredential> signInWithPopup(AuthProvider provider) async {
@@ -45,6 +47,37 @@ class _RecordingFirebaseAuth extends MockFirebaseAuth {
     this.provider = provider;
     nativeCalls += 1;
     return result;
+  }
+
+  @override
+  Future<void> signOut() async {
+    signOutCalls += 1;
+  }
+}
+
+// Test double intentionally records destructive calls.
+// ignore: must_be_immutable
+class _RecordingMockUser extends MockUser {
+  _RecordingMockUser({
+    required super.uid,
+    required super.email,
+    required super.displayName,
+  });
+
+  int deleteCalls = 0;
+
+  @override
+  Future<void> delete() async {
+    deleteCalls += 1;
+  }
+}
+
+class _FailingFirestoreService extends FirestoreService {
+  _FailingFirestoreService() : super(firestore: FakeFirebaseFirestore());
+
+  @override
+  Future<void> createUserProfile(AppUser user) async {
+    throw StateError('simulated profile race');
   }
 }
 
@@ -241,6 +274,34 @@ void main() {
       expect(auth.nativeCalls, 0);
       expect(auth.popupCalls, 0);
     });
+
+    test(
+      'profile provisioning failure signs out but never deletes the social identity',
+      () async {
+        final user = _RecordingMockUser(
+          uid: 'new-social-user',
+          email: 'social@example.com',
+          displayName: 'Social User',
+        );
+        final auth = _RecordingFirebaseAuth(
+          _UserCredential(user: user, isNewUser: true),
+        );
+        final service = AuthService(
+          firebaseAuth: auth,
+          firestoreService: _FailingFirestoreService(),
+          appleSignInFeatureEnabled: true,
+          appleUseWebPopup: false,
+          appleProviderProbe: () async => AppleSignInAvailability.available,
+        );
+
+        await expectLater(
+          service.signInWithApple(),
+          throwsA(isA<AuthServiceException>()),
+        );
+        expect(auth.signOutCalls, 1);
+        expect(user.deleteCalls, 0);
+      },
+    );
 
     test('maps native Apple cancellation to neutral UX copy', () {
       final service = AuthService(
