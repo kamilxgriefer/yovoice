@@ -231,6 +231,40 @@ already been verified with `firebase use`.
 
 ## Storage rules (manual)
 
+Cloud Storage rules in this project call `firestore.get()` and
+`firestore.exists()` for account, upload-reservation and ownership authority.
+That cross-service evaluation has a separate production IAM prerequisite; a
+green emulator suite and a successful rules deploy do not prove the binding
+exists. Verify it before every Storage-rules rollout:
+
+```bash
+PROJECT_ID=yovoice-ec54a
+PROJECT_NUMBER=80235878542
+STORAGE_RULES_AGENT="service-${PROJECT_NUMBER}@gcp-sa-firebasestorage.iam.gserviceaccount.com"
+
+gcloud projects get-iam-policy "$PROJECT_ID" \
+  --flatten='bindings[].members' \
+  --filter="bindings.role:roles/firebaserules.firestoreServiceAgent AND bindings.members:serviceAccount:${STORAGE_RULES_AGENT}" \
+  --format='value(bindings.role,bindings.members)'
+```
+
+The command must print the exact service-agent role and Storage service
+account. An empty result means every Storage rule branch that reads Firestore
+will fail closed with `storage/unauthorized`, including Voice Moments, profile
+artwork, room artwork and private message media. Restore only the documented
+service-agent binding, never loosen the Storage rules as a workaround:
+
+```bash
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${STORAGE_RULES_AGENT}" \
+  --role='roles/firebaserules.firestoreServiceAgent'
+```
+
+Wait for IAM propagation, then run a real authenticated upload smoke test that
+exercises a Firestore-backed rule before deploying the client. This role is
+granted only to the Google-managed Firebase Storage service agent and carries
+only the Firestore entity-read permission required for cross-service Rules.
+
 ```bash
 firebase deploy --only storage --project yovoice-ec54a
 ```

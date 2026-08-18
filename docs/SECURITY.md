@@ -524,13 +524,22 @@ bug); 12 are fixed, verified directly against current `firestore.rules`,
 `storage.rules`, and `functions/` — not assumed from the audit's own
 "fixed" claims.
 
-**Deployment status, 2026-08-17**: the hardened `firestore.rules` and
+**Deployment status, 2026-08-18**: the hardened `firestore.rules` and
 `storage.rules` are **live in production**. `firestore.rules` was deployed
 twice on 2026-08-16 — 20:40 by the operator and 21:06 covering `952d8e4` —
 and again on 2026-08-17 covering `c75720a`. Until this date, both this file
 and [Bugs.md](Bugs.md) described the 2026-08-16 fixes as "FIXED IN SOURCE,
 PENDING RULES DEPLOY"; that is no longer true and those markers have been
 cleared.
+
+The Storage rules' Firestore lookups also require production IAM state that is
+not contained in either rules file. On 2026-08-18 the missing
+`roles/firebaserules.firestoreServiceAgent` grant on the Google-managed
+Firebase Storage service agent was restored after real uploads reproduced a
+403 while the emulator suite remained green. The binding grants only
+`datastore.entities.get`; it must never be replaced by a broad database role
+or by weakening upload authorization. The mandatory verification and smoke
+test are in [DEPLOYMENT.md](DEPLOYMENT.md#storage-rules-manual).
 
 **Corrected 2026-08-17 — the deployed ruleset is readable, so stop
 treating the Console as the only evidence.** This section previously said

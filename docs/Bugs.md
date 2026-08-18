@@ -7,6 +7,23 @@ about things that are broken, risky, or need verification.
 
 ## Security
 
+- **FIXED LIVE 2026-08-18 — every Firestore-backed Storage upload was denied
+  despite green emulator tests.** Production was missing the
+  `roles/firebaserules.firestoreServiceAgent` binding on
+  `service-80235878542@gcp-sa-firebasestorage.iam.gserviceaccount.com`.
+  Consequently `firestore.get()`/`firestore.exists()` inside `storage.rules`
+  failed closed before a Voice Moment object could be created; the UI retained
+  the recording and reported only that publishing failed. The same missing
+  prerequisite affected profile/room/Club/message uploads whose rules read
+  Firestore authority. The minimal Google-managed service-agent binding was
+  restored in production, then an authenticated resumable upload using the
+  exact Voice Moment path, MIME, metadata, size and unpublished-draft contract
+  returned HTTP 200 and created a generation; the temporary Auth user,
+  Firestore documents and object were deleted. Deployment documentation now
+  requires an IAM-policy check plus a real cross-service upload smoke test.
+  Emulator coverage remains necessary for rule semantics but cannot model
+  production IAM. See ADR-077.
+
 - **FIXED AND DEPLOYED 2026-08-18 (`e524497`) — mobile Home hid both
   legitimate room-deletion paths.** The phone Home never loaded the shared
   staff-capability response, so an administrator or super moderator could not

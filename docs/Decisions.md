@@ -67,6 +67,7 @@ given a false-precision date.
 | [072](#adr-072-appearance-and-ui-language-are-device-local-preferences-with-explicit-beta-boundaries) | Appearance and UI language are device-local preferences with explicit Beta boundaries | Accepted in source | 2026-08-18 |
 | [073](#adr-073-firebase-session-management-exposes-account-wide-revocation-never-a-fabricated-device-list) | Firebase session management exposes account-wide revocation, never a fabricated device list | Accepted in source | 2026-08-18 |
 | [074](#adr-074-offline-voice-moments-are-bounded-account-isolated-device-storage-not-a-server-database) | Offline Voice Moments are bounded, account-isolated device storage, not a server database | Accepted in source | 2026-08-18 |
+| [077](#adr-077-firestore-backed-storage-rules-require-an-explicit-production-iam-gate) | Firestore-backed Storage Rules require an explicit production IAM gate | Accepted and restored in production | 2026-08-18 |
 
 > **The index is incomplete and has been for a while**: rows for ADR-020
 > through ADR-052 were never added, though the records themselves are all
@@ -4813,3 +4814,46 @@ tap would create fatigue and unnecessary audio work.
   overlapping sound per event.
 - Platform notification settings remain authoritative for background push
   sound; the in-app preference controls cues rendered by the focused app.
+
+## ADR-077: Firestore-backed Storage Rules require an explicit production IAM gate
+
+**Status:** Accepted and restored in production on 2026-08-18.
+
+### Context
+
+Storage authorization reads canonical Firestore documents for active-account,
+ownership and upload-reservation authority. The Storage emulator evaluates
+those calls internally, so the complete emulator suite passed while production
+returned `storage/unauthorized` before creating any object. The deployed rules
+source was correct and byte-identical to the repository; the missing state was
+the separate IAM bridge that lets the Firebase Storage rules service read the
+default Firestore database.
+
+### Decision
+
+1. The Google-managed Firebase Storage service agent receives exactly
+   `roles/firebaserules.firestoreServiceAgent`, not a general Firestore role.
+2. Every Storage-rules rollout verifies that exact project binding before the
+   deploy and performs one authenticated production upload through a rule
+   branch that calls `firestore.get()` or `firestore.exists()` afterward.
+3. Emulator tests remain the semantic gate, but are never cited as evidence
+   that production IAM is configured.
+4. A missing binding is repaired as infrastructure; Storage rules must not be
+   loosened to hide the failure.
+
+### Reasoning
+
+The predefined service-agent role contains only `datastore.entities.get`, the
+least privilege needed for cross-service Security Rules. Binding it to the
+Storage service agent follows Firebase's documented setup and preserves the
+existing fail-closed authorization model. A production smoke test covers the
+one dependency that a local emulator cannot represent.
+
+### Consequences
+
+- Voice Moment, profile/room/Club artwork and private message uploads can use
+  their existing Firestore-backed authority checks in production.
+- IAM policy becomes a named deployment prerequisite alongside rules source,
+  Functions and indexes.
+- Removing the role intentionally disables every affected upload path until it
+  is restored; this is preferable to silently widening access.
