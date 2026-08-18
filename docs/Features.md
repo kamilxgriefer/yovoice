@@ -110,9 +110,10 @@ same draft, request id and object generation. Browser/native seams and the
 complete reservation/rules contract are automated, but a real post-deploy
 iPhone Safari publish remains a release verification step.
 
-**Offline playback is implemented in source and not deployed as of
-2026-08-18.** Published, non-deleted Voice Moments can be downloaded on the
-current device. Offline audio is account-isolated and local:
+**Offline playback is live in the web/PWA client as of 2026-08-18; the same
+source is ready for the next signed native release.** Published, non-deleted
+Voice Moments can be downloaded on the current device. Offline audio is
+account-isolated and local:
 native clients store files in their application-support directory and play
 them directly from the file path; web uses the browser's Cache Storage and
 materializes bytes only for the selected playback. A compact local manifest
@@ -196,11 +197,11 @@ and authenticator-app two-factor authentication are implemented in source and
 covered by responsive/security tests; they require their coordinated Firebase
 configuration, Functions/Rules and client rollout before being called live.
 
-The following Settings additions are implemented in source and not deployed as
-of 2026-08-18. Appearance and app language have real device-local contracts.
-Appearance
-offers System, Dark and Light Beta; Language offers System, English and Polish
-Beta. Both persist through `shared_preferences`, update the root
+The following Settings additions were deployed to the web/PWA client on
+2026-08-18 from commit `8fa0192`; native stores require their own signed
+release. Appearance and app language have real device-local contracts.
+Appearance offers System, Dark and Light Beta; Language offers System, English
+and Polish Beta. Both persist through `shared_preferences`, update the root
 `MaterialApp`, and fall back to Dark/English when stored state is missing,
 malformed or unavailable so legacy installs do not enter a Beta implicitly.
 The Beta labels are material: the shared

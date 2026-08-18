@@ -17,8 +17,9 @@ someone decide what to pick up next.
 ## Done
 
 - **Device-local Appearance, Polish Beta and offline Voice Moment playback**
-  (2026-08-18, this revision — NOT YET DEPLOYED): Appearance now offers
-  System/Dark/Light Beta and app language offers System/English/Polish Beta,
+  (2026-08-18, web/PWA deployed from `8fa0192`; native store release pending):
+  Appearance now offers System/Dark/Light Beta and app language offers
+  System/English/Polish Beta,
   persisted locally with backward-compatible Dark/English fallbacks. Coverage is intentionally
   bounded to the shared theme plus migrated navigation, auth, Settings and
   framework controls; remaining inline-dark/English screens are still tracked
@@ -29,10 +30,11 @@ someone decide what to pick up next.
   feature creates a server database or pretends to synchronize between
   devices. See ADR-072 and ADR-074.
 
-- **Truthful account-wide session revocation** (2026-08-18, this revision —
-  NOT YET DEPLOYED): Devices & sessions shows the current Firebase token
-  session and can revoke all refresh tokens for the caller after a recent-auth
-  check, unregister the current push token and sign out locally. It does not
+- **Truthful account-wide session revocation** (2026-08-18, Function and
+  web/PWA deployed from `8fa0192`; native store release pending): Devices &
+  sessions shows the current Firebase token session and can revoke all refresh
+  tokens for the caller after a recent-auth check, unregister the current push
+  token and sign out locally. It does not
   label FCM registrations as login sessions or fabricate a per-device list:
   Firebase exposes neither individual refresh-token enumeration nor
   per-device revoke. The screen discloses that already-issued ID tokens can

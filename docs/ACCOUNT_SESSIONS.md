@@ -3,8 +3,9 @@
 YO Voice deliberately exposes only the session actions Firebase
 Authentication can enforce truthfully.
 
-**Release status (2026-08-18): implemented and tested in source, not yet
-deployed.** The architectural boundary is recorded in
+**Release status (2026-08-18): `revokeMyRefreshTokens` and the web/PWA client
+are deployed from `8fa0192`; the native store release is pending.** The
+architectural boundary is recorded in
 [ADR-073](Decisions.md#adr-073-firebase-session-management-exposes-account-wide-revocation-never-a-fabricated-device-list).
 
 ## Supported contract

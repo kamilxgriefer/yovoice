@@ -4553,7 +4553,8 @@ separate decision.
 
 ## ADR-072: Appearance and UI language are device-local preferences with explicit Beta boundaries
 
-**Status:** Accepted in source, not deployed (2026-08-18).
+**Status:** Accepted; deployed to web/PWA on 2026-08-18 (`8fa0192`). Native
+store release pending.
 
 ### Context
 
@@ -4610,7 +4611,8 @@ complete.
 
 ## ADR-073: Firebase session management exposes account-wide revocation, never a fabricated device list
 
-**Status:** Accepted in source, not deployed (2026-08-18).
+**Status:** Accepted; callable and web/PWA client deployed on 2026-08-18
+(`8fa0192`). Native store release pending.
 
 ### Context
 
@@ -4656,15 +4658,16 @@ extension.
 - Users gain a real "sign out everywhere" recovery action, including from a
   restricted account, after recent authentication.
 - Individual device enumeration and revoke are intentionally absent.
-- Functions must be deployed before the compatible client; until then the
-  source implementation is not a live capability.
+- Functions must be deployed before the compatible client. This ordering was
+  satisfied for the 2026-08-18 web/PWA release.
 - Revocation is account-wide and disruptive by design: the initiating device
   also signs out, and every device must authenticate again after existing ID
   tokens expire.
 
 ## ADR-074: Offline Voice Moments are bounded, account-isolated device storage, not a server database
 
-**Status:** Accepted in source, not deployed (2026-08-18).
+**Status:** Accepted; deployed to web/PWA on 2026-08-18 (`8fa0192`). Native
+store release pending.
 
 ### Context
 
