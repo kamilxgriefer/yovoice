@@ -77,12 +77,17 @@ class PushNotificationService {
   /// while the tab is focused. The app layer uses this hook for one modest
   /// in-app banner; native foreground messages are presented by the local
   /// notifications plugin with the same system sound as background pushes.
+  ///
+  /// [notificationId] is the Firestore notification document id carried in
+  /// the push payload — the app layer dedupes against its stream-driven
+  /// banner source with it, so the same notification never banners twice.
   void Function(
     String title,
     String? body,
     NotificationType type,
     String? targetId,
     String? actorId,
+    String? notificationId,
   )?
   onWebForegroundNotification;
 
@@ -101,7 +106,9 @@ class PushNotificationService {
     if (kIsWeb && webVapidKey.isEmpty) {
       debugPrint(
         'PushNotificationService: skipping web push setup — no VAPID key '
-        'in this build. In-app notifications are unaffected.',
+        'in this build. Background/system push will not work; the in-app '
+        'activity feed, badge and foreground banners come from Firestore '
+        'and keep working.',
       );
       return;
     }
@@ -311,6 +318,7 @@ class PushNotificationService {
         NotificationType.fromName(message.data['type'] as String?),
         message.data['targetId'] as String?,
         message.data['actorId'] as String?,
+        message.data['notificationId'] as String?,
       );
       return;
     }

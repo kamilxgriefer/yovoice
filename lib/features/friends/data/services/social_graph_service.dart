@@ -42,9 +42,15 @@ class SuggestedFriend {
 /// that rule — see functions/friends/social_graph.js.
 class SocialGraphService {
   SocialGraphService({FirebaseFunctions? functions})
-    : _functions = functions ?? FirebaseFunctions.instance;
+    : _functionsOverride = functions;
 
-  final FirebaseFunctions _functions;
+  final FirebaseFunctions? _functionsOverride;
+
+  // Resolved lazily (same pattern as FriendService) so a test double that
+  // overrides every callable-backed method can be constructed without an
+  // initialised Firebase app.
+  FirebaseFunctions get _functions =>
+      _functionsOverride ?? FirebaseFunctions.instance;
 
   Future<MutualFriendsSummary> getMutualFriends(String targetUserId) async {
     final callable = _functions.httpsCallable('getMutualFriends');

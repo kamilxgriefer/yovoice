@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
@@ -10,6 +11,7 @@ import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/auth/presentation/screens/auth_gate.dart';
+import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/presentation/notification_router.dart';
@@ -154,6 +156,91 @@ SnackBar buildForegroundNotificationBanner({
   );
 }
 
+/// Decides which Firestore-delivered notifications earn a foreground
+/// banner, independently of FCM — push is frequently unavailable (web
+/// builds without a VAPID key, denied permission, simulators), and the
+/// in-app banner must not depend on it.
+///
+/// Rules, in order:
+///  * nothing shows until the first snapshot after (re)sign-in has been
+///    recorded as the baseline — only arrivals newer than app start /
+///    sign-in banner, never the backlog;
+///  * a document banners at most once per session, whichever path (this
+///    stream or the FCM foreground hook) gets to it first;
+///  * documents that are already read or `bellSuppressed` (push-only
+///    carriers, e.g. friend-DM records) never banner.
+class ForegroundNotificationStreamSource {
+  ForegroundNotificationStreamSource({
+    required this.authStates,
+    required this.watchNotifications,
+    required this.showBanner,
+  });
+
+  final Stream<User?> authStates;
+
+  /// Called lazily on each sign-in, never before one — the feed query
+  /// requires a signed-in user.
+  final Stream<List<AppNotification>> Function() watchNotifications;
+  final void Function(AppNotification notification) showBanner;
+
+  StreamSubscription<User?>? _authSubscription;
+  StreamSubscription<List<AppNotification>>? _feedSubscription;
+  bool _baselineRecorded = false;
+  final Set<String> _knownIds = <String>{};
+  final Set<String> _banneredIds = <String>{};
+
+  void start() {
+    _authSubscription ??= authStates.listen(_handleAuthState);
+  }
+
+  void _handleAuthState(User? user) {
+    unawaited(_feedSubscription?.cancel());
+    _feedSubscription = null;
+    _baselineRecorded = false;
+    _knownIds.clear();
+    if (user == null) return;
+    _feedSubscription = watchNotifications().listen(
+      _handleSnapshot,
+      // The bell screen owns surfacing feed errors; the banner layer
+      // just goes quiet rather than crashing the whole app shell.
+      onError: (Object _) {},
+    );
+  }
+
+  void _handleSnapshot(List<AppNotification> notifications) {
+    if (!_baselineRecorded) {
+      _baselineRecorded = true;
+      for (final notification in notifications) {
+        _knownIds.add(notification.id);
+      }
+      return;
+    }
+    for (final notification in notifications) {
+      if (!_knownIds.add(notification.id)) continue;
+      if (notification.isRead || notification.bellSuppressed) continue;
+      if (!_banneredIds.add(notification.id)) continue;
+      showBanner(notification);
+    }
+  }
+
+  /// Dedupe gate for the FCM foreground path: false when [notificationId]
+  /// already produced a banner this session (either path); records it as
+  /// shown otherwise. A payload without an id cannot be deduped and is
+  /// always allowed through.
+  bool registerPushBanner(String? notificationId) {
+    if (notificationId == null || notificationId.isEmpty) return true;
+    _knownIds.add(notificationId);
+    return _banneredIds.add(notificationId);
+  }
+
+  Future<void> dispose() async {
+    await _authSubscription?.cancel();
+    await _feedSubscription?.cancel();
+    _authSubscription = null;
+    _feedSubscription = null;
+  }
+}
+
 class YoVoiceApp extends StatefulWidget {
   const YoVoiceApp({this.preferencesController, super.key});
 
@@ -165,6 +252,7 @@ class YoVoiceApp extends StatefulWidget {
 
 class _YoVoiceAppState extends State<YoVoiceApp> {
   final _messengerKey = GlobalKey<ScaffoldMessengerState>();
+  ForegroundNotificationStreamSource? _streamNotifications;
 
   @override
   void initState() {
@@ -177,33 +265,73 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
             actorId: actorId,
           );
         };
+    // Foreground banners are stream-driven: any freshly arrived unread
+    // notification document banners, whether or not FCM is configured or
+    // permitted on this device. The FCM foreground hook below stays as a
+    // second entry point (it can beat Firestore's snapshot), deduped per
+    // notification id through the same source.
+    final streamNotifications = ForegroundNotificationStreamSource(
+      authStates: FirebaseAuth.instance.authStateChanges(),
+      watchNotifications: () => NotificationService().watchNotifications(),
+      showBanner: (notification) => _showForegroundBanner(
+        title: notification.title,
+        body: null,
+        type: notification.type,
+        targetId: notification.targetId,
+        actorId: notification.actorId,
+      ),
+    )..start();
+    _streamNotifications = streamNotifications;
     PushNotificationService.instance.onWebForegroundNotification =
-        (title, body, type, targetId, actorId) {
-          unawaited(UiSoundService.instance.play(UiSound.notification));
-          final messenger = _messengerKey.currentState;
-          if (messenger == null) return;
-          final navigatorContext = notificationNavigatorKey.currentContext;
-          // Voice-room control docks grow with accessibility text scaling.
-          // Keep foreground notifications above them instead of covering the
-          // microphone, people, chat or leave actions.
-          final bottomClearance = foregroundNotificationBottomClearance(
-            navigatorContext == null
-                ? TextScaler.noScaling
-                : MediaQuery.textScalerOf(navigatorContext),
+        (title, body, type, targetId, actorId, notificationId) {
+          if (!streamNotifications.registerPushBanner(notificationId)) return;
+          _showForegroundBanner(
+            title: title,
+            body: body,
+            type: type,
+            targetId: targetId,
+            actorId: actorId,
           );
-          messenger
-            ..hideCurrentSnackBar()
-            ..showSnackBar(
-              buildForegroundNotificationBanner(
-                title: title,
-                body: body,
-                type: type,
-                targetId: targetId,
-                actorId: actorId,
-                bottomClearance: bottomClearance,
-              ),
-            );
         };
+  }
+
+  @override
+  void dispose() {
+    unawaited(_streamNotifications?.dispose());
+    super.dispose();
+  }
+
+  void _showForegroundBanner({
+    required String title,
+    required String? body,
+    required NotificationType type,
+    required String? targetId,
+    required String? actorId,
+  }) {
+    unawaited(UiSoundService.instance.play(UiSound.notification));
+    final messenger = _messengerKey.currentState;
+    if (messenger == null) return;
+    final navigatorContext = notificationNavigatorKey.currentContext;
+    // Voice-room control docks grow with accessibility text scaling.
+    // Keep foreground notifications above them instead of covering the
+    // microphone, people, chat or leave actions.
+    final bottomClearance = foregroundNotificationBottomClearance(
+      navigatorContext == null
+          ? TextScaler.noScaling
+          : MediaQuery.textScalerOf(navigatorContext),
+    );
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        buildForegroundNotificationBanner(
+          title: title,
+          body: body,
+          type: type,
+          targetId: targetId,
+          actorId: actorId,
+          bottomClearance: bottomClearance,
+        ),
+      );
   }
 
   @override

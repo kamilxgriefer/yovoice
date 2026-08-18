@@ -60,6 +60,7 @@ class _ChatScreenState extends State<ChatScreen> {
   late final Stream<List<Message>> _messages;
   late final Stream<bool> _typing;
   late final Stream<ChatPresence> _presence;
+  StreamSubscription<List<Message>>? _messagesSubscription;
 
   Timer? _typingTimer;
   Message? _replyTo;
@@ -72,25 +73,42 @@ class _ChatScreenState extends State<ChatScreen> {
   /// reported once per visit and logged every time.
   bool _typingFailureReported = false;
 
+  /// Read receipts follow the conversation snapshot, not the build cycle:
+  /// [_newestMarkedMessageId] is the newest message we already marked read
+  /// for, so N rebuilds of the same snapshot cost zero extra writes, and a
+  /// failure is reported once per visit — same contract as typing above.
+  String? _newestMarkedMessageId;
+  bool _markReadFailureReported = false;
+
   String get _currentUserId =>
       (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
 
   @override
   void initState() {
     super.initState();
-    _messages = _service.watchMessages(widget.conversationId);
+    // Broadcast so the state's own mark-read listener below and the
+    // message list's StreamBuilder can share one service stream.
+    _messages = _service
+        .watchMessages(widget.conversationId)
+        .asBroadcastStream();
     _typing = _service.watchTyping(
       conversationId: widget.conversationId,
       otherUserId: widget.otherUserId,
     );
     _presence = _service.watchUserPresence(widget.otherUserId);
+    _messagesSubscription = _messages.listen(
+      _handleMessagesDelivered,
+      // The StreamBuilder already renders the failure state; this
+      // subscription only exists to drive read receipts.
+      onError: (Object _) {},
+    );
     _controller.addListener(_handleTyping);
-    unawaited(_markRead());
   }
 
   @override
   void dispose() {
     _typingTimer?.cancel();
+    unawaited(_messagesSubscription?.cancel());
     _controller
       ..removeListener(_handleTyping)
       ..dispose();
@@ -160,14 +178,38 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// Fires once per newest-message advance — never per rebuild. Messages
+  /// arrive newest-first (watchMessages orders `sentAt` descending).
+  void _handleMessagesDelivered(List<Message> messages) {
+    if (messages.isEmpty) return;
+    final newestId = messages.first.id;
+    if (newestId == _newestMarkedMessageId) return;
+    _newestMarkedMessageId = newestId;
+    unawaited(_markRead());
+  }
+
   Future<void> _markRead() async {
     try {
       await _service.markConversationRead(widget.conversationId);
     } catch (error) {
-      // The stream stays usable even when read receipts cannot update, and
-      // this runs on every rebuild, so it must not raise a snackbar — but
-      // it does not get to vanish either.
       debugPrint('ChatScreen read-receipt update failed: $error');
+
+      // Let the next conversation change retry instead of pinning the
+      // failed newest message as "already marked".
+      _newestMarkedMessageId = null;
+
+      if (!mounted || _markReadFailureReported) return;
+
+      // Stale unread badges elsewhere must not fail invisibly — but a
+      // snackbar per snapshot would be a storm, so once per visit, like
+      // the typing-presence failure above. Never raw exception text.
+      _markReadFailureReported = true;
+      _showMessage(
+        friendlyErrorMessage(
+          error,
+          fallback: 'Unread counts may not update right now.',
+        ),
+      );
     }
   }
 
@@ -525,8 +567,6 @@ class _ChatScreenState extends State<ChatScreen> {
                           photoUrl: widget.otherPhotoUrl,
                         );
                       }
-
-                      unawaited(_markRead());
 
                       return ListView.builder(
                         reverse: true,

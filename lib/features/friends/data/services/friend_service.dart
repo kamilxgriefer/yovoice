@@ -135,9 +135,26 @@ class FriendService {
         <String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>{};
     final profiles = <String, FriendUser>{};
     final presences = <String, ({bool isOnline, DateTime? lastSeen})>{};
+    // Legacy mirror rows (`users/{me}/friends/{id}`) may carry a stored
+    // displayName; canonical rows do not. Captured so a row whose public
+    // profile is missing or unreadable can degrade to its last known name
+    // instead of silently disappearing from the list and its counter.
+    final mirrorNames = <String, String>{};
     StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? rootSubscription;
     var closed = false;
     List<FriendUser>? latest;
+
+    // Identity fallback for a friend whose `publicProfiles/{id}` read is
+    // unavailable. No photo, and presence is never fabricated here — the
+    // separately authorised presence listener still owns that join.
+    FriendUser degradedFriend(String id) => FriendUser(
+      id: id,
+      displayName: mirrorNames[id] ?? 'YO Voice member',
+      email: '',
+      photoUrl: null,
+      isOnline: false,
+      lastSeen: null,
+    );
 
     void emit() {
       if (closed || controller.isClosed) return;
@@ -173,7 +190,15 @@ class FriendService {
             .collection('friends')
             .snapshots()
             .listen((snapshot) {
-              final ids = snapshot.docs.map((doc) => doc.id).toSet();
+              final ids = <String>{};
+              for (final doc in snapshot.docs) {
+                ids.add(doc.id);
+                final mirrorName = (doc.data()['displayName'] as String?)
+                    ?.trim();
+                if (mirrorName != null && mirrorName.isNotEmpty) {
+                  mirrorNames[doc.id] = mirrorName;
+                }
+              }
 
               for (final removed
                   in profileSubscriptions.keys
@@ -183,6 +208,7 @@ class FriendService {
                 presenceSubscriptions.remove(removed)?.cancel();
                 profiles.remove(removed);
                 presences.remove(removed);
+                mirrorNames.remove(removed);
               }
 
               for (final id in ids) {
@@ -193,7 +219,11 @@ class FriendService {
                     .listen(
                       (document) {
                         if (!document.exists || document.data() == null) {
-                          profiles.remove(id);
+                          // The relationship edge is canonical even when the
+                          // public projection is missing. Keep the row,
+                          // degraded to its last known name, instead of
+                          // silently shrinking the list and its counter.
+                          profiles[id] = degradedFriend(id);
                         } else {
                           profiles[id] = FriendUser.fromFirestore(document);
                         }
@@ -201,12 +231,14 @@ class FriendService {
                       },
                       onError: (_) {
                         // A friend may make their full profile private. The
-                        // canonical relationship remains, but this complete
-                        // projection is no longer authorised. Fail closed per
-                        // row instead of turning the entire Friends surface
-                        // into an error (or retaining a stale cached profile).
-                        profiles.remove(id);
-                        presences.remove(id);
+                        // canonical relationship remains, so the row must
+                        // too: degrade identity (stored mirror name or a
+                        // neutral label, no photo) rather than dropping the
+                        // friend — dropping made the Friends counter
+                        // disagree with search. This also never retains a
+                        // stale cached profile; presence stays whatever its
+                        // own separately authorised listener last reported.
+                        profiles[id] = degradedFriend(id);
                         emit();
                       },
                     );

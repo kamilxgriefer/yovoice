@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
@@ -9,7 +10,14 @@ import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class AddFriendScreen extends StatefulWidget {
-  const AddFriendScreen({super.key});
+  const AddFriendScreen({this.friendService, this.socialGraphService, super.key});
+
+  /// Optional injection seams, matching the established pattern on
+  /// ChatScreen and NotificationsScreen: production passes nothing and
+  /// gets the live services, tests pass fakes so the accept/decline
+  /// wiring below can be exercised without a Firebase app.
+  final FriendService? friendService;
+  final SocialGraphService? socialGraphService;
 
   @override
   State<AddFriendScreen> createState() => _AddFriendScreenState();
@@ -22,8 +30,10 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
   static const Color _secondaryText = Color(0xFF9D95AD);
   static const Color _primary = Color(0xFFB348FF);
 
-  final FriendService _friendService = FriendService();
-  final SocialGraphService _socialGraphService = SocialGraphService();
+  late final FriendService _friendService =
+      widget.friendService ?? FriendService();
+  late final SocialGraphService _socialGraphService =
+      widget.socialGraphService ?? SocialGraphService();
   final TextEditingController _searchController = TextEditingController();
 
   Timer? _searchDebounce;
@@ -159,23 +169,38 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         return;
       }
 
+      if (status == FriendRelationshipStatus.requestReceived) {
+        // Accepting must go through the explicit accept mutation, never a
+        // reciprocal sendFriendRequest — "Accept" relying on the server's
+        // reciprocal-accept branch is exactly how sending auto-created a
+        // friendship. Mirrors ProfilePreviewSheet's accept wiring.
+        await _friendService.acceptFriendRequest(
+          FriendRequest(
+            senderId: user.id,
+            senderName: user.displayName,
+            senderEmail: user.email,
+            senderPhotoUrl: user.photoUrl,
+            createdAt: null,
+          ),
+        );
+
+        if (!mounted) return;
+        setState(() {
+          _relationshipStatuses[user.id] = FriendRelationshipStatus.friends;
+        });
+        _showMessage('You and ${user.displayName} are now friends.');
+        return;
+      }
+
       await _friendService.sendFriendRequest(user);
 
       if (!mounted) return;
 
-      final newStatus = status == FriendRelationshipStatus.requestReceived
-          ? FriendRelationshipStatus.friends
-          : FriendRelationshipStatus.requestSent;
-
       setState(() {
-        _relationshipStatuses[user.id] = newStatus;
+        _relationshipStatuses[user.id] = FriendRelationshipStatus.requestSent;
       });
 
-      _showMessage(
-        newStatus == FriendRelationshipStatus.friends
-            ? 'You and ${user.displayName} are now friends.'
-            : 'Friend request sent to ${user.displayName}.',
-      );
+      _showMessage('Friend request sent to ${user.displayName}.');
     } catch (error) {
       if (!mounted) return;
 
@@ -192,6 +217,32 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
       }
 
       _showError(message);
+    } finally {
+      if (mounted) {
+        setState(() => _processingIds.remove(user.id));
+      }
+    }
+  }
+
+  Future<void> _declineRequest(FriendUser user) async {
+    if (_processingIds.contains(user.id)) return;
+    if (_relationshipStatuses[user.id] !=
+        FriendRelationshipStatus.requestReceived) {
+      return;
+    }
+
+    setState(() => _processingIds.add(user.id));
+
+    try {
+      await _friendService.declineFriendRequest(user.id);
+
+      if (!mounted) return;
+      setState(() {
+        _relationshipStatuses[user.id] = FriendRelationshipStatus.none;
+      });
+      _showMessage('Friend request declined.');
+    } catch (error) {
+      if (mounted) _showError(_readableError(error));
     } finally {
       if (mounted) {
         setState(() => _processingIds.remove(user.id));
@@ -428,6 +479,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
               _relationshipStatuses[user.id] ?? FriendRelationshipStatus.none,
           isProcessing: _processingIds.contains(user.id),
           onPressed: () => _handlePrimaryAction(user),
+          onDecline: () => _declineRequest(user),
         );
       },
     );
@@ -625,12 +677,17 @@ class _UserResultCard extends StatelessWidget {
     required this.relationshipStatus,
     required this.isProcessing,
     required this.onPressed,
+    required this.onDecline,
   });
 
   final FriendUser user;
   final FriendRelationshipStatus relationshipStatus;
   final bool isProcessing;
   final VoidCallback onPressed;
+
+  /// Shown only while a request from this user is pending: Accept must
+  /// always travel with a visible way to say no.
+  final VoidCallback onDecline;
 
   @override
   Widget build(BuildContext context) {
@@ -728,6 +785,28 @@ class _UserResultCard extends StatelessWidget {
                     ),
             ),
           ),
+          if (relationshipStatus ==
+              FriendRelationshipStatus.requestReceived) ...[
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 40,
+              height: 40,
+              child: IconButton(
+                onPressed: isProcessing ? null : onDecline,
+                tooltip: 'Decline friend request',
+                style: IconButton.styleFrom(
+                  backgroundColor: const Color(0xFF3A2020),
+                  disabledBackgroundColor: const Color(0xFF2A2533),
+                  foregroundColor: const Color(0xFFE38B8B),
+                  disabledForegroundColor: const Color(0xFF8F8799),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                ),
+                icon: const Icon(Icons.close_rounded, size: 20),
+              ),
+            ),
+          ],
         ],
       ),
     );
