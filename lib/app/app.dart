@@ -27,6 +27,74 @@ SnackBar buildForegroundNotificationBanner({
   required String? actorId,
   double bottomClearance = 104,
 }) {
+  final isAchievement = type == NotificationType.achievementUnlocked;
+  if (isAchievement) {
+    return SnackBar(
+      behavior: SnackBarBehavior.floating,
+      margin: EdgeInsets.fromLTRB(12, 12, 12, bottomClearance),
+      padding: EdgeInsets.zero,
+      elevation: 0,
+      duration: const Duration(seconds: 2),
+      backgroundColor: Colors.transparent,
+      content: Align(
+        alignment: Alignment.bottomRight,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 380),
+          child: Material(
+            key: const ValueKey('achievement-toast'),
+            color: const Color(0xFF241132),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: const BorderSide(color: Color(0xFF7330A8)),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: () => NotificationRouter.route(
+                type: type,
+                targetId: targetId,
+                actorId: actorId,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.emoji_events_rounded,
+                      size: 22,
+                      color: Color(0xFFD28AFF),
+                    ),
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      size: 20,
+                      color: Color(0xFFD28AFF),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   return SnackBar(
     behavior: SnackBarBehavior.floating,
     margin: EdgeInsets.fromLTRB(16, 16, 16, bottomClearance),

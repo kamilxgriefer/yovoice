@@ -87,14 +87,54 @@ void main() {
       final titleRect = tester.getRect(
         find.text('Achievement unlocked: Room Opener'),
       );
-      final actionRect = tester.getRect(find.text('Open'));
+      final toastRect = tester.getRect(
+        find.byKey(const ValueKey('achievement-toast')),
+      );
       final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
-      expect(snackBar.margin, const EdgeInsets.fromLTRB(16, 16, 16, 176));
+      expect(snackBar.margin, const EdgeInsets.fromLTRB(12, 12, 12, 176));
+      expect(snackBar.duration, const Duration(seconds: 2));
+      expect(toastRect.width, lessThanOrEqualTo(380));
+      expect(find.text('Tap to open YO Voice'), findsNothing);
+      expect(find.text('Open'), findsNothing);
       expect(titleRect.overlaps(dockRect), isFalse);
-      expect(actionRect.overlaps(dockRect), isFalse);
+      expect(toastRect.overlaps(dockRect), isFalse);
       expect(titleRect.bottom, lessThanOrEqualTo(dockRect.top));
-      expect(actionRect.bottom, lessThanOrEqualTo(dockRect.top));
+      expect(toastRect.bottom, lessThanOrEqualTo(dockRect.top));
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('achievement toast disappears after two seconds', (tester) async {
+    const size = Size(1440, 900);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = size;
+    addTearDown(tester.view.reset);
+
+    final messengerKey = GlobalKey<ScaffoldMessengerState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        scaffoldMessengerKey: messengerKey,
+        home: const Scaffold(body: SizedBox.expand()),
+      ),
+    );
+    messengerKey.currentState!.showSnackBar(
+      buildForegroundNotificationBanner(
+        title: 'Achievement unlocked: First Word',
+        body: 'Tap to open YO Voice',
+        type: NotificationType.achievementUnlocked,
+        targetId: 'first-word',
+        actorId: null,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final toast = find.byKey(const ValueKey('achievement-toast'));
+    expect(toast, findsOneWidget);
+    expect(tester.getSize(toast).width, lessThanOrEqualTo(380));
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(toast, findsNothing);
+  });
 }
