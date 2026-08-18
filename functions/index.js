@@ -382,13 +382,16 @@ const {
   verifyPurchase,
   expirePremiumIdentity,
 } = require("./premium/entitlements");
-const {
-  getPremiumBillingContext,
-  createPremiumCheckoutSession,
-  createPremiumPortalSession,
-  stripePremiumWebhook,
-  onAuthUserDeletedCancelStripe,
-} = require("./premium/stripe_billing");
+// ADR-067: Stripe billing is implemented and tested in source, but its live
+// configuration (STRIPE_SECRET_KEY, prices, tax) deliberately does not exist
+// yet. Requiring the module registers its params, and the Functions CLI
+// validates every declared secret at deploy discovery even when no Stripe
+// endpoint is in the --only list — an unconfigured secret therefore blocks
+// deploying the entire codebase. The endpoints register only when the
+// operator explicitly turns the rollout on (functions/.env:
+// STRIPE_BILLING_EXPORTS=enabled) after the live Stripe setup exists.
+const stripeBillingEnabled =
+  process.env.STRIPE_BILLING_EXPORTS === "enabled";
 const { createStageBFunctions } = require("./integrity/stage_b_functions");
 const {
   onAchievementClubMemberCreated,
@@ -417,11 +420,20 @@ const {
 exports.adminSetPremiumEntitlements = adminSetPremiumEntitlements;
 exports.verifyPurchase = verifyPurchase;
 exports.expirePremiumIdentity = expirePremiumIdentity;
-exports.getPremiumBillingContext = getPremiumBillingContext;
-exports.createPremiumCheckoutSession = createPremiumCheckoutSession;
-exports.createPremiumPortalSession = createPremiumPortalSession;
-exports.stripePremiumWebhook = stripePremiumWebhook;
-exports.onAuthUserDeletedCancelStripe = onAuthUserDeletedCancelStripe;
+if (stripeBillingEnabled) {
+  const {
+    getPremiumBillingContext,
+    createPremiumCheckoutSession,
+    createPremiumPortalSession,
+    stripePremiumWebhook,
+    onAuthUserDeletedCancelStripe,
+  } = require("./premium/stripe_billing");
+  exports.getPremiumBillingContext = getPremiumBillingContext;
+  exports.createPremiumCheckoutSession = createPremiumCheckoutSession;
+  exports.createPremiumPortalSession = createPremiumPortalSession;
+  exports.stripePremiumWebhook = stripePremiumWebhook;
+  exports.onAuthUserDeletedCancelStripe = onAuthUserDeletedCancelStripe;
+}
 
 // Creator Studio pinned posts are references to canonical, published Voice
 // Moments. The callable is the only writer; the trigger removes a pin as soon
