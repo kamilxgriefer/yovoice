@@ -11,6 +11,7 @@ import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/rooms/data/services/room_mute_sync.dart';
 import 'package:yovoice/features/rooms/presentation/voice_room_identity.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
@@ -34,6 +35,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
 
   final _voice = VoiceCallService.instance;
   final _rooms = RoomService();
+  late final RoomMuteSync _muteSync;
   // Single shared stream instance -- both the manual subscription below and
   // the StreamBuilder in build() listen to this same Stream, instead of
   // each calling watchParticipants() independently. Firestore's snapshots()
@@ -66,6 +68,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   @override
   void initState() {
     super.initState();
+    _muteSync = RoomMuteSync(onBusyChanged: _refresh);
     _voice.addListener(_refresh);
     _participants = _rooms.watchParticipants(widget.room.id);
     _participantSubscription = _participants.listen(_handleParticipantState);
@@ -171,8 +174,23 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   }
 
   Future<void> _toggleMute() async {
-    await _voice.toggleMute();
-    await _rooms.setMuted(roomId: widget.room.id, isMuted: _voice.isMuted);
+    try {
+      await _muteSync.toggle(
+        currentMuted: _voice.isMuted,
+        persistRosterState: (muted) =>
+            _rooms.setMuted(roomId: widget.room.id, isMuted: muted),
+        applyMicrophoneState: _voice.setMuted,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Could not change microphone state. Try again.'),
+          ),
+        );
+    }
   }
 
   /// The mic can't publish right now — say why instead of a dead tap.
@@ -415,7 +433,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
                     _BottomControls(
                       identity: identity,
                       micState: _voice.micState,
-                      busy: _voice.muteChangeInProgress,
+                      busy: _voice.muteChangeInProgress || _muteSync.isBusy,
                       onMute: _toggleMute,
                       onLeave: _leave,
                       onMicBlocked: _explainMicState,

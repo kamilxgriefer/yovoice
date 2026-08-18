@@ -9,6 +9,7 @@ import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/rooms/data/services/room_mute_sync.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_background.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_bottom_controls.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
@@ -41,6 +42,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   // old flow pushed a separate PodcastVoiceCallScreen with its own
   // duplicate stage; that screen is gone.
   final VoiceCallService _voice = VoiceCallService.instance;
+  late final RoomMuteSync _muteSync;
 
   // Created once instead of inline in build() -- StreamBuilder resubscribes
   // whenever its `stream` argument is a new instance, and every setState()
@@ -66,6 +68,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   @override
   void initState() {
     super.initState();
+    _muteSync = RoomMuteSync(onBusyChanged: _refreshVoice);
     _voice.addListener(_refreshVoice);
     _participants = _rooms.watchParticipants(widget.room.id);
     _participantsWatch = _participants.listen(_handleParticipantsUpdate);
@@ -118,12 +121,20 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   }
 
   Future<void> _toggleMic() async {
-    await _voice.toggleMute();
     try {
-      await _rooms.setMuted(roomId: widget.room.id, isMuted: _voice.isMuted);
+      await _muteSync.toggle(
+        currentMuted: _voice.isMuted,
+        persistRosterState: (muted) =>
+            _rooms.setMuted(roomId: widget.room.id, isMuted: muted),
+        applyMicrophoneState: _voice.setMuted,
+      );
     } catch (_) {
-      // The LiveKit state is authoritative for what others hear; the
-      // Firestore flag is cosmetic here and self-heals on next change.
+      if (mounted) {
+        _showMessage(
+          'Could not change microphone state. Try again.',
+          isError: true,
+        );
+      }
     }
   }
 
@@ -706,7 +717,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                       ending: _ending,
                       connected: _voice.isConnected,
                       micMuted: _voice.isMuted,
-                      micBusy: _voice.muteChangeInProgress,
+                      micBusy: _voice.muteChangeInProgress || _muteSync.isBusy,
                       canSpeak: me != null && (me.isSpeaker || me.isHost),
                       handRaised: me?.isHandRaised ?? false,
                       canRaiseHand: me != null && !me.isSpeaker && !me.isHost,
