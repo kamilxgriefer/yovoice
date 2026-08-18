@@ -62,8 +62,12 @@ void main() {
     mockUser: MockUser(uid: uid, email: 'h@yovoice.app', displayName: 'Host'),
   );
 
-  setUp(() {
+  setUp(() async {
     db = FakeFirebaseFirestore();
+    await db.collection('users').doc(uid).set({
+      'displayName': 'Host',
+      'photoUrl': null,
+    });
   });
 
   Widget host(Widget child) => MaterialApp(home: child);

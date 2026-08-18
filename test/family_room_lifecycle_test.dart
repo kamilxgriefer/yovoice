@@ -34,8 +34,12 @@ void main() {
     notificationService: NotificationService(firestore: firestore, auth: auth),
   );
 
-  setUp(() {
+  setUp(() async {
     firestore = FakeFirebaseFirestore();
+    await firestore.doc('users/parent').set({
+      'displayName': 'Parent',
+      'photoUrl': null,
+    });
   });
 
   group('Family Room create and reopen', () {
