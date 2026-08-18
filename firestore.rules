@@ -1540,10 +1540,19 @@ service cloud.firestore {
         // reading a doc that lives under the *recipient's* subcollection.
         // Recipient-only read left that permanently denied for the sender's
         // own outgoing-request check.
-        allow read: if isActiveAccount() &&
+        //
+        // get and list are deliberately split: accountIsActive(senderId)
+        // resolves a document-ID wildcard, which a list query evaluates
+        // per candidate document — one denied row (or the query access-call
+        // budget) fails the whole incoming-request list, which is exactly
+        // how the Notifications screen lost every accept/decline control.
+        // The list is already path-scoped to the owner's own subcollection,
+        // so the per-sender liveness read adds nothing there.
+        allow get: if isActiveAccount() &&
             request.auth.uid in [userId, senderId] &&
             accountIsActive(userId) &&
             accountIsActive(senderId);
+        allow list: if isActiveAccount() && isOwner(userId);
         allow create, update, delete: if false;
       }
 
@@ -1561,14 +1570,20 @@ service cloud.firestore {
       // pending list without a collection-group query). Missing from the
       // rules entirely before this — every sendFriendRequest() call failed.
       match /sentFriendRequests/{receiverId} {
-        allow read: if isActiveAccount() && isOwner(userId) &&
+        // Same get/list split as friendRequests above: the wildcard
+        // liveness get() must not run per-row inside the owner's own list.
+        allow get: if isActiveAccount() && isOwner(userId) &&
             accountIsActive(receiverId);
+        allow list: if isActiveAccount() && isOwner(userId);
         allow create, update, delete: if false;
       }
 
       match /friends/{friendId} {
-        allow read: if isActiveAccount() && isOwner(userId) &&
+        // Same get/list split as friendRequests above — watchFriends()'s
+        // root query is the owner listing their own mirror rows.
+        allow get: if isActiveAccount() && isOwner(userId) &&
             accountIsActive(friendId);
+        allow list: if isActiveAccount() && isOwner(userId);
         allow create, update, delete: if false;
       }
 

@@ -1206,6 +1206,83 @@ async function main() {
     },
   );
 
+  // --- the actual LIST queries the product runs (2026-08-18 regression) ---
+  // watchFriendRequests()/watchFriends() run collection LIST queries. The
+  // old single-`read` rules called accountIsActive(<wildcard>) per candidate
+  // row, which fails a list wholesale — the Notifications screen lost every
+  // accept/decline control and the Friends counter read 0 in production.
+  // These tests execute the real queries; getDoc() coverage is not enough.
+  await check(
+    "regression: the RECIPIENT can LIST their own incoming friendRequests",
+    async () => {
+      const db = host.firestore();
+      await assertSucceeds(
+        getDocs(collection(db, "users/host-uid/friendRequests")),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a third party cannot LIST someone else's friendRequests",
+    async () => {
+      const db = invitee.firestore();
+      await assertFails(
+        getDocs(collection(db, "users/host-uid/friendRequests")),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: the sender cannot LIST the recipient's friendRequests",
+    async () => {
+      const db = attacker.firestore();
+      await assertFails(
+        getDocs(collection(db, "users/host-uid/friendRequests")),
+      );
+    },
+  );
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), "users/host-uid/friends/friend-1"), {
+      friendId: "friend-1",
+      displayName: "First friend",
+    });
+    await setDoc(
+      doc(ctx.firestore(), "users/host-uid/sentFriendRequests/invitee-uid"),
+      { receiverId: "invitee-uid", createdAt: null },
+    );
+  });
+
+  await check("regression: the owner can LIST their own friends mirror", async () => {
+    const db = host.firestore();
+    await assertSucceeds(getDocs(collection(db, "users/host-uid/friends")));
+  });
+
+  await check("SECURITY: a third party cannot LIST someone else's friends", async () => {
+    const db = invitee.firestore();
+    await assertFails(getDocs(collection(db, "users/host-uid/friends")));
+  });
+
+  await check(
+    "regression: the owner can LIST their own sentFriendRequests",
+    async () => {
+      const db = host.firestore();
+      await assertSucceeds(
+        getDocs(collection(db, "users/host-uid/sentFriendRequests")),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a third party cannot LIST someone else's sentFriendRequests",
+    async () => {
+      const db = invitee.firestore();
+      await assertFails(
+        getDocs(collection(db, "users/host-uid/sentFriendRequests")),
+      );
+    },
+  );
+
   // --- clubs/{clubId}/members collectionGroup compatibility ---
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     await setDoc(doc(ctx.firestore(), "clubs/club3"), {

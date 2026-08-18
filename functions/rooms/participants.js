@@ -148,9 +148,13 @@ const CALLABLE_OPTIONS = {
   timeoutSeconds: 120,
 };
 
-const removeRoomParticipantSelf = onCall(
-  CALLABLE_OPTIONS,
-  executeRemoveRoomParticipant,
+// firebase-functions v2 invokes every onCall handler as handler(request,
+// responseProxy). A multi-parameter execute* function must therefore never be
+// registered directly: the streaming response proxy would land in its
+// dependency-injection parameter and shadow the production LiveKit control.
+// Register one-argument wrappers only; tests keep injecting explicitly.
+const removeRoomParticipantSelf = onCall(CALLABLE_OPTIONS, (request) =>
+  executeRemoveRoomParticipant(request),
 );
 
 /**
@@ -229,7 +233,9 @@ async function executeLeaveRoom(request, roomControl = null) {
   return { success: true, roomId };
 }
 
-const leaveRoomSelf = onCall(CALLABLE_OPTIONS, executeLeaveRoom);
+const leaveRoomSelf = onCall(CALLABLE_OPTIONS, (request) =>
+  executeLeaveRoom(request),
+);
 
 async function executeSetRoomStatus(
   request,
@@ -275,7 +281,9 @@ async function executeSetRoomStatus(
   return { success: true, roomId, status };
 }
 
-const setRoomStatusSelf = onCall(CALLABLE_OPTIONS, executeSetRoomStatus);
+const setRoomStatusSelf = onCall(CALLABLE_OPTIONS, (request) =>
+  executeSetRoomStatus(request),
+);
 
 async function executeEndRoomVoice(
   request,
@@ -308,7 +316,9 @@ async function executeEndRoomVoice(
   return { success: true, roomId };
 }
 
-const endRoomVoiceSelf = onCall(CALLABLE_OPTIONS, executeEndRoomVoice);
+const endRoomVoiceSelf = onCall(CALLABLE_OPTIONS, (request) =>
+  executeEndRoomVoice(request),
+);
 
 async function executeDeleteRoom(
   request,
@@ -360,7 +370,9 @@ async function executeDeleteRoom(
   return { success: true, roomId };
 }
 
-const deleteRoomSelf = onCall(CALLABLE_OPTIONS, executeDeleteRoom);
+const deleteRoomSelf = onCall(CALLABLE_OPTIONS, (request) =>
+  executeDeleteRoom(request),
+);
 
 async function executeModerateRoomParticipant(
   request,
@@ -525,9 +537,8 @@ async function executeModerateRoomParticipant(
   return { success: true, roomId, participantId };
 }
 
-const moderateRoomParticipantSelf = onCall(
-  CALLABLE_OPTIONS,
-  executeModerateRoomParticipant,
+const moderateRoomParticipantSelf = onCall(CALLABLE_OPTIONS, (request) =>
+  executeModerateRoomParticipant(request),
 );
 
 async function executeSetOwnParticipantMute(
@@ -592,9 +603,8 @@ async function executeSetOwnParticipantMute(
   return { success: true, roomId, isMuted };
 }
 
-const setOwnRoomParticipantMute = onCall(
-  CALLABLE_OPTIONS,
-  executeSetOwnParticipantMute,
+const setOwnRoomParticipantMute = onCall(CALLABLE_OPTIONS, (request) =>
+  executeSetOwnParticipantMute(request),
 );
 
 module.exports = {

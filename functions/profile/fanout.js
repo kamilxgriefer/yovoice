@@ -83,7 +83,14 @@ const onProfileIdentityChanged = onDocumentUpdated(
         update[new FieldPath("participantPhotoUrls", uid)] = photoUrl ?? "";
       }
       if (nameChanged && displayName) {
-        update[new FieldPath("participantNames", uid)] = displayName;
+        // validateConversation() rejects participantNames entries over 80
+        // characters, while display names themselves may be up to 120 —
+        // an uncapped fan-out write would poison every conversation this
+        // account participates in (data-loss on send and mark-read).
+        update[new FieldPath("participantNames", uid)] = displayName.slice(
+          0,
+          80,
+        );
       }
       if (Object.keys(update).length > 0) {
         batch.update(doc.ref, update);
