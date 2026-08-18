@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/rooms/data/services/room_mute_coordinator.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 
@@ -41,11 +42,36 @@ class RoomMiniBar extends StatelessWidget {
     }
   }
 
+  /// The mini bar must not bypass the server: its mute goes through the same
+  /// coordinator as the room screens, so the roster, LiveKit permissions and
+  /// the local track always move together — and a session the server no
+  /// longer recognizes is torn down instead of lingering as a phantom bar.
+  Future<void> _toggleMute(BuildContext context, String roomId) async {
+    final outcome = await RoomMuteCoordinator.production.toggle(roomId: roomId);
+    if (!context.mounted) return;
+    switch (outcome) {
+      case RoomMuteOutcome.applied:
+      case RoomMuteOutcome.busy:
+      // The bar disappears on its own once the stale session disconnects.
+      case RoomMuteOutcome.sessionEnded:
+        break;
+      case RoomMuteOutcome.failed:
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('Could not change microphone state. Try again.'),
+            ),
+          );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final voice = VoiceCallService.instance;
+    final muteCoordinator = RoomMuteCoordinator.production;
     return ListenableBuilder(
-      listenable: voice,
+      listenable: Listenable.merge([voice, muteCoordinator]),
       builder: (context, _) {
         final roomId = voice.roomId;
         final active =
@@ -108,9 +134,10 @@ class RoomMiniBar extends StatelessWidget {
                   IconButton(
                     tooltip: voice.isMuted ? 'Unmute' : 'Mute',
                     visualDensity: VisualDensity.compact,
-                    onPressed: voice.muteChangeInProgress
+                    onPressed:
+                        voice.muteChangeInProgress || muteCoordinator.isBusy
                         ? null
-                        : voice.toggleMute,
+                        : () => _toggleMute(context, roomId),
                     icon: Icon(
                       voice.isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
                       color: voice.isMuted

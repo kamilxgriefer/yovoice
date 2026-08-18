@@ -8,8 +8,9 @@ import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
+import 'package:yovoice/features/rooms/data/services/room_leave_coordinator.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
-import 'package:yovoice/features/rooms/data/services/room_mute_sync.dart';
+import 'package:yovoice/features/rooms/data/services/room_mute_coordinator.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_background.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_bottom_controls.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
@@ -42,7 +43,8 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   // old flow pushed a separate PodcastVoiceCallScreen with its own
   // duplicate stage; that screen is gone.
   final VoiceCallService _voice = VoiceCallService.instance;
-  late final RoomMuteSync _muteSync;
+  final RoomLeaveCoordinator _leaveCoordinator = RoomLeaveCoordinator();
+  final RoomMuteCoordinator _muteCoordinator = RoomMuteCoordinator.production;
 
   // Created once instead of inline in build() -- StreamBuilder resubscribes
   // whenever its `stream` argument is a new instance, and every setState()
@@ -68,7 +70,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   @override
   void initState() {
     super.initState();
-    _muteSync = RoomMuteSync(onBusyChanged: _refreshVoice);
+    _muteCoordinator.addListener(_refreshVoice);
     _voice.addListener(_refreshVoice);
     _participants = _rooms.watchParticipants(widget.room.id);
     _participantsWatch = _participants.listen(_handleParticipantsUpdate);
@@ -77,6 +79,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
 
   @override
   void dispose() {
+    _muteCoordinator.removeListener(_refreshVoice);
     _voice.removeListener(_refreshVoice);
     unawaited(_participantsWatch?.cancel());
     // Deliberately NOT disconnecting here: backing out minimizes the
@@ -121,32 +124,44 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   }
 
   Future<void> _toggleMic() async {
-    try {
-      await _muteSync.toggle(
-        currentMuted: _voice.isMuted,
-        persistRosterState: (muted) =>
-            _rooms.setMuted(roomId: widget.room.id, isMuted: muted),
-        applyMicrophoneState: _voice.setMuted,
-      );
-    } catch (_) {
-      if (mounted) {
+    final outcome = await _muteCoordinator.toggle(roomId: widget.room.id);
+    if (!mounted) return;
+    switch (outcome) {
+      case RoomMuteOutcome.applied:
+      case RoomMuteOutcome.busy:
+        break;
+      case RoomMuteOutcome.sessionEnded:
+        _showMessage('This room is no longer live.', isError: true);
+        await _leaveCoordinator.leave(
+          disconnectAudio: _voice.disconnect,
+          navigateAway: () {
+            if (mounted) Navigator.of(context).pop();
+          },
+          cleanupParticipant: () => _rooms.leaveRoom(widget.room.id),
+          onCleanupError: (error, _) => debugPrint(
+            'Stale-session leave cleanup deferred to the server: $error',
+          ),
+        );
+      case RoomMuteOutcome.failed:
         _showMessage(
           'Could not change microphone state. Try again.',
           isError: true,
         );
-      }
     }
   }
 
   Future<void> _leaveRoom() async {
-    if (_ending) return;
-    await _voice.disconnect();
-    try {
-      await _rooms.leaveRoom(widget.room.id);
-    } catch (_) {
-      // Leaving must never trap someone in the room UI.
-    }
-    if (mounted) Navigator.of(context).pop();
+    if (_ending || _leaveCoordinator.isLeaving) return;
+    await _leaveCoordinator.leave(
+      disconnectAudio: _voice.disconnect,
+      navigateAway: () {
+        if (mounted) Navigator.of(context).pop();
+      },
+      cleanupParticipant: () => _rooms.leaveRoom(widget.room.id),
+      onCleanupError: (error, _) => debugPrint(
+        'Broadcast leave cleanup will rely on server reconciliation: $error',
+      ),
+    );
   }
 
   // Ending or deleting a broadcast room deletes every participant doc,
@@ -717,7 +732,9 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                       ending: _ending,
                       connected: _voice.isConnected,
                       micMuted: _voice.isMuted,
-                      micBusy: _voice.muteChangeInProgress || _muteSync.isBusy,
+                      micBusy:
+                          _voice.muteChangeInProgress ||
+                          _muteCoordinator.isBusy,
                       canSpeak: me != null && (me.isSpeaker || me.isHost),
                       handRaised: me?.isHandRaised ?? false,
                       canRaiseHand: me != null && !me.isSpeaker && !me.isHost,

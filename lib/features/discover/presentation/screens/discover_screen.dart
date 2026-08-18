@@ -384,6 +384,10 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                           hasScrollBody: false,
                           child: _DiscoverEmptyState(
                             hasFilters: _hasFilters,
+                            // With zero live rooms overall, "No matching
+                            // rooms" would blame the search phrase for an
+                            // empty universe.
+                            nothingIsLive: allRooms.isEmpty,
                             onClear: _clearFilters,
                           ),
                         )
@@ -1706,9 +1710,14 @@ class _DiscoverLoadingState extends StatelessWidget {
 }
 
 class _DiscoverEmptyState extends StatelessWidget {
-  const _DiscoverEmptyState({required this.hasFilters, required this.onClear});
+  const _DiscoverEmptyState({
+    required this.hasFilters,
+    required this.nothingIsLive,
+    required this.onClear,
+  });
 
   final bool hasFilters;
+  final bool nothingIsLive;
   final VoidCallback onClear;
 
   @override
@@ -1739,7 +1748,9 @@ class _DiscoverEmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 19),
             Text(
-              hasFilters ? 'No matching rooms' : 'No live rooms yet',
+              hasFilters && !nothingIsLive
+                  ? 'No matching rooms'
+                  : 'No rooms are live right now',
               textAlign: TextAlign.center,
               style: const TextStyle(
                 color: Colors.white,
@@ -1749,7 +1760,7 @@ class _DiscoverEmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              hasFilters
+              hasFilters && !nothingIsLive
                   ? 'Try another search phrase or clear the selected category.'
                   : 'Live public Community and Podcast rooms will appear here automatically.',
               textAlign: TextAlign.center,

@@ -131,9 +131,16 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _busy = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            intentionalOrFriendly(
+              error,
+              fallback: "The change couldn't be saved. Please try again.",
+            ),
+          ),
+        ),
+      );
     }
   }
 
@@ -143,6 +150,9 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
       RoomStatus.active => 'open',
       RoomStatus.closed => 'close',
       RoomStatus.archived => 'archive',
+      // Suspension is a moderation verdict, never a host choice; the
+      // settings UI does not offer it and the server would refuse it.
+      RoomStatus.suspended => 'suspend',
     };
     final confirmed =
         await showDialog<bool>(
@@ -190,34 +200,19 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
   }
 
   Future<void> _delete() async {
-    final confirmation = TextEditingController();
     final confirmed =
         await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
             backgroundColor: _surface,
-            title: const Text(
-              'Delete room permanently?',
-              style: TextStyle(color: Colors.white),
+            title: Text(
+              'Delete "${widget.room.name}"?',
+              style: const TextStyle(color: Colors.white),
             ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Messages, members and room settings will be permanently removed. Type the room name to confirm.',
-                  style: TextStyle(color: _muted),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: confirmation,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                    hintText: 'Room name',
-                    hintStyle: TextStyle(color: _muted),
-                  ),
-                ),
-              ],
+            content: const Text(
+              'Messages, members and room settings will be permanently '
+              'removed. This cannot be undone.',
+              style: TextStyle(color: _muted),
             ),
             actions: [
               TextButton(
@@ -226,17 +221,13 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
               ),
               FilledButton(
                 style: FilledButton.styleFrom(backgroundColor: _danger),
-                onPressed: () => Navigator.pop(
-                  context,
-                  confirmation.text.trim() == widget.room.name.trim(),
-                ),
-                child: const Text('DELETE'),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Delete'),
               ),
             ],
           ),
         ) ??
         false;
-    confirmation.dispose();
     if (!confirmed || _busy) return;
     setState(() => _busy = true);
     try {
@@ -246,9 +237,17 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _busy = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            intentionalOrFriendly(
+              error,
+              fallback:
+                  "The room couldn't be deleted. Please try again in a moment.",
+            ),
+          ),
+        ),
+      );
     }
   }
 

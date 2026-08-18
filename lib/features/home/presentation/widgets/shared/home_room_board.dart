@@ -681,8 +681,14 @@ class HomeActiveRooms extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // A room mid-deletion must never come back as a tile — the server
+    // marked it closed and its teardown finishes (or is retried) without
+    // the host's involvement. Discover already excludes these; showing
+    // them here with a Start button was how "phantom" rooms survived.
     final mine = rooms
-        .where((room) => room.hostId == currentUserId)
+        .where(
+          (room) => room.hostId == currentUserId && !room.deletionInProgress,
+        )
         .toList(growable: false);
 
     if (mine.isEmpty) {
@@ -904,7 +910,9 @@ class _OwnedRoomCard extends StatelessWidget {
             ),
           ),
           Text(
-            room.isLive
+            !room.isActive
+                ? 'Ended'
+                : room.isLive
                 ? 'Live · ${compactCount(room.participantCount)} here'
                 : 'Not live',
             maxLines: 1,
@@ -916,7 +924,9 @@ class _OwnedRoomCard extends StatelessWidget {
             width: double.infinity,
             height: 40,
             child: FilledButton(
-              onPressed: onEnter,
+              // A closed/archived/suspended room cannot be entered or
+              // restarted from here — joinRoom would only refuse it.
+              onPressed: room.isActive ? onEnter : null,
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 shape: RoundedRectangleBorder(
@@ -925,7 +935,11 @@ class _OwnedRoomCard extends StatelessWidget {
                 padding: EdgeInsets.zero,
               ),
               child: Text(
-                room.isLive ? 'Enter' : 'Start',
+                !room.isActive
+                    ? 'Ended'
+                    : room.isLive
+                    ? 'Enter'
+                    : 'Start',
                 style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w800,

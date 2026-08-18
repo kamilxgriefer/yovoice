@@ -10,8 +10,9 @@ import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
+import 'package:yovoice/features/rooms/data/services/room_leave_coordinator.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
-import 'package:yovoice/features/rooms/data/services/room_mute_sync.dart';
+import 'package:yovoice/features/rooms/data/services/room_mute_coordinator.dart';
 import 'package:yovoice/features/rooms/presentation/voice_room_identity.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
@@ -35,7 +36,8 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
 
   final _voice = VoiceCallService.instance;
   final _rooms = RoomService();
-  late final RoomMuteSync _muteSync;
+  final _leaveCoordinator = RoomLeaveCoordinator();
+  final _muteCoordinator = RoomMuteCoordinator.production;
   // Single shared stream instance -- both the manual subscription below and
   // the StreamBuilder in build() listen to this same Stream, instead of
   // each calling watchParticipants() independently. Firestore's snapshots()
@@ -68,7 +70,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   @override
   void initState() {
     super.initState();
-    _muteSync = RoomMuteSync(onBusyChanged: _refresh);
+    _muteCoordinator.addListener(_refresh);
     _voice.addListener(_refresh);
     _participants = _rooms.watchParticipants(widget.room.id);
     _participantSubscription = _participants.listen(_handleParticipantState);
@@ -150,17 +152,21 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   Future<void> _leave() async {
     if (_leaving) return;
     _leaving = true;
-    await _voice.disconnect();
-    // Club lounges get the lounge bookkeeping (isLive drops when the
-    // last member leaves) — plain leaveRoom left lounges "live" forever.
     final clubId = widget.room.clubId;
-    if (clubId != null) {
-      await _rooms.leaveClubLounge(clubId);
-    } else {
-      await _rooms.leaveRoom(widget.room.id);
-    }
-    if (!mounted) return;
-    Navigator.of(context).pop();
+    await _leaveCoordinator.leave(
+      disconnectAudio: _voice.disconnect,
+      navigateAway: () {
+        if (mounted) Navigator.of(context).pop();
+      },
+      // Club lounges get lounge bookkeeping (isLive drops when the last
+      // member leaves). Cleanup is idempotent and must not delay navigation.
+      cleanupParticipant: () => clubId != null
+          ? _rooms.leaveClubLounge(clubId)
+          : _rooms.leaveRoom(widget.room.id),
+      onCleanupError: (error, _) => debugPrint(
+        'Room leave cleanup will rely on server reconciliation: $error',
+      ),
+    );
   }
 
   void _openClubOverview() {
@@ -174,22 +180,27 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   }
 
   Future<void> _toggleMute() async {
-    try {
-      await _muteSync.toggle(
-        currentMuted: _voice.isMuted,
-        persistRosterState: (muted) =>
-            _rooms.setMuted(roomId: widget.room.id, isMuted: muted),
-        applyMicrophoneState: _voice.setMuted,
-      );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Could not change microphone state. Try again.'),
-          ),
-        );
+    final outcome = await _muteCoordinator.toggle(roomId: widget.room.id);
+    if (!mounted) return;
+    switch (outcome) {
+      case RoomMuteOutcome.applied:
+      case RoomMuteOutcome.busy:
+        break;
+      case RoomMuteOutcome.sessionEnded:
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(content: Text('This room is no longer live.')),
+          );
+        await _leave();
+      case RoomMuteOutcome.failed:
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('Could not change microphone state. Try again.'),
+            ),
+          );
     }
   }
 
@@ -433,7 +444,9 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
                     _BottomControls(
                       identity: identity,
                       micState: _voice.micState,
-                      busy: _voice.muteChangeInProgress || _muteSync.isBusy,
+                      busy:
+                          _voice.muteChangeInProgress ||
+                          _muteCoordinator.isBusy,
                       onMute: _toggleMute,
                       onLeave: _leave,
                       onMicBlocked: _explainMicState,

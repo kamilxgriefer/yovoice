@@ -15,12 +15,17 @@ enum RoomType {
 enum RoomStatus {
   active,
   closed,
-  archived;
+  archived,
+  suspended;
 
   static RoomStatus fromValue(Object? value) {
     return switch (value) {
       'closed' => RoomStatus.closed,
       'archived' => RoomStatus.archived,
+      // Moderation writes "suspended" server-side; mapping it to active
+      // would render a sanctioned room as joinable.
+      'suspended' => RoomStatus.suspended,
+      // A missing field is legacy data and stays active on purpose.
       _ => RoomStatus.active,
     };
   }
@@ -58,6 +63,7 @@ class VoiceRoom {
     this.conversationStyle,
     this.newcomerFriendly = false,
     this.showFormat,
+    this.deletionInProgress = false,
   });
 
   final String id;
@@ -98,6 +104,12 @@ class VoiceRoom {
 
   /// Podcast only; null on a community room.
   final ShowFormat? showFormat;
+
+  /// Server-written marker: a host deletion committed its closing
+  /// transaction but the full teardown has not finished (or failed and
+  /// awaits retry). Such a room must never be presented as joinable or
+  /// restartable.
+  final bool deletionInProgress;
 
   /// Set on club-lounge rooms (written by ensureClubLounge). Older lounge
   /// documents may predate the field, so fromFirestore falls back to the
@@ -167,6 +179,7 @@ class VoiceRoom {
       ),
       newcomerFriendly: data['newcomerFriendly'] as bool? ?? false,
       showFormat: ShowFormat.fromValue(data['showFormat']),
+      deletionInProgress: data['deletionInProgress'] as bool? ?? false,
       clubId:
           data['clubId'] as String? ??
           (document.id.startsWith('club_lounge_')
