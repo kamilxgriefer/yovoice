@@ -63,7 +63,9 @@ List<VoiceRoom> rankRoomsForHome({
     place(room, isLive: room.isLive);
   }
 
-  return [for (final tier in tiers) ...tier].take(limit).toList(growable: false);
+  return [
+    for (final tier in tiers) ...tier,
+  ].take(limit).toList(growable: false);
 }
 
 /// 2400 → "2.4K". Every listener count on Home goes through this, so a
@@ -92,6 +94,9 @@ class HomeRoomBanner extends StatelessWidget {
     required this.onJoin,
     this.roomService,
     this.compact = false,
+    this.currentUserId,
+    this.onManageOwnedRoom,
+    this.onDeleteOwnedRoom,
     this.staffCapabilities,
     this.staffFunctions,
     this.onRoomDeleted,
@@ -110,6 +115,13 @@ class HomeRoomBanner extends StatelessWidget {
   /// the reading order is identical on both.
   final bool compact;
 
+  /// The ordinary owner controls are derived from the room authority, never
+  /// from a staff badge. The callable invoked by [onDeleteOwnedRoom] checks
+  /// the same host id again on the server.
+  final String? currentUserId;
+  final VoidCallback? onManageOwnedRoom;
+  final Future<void> Function()? onDeleteOwnedRoom;
+
   /// Server-derived capabilities. Null or [StaffCapabilities.none] renders
   /// the banner exactly as every ordinary account sees it — no shield, no
   /// gaps, no disabled controls.
@@ -119,6 +131,13 @@ class HomeRoomBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ownsRoom =
+        currentUserId != null &&
+        currentUserId!.isNotEmpty &&
+        room.hostId == currentUserId;
+    final hasOwnerActions =
+        ownsRoom && (onManageOwnedRoom != null || onDeleteOwnedRoom != null);
+    final hasStaffActions = staffCapabilities?.hasRoomModeration ?? false;
     final tags = <String>[
       room.category.trim(),
       if (room.isBroadcast) 'Broadcast',
@@ -159,15 +178,22 @@ class HomeRoomBanner extends StatelessWidget {
                       _StatusBadge(live: room.isLive),
                       const SizedBox(width: 9),
                       _CountChip(count: room.participantCount),
-                      if (staffCapabilities?.hasRoomModeration ?? false) ...[
-                        const Spacer(),
+                      if (hasOwnerActions || hasStaffActions) const Spacer(),
+                      if (hasOwnerActions)
+                        _OwnedRoomMenu(
+                          room: room,
+                          onManage: onManageOwnedRoom,
+                          onDelete: onDeleteOwnedRoom,
+                        ),
+                      if (hasOwnerActions && hasStaffActions)
+                        const SizedBox(width: 4),
+                      if (hasStaffActions)
                         RoomStaffMenu(
                           room: room,
                           capabilities: staffCapabilities!,
                           functions: staffFunctions,
                           onRoomDeleted: onRoomDeleted,
                         ),
-                      ],
                     ],
                   ),
                   SizedBox(height: compact ? 10 : 12),
@@ -208,10 +234,7 @@ class HomeRoomBanner extends StatelessWidget {
                         compact: compact,
                       ),
                       SizedBox(width: compact ? 8 : 12),
-                      _JoinButton(
-                        compact: compact,
-                        onTap: () => onJoin(room),
-                      ),
+                      _JoinButton(compact: compact, onTap: () => onJoin(room)),
                     ],
                   ),
                 ],
@@ -220,6 +243,198 @@ class HomeRoomBanner extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+enum _OwnedRoomAction { settings, delete }
+
+/// The host's menu is deliberately separate from [RoomStaffMenu]. A regular
+/// account can manage only its own room; admins and super moderators use the
+/// shield and the separately audited staff callable for rooms they do not
+/// own.
+class _OwnedRoomMenu extends StatelessWidget {
+  const _OwnedRoomMenu({
+    required this.room,
+    required this.onManage,
+    required this.onDelete,
+  });
+
+  final VoiceRoom room;
+  final VoidCallback? onManage;
+  final Future<void> Function()? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<_OwnedRoomAction>(
+      tooltip: 'Manage your room',
+      icon: const Icon(Icons.more_horiz_rounded, color: Colors.white, size: 22),
+      color: const Color(0xFF171121),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: Color(0xFF49365D)),
+      ),
+      itemBuilder: (context) => [
+        if (onManage != null)
+          const PopupMenuItem(
+            value: _OwnedRoomAction.settings,
+            child: _OwnedMenuRow(
+              icon: Icons.settings_rounded,
+              label: 'Room settings',
+            ),
+          ),
+        if (onDelete != null)
+          const PopupMenuItem(
+            value: _OwnedRoomAction.delete,
+            child: _OwnedMenuRow(
+              icon: Icons.delete_forever_rounded,
+              label: 'Delete room…',
+              danger: true,
+            ),
+          ),
+      ],
+      onSelected: (action) async {
+        switch (action) {
+          case _OwnedRoomAction.settings:
+            onManage?.call();
+            return;
+          case _OwnedRoomAction.delete:
+            await showDialog<void>(
+              context: context,
+              barrierDismissible: false,
+              builder: (_) =>
+                  _DeleteOwnedRoomDialog(room: room, onDelete: onDelete!),
+            );
+            return;
+        }
+      },
+    );
+  }
+}
+
+class _OwnedMenuRow extends StatelessWidget {
+  const _OwnedMenuRow({
+    required this.icon,
+    required this.label,
+    this.danger = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = danger ? const Color(0xFFFF7B99) : const Color(0xFFE4DEED);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 10),
+        Text(
+          label,
+          style: TextStyle(color: color, fontWeight: FontWeight.w700),
+        ),
+      ],
+    );
+  }
+}
+
+class _DeleteOwnedRoomDialog extends StatefulWidget {
+  const _DeleteOwnedRoomDialog({required this.room, required this.onDelete});
+
+  final VoiceRoom room;
+  final Future<void> Function() onDelete;
+
+  @override
+  State<_DeleteOwnedRoomDialog> createState() => _DeleteOwnedRoomDialogState();
+}
+
+class _DeleteOwnedRoomDialogState extends State<_DeleteOwnedRoomDialog> {
+  final _confirmation = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  bool get _valid => _confirmation.text.trim() == widget.room.name.trim();
+
+  @override
+  void dispose() {
+    _confirmation.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_busy || !_valid) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.onDelete();
+      if (mounted) Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = error.toString().replaceFirst(RegExp(r'^\[[^\]]*\]\s*'), '');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF171121),
+      title: const Text(
+        'Delete room permanently?',
+        style: TextStyle(color: Colors.white),
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Messages, members and room settings will be permanently removed. '
+            'Type “${widget.room.name}” to confirm.',
+            style: const TextStyle(color: Color(0xFFB8AFC2), height: 1.4),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _confirmation,
+            enabled: !_busy,
+            autofocus: true,
+            style: const TextStyle(color: Colors.white),
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(labelText: 'Room name'),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              _error!,
+              style: const TextStyle(color: Color(0xFFFF9BB0), fontSize: 12.5),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _busy || !_valid ? null : _submit,
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFFFF416C),
+          ),
+          child: _busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('DELETE'),
+        ),
+      ],
     );
   }
 }
@@ -252,9 +467,7 @@ class _CoverScrim extends StatelessWidget {
             Color(0xB00B0713),
             Color(0x330B0713),
           ],
-          stops: compact
-              ? const [0, .45, .78, 1]
-              : const [0, .34, .62, 1],
+          stops: compact ? const [0, .45, .78, 1] : const [0, .34, .62, 1],
         ),
       ),
       child: const DecoratedBox(
@@ -571,11 +784,7 @@ class _CreateRoomTile extends StatelessWidget {
               child: const Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(
-                    Icons.add_rounded,
-                    color: Color(0xFFD3A5FF),
-                    size: 28,
-                  ),
+                  Icon(Icons.add_rounded, color: Color(0xFFD3A5FF), size: 28),
                   SizedBox(height: 8),
                   Text(
                     'Create room',
@@ -730,7 +939,6 @@ class _OwnedRoomCard extends StatelessWidget {
   }
 }
 
-
 /// Three real faces from the room, and the way into the rest of them.
 ///
 /// The faces come from the room's own participant stream — the same
@@ -800,10 +1008,7 @@ class _FacePile extends StatelessWidget {
                           decoration: const BoxDecoration(
                             shape: BoxShape.circle,
                             gradient: LinearGradient(
-                              colors: [
-                                AppColors.primary,
-                                AppColors.secondary,
-                              ],
+                              colors: [AppColors.primary, AppColors.secondary],
                             ),
                           ),
                           child: UserAvatar(

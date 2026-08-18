@@ -16,6 +16,16 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Owner and senior-staff room deletion has mobile/desktop parity**
+  (2026-08-18, this revision — NOT YET DEPLOYED): every room host now sees
+  the same Room settings and typed-name Delete room action from a compact
+  overflow menu on Home at phone and desktop widths. That action still calls
+  `deleteRoomSelf`, whose server boundary requires the caller to be the exact
+  canonical `hostId`. Separately, the audited staff shield is now loaded on
+  mobile as well as desktop; permanent deletion of any room is granted only
+  to `superAdmin` and `superModerator`. A regular moderator cannot invoke or
+  see that destructive action. See ADR-075.
+
 - **Device-local Appearance, Polish Beta and offline Voice Moment playback**
   (2026-08-18, web/PWA deployed from `8fa0192`; native store release pending):
   Appearance now offers System/Dark/Light Beta and app language offers

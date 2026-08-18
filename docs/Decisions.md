@@ -4725,3 +4725,51 @@ direct-path native playback avoids a second in-memory copy during listening.
   by 12 MB; native playback stays path-based.
 - Raising either quota requires a performance/storage review rather than only a
   copy change.
+
+## ADR-075: Owning one room and deleting any room are separate authorities on every form factor
+
+**Status:** Accepted in source on 2026-08-18; not yet deployed.
+
+### Context
+
+Desktop Home loaded the server-derived staff capability matrix, but mobile Home
+did not. As a result, an administrator or super moderator had no way to reach
+the audited permanent-delete workflow from a phone. A normal owner had a
+different usability gap: self-deletion existed in Room settings but was not a
+clear room-card action, and it appeared only when that room reached the narrow
+`Your active rooms` presentation. Reusing one destructive control for both
+cases would blur a material authorization boundary.
+
+### Decision
+
+1. A host manages and deletes only their own room through an owner overflow
+   menu rendered when `room.hostId` exactly matches the signed-in uid. Deletion
+   still calls `deleteRoomSelf`; the server re-reads the room and enforces the
+   same exact ownership before any deletion or cleanup.
+2. Permanent deletion of an arbitrary room remains a separate staff shield and
+   calls `adminDeleteRoom`. Its server role allowlist is exactly
+   `superModerator` and `superAdmin`; ordinary `moderator` is denied.
+3. Mobile and desktop both load `getMyStaffCapabilities` and render the same
+   `permanentDeleteSpaces` result. UI capability checks are presentation only;
+   the callable repeats claim, server-role, account-status and room checks.
+4. Owner deletion requires typing the room name. Staff deletion preserves its
+   existing reason, typed-name confirmation, cleanup and audit contract.
+
+### Reasoning
+
+Ownership is object-scoped authority, while senior moderation is platform-wide
+authority. Keeping two callables and two visually distinct affordances makes
+that distinction inspectable and prevents a regular moderator capability from
+quietly becoming a data-erasure permission. Loading the same capability source
+on both layouts fixes parity without copying role-string comparisons into
+Flutter.
+
+### Consequences
+
+- A regular user can delete a room only when they are its canonical owner.
+- `superModerator` and `superAdmin` can delete any room from phone or desktop;
+  regular moderators cannot.
+- A forged or stale UI cannot widen either authority because both callables
+  fail closed server-side.
+- Functions must be deployed before the client so the new senior-role matrix
+  is authoritative when the mobile control becomes visible.

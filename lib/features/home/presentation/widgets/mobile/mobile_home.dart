@@ -20,6 +20,7 @@ import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -55,6 +56,7 @@ class MobileHome extends StatefulWidget {
     this.profileService,
     this.feedService,
     this.messageService,
+    this.capabilityService,
     this.currentUserId,
     super.key,
   });
@@ -83,6 +85,7 @@ class MobileHome extends StatefulWidget {
   /// passes nothing and resolves its own, which needs a Firebase app.
 
   final MessageService? messageService;
+  final StaffCapabilityService? capabilityService;
 
   /// The signed-in uid. Optional so tests need no Firebase app.
   final String? currentUserId;
@@ -100,6 +103,7 @@ class _MobileHomeState extends State<MobileHome> {
 
   Stream<List<Conversation>>? _conversations;
   Stream<List<VoiceRoom>>? _owned;
+  StaffCapabilities _capabilities = StaffCapabilities.none;
 
   @override
   void initState() {
@@ -133,6 +137,12 @@ class _MobileHomeState extends State<MobileHome> {
     } catch (_) {
       _conversations = null;
     }
+    (widget.capabilityService ?? StaffCapabilityService())
+        .load()
+        .then((capabilities) {
+          if (mounted) setState(() => _capabilities = capabilities);
+        })
+        .catchError((_) {});
   }
 
   String get _resolvedUserId {
@@ -149,6 +159,14 @@ class _MobileHomeState extends State<MobileHome> {
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(builder: (_) => RoomSettingsScreen(room: room)),
     );
+  }
+
+  Future<void> _deleteOwnedRoom(VoiceRoom room) async {
+    final service = _rooms;
+    if (service == null) {
+      throw StateError('Room management is temporarily unavailable.');
+    }
+    await service.deleteRoom(room.id);
   }
 
   @override
@@ -216,6 +234,10 @@ class _MobileHomeState extends State<MobileHome> {
                       onJoin: widget.onOpenRoom,
                       roomService: _rooms,
                       compact: true,
+                      currentUserId: _resolvedUserId,
+                      onManageOwnedRoom: () => _openRoomSettings(room),
+                      onDeleteOwnedRoom: () => _deleteOwnedRoom(room),
+                      staffCapabilities: _capabilities,
                     ),
                 MobileSectionHeader(
                   title: 'Your active rooms',

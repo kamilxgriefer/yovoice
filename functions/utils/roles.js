@@ -79,10 +79,13 @@ const ROOM_MANAGEMENT_ROLES = new Set([
   USER_ROLES.SUPER_ADMIN,
 ]);
 
-// Permanent deletion is superAdmin-only. superModerator is deliberately
-// absent — that reduction is the entire point of retiring `admin` into
-// `superModerator` rather than carrying it forward.
-const PERMANENT_DELETE_ROLES = new Set([USER_ROLES.SUPER_ADMIN]);
+// Global room deletion is reserved for the two senior room-authority tiers.
+// A regular moderator can end a public live session, but cannot permanently
+// erase a room or its history.
+const PERMANENT_DELETE_ROLES = new Set([
+  USER_ROLES.SUPER_MODERATOR,
+  USER_ROLES.SUPER_ADMIN,
+]);
 
 function normalizeRole(value) {
   return String(value ?? "").trim();

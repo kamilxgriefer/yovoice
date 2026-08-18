@@ -196,6 +196,14 @@ class _DesktopHomeState extends State<DesktopHome> {
     );
   }
 
+  Future<void> _deleteOwnedRoom(VoiceRoom room) async {
+    final service = _rooms;
+    if (service == null) {
+      throw StateError('Room management is temporarily unavailable.');
+    }
+    await service.deleteRoom(room.id);
+  }
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<VoiceRoom>>(
@@ -254,6 +262,9 @@ class _DesktopHomeState extends State<DesktopHome> {
                       room: room,
                       onJoin: widget.onOpenRoom,
                       roomService: _rooms,
+                      currentUserId: widget.currentUserId,
+                      onManageOwnedRoom: () => _openRoomSettings(room),
+                      onDeleteOwnedRoom: () => _deleteOwnedRoom(room),
                       staffCapabilities: _capabilities,
                     ),
                 gap,

@@ -449,6 +449,16 @@ data appears. Recipients may still only change `isRead`/`readAt`, and
 
 ## Room and club membership authority (hardened 2026-08-16)
 
+Room deletion has two deliberately separate authorities. A room owner uses
+`deleteRoomSelf`; the callable reads the canonical room and requires
+`room.hostId == request.auth.uid`, so displaying or forging the owner menu does
+not grant deletion of somebody else's room. Permanent deletion of an arbitrary
+room uses `adminDeleteRoom`, which requires an active, matching Auth-claim and
+server role in `['superModerator', 'superAdmin']` and writes the existing audit
+trail. A regular `moderator` cannot use that path. Mobile and desktop both
+render from the same server-derived capability, but UI visibility is never the
+authorization boundary. See ADR-075.
+
 `isRoomMember()` now requires `isActiveAccount()`, matching
 `isActiveClubRoomMember()`. Before `2fc05e5` it required only
 `isSignedIn()`, so widening `canAccessRoom()` to include members handed

@@ -13,6 +13,7 @@ import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.da
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 
 /// Mobile Home ("Voice Briefing") coverage: real data in every module,
 /// the retired hero composition gone, honest empty states, and clean
@@ -32,9 +33,10 @@ void main() {
     required String name,
     required String description,
     int participants = 8,
+    String? hostId,
   }) async {
     await db.collection('rooms').doc(id).set({
-      'hostId': 'host-$id',
+      'hostId': hostId ?? 'host-$id',
       'hostName': 'Host',
       'name': name,
       'description': description,
@@ -109,6 +111,7 @@ void main() {
     VoidCallback? onCreateRoom,
     VoidCallback? onProfile,
     ValueChanged<Conversation>? onOpenConversation,
+    StaffCapabilityService? capabilityService,
   }) {
     final firebaseAuth = auth();
     return MobileHome(
@@ -128,6 +131,7 @@ void main() {
       profileService: ProfileService(firestore: db, auth: firebaseAuth),
       feedService: HomeFeedService(firestore: db, auth: firebaseAuth),
       messageService: MessageService(firestore: db, auth: firebaseAuth),
+      capabilityService: capabilityService,
       currentUserId: uid,
     );
   }
@@ -235,6 +239,45 @@ void main() {
     expect(friends, 0);
   });
 
+  testWidgets('phone room banners expose owner controls and senior staff '
+      'controls without granting them to ordinary visitors', (tester) async {
+    usePhone(tester, const Size(390, 1400));
+    await seedRoom(
+      id: 'mine',
+      name: 'My mobile room',
+      description: 'Owned here',
+      hostId: uid,
+    );
+
+    await tester.pumpWidget(host(buildHome()));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.byTooltip('Manage your room'), findsWidgets);
+    expect(find.byIcon(Icons.shield_rounded), findsNothing);
+
+    // Start a fresh screen/session so initState loads the newly injected
+    // server capability set rather than retaining the ordinary-account one.
+    await tester.pumpWidget(host(const SizedBox.shrink()));
+    await tester.pump();
+    await tester.pumpWidget(
+      host(
+        buildHome(
+          capabilityService: _StaticCapabilityService(
+            const StaffCapabilities(
+              staffRole: 'superModerator',
+              permanentDeleteSpaces: true,
+              endAnyRoom: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.byIcon(Icons.shield_rounded), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.shield_rounded));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete permanently…'), findsOneWidget);
+  });
+
   testWidgets('header profile is a named 44px keyboard action', (tester) async {
     usePhone(tester, const Size(390, 844));
     var opens = 0;
@@ -325,4 +368,13 @@ void main() {
       expect(find.text('Find friends'), findsOneWidget);
     });
   });
+}
+
+class _StaticCapabilityService extends StaffCapabilityService {
+  _StaticCapabilityService(this.value);
+
+  final StaffCapabilities value;
+
+  @override
+  Future<StaffCapabilities> load({bool refresh = false}) async => value;
 }

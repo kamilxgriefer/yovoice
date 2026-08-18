@@ -120,13 +120,12 @@ describe("the retired admin tier holds nothing", () => {
     }
   });
 
-  test("superModerator does NOT get permanent delete", () => {
-    // The reduction that retiring admin into superModerator applied.
+  test("superModerator gets room deletion but not user management", () => {
     assert.equal(
       PERMANENT_DELETE_ROLES.has(USER_ROLES.SUPER_MODERATOR),
-      false,
+      true,
     );
-    // ...but it IS moderation staff, in the sets admin used to occupy.
+    // It is senior room staff, but not a user manager.
     assert.equal(ADMIN_CENTER_ROLES.has(USER_ROLES.SUPER_MODERATOR), true);
     assert.equal(ROOM_MANAGEMENT_ROLES.has(USER_ROLES.SUPER_MODERATOR), true);
     assert.equal(PERMANENT_DELETE_ROLES.has(USER_ROLES.SUPER_ADMIN), true);

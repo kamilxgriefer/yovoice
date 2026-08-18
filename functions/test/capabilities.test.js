@@ -51,8 +51,7 @@ const FIXTURES = [
   `${P}vip`,
 ];
 
-const OWNER_CAPS = [
-  "permanentDeleteSpaces",
+const OWNER_ONLY_CAPS = [
   "deleteAnyMessage",
   "permanentBan",
   "manageRoles",
@@ -89,7 +88,8 @@ describe("matrix", () => {
       user: { role: "superAdmin" },
     });
     assert.equal(caps.isOwner, true);
-    for (const cap of OWNER_CAPS) assert.equal(caps[cap], true, cap);
+    assert.equal(caps.permanentDeleteSpaces, true);
+    for (const cap of OWNER_ONLY_CAPS) assert.equal(caps[cap], true, cap);
     assert.equal(caps.suspensionLimitHours, null);
     assert.equal(caps.viewAllQueues, true);
   });
@@ -102,24 +102,27 @@ describe("matrix", () => {
     });
     assert.equal(caps.isOwner, false);
     assert.equal(caps.unconfirmedSuperAdmin, true);
-    for (const cap of OWNER_CAPS) assert.equal(caps[cap], false, cap);
+    assert.equal(caps.permanentDeleteSpaces, true);
+    for (const cap of OWNER_ONLY_CAPS) assert.equal(caps[cap], false, cap);
     // Fails SAFELY into the super-moderation tier.
     assert.equal(caps.viewAllQueues, true);
     assert.equal(caps.suspensionLimitHours, SUSPENSION_LIMIT_HOURS.superModerator);
   });
 
-  test("with the secret MISSING, even the owner uid grants nothing "
-      + "destructive — fail closed in the granting direction too", () => {
+  test("with the secret MISSING, owner-only powers fail closed while the "
+      + "senior room-delete tier remains", () => {
     setProtectedOwnerUidForTests(null);
     const caps = deriveCapabilities({
       uid: OWNER,
       user: { role: "superAdmin" },
     });
     assert.equal(caps.isOwner, false);
-    for (const cap of OWNER_CAPS) assert.equal(caps[cap], false, cap);
+    assert.equal(caps.permanentDeleteSpaces, true);
+    for (const cap of OWNER_ONLY_CAPS) assert.equal(caps[cap], false, cap);
   });
 
-  test("superModerator: full moderation, 30-day ceiling, no destruction", () => {
+  test("superModerator: full room moderation including deletion, with a "
+      + "30-day sanction ceiling", () => {
     const caps = deriveCapabilities({
       uid: `${P}supermod`,
       user: { role: "superModerator" },
@@ -127,9 +130,10 @@ describe("matrix", () => {
     assert.equal(caps.viewAllQueues, true);
     assert.equal(caps.quarantineSpaces, true);
     assert.equal(caps.endAnyRoom, true);
+    assert.equal(caps.permanentDeleteSpaces, true);
     assert.equal(caps.liftSuspensions, true);
     assert.equal(caps.suspensionLimitHours, 720);
-    for (const cap of OWNER_CAPS) assert.equal(caps[cap], false, cap);
+    for (const cap of OWNER_ONLY_CAPS) assert.equal(caps[cap], false, cap);
   });
 
   test("moderator: assigned-report moderation, 24-hour ceiling, no "
@@ -147,7 +151,8 @@ describe("matrix", () => {
     assert.equal(caps.endAnyRoom, false);
     assert.equal(caps.liftSuspensions, false);
     assert.equal(caps.viewAllQueues, false);
-    for (const cap of OWNER_CAPS) assert.equal(caps[cap], false, cap);
+    assert.equal(caps.permanentDeleteSpaces, false);
+    for (const cap of OWNER_ONLY_CAPS) assert.equal(caps[cap], false, cap);
   });
 
   test("auditor, support and guideMaster get exactly their one flag", () => {
@@ -163,7 +168,10 @@ describe("matrix", () => {
       assert.equal(caps.handleAssignedReports, false, role);
       assert.equal(caps.suspendUsers, false, role);
       assert.equal(caps.quarantineSpaces, false, role);
-      for (const cap of OWNER_CAPS) assert.equal(caps[cap], false, `${role} ${cap}`);
+      assert.equal(caps.permanentDeleteSpaces, false, role);
+      for (const cap of OWNER_ONLY_CAPS) {
+        assert.equal(caps[cap], false, `${role} ${cap}`);
+      }
     }
   });
 
@@ -181,7 +189,8 @@ describe("matrix", () => {
     });
     assert.equal(vipOnly.suspendUsers, false);
     assert.equal(vipOnly.handleAssignedReports, false);
-    for (const cap of OWNER_CAPS) assert.equal(vipOnly[cap], false, cap);
+    assert.equal(vipOnly.permanentDeleteSpaces, false);
+    for (const cap of OWNER_ONLY_CAPS) assert.equal(vipOnly[cap], false, cap);
   });
 
   test("an ordinary user holds nothing", () => {
@@ -201,7 +210,10 @@ describe("matrix", () => {
       });
       assert.equal(caps.suspendUsers, false, role);
       assert.equal(caps.viewAllQueues, false, role);
-      for (const cap of OWNER_CAPS) assert.equal(caps[cap], false, `${role} ${cap}`);
+      assert.equal(caps.permanentDeleteSpaces, false, role);
+      for (const cap of OWNER_ONLY_CAPS) {
+        assert.equal(caps[cap], false, `${role} ${cap}`);
+      }
     }
   });
 });
@@ -215,15 +227,15 @@ describe("getMyStaffCapabilities", () => {
     assert.equal("unconfirmedSuperAdmin" in result.capabilities, false);
   });
 
-  test("a NON-owner superAdmin gets no ownership and a security audit "
-      + "event is recorded", async () => {
+  test("a NON-owner superAdmin gets the senior room-delete tier, not "
+      + "ownership, and a security audit event is recorded", async () => {
     await db.collection("users").doc(FAKE_SUPER).set({ role: "superAdmin" });
     const result = await runCaps({
       auth: { uid: FAKE_SUPER, token: {} },
       data: {},
     });
     assert.equal(result.capabilities.isOwner, false);
-    assert.equal(result.capabilities.permanentDeleteSpaces, false);
+    assert.equal(result.capabilities.permanentDeleteSpaces, true);
 
     const alerts = await db
       .collection("adminAuditLogs")

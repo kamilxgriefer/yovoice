@@ -66,6 +66,7 @@ void main() {
 
   const superMod = StaffCapabilities(
     staffRole: 'superModerator',
+    permanentDeleteSpaces: true,
     viewAllQueues: true,
     quarantineSpaces: true,
     endAnyRoom: true,
@@ -105,8 +106,8 @@ void main() {
       expect(find.text('Quarantine…'), findsOneWidget);
     });
 
-    testWidgets('a super moderator gets coral, close/quarantine, and NO '
-        'permanent deletion', (tester) async {
+    testWidgets('a super moderator gets coral, close/quarantine and '
+        'permanent room deletion', (tester) async {
       useSize(tester, const Size(1440, 900));
       await tester.pumpWidget(
         host(RoomStaffMenu(room: room(), capabilities: superMod)),
@@ -118,7 +119,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('End room…'), findsOneWidget);
       expect(find.text('Quarantine…'), findsOneWidget);
-      expect(find.text('Delete permanently…'), findsNothing);
+      expect(find.text('Delete permanently…'), findsOneWidget);
     });
 
     testWidgets('a moderator gets violet and ONLY the end-public-room '
@@ -161,6 +162,62 @@ void main() {
   });
 
   group('banner integration', () {
+    testWidgets('a regular host can manage and delete only their own room '
+        'from the phone banner', (tester) async {
+      useSize(tester, const Size(390, 844));
+      var managed = 0;
+      var deleted = 0;
+      await tester.pumpWidget(
+        host(
+          SingleChildScrollView(
+            child: HomeRoomBanner(
+              room: room(),
+              onJoin: (_) {},
+              compact: true,
+              currentUserId: 'host',
+              onManageOwnedRoom: () => managed++,
+              onDeleteOwnedRoom: () async => deleted++,
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.byTooltip('Manage your room'));
+      await tester.pumpAndSettle();
+      expect(find.text('Room settings'), findsOneWidget);
+      expect(find.text('Delete room…'), findsOneWidget);
+
+      await tester.tap(find.text('Room settings'));
+      await tester.pumpAndSettle();
+      expect(managed, 1);
+
+      await tester.tap(find.byTooltip('Manage your room'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete room…'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete room permanently?'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), 'Evening Talks');
+      await tester.pump();
+      await tester.tap(find.text('DELETE'));
+      await tester.pumpAndSettle();
+      expect(deleted, 1);
+
+      await tester.pumpWidget(
+        host(
+          HomeRoomBanner(
+            room: room(),
+            onJoin: (_) {},
+            compact: true,
+            currentUserId: 'someone-else',
+            onManageOwnedRoom: () {},
+            onDeleteOwnedRoom: () async {},
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byTooltip('Manage your room'), findsNothing);
+    });
+
     testWidgets('an ordinary account\'s banner is unchanged — no shield, '
         'no gaps', (tester) async {
       useSize(tester, const Size(1440, 900));
@@ -214,9 +271,7 @@ void main() {
       useSize(tester, const Size(1440, 900));
       final functions = _RecordingFunctions();
       await tester.pumpWidget(
-        host(
-          OwnerDeleteRoomDialog(room: room(), functions: functions),
-        ),
+        host(OwnerDeleteRoomDialog(room: room(), functions: functions)),
       );
       await tester.pump();
 
@@ -277,15 +332,21 @@ void main() {
         'OWNER · SUPER ADMIN',
       );
       expect(RoleIdentity.labelFor('superAdmin'), 'SUPER ADMIN');
-      expect(RoleIdentity.colorFor('superAdmin', isOwner: true),
-          RoleIdentity.ownerColor);
-      expect(RoleIdentity.colorFor('superModerator'),
-          RoleIdentity.superModeratorColor);
+      expect(
+        RoleIdentity.colorFor('superAdmin', isOwner: true),
+        RoleIdentity.ownerColor,
+      );
+      expect(
+        RoleIdentity.colorFor('superModerator'),
+        RoleIdentity.superModeratorColor,
+      );
       expect(RoleIdentity.colorFor('moderator'), RoleIdentity.moderatorColor);
       expect(RoleIdentity.colorFor('auditor'), RoleIdentity.auditorColor);
       expect(RoleIdentity.colorFor('support'), RoleIdentity.supportColor);
       expect(
-          RoleIdentity.colorFor('guideMaster'), RoleIdentity.guideMasterColor);
+        RoleIdentity.colorFor('guideMaster'),
+        RoleIdentity.guideMasterColor,
+      );
       expect(RoleIdentity.labelFor('user'), '');
     });
 

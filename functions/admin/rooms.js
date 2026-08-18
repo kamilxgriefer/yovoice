@@ -2,11 +2,14 @@ const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { FieldValue } = require("firebase-admin/firestore");
 const { getStorage } = require("firebase-admin/storage");
 
-const { USER_ROLES, ROOM_MANAGEMENT_ROLES } = require("../utils/roles");
+const {
+  USER_ROLES,
+  ROOM_MANAGEMENT_ROLES,
+  PERMANENT_DELETE_ROLES,
+} = require("../utils/roles");
 
 const {
   requireVerifiedStaff,
-  requireProtectedOwner,
 } = require("../utils/auth");
 
 const {
@@ -51,6 +54,14 @@ async function requireRoomQuarantineAccess(request) {
     request,
     QUARANTINE_ROLES,
     "You do not have permission to quarantine rooms.",
+  );
+}
+
+async function requireRoomDeleteAccess(request) {
+  return requireVerifiedStaff(
+    request,
+    PERMANENT_DELETE_ROLES,
+    "Only an administrator or super moderator can delete any room.",
   );
 }
 
@@ -775,12 +786,10 @@ const adminDeleteRoom = onCall(
     enforceAppCheck: false,
     timeoutSeconds: 120,
     memory: "512MiB",
-    // Permanent deletion is an OWNERSHIP capability: the uid must match
-    // the protected-owner secret, not merely carry superAdmin.
-    secrets: ["YOVOICE_PROTECTED_OWNER_UID", ...LIVEKIT_SECRETS],
+    secrets: LIVEKIT_SECRETS,
   },
   async (request) => {
-    const caller = await requireProtectedOwner(request);
+    const caller = await requireRoomDeleteAccess(request);
 
     const roomId = normalizeText(request.data?.roomId, 128);
 

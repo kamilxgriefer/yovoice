@@ -721,4 +721,33 @@ describe("callable convergence", () => {
         true,
       );
     });
+
+  test("global deletion allows a super moderator and refuses a regular "
+      + "moderator", async () => {
+    const data = {
+      roomId: ROOM,
+      reason: "confirmed policy violation",
+      confirmation: ROOM,
+    };
+    await expectCode(
+      run(adminDeleteRoom)(request(MOD, "moderator", data)),
+      "permission-denied",
+    );
+    assert.equal((await db.collection("rooms").doc(ROOM).get()).exists, true);
+
+    setRoomLiveKitControlForTests({
+      async endRoom() {
+        return {};
+      },
+    });
+    setRoomStorageBucketForTests({
+      name: "yovoice-test.firebasestorage.app",
+      async deleteFiles() {},
+    });
+    const result = await run(adminDeleteRoom)(
+      request(SUPERMOD, "superModerator", data),
+    );
+    assert.equal(result.success, true);
+    assert.equal((await db.collection("rooms").doc(ROOM).get()).exists, false);
+  });
 });

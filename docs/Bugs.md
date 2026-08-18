@@ -7,6 +7,19 @@ about things that are broken, risky, or need verification.
 
 ## Security
 
+- **FIXED IN SOURCE 2026-08-18, NOT YET DEPLOYED — mobile Home hid both
+  legitimate room-deletion paths.** The phone Home never loaded the shared
+  staff-capability response, so an administrator or super moderator could not
+  see the audited room menu that desktop already rendered. Owners could reach
+  deletion only when a room happened to appear under `Your active rooms`, with
+  no explicit management affordance on the room card. Home room cards now
+  expose a separate owner-only overflow menu backed by `deleteRoomSelf`, while
+  the shield menu is backed by `adminDeleteRoom`. Server authorization is
+  intentionally asymmetric: exact `hostId` ownership is sufficient only for
+  the caller's own room; deleting any room requires `superAdmin` or
+  `superModerator`; ordinary `moderator` is denied. Phone navigation now loads
+  the same capability object as desktop. See ADR-075.
+
 **Rules status, 2026-08-16: the pending fixes are now DEPLOYED.** Every
 "FIXED IN SOURCE, PENDING RULES DEPLOY" marker in this file was cleared on
 this date. `firestore.rules` was deployed twice — 20:40 by the operator and

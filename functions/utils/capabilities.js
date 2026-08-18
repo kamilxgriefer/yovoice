@@ -2,7 +2,9 @@
 //
 // Functions enforce capabilities; Flutter renders them. Neither side ever
 // compares role strings on its own, because scattered comparisons are how
-// one surface forgets that superModerator lost permanent delete.
+// one surface forgets that regular moderators cannot permanently delete,
+// while superModerator may delete rooms but still cannot manage users, roles,
+// or the other protected-owner resources.
 //
 // OWNERSHIP is stricter than role. Full destructive control belongs only
 // to the account whose uid matches the YOVOICE_PROTECTED_OWNER_UID
@@ -80,8 +82,10 @@ function deriveCapabilities({ uid, user = {}, grant = null, now = new Date() }) 
     isOwner: ownerConfirmed,
     unconfirmedSuperAdmin,
 
+    // ------------------------------------------------ senior room authority
+    permanentDeleteSpaces: superModTier,
+
     // ------------------------------------------------ owner only
-    permanentDeleteSpaces: ownerConfirmed,
     deleteAnyMessage: ownerConfirmed,
     permanentBan: ownerConfirmed,
     manageRoles: ownerConfirmed,
