@@ -4728,7 +4728,7 @@ direct-path native playback avoids a second in-memory copy during listening.
 
 ## ADR-075: Owning one room and deleting any room are separate authorities on every form factor
 
-**Status:** Accepted in source on 2026-08-18; not yet deployed.
+**Status:** Accepted and deployed on 2026-08-18 (`e524497`).
 
 ### Context
 

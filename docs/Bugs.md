@@ -7,7 +7,7 @@ about things that are broken, risky, or need verification.
 
 ## Security
 
-- **FIXED IN SOURCE 2026-08-18, NOT YET DEPLOYED — mobile Home hid both
+- **FIXED AND DEPLOYED 2026-08-18 (`e524497`) — mobile Home hid both
   legitimate room-deletion paths.** The phone Home never loaded the shared
   staff-capability response, so an administrator or super moderator could not
   see the audited room menu that desktop already rendered. Owners could reach
