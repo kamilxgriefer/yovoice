@@ -32,6 +32,8 @@ import 'package:yovoice/features/staff/data/staff_directory_service.dart';
 import 'package:yovoice/features/staff/data/staff_overview_service.dart';
 import 'package:yovoice/features/staff/presentation/screens/staff_center_screen.dart';
 import 'package:yovoice/features/staff/presentation/screens/user_management_screen.dart';
+import 'package:yovoice/features/staff/presentation/sections/staff_overview_section.dart';
+import 'package:yovoice/features/staff/presentation/sections/staff_users_section.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
 const _ownerCaps = StaffCapabilities(
@@ -587,6 +589,122 @@ void main() {
         expect(find.text('Open Moderation Center'), findsNothing);
         expect(find.byType(Scaffold), findsOneWidget);
         expect(find.byType(AppBar), findsOneWidget);
+        expect(tester.takeException(), isNull, reason: '$size');
+      }
+    });
+
+    testWidgets(
+      'section tabs collapse while content scrolls and the app-bar menu '
+      'keeps every section reachable',
+      (tester) async {
+        useSize(tester, const Size(390, 844));
+        await tester.pumpWidget(MaterialApp(home: mobileScreen()));
+        await settle(tester);
+
+        expect(
+          find.byKey(const ValueKey('staff-mobile-section-tabs')),
+          findsOneWidget,
+        );
+        expect(find.byType(ChoiceChip), findsWidgets);
+        final initialContentTop = tester
+            .getTopLeft(find.byType(StaffOverviewSection))
+            .dy;
+
+        final overviewScroll = find.descendant(
+          of: find.byType(StaffOverviewSection),
+          matching: find.byType(SingleChildScrollView),
+        );
+        await tester.drag(overviewScroll, const Offset(0, -280));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 220));
+
+        expect(
+          find.byKey(const ValueKey('staff-mobile-tabs-collapsed')),
+          findsOneWidget,
+        );
+        expect(find.byType(ChoiceChip), findsNothing);
+        final expandedContentTop = tester
+            .getTopLeft(find.byType(StaffOverviewSection))
+            .dy;
+        expect(
+          expandedContentTop,
+          lessThan(initialContentTop - 40),
+          reason: 'scrolling should return the tab-strip height to content',
+        );
+
+        await tester.drag(overviewScroll, const Offset(0, 140));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 220));
+        expect(
+          find.byKey(const ValueKey('staff-mobile-section-tabs')),
+          findsOneWidget,
+        );
+
+        await tester.drag(overviewScroll, const Offset(0, -140));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 220));
+        expect(
+          find.byKey(const ValueKey('staff-mobile-tabs-collapsed')),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byTooltip('Choose Staff Center section'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Users').last);
+        await settle(tester);
+
+        expect(find.byType(StaffUsersSection), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('staff-mobile-section-tabs')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets('collapsible Staff Center chrome stays usable on narrow phones '
+        'at 200% text', (tester) async {
+      for (final size in const [
+        Size(320, 640),
+        Size(390, 844),
+        Size(430, 932),
+      ]) {
+        useSize(tester, size);
+        await tester.pumpWidget(
+          MaterialApp(
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: child!,
+            ),
+            home: KeyedSubtree(
+              key: ValueKey('staff-${size.width}'),
+              child: mobileScreen(),
+            ),
+          ),
+        );
+        await settle(tester);
+
+        expect(find.byType(ChoiceChip), findsWidgets, reason: '$size');
+        final overviewScroll = find.descendant(
+          of: find.byType(StaffOverviewSection),
+          matching: find.byType(SingleChildScrollView),
+        );
+        await tester.drag(overviewScroll, const Offset(0, -300));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 220));
+
+        expect(
+          find.byKey(const ValueKey('staff-mobile-tabs-collapsed')),
+          findsOneWidget,
+          reason: '$size',
+        );
+        expect(
+          find.byTooltip('Choose Staff Center section'),
+          findsOneWidget,
+          reason: '$size',
+        );
         expect(tester.takeException(), isNull, reason: '$size');
       }
     });

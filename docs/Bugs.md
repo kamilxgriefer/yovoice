@@ -1407,3 +1407,12 @@ permission flags).
   and preference-change-during-upload attacks are covered by the Functions and
   Rules emulator suites; responsive Flutter widget/service tests cover 320 px
   and desktop widths.
+- **Fixed in source — mobile Staff Center left too little room for its
+  content.** The pushed Staff Center kept both a seven-item horizontal section
+  strip and the application dock visible while every section scrolled inside
+  the remaining viewport. The section strip now collapses when content moves
+  toward the bottom and returns when the user scrolls back; an always-visible
+  app-bar menu keeps every capability-gated section reachable. Phone headers
+  also keep their action beside the title instead of wasting a separate row.
+  Geometry and interaction regressions cover 320/390/430 px at 200% text, and
+  the real-font screenshot harness includes the scrolled state.

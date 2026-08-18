@@ -43,34 +43,28 @@ class StaffSectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const titleStyle = TextStyle(
+      color: Colors.white,
+      fontSize: 22,
+      fontWeight: FontWeight.w900,
+      letterSpacing: -.3,
+    );
+    const subtitleStyle = TextStyle(
+      color: StaffCenterStyle.muted,
+      fontSize: 12.5,
+      height: 1.35,
+    );
     final titleBlock = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          title,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 22,
-            fontWeight: FontWeight.w900,
-            letterSpacing: -.3,
-          ),
-        ),
+        Text(title, style: titleStyle),
         const SizedBox(height: 3),
-        Text(
-          subtitle,
-          style: const TextStyle(
-            color: StaffCenterStyle.muted,
-            fontSize: 12.5,
-            height: 1.35,
-          ),
-        ),
+        Text(subtitle, style: subtitleStyle),
       ],
     );
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
-      // On a phone the trailing action drops UNDER the title instead of
-      // squeezing beside it — same content, no horizontal overflow.
       child: LayoutBuilder(
         builder: (context, constraints) {
           final narrow = constraints.maxWidth < 520 && trailing != null;
@@ -78,9 +72,16 @@ class StaffSectionHeader extends StatelessWidget {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                titleBlock,
-                const SizedBox(height: 10),
-                Align(alignment: Alignment.centerLeft, child: trailing),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: Text(title, style: titleStyle)),
+                    const SizedBox(width: 8),
+                    trailing!,
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(subtitle, style: subtitleStyle),
               ],
             );
           }

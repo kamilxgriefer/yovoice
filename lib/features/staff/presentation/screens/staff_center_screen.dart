@@ -85,6 +85,7 @@ enum StaffSection {
 class _StaffCenterScreenState extends State<StaffCenterScreen> {
   StaffCapabilities? _capabilities;
   bool _loading = true;
+  bool _mobileTabsCollapsed = false;
 
   StaffSection _section = StaffSection.overview;
   String _usersFilter = 'all';
@@ -93,6 +94,32 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
   // Remounts Users when a navigation asks for a fresh filter.
   int _usersEpoch = 0;
   int _auditEpoch = 0;
+
+  void _selectSection(StaffSection section) {
+    setState(() {
+      _section = section;
+      _mobileTabsCollapsed = false;
+    });
+  }
+
+  bool _handleMobileScroll(ScrollNotification notification) {
+    if (notification.metrics.axis != Axis.vertical) return false;
+
+    if (notification is! ScrollUpdateNotification ||
+        notification.scrollDelta == null) {
+      return false;
+    }
+
+    final delta = notification.scrollDelta!;
+    final shouldCollapse = delta > 2 && notification.metrics.pixels > 24;
+    final shouldExpand = delta < -2;
+    if (shouldCollapse && !_mobileTabsCollapsed) {
+      setState(() => _mobileTabsCollapsed = true);
+    } else if (shouldExpand && _mobileTabsCollapsed) {
+      setState(() => _mobileTabsCollapsed = false);
+    }
+    return false;
+  }
 
   String get _currentUid {
     if (widget.currentUid != null) return widget.currentUid!;
@@ -190,6 +217,7 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
     // a navigation dead end.
     final inShellSlot =
         widget.isRootTab && MediaQuery.sizeOf(context).width >= 980;
+    final compactNavigation = MediaQuery.sizeOf(context).width < 980;
 
     return Scaffold(
       backgroundColor: StaffCenterStyle.background,
@@ -226,6 +254,26 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
                 ],
               ),
               actions: [
+                if (compactNavigation && sections.isNotEmpty)
+                  PopupMenuButton<StaffSection>(
+                    tooltip: 'Choose Staff Center section',
+                    initialValue: _section,
+                    onSelected: _selectSection,
+                    icon: const Icon(Icons.view_list_rounded),
+                    itemBuilder: (context) => [
+                      for (final section in sections)
+                        PopupMenuItem<StaffSection>(
+                          value: section,
+                          child: Row(
+                            children: [
+                              Icon(section.icon, size: 18),
+                              const SizedBox(width: 10),
+                              Expanded(child: Text(section.label)),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
                 IconButton(
                   tooltip: 'Home',
                   onPressed: () =>
@@ -274,11 +322,28 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _tabs(sections),
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeOutCubic,
+                        alignment: Alignment.topCenter,
+                        child: _mobileTabsCollapsed
+                            ? const SizedBox.shrink(
+                                key: ValueKey('staff-mobile-tabs-collapsed'),
+                              )
+                            : KeyedSubtree(
+                                key: const ValueKey(
+                                  'staff-mobile-section-tabs',
+                                ),
+                                child: _tabs(sections),
+                              ),
+                      ),
                       Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-                          child: _sectionBody(capabilities),
+                        child: NotificationListener<ScrollNotification>(
+                          onNotification: _handleMobileScroll,
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                            child: _sectionBody(capabilities),
+                          ),
                         ),
                       ),
                     ],
@@ -382,7 +447,7 @@ class _StaffCenterScreenState extends State<StaffCenterScreen> {
                 ),
                 label: Text(section.label),
                 selected: _section == section,
-                onSelected: (_) => setState(() => _section = section),
+                onSelected: (_) => _selectSection(section),
                 labelStyle: TextStyle(
                   color: _section == section
                       ? Colors.white

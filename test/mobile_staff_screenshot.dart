@@ -5,6 +5,7 @@
 //   mobile_more_owner            owner's More sheet (crimson Staff Center)
 //   mobile_more_moderator        moderator's sheet (violet Moderation Center)
 //   mobile_staff_center_owner    Staff Center tabs as the owner
+//   mobile_staff_center_owner_scrolled  collapsed tabs while scrolling
 //   mobile_staff_center_moderator  the moderation tier's three sections
 //
 //   flutter test test/mobile_staff_screenshot.dart
@@ -27,6 +28,7 @@ import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/data/staff_directory_service.dart';
 import 'package:yovoice/features/staff/data/staff_overview_service.dart';
 import 'package:yovoice/features/staff/presentation/screens/staff_center_screen.dart';
+import 'package:yovoice/features/staff/presentation/sections/staff_overview_section.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
 String _resolveFontRoot() {
@@ -285,6 +287,14 @@ void main() {
       );
       await _settle(tester);
       await _shoot(tester, name);
+      if (name == 'mobile_staff_center_owner') {
+        await tester.drag(
+          find.byType(StaffOverviewSection),
+          const Offset(0, -280),
+        );
+        await _settle(tester);
+        await _shoot(tester, 'mobile_staff_center_owner_scrolled');
+      }
       expect(tester.takeException(), isNull);
     });
   }
