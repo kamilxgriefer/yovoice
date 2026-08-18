@@ -258,6 +258,7 @@ exports.onClubMemberCreated = onClubMemberCreated;
 
 const { onProfileIdentityChanged } = require("./profile/fanout");
 const { updateMyDisplayName } = require("./profile/display_name");
+const { setMyProfileVisibility } = require("./profile/profile_visibility");
 const {
   onAuthUserDeleted,
   onUserPrivacySourceChanged,
@@ -266,6 +267,7 @@ const {
 
 exports.onProfileIdentityChanged = onProfileIdentityChanged;
 exports.updateMyDisplayName = updateMyDisplayName;
+exports.setMyProfileVisibility = setMyProfileVisibility;
 exports.onAuthUserDeleted = onAuthUserDeleted;
 exports.onUserPrivacySourceChanged = onUserPrivacySourceChanged;
 exports.searchPublicProfiles = searchPublicProfiles;
@@ -368,6 +370,13 @@ const {
   verifyPurchase,
   expirePremiumIdentity,
 } = require("./premium/entitlements");
+const {
+  getPremiumBillingContext,
+  createPremiumCheckoutSession,
+  createPremiumPortalSession,
+  stripePremiumWebhook,
+  onAuthUserDeletedCancelStripe,
+} = require("./premium/stripe_billing");
 const { createStageBFunctions } = require("./integrity/stage_b_functions");
 const {
   onAchievementClubMemberCreated,
@@ -396,6 +405,11 @@ const {
 exports.adminSetPremiumEntitlements = adminSetPremiumEntitlements;
 exports.verifyPurchase = verifyPurchase;
 exports.expirePremiumIdentity = expirePremiumIdentity;
+exports.getPremiumBillingContext = getPremiumBillingContext;
+exports.createPremiumCheckoutSession = createPremiumCheckoutSession;
+exports.createPremiumPortalSession = createPremiumPortalSession;
+exports.stripePremiumWebhook = stripePremiumWebhook;
+exports.onAuthUserDeletedCancelStripe = onAuthUserDeletedCancelStripe;
 
 // Creator Studio pinned posts are references to canonical, published Voice
 // Moments. The callable is the only writer; the trigger removes a pin as soon

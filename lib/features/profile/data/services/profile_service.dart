@@ -22,6 +22,13 @@ export 'package:yovoice/features/profile/data/services/profile_image_rules.dart'
 typedef DisplayNameMutationInvoker =
     Future<DisplayNameChangeResult> Function(String displayName);
 
+class ProfileUnavailableException implements Exception {
+  const ProfileUnavailableException();
+
+  @override
+  String toString() => 'This profile is not available.';
+}
+
 enum DisplayNameChangeFailure {
   cooldown,
   authSyncPending,
@@ -187,11 +194,14 @@ class ProfileService {
     // from the exact server-owned public projection (no email, preferences,
     // presence, staff/ban or achievement internals).
     final collection = userId == _uid ? 'users' : 'publicProfiles';
-    return _firestore
-        .collection(collection)
-        .doc(userId)
-        .snapshots()
-        .map(UserProfile.fromFirestore);
+    return _firestore.collection(collection).doc(userId).snapshots().map((
+      document,
+    ) {
+      if (userId != _uid && !document.exists) {
+        throw const ProfileUnavailableException();
+      }
+      return UserProfile.fromFirestore(document);
+    });
   }
 
   Future<void> ensureProfile() async {

@@ -1310,3 +1310,50 @@ permission flags).
   create rules require byte-for-byte equality with its `displayName`, exact
   schemas and server-time timestamps; focused Flutter tests and Rules emulator
   cases cover canonical, stale, forged and missing-profile paths.
+- **OPEN — Stripe Premium is implemented and tested in source but is not ready
+  for production deployment.** Code now fixes the old profile redirect, uses
+  hosted Checkout/Portal, exact PLN 19.99/199.99 inclusive base Prices,
+  Adaptive Pricing, paid-Invoice webhook authority and Auth-deletion
+  cancellation. No live Stripe objects, secrets, webhook, Portal configuration
+  or Functions were created/deployed in this work. Launch remains blocked on
+  seller-of-record/VAT identity, consumer refund-money timing and disclosure,
+  Stripe Tax registrations, live Price/Product creation, Portal
+  configuration and a controlled smoke/reconciliation run. Do not publish tax
+  or refund claims until those decisions exist. Access behavior is pinned:
+  full refund/dispute revokes and cancels; partial refund creates a private
+  support-review case without automatic revocation.
+- **Fixed in source — Google Sign-In on Flutter Web returned Google error 400
+  `redirect_uri_mismatch`.** The deployed bundle used
+  `auth.yovoice.app/__/auth/handler`, but that redirect was not registered on
+  the Google OAuth client. Flutter Web now uses Firebase's registered
+  `yovoice-ec54a.firebaseapp.com` Auth handler. The Android Firebase app also
+  has both debug and release/upload SHA-1 and SHA-256 fingerprints, and the
+  checked-in SDK config contains the release OAuth client. Production web will
+  remain broken until the auth-only Hosting build is deployed and smoke-tested.
+- **OPEN operational dependency — Sign in with Apple is not configured in
+  Firebase or in the Apple release profile.** The former login button was a
+  placeholder. The client now contains the real Firebase Apple provider flow,
+  shared profile provisioning and a runtime provider probe, but the feature is
+  fail-closed behind `YOVOICE_APPLE_SIGN_IN_ENABLED=false`. Do not enable it
+  until a Sign in with Apple Service ID/key is configured in Firebase, the
+  Apple capability is added to the App ID and release provisioning profile,
+  and web/iOS/Android real-account smoke tests pass. The existing
+  `AuthKey_3288VCBHFD.p8` is an APNs key and must not be reused as an Apple
+  sign-in key.
+- **Fixed in source — Profile visibility was a disabled placeholder.** The
+  reusable Settings surface now persists `public`/`friends`/`private` through a
+  server-authoritative callable. Rules, search and website publication enforce
+  it; invalid state fails closed. A backend-only generation also closes the race
+  where a scheduled showcase build could otherwise reinsert a profile just
+  after it became private. Source and production still differ until Functions,
+  Rules and clients are deliberately deployed.
+- **Fixed in source, not deployed — “Who can message you” was a disabled
+  placeholder with no delivery policy.** A recipient now selects Everyone,
+  People you follow, Friends only, or Nobody. The server rechecks the setting
+  on canonical conversation open, every text send, media reservation, and
+  media finalization; existing threads and a pre-change upload reservation are
+  not bypasses. Firestore Rules also protect the legacy direct-write path.
+  Directional-follow, one-sided-friendship, malformed-value, existing-thread,
+  and preference-change-during-upload attacks are covered by the Functions and
+  Rules emulator suites; responsive Flutter widget/service tests cover 320 px
+  and desktop widths.

@@ -6,6 +6,7 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/premium_plans.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
+import 'package:yovoice/features/premium/data/services/premium_billing_service.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_plans_screen.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_badge_pill.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
@@ -25,10 +26,16 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 /// via [ProfileService]) wearing the canonical [PremiumAvatarFrame] —
 /// a truthful preview of their own Premium identity, never a fake person.
 class PremiumScreen extends StatefulWidget {
-  const PremiumScreen({this.entitlementService, this.profileService, super.key});
+  const PremiumScreen({
+    this.entitlementService,
+    this.profileService,
+    this.billingService,
+    super.key,
+  });
 
   final EntitlementService? entitlementService;
   final ProfileService? profileService;
+  final PremiumBillingGateway? billingService;
 
   @override
   State<PremiumScreen> createState() => _PremiumScreenState();
@@ -46,8 +53,10 @@ class _PremiumScreenState extends State<PremiumScreen> {
   void _openPlans() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) =>
-            PremiumPlansScreen(entitlementService: widget.entitlementService),
+        builder: (_) => PremiumPlansScreen(
+          entitlementService: widget.entitlementService,
+          billingService: widget.billingService,
+        ),
       ),
     );
   }
@@ -78,6 +87,7 @@ class _PremiumScreenState extends State<PremiumScreen> {
             return _PremiumActiveView(
               entitlements: entitlements,
               justActivated: _checkedInitial && !_wasPremiumOnOpen,
+              onManageSubscription: _openPlans,
             );
           }
 
@@ -340,7 +350,11 @@ class _HeroPill extends StatelessWidget {
         color: AppColors.surface.withValues(alpha: .88),
         border: Border.all(color: Colors.white.withValues(alpha: .12)),
         boxShadow: const [
-          BoxShadow(color: Colors.black45, blurRadius: 12, offset: Offset(0, 3)),
+          BoxShadow(
+            color: Colors.black45,
+            blurRadius: 12,
+            offset: Offset(0, 3),
+          ),
         ],
       ),
       child: Row(
@@ -478,10 +492,12 @@ class _PremiumActiveView extends StatelessWidget {
   const _PremiumActiveView({
     required this.entitlements,
     required this.justActivated,
+    required this.onManageSubscription,
   });
 
   final SubscriptionEntitlements entitlements;
   final bool justActivated;
+  final VoidCallback onManageSubscription;
 
   @override
   Widget build(BuildContext context) {
@@ -556,7 +572,7 @@ class _PremiumActiveView extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               FilledButton(
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: onManageSubscription,
                 style: FilledButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   padding: const EdgeInsets.symmetric(
@@ -565,7 +581,7 @@ class _PremiumActiveView extends StatelessWidget {
                   ),
                 ),
                 child: const Text(
-                  'Explore Premium',
+                  'Manage subscription',
                   style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w800,

@@ -18,12 +18,14 @@ const { getAuth } = require("firebase-admin/auth");
 const { Timestamp } = require("firebase-admin/firestore");
 
 const { db } = require("../utils/firestore");
+const { normalizeProfileVisibility } = require("../profile/profile_visibility");
 
 const REGION = "europe-west1";
 const MARKETING_CONSENTS_COLLECTION = "marketingConsents";
 const CLUB_MARKETING_CONSENTS_COLLECTION = "clubMarketingConsents";
 const PUBLIC_SHOWCASE_COLLECTION = "publicShowcase";
 const PUBLIC_SHOWCASE_DOCUMENT = "live";
+const PRIVATE_SHOWCASE_CONTROL_COLLECTION = "privateShowcaseControl";
 const PUBLIC_SHOWCASE_SCHEMA_VERSION = 1;
 const CONSENT_SCHEMA_VERSION = 1;
 const MAX_PERSON_CONSENT_SCAN = 200;
@@ -127,6 +129,7 @@ function derivePublicPerson({ uid, consent, profile, user, authUser }, nowMillis
   if (!authUser || authUser.uid !== uid || authUser.disabled === true ||
       !user || user.banned === true || user.disabled === true ||
       user.deleted === true || user.status === "deleted" ||
+      normalizeProfileVisibility(user.profileVisibility) !== "public" ||
       user.role !== "user") {
     return null;
   }
@@ -354,17 +357,42 @@ async function publishPublicShowcase({
   loadPeople = () => loadPeopleFromFirestore(),
   loadClubs = () => loadClubsFromFirestore(),
   writeShowcase = null,
+  readPrivacyGeneration = null,
 } = {}) {
+  const controlRef = db
+    .collection(PRIVATE_SHOWCASE_CONTROL_COLLECTION)
+    .doc(PUBLIC_SHOWCASE_DOCUMENT);
+  const readGeneration = readPrivacyGeneration ?? (async () => {
+    const snapshot = await controlRef.get();
+    const value = snapshot.data()?.privacyGeneration;
+    return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  });
+  const privacyGeneration = await readGeneration();
   const showcase = await computePublicShowcase({
     nowMillis,
     loadPeople,
     loadClubs,
   });
-  const write = writeShowcase ?? ((payload) => db
-    .collection(PUBLIC_SHOWCASE_COLLECTION)
-    .doc(PUBLIC_SHOWCASE_DOCUMENT)
-    .set(payload));
-  await write(showcase);
+  if (writeShowcase) {
+    await writeShowcase(showcase);
+  } else {
+    const showcaseRef = db
+      .collection(PUBLIC_SHOWCASE_COLLECTION)
+      .doc(PUBLIC_SHOWCASE_DOCUMENT);
+    await db.runTransaction(async (transaction) => {
+      const control = await transaction.get(controlRef);
+      const value = control.data()?.privacyGeneration;
+      const currentGeneration = Number.isSafeInteger(value) && value >= 0
+        ? value
+        : 0;
+      if (currentGeneration !== privacyGeneration) {
+        throw new PublicShowcaseError(
+          "Profile privacy changed while the showcase was being built; refusing a stale publication.",
+        );
+      }
+      transaction.set(showcaseRef, showcase);
+    });
+  }
   return showcase;
 }
 
@@ -398,6 +426,7 @@ module.exports = {
   PUBLIC_SHOWCASE_COLLECTION,
   PUBLIC_SHOWCASE_DOCUMENT,
   PUBLIC_SHOWCASE_SCHEMA_VERSION,
+  PRIVATE_SHOWCASE_CONTROL_COLLECTION,
   PublicShowcaseError,
   RECENT_ACTIVITY_SECONDS,
   REGION,

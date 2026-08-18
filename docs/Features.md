@@ -177,9 +177,12 @@ microphone/camera/push-notification permission status
 → `yovoice.app`). Account deletion routes to a real pre-filled support
 email rather than a self-service delete, since that needs a dedicated
 Cloud Function to clean up Auth + Firestore + Storage together — not
-built yet. Not real yet, shown disabled: two-factor auth, profile
-visibility/message-privacy controls, multi-device session management, app
-UI language switching.
+built yet. Profile visibility, recipient-controlled direct-message privacy
+and authenticator-app two-factor authentication are implemented in source and
+covered by responsive/security tests; they require their coordinated Firebase
+configuration, Functions/Rules and client rollout before being called live.
+Multi-device session management and app UI language switching remain disabled
+until their real platform/data contracts exist.
 
 ## Notifications
 

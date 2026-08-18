@@ -28,6 +28,13 @@ for why this architecture was chosen anyway.
   `request.auth.token.email_verified` is checked directly in Firestore
   rules and Cloud Functions before allowing outbound/content-creation
   actions (posting, creating rooms/clubs/moments, admin bootstrap).
+- **Two-factor authentication uses Firebase TOTP, not an app-owned secret or
+  SMS code.** Enrollment and sign-in assertions are created by the Firebase
+  Auth SDK. The app keeps an enrollment secret only in memory until setup is
+  completed or cancelled, never writes it to Firestore/Storage/logs, and
+  requires recent primary authentication when Firebase requests it. Project
+  MFA stays disabled until both compatible sign-in clients can be rolled out
+  together.
 - **Roles live in Auth custom claims, never in a Firestore document.**
   This is the single most load-bearing security decision in the project:
   a user can always write their own `users/{uid}` document (that's how
@@ -233,6 +240,24 @@ read requests `MAX + 1` so an oversized graph fails closed instead of silently
 truncating authority. Follow edges contain only uid and server time; display
 identity is resolved from the current public projection and inactive endpoints
 are denied.
+
+## Direct-message privacy
+
+The recipient, not the sender or client UI, controls new direct-message
+delivery. `users/{uid}.messagePrivacy` accepts `everyone`,
+`peopleYouFollow`, `friends`, or `nobody`; absence is a backwards-compatible
+Everyone default and every unknown value fails closed. The follow mode reads
+the recipient's server-owned following edge. Friends requires both canonical
+friendship guards, so a stranded half or forged legacy mirror grants nothing.
+
+Functions enforce the preference when a conversation opens and again for each
+text send, media reservation, and media finalization. This closes the existing
+conversation and reserve-before-change bypasses. Firestore Rules mirror the
+check on the legacy message-create path, and owner writes are allowlisted to
+the exact enum. Blocks, account state, email verification, and sanctions are
+still checked independently and can only narrow access. History, reactions,
+read receipts, edits, and deletes are intentionally not revoked by a new inbox
+preference.
 
 New friend requests and conversations copy no email field; compatibility
 parsers tolerate legacy documents without using email as visible identity. A
@@ -550,6 +575,45 @@ the same practice any project handling real user data should follow,
 scaled to this project's actual size rather than a boilerplate policy no
 one would act on. See [CONTRIBUTING.md](CONTRIBUTING.md) for what this
 looks like if the project ever gains outside contributors.
+
+## Stripe billing boundary (source only; not deployed)
+
+The client selects only `monthly` or `yearly`; it cannot provide amount,
+currency, Price, Customer, Firebase uid or return URL. Checkout and Portal use
+fixed HTTPS destinations. A canonical server-created `billingAccounts/{uid}`
+binding—not mutable Stripe metadata—owns the Customer. Provider secrets and all
+operational billing collections are server-only.
+
+Webhook acceptance requires Stripe signature, deployment livemode match,
+validated immutable Prices and a paid latest Invoice for first activation.
+Entitlement + billing + event receipt use one transaction, replay is absorbed,
+and every transaction retry fetches current Stripe state so an older active
+handler cannot resurrect canceled access. Checkout creation uses a lease plus a
+persisted provider idempotency token and checks existing subscriptions. Portal
+authorization deliberately permits the authenticated payer even when their app
+account is suspended, so moderation cannot trap recurring charges.
+
+Production deployment is fail-closed unless `yovoice-ec54a` uses `sk_live_`,
+live Prices and live webhook events. App Check enforcement remains off pending
+the project-wide monitored rollout; it is not treated as billing authorization.
+Full refunds and newly-created disputes fail closed by canceling every
+nonterminal canonical Customer subscription and revoking access. Partial
+refunds preserve the current paid entitlement and create a private support
+review audit; no financial or proration conclusion is inferred. Seller/VAT,
+refund-money timing and B2B policy remain launch blockers.
+
+## Profile visibility boundary (source only; not deployed)
+
+Profile privacy is enforced from private `users/{uid}.profileVisibility`, never
+from client-writable state or from the public projection alone. Missing legacy
+state is public for compatibility; malformed state is private. Foreign known-id
+reads require an active account, no inbound block and the visibility grant;
+friends-only access requires two canonical server-owned guards. Collection
+listing stays denied. Search applies the same checks server-side. Website
+consent cannot override non-public app visibility, and a private Admin-only
+generation prevents a stale publisher transaction from restoring removed data.
+Existing conversation access is intentionally independent and reveals only the
+participant label already stored on that authorised conversation.
 
 ## Checklist for new privileged write paths
 

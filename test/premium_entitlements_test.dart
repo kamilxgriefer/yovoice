@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
+import 'package:yovoice/features/premium/data/models/premium_billing_context.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
+import 'package:yovoice/features/premium/data/services/premium_billing_service.dart';
 import 'package:yovoice/features/premium/premium_gates.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
@@ -14,6 +16,54 @@ import 'package:yovoice/features/premium/presentation/widgets/premium_feature_ga
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 
 const _uid = 'premium-user';
+
+const _billingContext = PremiumBillingContext(
+  countryCode: 'PL',
+  currency: 'PLN',
+  taxDisplay: 'included',
+  taxNotice: 'VAT is included where required.',
+  priceDisplaySource: 'base',
+  localizedAtCheckout: true,
+  billingManagedBy: PremiumBillingManager.none,
+  checkoutAvailable: true,
+  portalAvailable: false,
+  currentPlan: PremiumPlan.none,
+  renewalBehavior: 'none',
+  currentPeriodEnd: null,
+  plans: [
+    PremiumLocalizedPlan(
+      plan: PremiumPlan.monthly,
+      interval: 'month',
+      currency: 'PLN',
+      unitAmount: 1999,
+      formattedPrice: '19,99 zł',
+      formattedEquivalent: null,
+      savingsPercent: 0,
+    ),
+    PremiumLocalizedPlan(
+      plan: PremiumPlan.yearly,
+      interval: 'year',
+      currency: 'PLN',
+      unitAmount: 19999,
+      formattedPrice: '199,99 zł',
+      formattedEquivalent: '16,67 zł',
+      savingsPercent: 17,
+    ),
+  ],
+);
+
+class _FakeBilling implements PremiumBillingGateway {
+  const _FakeBilling();
+  @override
+  Future<PremiumBillingContext> getContext({String? countryCode}) async =>
+      _billingContext;
+  @override
+  Future<Uri> createCheckout(PremiumPlan plan) async =>
+      Uri.parse('https://checkout.stripe.com/test');
+  @override
+  Future<Uri> createPortal() async =>
+      Uri.parse('https://billing.stripe.com/test');
+}
 
 MockFirebaseAuth _auth() => MockFirebaseAuth(
   signedIn: true,
@@ -228,6 +278,7 @@ void main() {
           home: PremiumScreen(
             entitlementService: EntitlementService(firestore: db, auth: auth),
             profileService: ProfileService(firestore: db, auth: auth),
+            billingService: const _FakeBilling(),
           ),
         ),
       );
@@ -249,27 +300,26 @@ void main() {
       expect(find.text('Create your own Clubs'), findsOneWidget);
       expect(find.text('Stand out'), findsOneWidget);
       // No pricing on the presentation — that's the plans screen's job.
-      expect(find.text('€9.99'), findsNothing);
+      expect(find.text('19,99 zł'), findsNothing);
 
       await tester.tap(find.text('Check plans'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.text('Choose your plan'), findsOneWidget);
-      expect(find.text('€9.99'), findsOneWidget);
-      expect(find.text('€89.99'), findsOneWidget);
+      expect(find.text('19,99 zł'), findsOneWidget);
+      expect(find.text('199,99 zł'), findsOneWidget);
       expect(find.text('Best value'), findsOneWidget);
-      expect(find.text('≈ €7.50 / month'), findsOneWidget);
-      expect(find.text('Save about 25%'), findsOneWidget);
+      expect(find.text('16,67 zł / month'), findsOneWidget);
+      expect(find.text('Save 17%'), findsOneWidget);
 
       await tester.scrollUntilVisible(
-        find.text('Restore purchases'),
+        find.text('Everything Premium includes:'),
         250,
         scrollable: find.byType(Scrollable).last,
       );
       await tester.pump();
       expect(find.text('Everything Premium includes:'), findsOneWidget);
-      expect(find.text('Restore purchases'), findsOneWidget);
     });
 
     testWidgets('active premium member sees status, not the paywall', (
@@ -288,6 +338,7 @@ void main() {
           home: PremiumScreen(
             entitlementService: EntitlementService(firestore: db, auth: auth),
             profileService: ProfileService(firestore: db, auth: auth),
+            billingService: const _FakeBilling(),
           ),
         ),
       );
@@ -296,7 +347,7 @@ void main() {
 
       expect(find.text('You have YO Voice Premium'), findsOneWidget);
       expect(find.textContaining('Yearly plan'), findsOneWidget);
-      expect(find.text('€9.99'), findsNothing);
+      expect(find.text('19,99 zł'), findsNothing);
       expect(find.text('Check plans'), findsNothing);
     });
   });

@@ -83,6 +83,18 @@ async function wipe() {
         .doc(CALLER)
         .delete(),
       db.collection("privateRateLimits").doc(rateLimitId(uid)).delete(),
+      db
+        .collection("friendshipGuards")
+        .doc(CALLER)
+        .collection("friends")
+        .doc(uid)
+        .delete(),
+      db
+        .collection("friendshipGuards")
+        .doc(uid)
+        .collection("friends")
+        .doc(CALLER)
+        .delete(),
     ]),
     ...unrelatedBlocked.map((uid) =>
       db
@@ -341,6 +353,7 @@ describe("privacy projection trigger", () => {
       );
     assert.equal(source.data().disabled, true);
     assert.equal(source.data().isOnline, false);
+    assert.equal(source.data().premiumIdentity, false);
     assert.ok(source.data().authDeletedAt);
     assert.equal(profile.exists, false);
     assert.equal(presence.exists, false);
@@ -425,6 +438,74 @@ describe("public profile search", () => {
       premiumIdentity: false,
       followerCount: 0,
     });
+  });
+
+  test("visibility filters discovery from private source state, not the stale projection", async () => {
+    await seedSearchWorld();
+    await db.collection("users").doc(VISIBLE).update({
+      profileVisibility: "private",
+    });
+    let response = await runSearch({
+      auth: { uid: CALLER, token: { email_verified: true } },
+      data: { query: "@voice", limit: 20 },
+    });
+    assert.deepEqual(response.profiles, []);
+
+    await db.collection("users").doc(VISIBLE).update({
+      profileVisibility: "friends",
+    });
+    response = await runSearch({
+      auth: { uid: CALLER, token: { email_verified: true } },
+      data: { query: "@voice", limit: 20 },
+    });
+    assert.deepEqual(response.profiles, []);
+
+    const establishedAt = Timestamp.now();
+    await Promise.all([
+      db
+        .collection("friendshipGuards")
+        .doc(CALLER)
+        .collection("friends")
+        .doc(VISIBLE)
+        .set({
+          ownerId: CALLER,
+          friendId: VISIBLE,
+          schemaVersion: 1,
+          establishedAt,
+        }),
+      db
+        .collection("friendshipGuards")
+        .doc(VISIBLE)
+        .collection("friends")
+        .doc(CALLER)
+        .set({
+          ownerId: VISIBLE,
+          friendId: CALLER,
+          schemaVersion: 1,
+          establishedAt,
+        }),
+    ]);
+    response = await runSearch({
+      auth: { uid: CALLER, token: { email_verified: true } },
+      data: { query: "@voice", limit: 20 },
+    });
+    assert.deepEqual(
+      response.profiles.map((profile) => profile.uid),
+      [VISIBLE],
+    );
+
+    // One malformed/missing half never buys access.
+    await db
+      .collection("friendshipGuards")
+      .doc(VISIBLE)
+      .collection("friends")
+      .doc(CALLER)
+      .update({ ownerId: CALLER });
+    response = await runSearch({
+      auth: { uid: CALLER, token: { email_verified: true } },
+      data: { query: "@voice", limit: 20 },
+    });
+    assert.deepEqual(response.profiles, []);
   });
 
   test("creator directory returns only requested canonical account types", async () => {

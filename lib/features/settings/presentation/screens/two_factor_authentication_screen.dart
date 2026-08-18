@@ -1,0 +1,690 @@
+import 'package:barcode_widget/barcode_widget.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+
+const _background = Color(0xFF080711);
+const _surface = Color(0xFF17101F);
+const _border = Color(0xFF3B2949);
+const _muted = Color(0xFFA79DB5);
+const _primary = Color(0xFFB348FF);
+const _danger = Color(0xFFFF6F9C);
+
+class TwoFactorAuthenticationScreen extends StatefulWidget {
+  const TwoFactorAuthenticationScreen({
+    this.isRootTab = false,
+    this.client,
+    this.signOutForExpiredSession,
+    super.key,
+  });
+
+  final bool isRootTab;
+  final TotpMfaClient? client;
+  final Future<void> Function()? signOutForExpiredSession;
+
+  @override
+  State<TwoFactorAuthenticationScreen> createState() =>
+      _TwoFactorAuthenticationScreenState();
+}
+
+class _TwoFactorAuthenticationScreenState
+    extends State<TwoFactorAuthenticationScreen> {
+  late final TotpMfaClient _client = widget.client ?? TotpMfaService();
+  late final Future<void> Function() _signOutForExpiredSession =
+      widget.signOutForExpiredSession ?? AuthService().signOut;
+  final _codeController = TextEditingController();
+  List<TotpFactorSummary>? _factors;
+  TotpEnrollmentDraft? _draft;
+  String? _error;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _client.cancelPendingEnrollment();
+    _codeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    if (!_client.isSupportedPlatform) {
+      setState(() => _factors = const []);
+      return;
+    }
+    try {
+      final factors = await _client.getFactors();
+      if (mounted) setState(() => _factors = factors);
+    } catch (error) {
+      if (mounted) setState(() => _error = _messageFor(error));
+    }
+  }
+
+  Future<void> _startSetup() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final draft = await _client.startEnrollment();
+      if (mounted) setState(() => _draft = draft);
+    } on FirebaseAuthException catch (error) {
+      if (error.code == 'requires-recent-login' && mounted) {
+        final reauthenticated = await _reauthenticate();
+        if (reauthenticated && mounted) {
+          setState(() => _busy = false);
+          await _startSetup();
+          return;
+        }
+      } else if (mounted) {
+        setState(() => _error = _messageFor(error));
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = _messageFor(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<bool> _reauthenticate() async {
+    final providers = _client.providerIds;
+    if (providers.contains(GoogleAuthProvider.PROVIDER_ID)) {
+      return _performReauth(_client.reauthenticateWithGoogle);
+    }
+    if (providers.contains(AppleAuthProvider.PROVIDER_ID)) {
+      return _performReauth(_client.reauthenticateWithApple);
+    }
+    if (!providers.contains(EmailAuthProvider.PROVIDER_ID)) {
+      if (mounted) {
+        setState(() {
+          _error =
+              'Sign out and sign in again before changing two-factor authentication.';
+        });
+      }
+      return false;
+    }
+
+    final passwordController = TextEditingController();
+    final password = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Confirm your password'),
+        content: TextField(
+          controller: passwordController,
+          autofocus: true,
+          obscureText: true,
+          autofillHints: const [AutofillHints.password],
+          decoration: const InputDecoration(labelText: 'Password'),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, passwordController.text),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    passwordController.dispose();
+    if (password == null) return false;
+    return _performReauth(() => _client.reauthenticateWithPassword(password));
+  }
+
+  Future<bool> _performReauth(Future<void> Function() operation) async {
+    try {
+      await operation();
+      return true;
+    } catch (error) {
+      if (mounted) setState(() => _error = _messageFor(error));
+      return false;
+    }
+  }
+
+  Future<void> _openAuthenticator() async {
+    try {
+      await _client.openPendingInAuthenticatorApp();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = _messageFor(error));
+    }
+  }
+
+  void _cancelSetup() {
+    _client.cancelPendingEnrollment();
+    setState(() {
+      _draft = null;
+      _error = null;
+      _codeController.clear();
+    });
+  }
+
+  Future<void> _completeSetup() async {
+    if (_busy) return;
+    final deadline = _draft?.expiresAt;
+    if (deadline != null && !deadline.isAfter(DateTime.now())) {
+      _client.cancelPendingEnrollment();
+      setState(() {
+        _draft = null;
+        _codeController.clear();
+        _error = 'This setup expired. Start again to create a new secret.';
+      });
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await _client.completeEnrollment(_codeController.text);
+      _codeController.clear();
+      final factors = await _client.getFactors();
+      if (!mounted) return;
+      setState(() {
+        _draft = null;
+        _factors = factors;
+      });
+      _notify('Two-factor authentication is now enabled.');
+    } catch (error) {
+      if (mounted) setState(() => _error = _messageFor(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _remove(TotpFactorSummary factor) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remove authenticator?'),
+        content: const Text(
+          'You will no longer need a code from this authenticator when signing in.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Keep it'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: _danger),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || _busy) {
+      return;
+    }
+    await _removeConfirmed(factor);
+  }
+
+  Future<void> _removeConfirmed(
+    TotpFactorSummary factor, {
+    bool retriedAfterReauthentication = false,
+  }) async {
+    if (!mounted) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await _client.removeFactor(factor.uid);
+      final factors = await _client.getFactors();
+      if (!mounted) return;
+      setState(() => _factors = factors);
+      _notify('Authenticator removed.');
+    } on FirebaseAuthException catch (error) {
+      if (error.code == 'user-token-expired') {
+        if (mounted) {
+          _notify(
+            'Authenticator removed. Firebase ended this session; sign in again.',
+          );
+        }
+        await _signOutForExpiredSession();
+        if (mounted) {
+          Navigator.of(context).popUntil((route) => route.isFirst);
+        }
+      } else if (error.code == 'requires-recent-login' &&
+          !retriedAfterReauthentication &&
+          mounted) {
+        final reauthenticated = await _reauthenticate();
+        if (reauthenticated && mounted) {
+          await _removeConfirmed(factor, retriedAfterReauthentication: true);
+          return;
+        }
+      } else if (mounted) {
+        setState(() => _error = _messageFor(error));
+      }
+    } catch (error) {
+      if (mounted) setState(() => _error = _messageFor(error));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _notify(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  String _messageFor(Object error) {
+    if (error is FormatException) return error.message;
+    if (error is StateError) return error.message;
+    if (error is UnsupportedError) return error.message ?? 'Not supported.';
+    if (error is FirebaseAuthException) {
+      return switch (error.code) {
+        'email-not-verified' =>
+          'Verify your email before enabling two-factor authentication.',
+        'invalid-verification-code' || 'invalid-credential' =>
+          'That code is not valid. Wait for a new code and try again.',
+        'wrong-password' => 'The password is not correct.',
+        'too-many-requests' => 'Too many attempts. Please try again later.',
+        'session-expired' =>
+          'This setup expired. Start again to create a new secret.',
+        'operation-not-allowed' =>
+          'Two-factor authentication is not enabled for this app yet.',
+        _ => error.message ?? 'Two-factor authentication could not be updated.',
+      };
+    }
+    return 'Two-factor authentication could not be updated.';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final factors = _factors;
+    return Scaffold(
+      backgroundColor: _background,
+      appBar: widget.isRootTab
+          ? null
+          : AppBar(
+              backgroundColor: Colors.transparent,
+              title: const Text('Two-factor authentication'),
+            ),
+      body: SafeArea(
+        child: ResponsiveContentFrame(
+          width: ResponsiveContentWidth.form,
+          alignment: ResponsiveContentAlignment.topLeft,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(18, 22, 18, 64),
+            children: [
+              const Text(
+                'Two-factor authentication',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 28,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Protect your account with a changing 6-digit code from an authenticator app. YO Voice never asks for your authenticator secret.',
+                style: TextStyle(color: _muted, height: 1.45),
+              ),
+              const SizedBox(height: 24),
+              if (_error != null) ...[
+                Semantics(
+                  liveRegion: true,
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF5C1B33),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+              ],
+              if (!_client.isSupportedPlatform)
+                const _UnsupportedPlatformCard()
+              else if (factors == null)
+                const Center(child: CircularProgressIndicator(color: _primary))
+              else ...[
+                _StatusCard(enabled: factors.isNotEmpty),
+                const SizedBox(height: 18),
+                for (final factor in factors) ...[
+                  _FactorCard(
+                    factor: factor,
+                    busy: _busy,
+                    onRemove: () => _remove(factor),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if (_draft == null)
+                  SizedBox(
+                    height: 52,
+                    child: FilledButton.icon(
+                      onPressed: _busy ? null : _startSetup,
+                      icon: const Icon(Icons.add_moderator_rounded),
+                      label: Text(
+                        factors.isEmpty
+                            ? 'Set up authenticator'
+                            : 'Add another authenticator',
+                      ),
+                    ),
+                  )
+                else
+                  _EnrollmentCard(
+                    draft: _draft!,
+                    codeController: _codeController,
+                    busy: _busy,
+                    canOpenAuthenticatorApp: _client.canOpenAuthenticatorApp,
+                    onOpenAuthenticator: _openAuthenticator,
+                    onCopySecret: () async {
+                      await Clipboard.setData(
+                        ClipboardData(text: _draft!.secretKey),
+                      );
+                      if (mounted) _notify('Secret copied.');
+                    },
+                    onComplete: _completeSetup,
+                    onCancel: _busy ? null : _cancelSetup,
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _UnsupportedPlatformCard extends StatelessWidget {
+  const _UnsupportedPlatformCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: _surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _border),
+        ),
+        child: const Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.desktop_access_disabled_rounded, color: _muted),
+            SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                'Authenticator-based two-factor authentication is not supported by Firebase on Windows or Linux. Set it up from YO Voice on the web, Android, iPhone, iPad or Mac.',
+                style: TextStyle(color: _muted, height: 1.4),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusCard extends StatelessWidget {
+  const _StatusCard({required this.enabled});
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = enabled ? const Color(0xFF3FDA8E) : _muted;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: enabled ? color.withValues(alpha: .45) : _border,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            enabled ? Icons.verified_user_rounded : Icons.shield_outlined,
+            color: color,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  enabled ? '2FA is enabled' : '2FA is not enabled',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  enabled
+                      ? 'A code is required after your password or social sign-in.'
+                      : 'Add an authenticator to protect future sign-ins.',
+                  style: const TextStyle(color: _muted, height: 1.35),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FactorCard extends StatelessWidget {
+  const _FactorCard({
+    required this.factor,
+    required this.busy,
+    required this.onRemove,
+  });
+  final TotpFactorSummary factor;
+  final bool busy;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _border),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.phonelink_lock_rounded, color: _primary),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  factor.displayName,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  'Added ${_formatDate(factor.enrolledAt)}',
+                  style: const TextStyle(color: _muted),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Remove authenticator',
+            onPressed: busy ? null : onRemove,
+            icon: const Icon(Icons.delete_outline_rounded, color: _danger),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EnrollmentCard extends StatelessWidget {
+  const _EnrollmentCard({
+    required this.draft,
+    required this.codeController,
+    required this.busy,
+    required this.canOpenAuthenticatorApp,
+    required this.onOpenAuthenticator,
+    required this.onCopySecret,
+    required this.onComplete,
+    required this.onCancel,
+  });
+  final TotpEnrollmentDraft draft;
+  final TextEditingController codeController;
+  final bool busy;
+  final bool canOpenAuthenticatorApp;
+  final VoidCallback onOpenAuthenticator;
+  final VoidCallback onCopySecret;
+  final VoidCallback onComplete;
+  final VoidCallback? onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _primary.withValues(alpha: .55)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Connect your authenticator',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Scan this QR code with your authenticator app. You can also enter the setup key manually. Then enter the current 6-digit code.',
+            style: TextStyle(color: _muted, height: 1.4),
+          ),
+          const SizedBox(height: 16),
+          Center(
+            child: Semantics(
+              label: 'Authenticator setup QR code',
+              image: true,
+              child: ExcludeSemantics(
+                child: Container(
+                  width: 196,
+                  height: 196,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: BarcodeWidget(
+                    barcode: Barcode.qrCode(),
+                    data: draft.qrCodeUrl,
+                    color: Colors.black,
+                    backgroundColor: Colors.white,
+                    errorBuilder: (context, error) => const Center(
+                      child: Icon(
+                        Icons.qr_code_2_rounded,
+                        color: Colors.black,
+                        size: 56,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Manual setup key',
+            style: TextStyle(color: _muted, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          Semantics(
+            label: 'Manual authenticator setup key',
+            child: SelectableText(
+              draft.secretKey,
+              style: const TextStyle(
+                color: Colors.white,
+                fontFamily: 'monospace',
+                letterSpacing: 1.2,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: busy ? null : onCopySecret,
+            icon: const Icon(Icons.copy_rounded),
+            label: const Text('Copy setup secret'),
+          ),
+          if (canOpenAuthenticatorApp) ...[
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: busy ? null : onOpenAuthenticator,
+              icon: const Icon(Icons.open_in_new_rounded),
+              label: const Text('Open authenticator app'),
+            ),
+          ],
+          if (draft.expiresAt != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Finish setup before ${_formatDeadline(draft.expiresAt!)}.',
+              style: const TextStyle(color: _muted),
+            ),
+          ],
+          const SizedBox(height: 16),
+          TextField(
+            controller: codeController,
+            enabled: !busy,
+            keyboardType: TextInputType.number,
+            maxLength: 6,
+            autofillHints: const [AutofillHints.oneTimeCode],
+            decoration: const InputDecoration(labelText: '6-digit code'),
+            onSubmitted: (_) => onComplete(),
+          ),
+          const SizedBox(height: 8),
+          FilledButton(
+            onPressed: busy ? null : onComplete,
+            child: const Text('Enable two-factor authentication'),
+          ),
+          TextButton(onPressed: onCancel, child: const Text('Cancel setup')),
+        ],
+      ),
+    );
+  }
+}
+
+String _formatDate(DateTime value) {
+  final local = value.toLocal();
+  String two(int number) => number.toString().padLeft(2, '0');
+  return '${local.year}-${two(local.month)}-${two(local.day)}';
+}
+
+String _formatDeadline(DateTime value) {
+  final local = value.toLocal();
+  String two(int number) => number.toString().padLeft(2, '0');
+  return '${two(local.hour)}:${two(local.minute)}';
+}

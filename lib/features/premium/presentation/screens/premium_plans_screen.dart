@@ -1,26 +1,32 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/features/premium/data/models/premium_billing_context.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/premium_plans.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
+import 'package:yovoice/features/premium/data/services/premium_billing_service.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_badge_pill.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 
 /// The plans & purchase screen — where the "Check plans" CTA lands.
 ///
-/// Purchase flow honesty (unchanged from the original combined screen):
-/// choosing a plan calls the `verifyPurchase` backend, which — until the
-/// store adapters are configured — declines with a clear message. Nothing
-/// is unlocked optimistically. The screen watches the TRUSTED entitlement
-/// stream; if it flips premium while open (a real purchase or an admin
-/// grant), it pops back to [PremiumScreen], which plays the welcome state.
+/// Pricing, tax copy, checkout availability and billing ownership all come
+/// from the trusted billing context. Web checkout and the Stripe customer
+/// portal are server-created; App Store / Play subscriptions open their own
+/// management surfaces. Nothing is unlocked optimistically.
 class PremiumPlansScreen extends StatefulWidget {
-  const PremiumPlansScreen({this.entitlementService, super.key});
+  const PremiumPlansScreen({
+    this.entitlementService,
+    this.billingService,
+    super.key,
+  });
 
   final EntitlementService? entitlementService;
+  final PremiumBillingGateway? billingService;
 
   @override
   State<PremiumPlansScreen> createState() => _PremiumPlansScreenState();
@@ -29,6 +35,9 @@ class PremiumPlansScreen extends StatefulWidget {
 class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
   late final EntitlementService _entitlements =
       widget.entitlementService ?? EntitlementService();
+  late final PremiumBillingGateway _billing =
+      widget.billingService ?? PremiumBillingService();
+  late Future<PremiumBillingContext> _billingContext;
 
   PremiumPlan _selected = PremiumPlan.yearly;
   bool _busy = false;
@@ -36,37 +45,88 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
   bool _checkedInitial = false;
   bool _popScheduled = false;
 
-  Future<void> _attemptPurchase(PremiumProduct product) async {
+  @override
+  void initState() {
+    super.initState();
+    _billingContext = _loadBillingContext();
+  }
+
+  Future<PremiumBillingContext> _loadBillingContext() => _billing.getContext(
+    countryCode: WidgetsBinding.instance.platformDispatcher.locale.countryCode,
+  );
+
+  void _retryBilling() {
+    setState(() => _billingContext = _loadBillingContext());
+  }
+
+  Future<void> _attemptPurchase(PremiumLocalizedPlan product) async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      await FirebaseFunctions.instanceFor(
-        region: 'europe-west1',
-      ).httpsCallable('verifyPurchase').call<void>({
-        'platform': Theme.of(context).platform.name,
-        'productId': product.storeProductId,
-      });
+      final uri = await _billing.createCheckout(product.plan);
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        throw StateError('Billing link could not be opened.');
+      }
     } on FirebaseFunctionsException catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            error.code == 'failed-precondition'
-                ? (error.message ?? 'Purchases are not enabled yet.')
-                : 'Something went wrong. Please try again.',
-          ),
-        ),
-      );
+      _showBillingError(error);
     } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Something went wrong. Please try again.'),
+      _showMessage('We couldn\'t open checkout. Please try again.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _openManagement(PremiumBillingContext billing) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final uri = switch (billing.billingManagedBy) {
+        PremiumBillingManager.apple => Uri.parse(
+          'https://apps.apple.com/account/subscriptions',
         ),
+        PremiumBillingManager.google => Uri.parse(
+          'https://play.google.com/store/account/subscriptions',
+        ),
+        _ => await _billing.createPortal(),
+      };
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        throw StateError('Billing portal could not be opened.');
+      }
+    } on FirebaseFunctionsException catch (error) {
+      _showBillingError(error);
+    } catch (_) {
+      _showMessage(
+        'We couldn\'t open subscription management. Please try again.',
       );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  void _showBillingError(FirebaseFunctionsException error) {
+    final details = error.details;
+    final reason = details is Map ? details['reason'] : null;
+    final message = switch (reason) {
+      'billing-managed-elsewhere' =>
+        'This subscription is managed by your app store. Open your store subscription settings to make changes.',
+      'stripe-customer-missing' =>
+        'We couldn\'t find a billing profile for this subscription. Contact support if this keeps happening.',
+      'billing-not-configured' =>
+        'Billing is temporarily unavailable. Please try again later.',
+      'stripe-subscription-exists' =>
+        'You already have a web subscription. Open subscription management to change it.',
+      'checkout-in-progress' =>
+        'A checkout is already in progress. Finish it or try again in a moment.',
+      _ => 'We couldn\'t open billing. Please try again.',
+    };
+    _showMessage(message);
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+    );
   }
 
   Future<void> _openUrl(String url) async {
@@ -106,103 +166,145 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
             });
           }
 
-          return Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(22, 4, 22, 40),
-                children: [
-                  const Center(child: PremiumBadgePill()),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Choose your plan',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -.6,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Unlock the full YO Voice experience',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: AppColors.textSecondary,
-                      fontSize: 14.5,
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-                  _PlanToggle(
-                    selected: _selected,
-                    onChanged: (plan) => setState(() => _selected = plan),
-                  ),
-                  const SizedBox(height: 20),
-                  _PlanCards(
-                    selected: _selected,
-                    busy: _busy,
-                    onSelect: (plan) => setState(() => _selected = plan),
-                    onChoose: _attemptPurchase,
-                  ),
-                  const SizedBox(height: 28),
-                  const Text(
-                    'Everything Premium includes:',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const _EverythingIncluded(),
-                  const SizedBox(height: 20),
-                  const _TrustFooter(),
-                  const SizedBox(height: 10),
-                  Center(
-                    child: TextButton(
-                      onPressed: _busy
-                          ? null
-                          : () => _attemptPurchase(PremiumPlans.monthly),
-                      child: const Text(
-                        'Restore purchases',
-                        style: TextStyle(color: Color(0xFFD3A5FF)),
-                      ),
-                    ),
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+          return FutureBuilder<PremiumBillingContext>(
+            future: _billingContext,
+            builder: (context, billingSnapshot) {
+              if (billingSnapshot.connectionState != ConnectionState.done) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (billingSnapshot.hasError || !billingSnapshot.hasData) {
+                return _BillingLoadError(onRetry: _retryBilling);
+              }
+              final billing = billingSnapshot.requireData;
+              return Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 720),
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(22, 4, 22, 40),
                     children: [
-                      TextButton(
-                        onPressed: () => _openUrl('https://yovoice.app/terms'),
-                        child: const Text(
-                          'Terms',
-                          style: TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 12,
-                          ),
+                      const Center(child: PremiumBadgePill()),
+                      const SizedBox(height: 16),
+                      Text(
+                        entitlements.isPremium
+                            ? 'Manage your plan'
+                            : 'Choose your plan',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -.6,
                         ),
                       ),
+                      const SizedBox(height: 8),
+                      Text(
+                        entitlements.isPremium
+                            ? 'See your current plan, compare options or manage billing.'
+                            : 'Unlock the full YO Voice experience',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 14.5,
+                        ),
+                      ),
+                      const SizedBox(height: 22),
+                      if (entitlements.isPremium) ...[
+                        _CurrentPlanCard(
+                          entitlements: entitlements,
+                          billing: billing,
+                          busy: _busy,
+                          onManage: () => _openManagement(billing),
+                        ),
+                        const SizedBox(height: 20),
+                      ],
+                      _PlanToggle(
+                        selected: _selected,
+                        yearlySavingsPercent: billing.plans
+                            .firstWhere(
+                              (plan) => plan.plan == PremiumPlan.yearly,
+                            )
+                            .savingsPercent,
+                        onChanged: (plan) => setState(() => _selected = plan),
+                      ),
+                      const SizedBox(height: 20),
+                      _PlanCards(
+                        plans: billing.plans,
+                        selected: _selected,
+                        busy: _busy,
+                        checkoutAvailable: kIsWeb && billing.checkoutAvailable,
+                        onSelect: (plan) => setState(() => _selected = plan),
+                        onChoose: _attemptPurchase,
+                      ),
+                      if (!kIsWeb &&
+                          billing.billingManagedBy !=
+                              PremiumBillingManager.admin) ...[
+                        const SizedBox(height: 12),
+                        const Text(
+                          'To start or change a web subscription, continue on yovoice.app. App Store and Google Play purchases stay managed by their store.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: AppColors.textSecondary),
+                        ),
+                      ],
+                      const SizedBox(height: 14),
+                      Text(
+                        billing.taxNotice,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 12.5,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 28),
                       const Text(
-                        '·',
-                        style: TextStyle(color: AppColors.textSecondary),
-                      ),
-                      TextButton(
-                        onPressed: () =>
-                            _openUrl('https://yovoice.app/privacy'),
-                        child: const Text(
-                          'Privacy',
-                          style: TextStyle(
-                            color: AppColors.textSecondary,
-                            fontSize: 12,
-                          ),
+                        'Everything Premium includes:',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
                         ),
+                      ),
+                      const SizedBox(height: 12),
+                      const _EverythingIncluded(),
+                      const SizedBox(height: 20),
+                      const _TrustFooter(),
+                      const SizedBox(height: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          TextButton(
+                            onPressed: () =>
+                                _openUrl('https://yovoice.app/terms'),
+                            child: const Text(
+                              'Terms',
+                              style: TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                          const Text(
+                            '·',
+                            style: TextStyle(color: AppColors.textSecondary),
+                          ),
+                          TextButton(
+                            onPressed: () =>
+                                _openUrl('https://yovoice.app/privacy'),
+                            child: const Text(
+                              'Privacy',
+                              style: TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
-              ),
-            ),
+                ),
+              );
+            },
           );
         },
       ),
@@ -210,11 +312,164 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
   }
 }
 
-/// Monthly | Yearly segmented control with the "-25%" chip on Yearly.
+class _BillingLoadError extends StatelessWidget {
+  const _BillingLoadError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 440),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.cloud_off_rounded,
+                color: Color(0xFFD3A5FF),
+                size: 38,
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Plans are temporarily unavailable',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'We couldn\'t load plan pricing. Check your connection and try again.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.textSecondary, height: 1.45),
+              ),
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Try again'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CurrentPlanCard extends StatelessWidget {
+  const _CurrentPlanCard({
+    required this.entitlements,
+    required this.billing,
+    required this.busy,
+    required this.onManage,
+  });
+
+  final SubscriptionEntitlements entitlements;
+  final PremiumBillingContext billing;
+  final bool busy;
+  final VoidCallback onManage;
+
+  @override
+  Widget build(BuildContext context) {
+    final end = billing.currentPeriodEnd;
+    final periodText = billing.billingManagedBy == PremiumBillingManager.admin
+        ? 'Complimentary Premium access'
+        : billing.renewalBehavior == 'ends' && end != null
+        ? 'Ends ${end.day}.${end.month}.${end.year}'
+        : billing.renewalBehavior == 'renews' && end != null
+        ? 'Renews ${end.day}.${end.month}.${end.year}'
+        : end == null
+        ? 'Premium active'
+        : 'Premium active';
+    final manager = switch (billing.billingManagedBy) {
+      PremiumBillingManager.apple => 'Managed in the App Store',
+      PremiumBillingManager.google => 'Managed in Google Play',
+      PremiumBillingManager.admin => 'Complimentary access',
+      PremiumBillingManager.stripe => 'Managed securely by Stripe',
+      PremiumBillingManager.none => 'Billing details unavailable',
+    };
+    return Semantics(
+      container: true,
+      label: 'Current Premium subscription',
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E1233),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: AppColors.secondary.withValues(alpha: .5)),
+        ),
+        child: Wrap(
+          spacing: 18,
+          runSpacing: 16,
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 410),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Current plan',
+                    style: TextStyle(
+                      color: Color(0xFFD3A5FF),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'YO Voice Premium · ${entitlements.plan.label}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    '$periodText · $manager',
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (billing.portalAvailable ||
+                billing.billingManagedBy == PremiumBillingManager.apple ||
+                billing.billingManagedBy == PremiumBillingManager.google)
+              FilledButton.icon(
+                onPressed: busy ? null : onManage,
+                icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                label: const Text('Change or cancel'),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Monthly | Yearly segmented control with the server-provided savings chip.
 class _PlanToggle extends StatelessWidget {
-  const _PlanToggle({required this.selected, required this.onChanged});
+  const _PlanToggle({
+    required this.selected,
+    required this.yearlySavingsPercent,
+    required this.onChanged,
+  });
 
   final PremiumPlan selected;
+  final int yearlySavingsPercent;
   final ValueChanged<PremiumPlan> onChanged;
 
   @override
@@ -232,7 +487,11 @@ class _PlanToggle extends StatelessWidget {
       child: Row(
         children: [
           _segment(label: 'Monthly', plan: PremiumPlan.monthly),
-          _segment(label: 'Yearly', plan: PremiumPlan.yearly, chip: '-25%'),
+          _segment(
+            label: 'Yearly',
+            plan: PremiumPlan.yearly,
+            chip: yearlySavingsPercent > 0 ? '-$yearlySavingsPercent%' : null,
+          ),
         ],
       ),
     );
@@ -264,7 +523,7 @@ class _PlanToggle extends StatelessWidget {
             ),
           ),
           // scaleDown only engages on very narrow phones (<=390pt), where
-          // "Yearly" + the -25% chip outgrow half the toggle — caught by
+          // "Yearly" + the savings chip can outgrow half the toggle — caught by
           // the 320-1440 layout matrix.
           child: Center(
             child: FittedBox(
@@ -293,9 +552,9 @@ class _PlanToggle extends StatelessWidget {
                           colors: [AppColors.primary, AppColors.secondary],
                         ),
                       ),
-                      child: const Text(
-                        '-25%',
-                        style: TextStyle(
+                      child: Text(
+                        chip,
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 10.5,
                           fontWeight: FontWeight.w800,
@@ -318,46 +577,64 @@ class _PlanToggle extends StatelessWidget {
 /// regardless of selection — it's a fact about the plan, not a UI state.
 class _PlanCards extends StatelessWidget {
   const _PlanCards({
+    required this.plans,
     required this.selected,
     required this.busy,
+    required this.checkoutAvailable,
     required this.onSelect,
     required this.onChoose,
   });
 
+  final List<PremiumLocalizedPlan> plans;
   final PremiumPlan selected;
   final bool busy;
+  final bool checkoutAvailable;
   final ValueChanged<PremiumPlan> onSelect;
-  final ValueChanged<PremiumProduct> onChoose;
+  final ValueChanged<PremiumLocalizedPlan> onChoose;
 
   @override
   Widget build(BuildContext context) {
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            child: _PlanCard(
-              product: PremiumPlans.monthly,
-              selected: selected == PremiumPlan.monthly,
-              checkColor: AppColors.accent,
-              busy: busy,
-              onSelect: onSelect,
-              onChoose: onChoose,
-            ),
+    final monthly = plans.firstWhere(
+      (plan) => plan.plan == PremiumPlan.monthly,
+    );
+    final yearly = plans.firstWhere((plan) => plan.plan == PremiumPlan.yearly);
+    final monthlyCard = _PlanCard(
+      product: monthly,
+      selected: selected == PremiumPlan.monthly,
+      checkColor: AppColors.accent,
+      busy: busy || !checkoutAvailable,
+      onSelect: onSelect,
+      onChoose: onChoose,
+    );
+    final yearlyCard = _PlanCard(
+      product: yearly,
+      selected: selected == PremiumPlan.yearly,
+      checkColor: const Color(0xFFE879F9),
+      busy: busy || !checkoutAvailable,
+      onSelect: onSelect,
+      onChoose: onChoose,
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stacked =
+            constraints.maxWidth < 560 ||
+            MediaQuery.textScalerOf(context).scale(1) > 1.3;
+        if (stacked) {
+          return Column(
+            children: [monthlyCard, const SizedBox(height: 18), yearlyCard],
+          );
+        }
+        return IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: monthlyCard),
+              const SizedBox(width: 12),
+              Expanded(child: yearlyCard),
+            ],
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: _PlanCard(
-              product: PremiumPlans.yearly,
-              selected: selected == PremiumPlan.yearly,
-              checkColor: const Color(0xFFE879F9),
-              busy: busy,
-              onSelect: onSelect,
-              onChoose: onChoose,
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -372,19 +649,19 @@ class _PlanCard extends StatelessWidget {
     required this.onChoose,
   });
 
-  final PremiumProduct product;
+  final PremiumLocalizedPlan product;
   final bool selected;
   final Color checkColor;
   final bool busy;
   final ValueChanged<PremiumPlan> onSelect;
-  final ValueChanged<PremiumProduct> onChoose;
+  final ValueChanged<PremiumLocalizedPlan> onChoose;
 
   @override
   Widget build(BuildContext context) {
     final card = AccessibleTapRegion(
       onTap: () => onSelect(product.plan),
       semanticLabel:
-          'Select ${product.plan.label} plan, ${product.displayPrice}',
+          'Select ${product.plan.label} plan, ${product.formattedPrice}',
       tooltip: 'Select ${product.plan.label} plan',
       selected: selected,
       borderRadius: 22,
@@ -426,7 +703,7 @@ class _PlanCard extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             Text(
-              product.displayPrice,
+              product.formattedPrice,
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 26,
@@ -436,23 +713,32 @@ class _PlanCard extends StatelessWidget {
             ),
             const SizedBox(height: 2),
             Text(
-              product.billingPeriodLabel,
+              product.interval == 'month' ? '/ month' : '/ year',
               style: const TextStyle(
                 color: AppColors.textSecondary,
                 fontSize: 12,
               ),
             ),
-            if (product.equivalentMonthlyPrice != null) ...[
+            const SizedBox(height: 3),
+            const Text(
+              'Base price · final local price at checkout',
+              style: TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 11,
+                height: 1.3,
+              ),
+            ),
+            if (product.formattedEquivalent != null) ...[
               const SizedBox(height: 4),
               Text(
-                product.equivalentMonthlyPrice!,
+                '${product.formattedEquivalent!} / month',
                 style: const TextStyle(
                   color: AppColors.textSecondary,
                   fontSize: 12,
                 ),
               ),
             ],
-            if (product.savingsLabel != null) ...[
+            if (product.savingsPercent > 0) ...[
               const SizedBox(height: 10),
               Container(
                 padding: const EdgeInsets.symmetric(
@@ -466,7 +752,7 @@ class _PlanCard extends StatelessWidget {
                   ),
                 ),
                 child: Text(
-                  product.savingsLabel!,
+                  'Save ${product.savingsPercent}%',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 11,
@@ -495,7 +781,6 @@ class _PlanCard extends StatelessWidget {
                   ],
                 ),
               ),
-            const Spacer(),
             const SizedBox(height: 8),
             _chooseButton(),
           ],
@@ -509,7 +794,7 @@ class _PlanCard extends StatelessWidget {
       clipBehavior: Clip.none,
       children: [
         Padding(padding: const EdgeInsets.only(top: 13), child: card),
-        if (product.highlight)
+        if (product.plan == PremiumPlan.yearly)
           Positioned(
             top: 0,
             left: 0,

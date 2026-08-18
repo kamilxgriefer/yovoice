@@ -2083,6 +2083,140 @@ async function main() {
     },
   );
 
+  // --- Direct-message privacy (recipient authority) ---
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), "conversations/privacy-convo"), {
+      participantIds: ["host-uid", "invitee-uid"],
+    });
+  });
+
+  const sendPrivacyProbe = (db, id) => setDoc(
+    doc(db, `conversations/privacy-convo/messages/${id}`),
+    {
+      senderId: "host-uid",
+      content: id,
+      sentAt: new Date(),
+      readBy: ["host-uid"],
+      reactions: {},
+      isDeleted: false,
+    },
+  );
+
+  await check(
+    "message privacy is owner-writable only and accepts the exact enum",
+    async () => {
+      const own = invitee.firestore();
+      await assertSucceeds(updateDoc(doc(own, "users/invitee-uid"), {
+        messagePrivacy: "nobody",
+      }));
+      await assertFails(updateDoc(doc(own, "users/invitee-uid"), {
+        messagePrivacy: "followers",
+      }));
+      await assertFails(updateDoc(doc(attacker.firestore(), "users/invitee-uid"), {
+        messagePrivacy: "everyone",
+      }));
+    },
+  );
+
+  await check(
+    "SECURITY DM PRIVACY: nobody denies a client-direct legacy send",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users/invitee-uid"), {
+          messagePrivacy: "nobody",
+        });
+      });
+      await assertFails(sendPrivacyProbe(host.firestore(), "privacy-nobody"));
+    },
+  );
+
+  await check(
+    "DM PRIVACY: missing/everyone preserves backwards-compatible messaging",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users/invitee-uid"), {
+          messagePrivacy: deleteField(),
+        });
+      });
+      await assertSucceeds(sendPrivacyProbe(host.firestore(), "privacy-missing"));
+      await updateDoc(doc(invitee.firestore(), "users/invitee-uid"), {
+        messagePrivacy: "everyone",
+      });
+      await assertSucceeds(sendPrivacyProbe(host.firestore(), "privacy-everyone"));
+    },
+  );
+
+  await check(
+    "SECURITY DM PRIVACY: people you follow is directional and server-owned",
+    async () => {
+      await updateDoc(doc(invitee.firestore(), "users/invitee-uid"), {
+        messagePrivacy: "peopleYouFollow",
+      });
+      await assertFails(sendPrivacyProbe(host.firestore(), "privacy-no-follow"));
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        // Wrong direction: sender follows recipient.
+        await setDoc(
+          doc(ctx.firestore(), "users/host-uid/following/invitee-uid"),
+          { uid: "invitee-uid", followedAt: new Date() },
+        );
+      });
+      await assertFails(sendPrivacyProbe(host.firestore(), "privacy-wrong-follow"));
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), "users/invitee-uid/following/host-uid"),
+          { uid: "host-uid", followedAt: new Date() },
+        );
+      });
+      await assertSucceeds(sendPrivacyProbe(host.firestore(), "privacy-followed"));
+    },
+  );
+
+  await check(
+    "SECURITY DM PRIVACY: friends requires both canonical guard halves",
+    async () => {
+      await updateDoc(doc(invitee.firestore(), "users/invitee-uid"), {
+        messagePrivacy: "friends",
+      });
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), "friendshipGuards/host-uid/friends/invitee-uid"),
+          {
+            ownerId: "host-uid",
+            friendId: "invitee-uid",
+            schemaVersion: 1,
+            establishedAt: new Date(),
+          },
+        );
+      });
+      await assertFails(sendPrivacyProbe(host.firestore(), "privacy-one-guard"));
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), "friendshipGuards/invitee-uid/friends/host-uid"),
+          {
+            ownerId: "invitee-uid",
+            friendId: "host-uid",
+            schemaVersion: 1,
+            establishedAt: new Date(),
+          },
+        );
+      });
+      await assertSucceeds(sendPrivacyProbe(host.firestore(), "privacy-friends"));
+    },
+  );
+
+  await check(
+    "SECURITY DM PRIVACY: malformed stored values fail closed",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users/invitee-uid"), {
+          messagePrivacy: "unknown-future-mode",
+        });
+      });
+      await assertFails(sendPrivacyProbe(host.firestore(), "privacy-malformed"));
+    },
+  );
+
   await check(
     "SECURITY: an unverified user cannot create a club",
     async () => {
@@ -2342,6 +2476,32 @@ async function main() {
       getDoc(doc(attacker.firestore(), "entitlements/host-uid")),
     );
   });
+
+  await check(
+    "SECURITY BILLING: Stripe operational collections are invisible and server-only",
+    async () => {
+      const collections = [
+        "billingAccounts",
+        "billingRateLimits",
+        "billingCheckoutLocks",
+        "stripeWebhookEvents",
+      ];
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        for (const name of collections) {
+          await setDoc(doc(ctx.firestore(), `${name}/host-uid`), {
+            secret: "server-owned",
+          });
+        }
+      });
+      for (const name of collections) {
+        const reference = doc(host.firestore(), `${name}/host-uid`);
+        await assertFails(getDoc(reference));
+        await assertFails(setDoc(reference, { forged: true }));
+        await assertFails(updateDoc(reference, { forged: true }));
+        await assertFails(deleteDoc(reference));
+      }
+    },
+  );
 
   await check("community Club creation is callable-only", async () => {
     // Even a fully entitled client cannot skip the serialized server quota by
@@ -7031,6 +7191,165 @@ async function main() {
   );
 
   await check(
+    "PROFILE VISIBILITY: a missing legacy preference remains public",
+    async () => {
+      await assertSucceeds(
+        getDoc(
+          doc(
+            privacyStranger.firestore(),
+            "publicProfiles/privacy-target-uid",
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "PROFILE VISIBILITY: friends requires both canonical friendship guards",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), "users/privacy-target-uid"), {
+          profileVisibility: "friends",
+        });
+      });
+      await assertSucceeds(
+        getDoc(
+          doc(privacyReader.firestore(), "publicProfiles/privacy-target-uid"),
+        ),
+      );
+      await assertFails(
+        getDoc(
+          doc(
+            privacyStranger.firestore(),
+            "publicProfiles/privacy-target-uid",
+          ),
+        ),
+      );
+
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await deleteDoc(
+          doc(
+            context.firestore(),
+            "friendshipGuards/privacy-target-uid/friends/privacy-reader-uid",
+          ),
+        );
+      });
+      await assertFails(
+        getDoc(
+          doc(privacyReader.firestore(), "publicProfiles/privacy-target-uid"),
+        ),
+      );
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(
+          doc(
+            context.firestore(),
+            "friendshipGuards/privacy-target-uid/friends/privacy-reader-uid",
+          ),
+          {
+            ownerId: "privacy-target-uid",
+            friendId: "privacy-reader-uid",
+            schemaVersion: 1,
+            establishedAt: Timestamp.now(),
+          },
+        );
+      });
+    },
+  );
+
+  await check(
+    "SECURITY PROFILE VISIBILITY: private denies every foreign client, including staff",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), "users/privacy-target-uid"), {
+          profileVisibility: "private",
+        });
+      });
+      for (const context of [
+        privacyReader,
+        privacyStranger,
+        privacyModerator,
+        privacySuperAdmin,
+      ]) {
+        await assertFails(
+          getDoc(
+            doc(context.firestore(), "publicProfiles/privacy-target-uid"),
+          ),
+        );
+      }
+      await assertSucceeds(
+        getDoc(
+          doc(privacyTarget.firestore(), "publicProfiles/privacy-target-uid"),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY PROFILE VISIBILITY: clients cannot forge the server-owned preference",
+    async () => {
+      await assertFails(
+        updateDoc(doc(privacyTarget.firestore(), "users/privacy-target-uid"), {
+          profileVisibility: "public",
+          profileVisibilityUpdatedAt: serverTimestamp(),
+        }),
+      );
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), "users/privacy-target-uid"), {
+          profileVisibility: "public",
+        });
+      });
+    },
+  );
+
+  await check(
+    "PROFILE VISIBILITY: the blocker can resolve Blocked users but the blocked account cannot open the blocker",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await Promise.all([
+          setDoc(
+            doc(db, "users/privacy-reader-uid/blocked/privacy-target-uid"),
+            { blockedAt: Timestamp.now() },
+          ),
+          setDoc(doc(db, "publicProfiles/privacy-reader-uid"), {
+            uid: "privacy-reader-uid",
+            displayName: "Reader",
+            username: "reader",
+            displayNameSearch: "reader",
+            usernameSearch: "reader",
+            photoUrl: null,
+            bannerUrl: null,
+            bio: "",
+            country: "",
+            nativeLanguage: "",
+            spokenLanguages: [],
+            learningLanguages: [],
+            website: null,
+            statusMessage: "",
+            accountType: "personal",
+            premiumIdentity: false,
+            friendCount: 1,
+            followerCount: 0,
+            followingCount: 0,
+            schemaVersion: 1,
+            updatedAt: Timestamp.now(),
+          }),
+        ]);
+      });
+      await assertSucceeds(
+        getDoc(
+          doc(privacyReader.firestore(), "publicProfiles/privacy-target-uid"),
+        ),
+      );
+      await assertFails(
+        getDoc(
+          doc(privacyTarget.firestore(), "publicProfiles/privacy-reader-uid"),
+        ),
+      );
+    },
+  );
+
+  await check(
     "SECURITY PRIVACY: unauthenticated and banned-target profile reads fail",
     async () => {
       await assertFails(
@@ -9152,6 +9471,30 @@ async function main() {
       await assertFails(deleteDoc(doc(
         showcaseStranger.firestore(),
         "publicShowcase/live",
+      )));
+    },
+  );
+
+  await check(
+    "SECURITY PUBLIC SHOWCASE: privacy-generation control is backend-only",
+    async () => {
+      const anonymous = showcaseStranger.firestore();
+      const signedIn = host.firestore();
+      await assertFails(getDoc(doc(
+        anonymous,
+        "privateShowcaseControl/live",
+      )));
+      await assertFails(getDoc(doc(
+        signedIn,
+        "privateShowcaseControl/live",
+      )));
+      await assertFails(setDoc(doc(
+        signedIn,
+        "privateShowcaseControl/live",
+      ), { privacyGeneration: 999 }));
+      await assertFails(getDocs(collection(
+        signedIn,
+        "privateShowcaseControl",
       )));
     },
   );

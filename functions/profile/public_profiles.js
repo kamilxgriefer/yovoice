@@ -17,6 +17,7 @@ const { createHash } = require("node:crypto");
 
 const { requireAuthentication } = require("../utils/auth");
 const { db } = require("../utils/firestore");
+const { normalizeProfileVisibility } = require("./profile_visibility");
 
 const REGION = "europe-west1";
 const PUBLIC_PROFILE_SCHEMA_VERSION = 1;
@@ -322,6 +323,7 @@ async function handleAuthUserDeleted(uid, { database = db } = {}) {
         {
           disabled: true,
           isOnline: false,
+          premiumIdentity: false,
           authDeletedAt: FieldValue.serverTimestamp(),
         },
         { merge: true },
@@ -361,6 +363,39 @@ function searchResult(snapshot, authority = {}) {
     premiumIdentity: authority.premiumIdentity === true,
     followerCount: safeCount(data.followerCount),
   };
+}
+
+function exactFriendshipGuard(snapshot, ownerId, friendId) {
+  if (!snapshot?.exists) return false;
+  const data = snapshot.data() ?? {};
+  const keys = Object.keys(data).sort();
+  const expected = [
+    "establishedAt",
+    "friendId",
+    "ownerId",
+    "schemaVersion",
+  ];
+  return keys.length === expected.length &&
+    keys.every((key, index) => key === expected[index]) &&
+    data.ownerId === ownerId &&
+    data.friendId === friendId &&
+    data.schemaVersion === 1 &&
+    data.establishedAt &&
+    typeof data.establishedAt.toMillis === "function";
+}
+
+function sourceProfileVisibleToCaller({
+  callerId,
+  targetId,
+  source,
+  forwardGuard,
+  reverseGuard,
+}) {
+  const visibility = normalizeProfileVisibility(source?.profileVisibility);
+  if (visibility === "public") return true;
+  if (visibility === "private") return false;
+  return exactFriendshipGuard(forwardGuard, callerId, targetId) &&
+    exactFriendshipGuard(reverseGuard, targetId, callerId);
 }
 
 async function requireActiveCaller(uid) {
@@ -538,9 +573,16 @@ const searchPublicProfiles = onCall(
     }
 
     const candidateIds = [...candidates.keys()];
-    const [forwardBlocks, reverseBlocks, sourceProfiles, entitlements] =
+    const [
+      forwardBlocks,
+      reverseBlocks,
+      sourceProfiles,
+      entitlements,
+      forwardFriendships,
+      reverseFriendships,
+    ] =
       candidateIds.length === 0
-        ? [[], [], [], []]
+        ? [[], [], [], [], [], []]
         : await Promise.all([
             // Never enumerate the caller's whole block list. A caller controls
             // its size, so doing that would make every search arbitrarily costly.
@@ -573,6 +615,24 @@ const searchPublicProfiles = onCall(
                 db.collection("entitlements").doc(uid),
               ),
             ),
+            db.getAll(
+              ...candidateIds.map((uid) =>
+                db
+                  .collection("friendshipGuards")
+                  .doc(auth.uid)
+                  .collection("friends")
+                  .doc(uid),
+              ),
+            ),
+            db.getAll(
+              ...candidateIds.map((uid) =>
+                db
+                  .collection("friendshipGuards")
+                  .doc(uid)
+                  .collection("friends")
+                  .doc(auth.uid),
+              ),
+            ),
           ]);
     const hidden = new Set();
     const authorityByUid = new Map();
@@ -586,6 +646,16 @@ const searchPublicProfiles = onCall(
       const snapshot = sourceProfiles[index];
       const source = snapshot.exists ? (snapshot.data() ?? {}) : null;
       if (!source || source.banned === true || source.disabled === true) {
+        hidden.add(snapshot.id);
+        continue;
+      }
+      if (!sourceProfileVisibleToCaller({
+        callerId: auth.uid,
+        targetId: snapshot.id,
+        source,
+        forwardGuard: forwardFriendships[index],
+        reverseGuard: reverseFriendships[index],
+      })) {
         hidden.add(snapshot.id);
         continue;
       }
@@ -655,6 +725,8 @@ module.exports = {
   projectionMatches,
   fetchAuthUserOrNull,
   consumeSearchRateLimit,
+  exactFriendshipGuard,
+  sourceProfileVisibleToCaller,
   syncPrivacyProjectionsForUser,
   handleAuthUserDeleted,
   onUserPrivacySourceChanged,

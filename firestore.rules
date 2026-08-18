@@ -162,6 +162,76 @@ service cloud.firestore {
       );
     }
 
+    // Direction matters for known-id profile reads. A member must still be
+    // able to resolve the minimal public identity of somebody THEY blocked in
+    // order to render Settings -> Blocked users and offer Unblock. The reverse
+    // is not true: somebody blocked by the profile owner must not use a stale
+    // notification or guessed uid to keep opening that owner's profile.
+    function profileOwnerBlockedCaller(profileOwnerId) {
+      return isSignedIn() && exists(
+        /databases/$(database)/documents/users/$(profileOwnerId)/blocked/$(request.auth.uid)
+      );
+    }
+
+    // Missing means public solely for backwards compatibility with profiles
+    // created before the visibility control shipped. An unknown server value
+    // fails closed to private instead of widening access accidentally.
+    function profileVisibilityOf(userId) {
+      let value = get(
+        /databases/$(database)/documents/users/$(userId)
+      ).data.get('profileVisibility', 'public');
+      return value in ['public', 'friends', 'private'] ? value : 'private';
+    }
+
+    function canReadFullProfile(userId) {
+      let visibility = profileVisibilityOf(userId);
+      return isActiveAccount() && accountIsActive(userId) &&
+          (
+            isOwner(userId) ||
+            (
+              !profileOwnerBlockedCaller(userId) &&
+              (
+                visibility == 'public' ||
+                (
+                  visibility == 'friends' &&
+                  canonicalFriendshipGuard(request.auth.uid, userId) &&
+                  canonicalFriendshipGuard(userId, request.auth.uid)
+                )
+              )
+            )
+          );
+    }
+
+    // Direct-message privacy is private account configuration. Absence means
+    // `everyone` for backward compatibility with existing accounts; any
+    // present, unknown value fails closed because none of the branches below
+    // match. Social edges are server-owned, so a modified client cannot forge
+    // the follow/friend relationship needed by a narrower mode.
+    function canDirectMessage(senderId, recipientId) {
+      let privacy = get(
+        /databases/$(database)/documents/users/$(recipientId)
+      ).data.get('messagePrivacy', 'everyone');
+      return privacy == 'everyone' ||
+          (
+            privacy == 'peopleYouFollow' &&
+            canonicalFollowingEdge(recipientId, senderId)
+          ) ||
+          (
+            privacy == 'friends' &&
+            canonicalFriendshipGuard(senderId, recipientId) &&
+            canonicalFriendshipGuard(recipientId, senderId)
+          );
+    }
+
+    function canonicalFollowingEdge(ownerId, targetId) {
+      let edgePath = /databases/$(database)/documents/users/$(ownerId)/following/$(targetId);
+      return exists(edgePath) &&
+          get(edgePath).data.keys().hasAll(['uid', 'followedAt']) &&
+          get(edgePath).data.keys().hasOnly(['uid', 'followedAt']) &&
+          get(edgePath).data.uid == targetId &&
+          get(edgePath).data.followedAt is timestamp;
+    }
+
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
@@ -242,6 +312,14 @@ service cloud.firestore {
           );
     }
 
+    function messagePrivacyChangeAllowed() {
+      return !request.resource.data.diff(resource.data)
+            .affectedKeys().hasAny(['messagePrivacy']) ||
+          request.resource.data.messagePrivacy in [
+            'everyone', 'peopleYouFollow', 'friends', 'nobody'
+          ];
+    }
+
     // A user's first client write used to accept ANY fields, which let a new
     // account create itself as Creator, Premium or staff before the stricter
     // update rule ever applied. First-write races from presence/friends are
@@ -260,7 +338,7 @@ service cloud.firestore {
             'reactionCount', 'hostMinutes', 'activeDays', 'momentCount',
             'friendCount', 'unlockedTitleIds', 'unlockedTitleTimestamps',
             'selectedTitleId', 'achievementsUpdatedAt',
-            'notificationPreferences'
+            'notificationPreferences', 'messagePrivacy'
           ]) &&
           (
             !request.resource.data.keys().hasAny(['uid']) ||
@@ -269,6 +347,12 @@ service cloud.firestore {
           (
             !request.resource.data.keys().hasAny(['accountType']) ||
             request.resource.data.accountType == 'personal'
+          ) &&
+          (
+            !request.resource.data.keys().hasAny(['messagePrivacy']) ||
+            request.resource.data.messagePrivacy in [
+              'everyone', 'peopleYouFollow', 'friends', 'nobody'
+            ]
           ) &&
           (
             !request.resource.data.keys().hasAny(['friendCount']) ||
@@ -1304,6 +1388,13 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Monotonic privacy generation used by the server publisher to reject a
+    // stale showcase build after somebody hides their profile. It is neither
+    // public product data nor owner configuration; Admin SDK only.
+    match /privateShowcaseControl/{controlId} {
+      allow read, write: if false;
+    }
+
     // ONE OF THE TWO PINNED DOCUMENTS A STRANGER CAN READ.
     //
     // `publicStats/live` is a server-owned aggregate written by
@@ -1357,7 +1448,7 @@ service cloud.firestore {
     match /publicProfiles/{userId} {
       // Checking the private source as well as the projection closes the
       // trigger's eventual-consistency window after a ban/disable/delete.
-      allow get: if isActiveAccount() && accountIsActive(userId) &&
+      allow get: if canReadFullProfile(userId) &&
           publicProfileSchemaIsExact(userId);
       allow list: if false;
       allow create, update, delete: if false;
@@ -1433,9 +1524,10 @@ service cloud.firestore {
                     'momentCount', 'unlockedTitleIds',
                     'unlockedTitleTimestamps', 'selectedTitleId',
                     'achievementsUpdatedAt',
-                    'notificationPreferences',
+                    'notificationPreferences', 'messagePrivacy',
                   ]) && accountTypeChangeAllowed())
                   && displayNameChangeAllowed()
+                  && messagePrivacyChangeAllowed()
               : false
           );
 
@@ -1615,7 +1707,19 @@ service cloud.firestore {
         allow create: if isVerified() &&
             isConversationParticipant(conversationId) &&
             request.resource.data.senderId == request.auth.uid &&
-            !conversationBlocked(conversationId);
+            !conversationBlocked(conversationId) &&
+            canDirectMessage(
+              request.auth.uid,
+              get(
+                /databases/$(database)/documents/conversations/$(conversationId)
+              ).data.participantIds[0] == request.auth.uid
+                ? get(
+                    /databases/$(database)/documents/conversations/$(conversationId)
+                  ).data.participantIds[1]
+                : get(
+                    /databases/$(database)/documents/conversations/$(conversationId)
+                  ).data.participantIds[0]
+            );
 
         // message_service.dart's editMessage/deleteMessage/toggleReaction/
         // markConversationRead all call update() on this path — this was
@@ -1663,6 +1767,23 @@ service cloud.firestore {
     match /entitlements/{userId} {
       allow read: if isOwner(userId);
       allow write: if false;
+    }
+
+    // Stripe customer/subscription identifiers, anti-replay event receipts,
+    // rate-limit counters and checkout serialization leases are backend-only.
+    // Entitlements are the deliberately minimal owner-readable projection;
+    // no client needs these operational billing records.
+    match /billingAccounts/{userId} {
+      allow read, write: if false;
+    }
+    match /billingRateLimits/{limitId} {
+      allow read, write: if false;
+    }
+    match /billingCheckoutLocks/{userId} {
+      allow read, write: if false;
+    }
+    match /stripeWebhookEvents/{eventId} {
+      allow read, write: if false;
     }
 
     // One server-owned pointer to a creator's canonical published Voice

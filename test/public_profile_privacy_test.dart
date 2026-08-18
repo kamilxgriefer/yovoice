@@ -83,6 +83,19 @@ void main() {
     },
   );
 
+  test(
+    'a missing foreign projection is an unavailable profile, not a fake user',
+    () async {
+      await expectLater(
+        ProfileService(
+          firestore: db,
+          auth: auth,
+        ).watchProfile('missing-profile').first,
+        throwsA(isA<ProfileUnavailableException>()),
+      );
+    },
+  );
+
   test('friends join public identity with friend-only presence', () async {
     final service = FriendService(firestore: db, auth: auth);
     final friends = await service

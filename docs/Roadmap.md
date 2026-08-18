@@ -883,18 +883,19 @@ regression test pinning the contract.
   that the scheduled `expirePremiumIdentity` sweep needs, so **Premium
   expiry can run for the first time**; no successful run has been observed
   in Console → Functions → Logs yet, so treat that as UNVERIFIED. Real
-  store checkout is still not operational: `verifyPurchase` deliberately
-  declines because no App Store/Play verification adapter or IAP client is
-  configured.
+  mobile-store checkout is still not operational: `verifyPurchase`
+  deliberately declines because no App Store/Play verification adapter or IAP
+  client is configured. Stripe web Checkout/Portal and webhook authority are
+  implemented and tested in source under ADR-067, but not deployed; live Stripe
+  and legal/tax configuration remain blocked.
 - **Actions**:
   1. ~~Deploy the tested `firestore.rules` update.~~ **DONE 2026-08-16.**
      Instead, confirm one real `expirePremiumIdentity` run succeeds.
-  2. Create store products `yovoice_premium_monthly` (€9.99) and
-     `yovoice_premium_yearly` (€89.99) in App Store Connect + Play
-     Console; add an IAP plugin client-side; implement the verification
-     adapters in functions/premium/entitlements.js (App Store Server
-     API key, Play service-account, or web provider webhooks). Each
-     adapter ends by calling applyEntitlements() — nothing else changes.
+  2. Complete ADR-067's blocked Stripe rollout: one live Product, inclusive PLN
+     Prices at 19.99/month and 199.99/year (17% annual saving), Adaptive
+     Pricing, Tax registrations, Portal and signed webhooks. Separately create
+     equivalent App Store/Play products only when mobile IAP adapters are
+     designed; store-localized prices remain authoritative on those platforms.
   3. Interim: grant premium via the `adminSetPremiumEntitlements`
      callable (admin/superAdmin only).
 
@@ -1001,29 +1002,37 @@ regression test pinning the contract.
 
 ### 6. Two-factor authentication
 
-- **Status**: Not started — Settings has a visible, honestly-disabled
-  "Coming soon" entry.
-- **Description**: An additional sign-in factor beyond password/Google
-  Sign-In.
-- **Dependencies**: Firebase Auth supports multi-factor auth natively;
-  this is mostly Flutter UI + enrollment-flow work, not new backend
-  infrastructure.
+- **Status**: Implemented and tested in source on 2026-08-18; Firebase TOTP
+  provider configuration and the coordinated client rollout remain pending.
+- **Description**: A Firebase Auth TOTP factor managed from Settings, including
+  enrollment, removal, recent-login reauthentication and the second-factor
+  resolver shown after password, Google or Apple primary sign-in.
+- **Dependencies**: Identity Platform TOTP must be enabled immediately before
+  the compatible clients are released. The app deliberately does not offer SMS
+  MFA.
 - **Priority**: Medium — a real account-security improvement, not urgent
   since there's no evidence of account-takeover activity today.
-- **Future considerations**: SMS-based MFA has real cost-per-message and
-  SIM-swap risk; an authenticator-app (TOTP) flow avoids both and is worth
-  defaulting to if Firebase's SDK support is equivalent.
+- **Future considerations**: Recovery codes and support-assisted account
+  recovery need a separate, audited policy. Never log or persist the TOTP
+  enrollment secret outside Firebase Auth.
 
 ### 7. Profile visibility / message-privacy controls
 
-- **Status**: Not started — Settings has a visible, honestly-disabled
-  "Coming soon" entry.
+- **Status**: Profile visibility implemented and emulator-tested in source on
+  2026-08-18; not deployed. Message privacy is tracked separately.
 - **Description**: Let a user restrict who can view their profile or send
   them direct messages.
-- **Dependencies**: New fields on `UserProfile` plus corresponding
-  Firestore rules updates — and, importantly, every existing read path
-  that shows profile/message data needs to actually respect the new
-  setting, not just the write path that sets it.
+- **Implementation**: `public`, `friends` and `private` are canonical private
+  profile states changed only through `setMyProfileVisibility`. Known-id reads,
+  search and the signed-out website showcase enforce that same source value;
+  friend-only reads require exact bilateral server-owned friendship guards.
+- **Message privacy**: Implemented and emulator-tested in source on 2026-08-18;
+  not deployed. The reusable Settings route offers Everyone, People you follow,
+  Friends only and Nobody. Functions recheck the recipient's choice for
+  conversation open, every text send, media reservation and media finalization;
+  Rules protect the legacy message-create path. Missing legacy values default
+  to Everyone and malformed values fail closed
+  ([ADR-070](Decisions.md#adr-070-direct-message-privacy-is-recipient-authoritative-on-every-new-send)).
 - **Priority**: Medium — a real trust/safety feature.
 - **Future considerations**: This is exactly the kind of feature ADR-013
   warns about: if enforcement can live entirely in Firestore rules
@@ -1122,6 +1131,11 @@ regression test pinning the contract.
 ### 13. App-store distribution
 
 - **Status**: Not started — no published iOS/Android builds exist yet.
+- **Social-auth readiness (2026-08-18)**: Google web OAuth and Android
+  debug/release configuration are fixed in source; deploy plus real-account
+  device smoke tests remain. Sign in with Apple has a real fail-closed client
+  flow, but stays disabled until the Apple Service ID/key, Firebase provider,
+  capability and regenerated release profile exist.
 - **Description**: Publish to the Apple App Store and Google Play. The
   website's download center is honest about this today ("coming soon" + a
   GitHub link) rather than linking to store pages that don't exist.

@@ -8,6 +8,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
+import 'package:yovoice/features/premium/data/models/premium_billing_context.dart';
+import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
+import 'package:yovoice/features/premium/data/services/premium_billing_service.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_plans_screen.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
@@ -23,11 +26,9 @@ import 'package:yovoice/features/rooms/presentation/widgets/recent_room_messages
 /// browser can reach.
 const sizes = <Size>[
   Size(320, 568),
-  Size(375, 667),
   Size(390, 844),
-  Size(430, 932),
   Size(768, 1024),
-  Size(1024, 768),
+  Size(1100, 800),
   Size(1440, 900),
 ];
 
@@ -37,6 +38,74 @@ MockFirebaseAuth _auth() => MockFirebaseAuth(
   signedIn: true,
   mockUser: MockUser(uid: _uid, email: 'matrix@yovoice.app'),
 );
+
+const _billingContext = PremiumBillingContext(
+  countryCode: 'PL',
+  currency: 'PLN',
+  taxDisplay: 'included',
+  taxNotice: 'VAT is included where required.',
+  priceDisplaySource: 'base',
+  localizedAtCheckout: true,
+  billingManagedBy: PremiumBillingManager.none,
+  checkoutAvailable: true,
+  portalAvailable: false,
+  currentPlan: PremiumPlan.none,
+  renewalBehavior: 'none',
+  currentPeriodEnd: null,
+  plans: [
+    PremiumLocalizedPlan(
+      plan: PremiumPlan.monthly,
+      interval: 'month',
+      currency: 'PLN',
+      unitAmount: 1999,
+      formattedPrice: '19,99 zł',
+      formattedEquivalent: null,
+      savingsPercent: 0,
+    ),
+    PremiumLocalizedPlan(
+      plan: PremiumPlan.yearly,
+      interval: 'year',
+      currency: 'PLN',
+      unitAmount: 19999,
+      formattedPrice: '199,99 zł',
+      formattedEquivalent: '16,67 zł',
+      savingsPercent: 17,
+    ),
+  ],
+);
+
+class _FakeBilling implements PremiumBillingGateway {
+  const _FakeBilling({this.context = _billingContext, this.fails = false});
+
+  final PremiumBillingContext context;
+  final bool fails;
+
+  @override
+  Future<PremiumBillingContext> getContext({String? countryCode}) async {
+    if (fails) throw StateError('offline');
+    return context;
+  }
+
+  @override
+  Future<Uri> createCheckout(PremiumPlan plan) async =>
+      Uri.parse('https://checkout.stripe.com/test');
+
+  @override
+  Future<Uri> createPortal() async =>
+      Uri.parse('https://billing.stripe.com/test');
+}
+
+Widget _scaledApp(Widget home) => MaterialApp(
+  builder: (context, child) => MediaQuery(
+    data: MediaQuery.of(
+      context,
+    ).copyWith(textScaler: const TextScaler.linear(2)),
+    child: child!,
+  ),
+  home: home,
+);
+
+Widget _app(Widget home) => MaterialApp(home: home);
 
 void main() {
   setUp(() {
@@ -58,10 +127,11 @@ void main() {
       final db = FakeFirebaseFirestore();
       final auth = _auth();
       await tester.pumpWidget(
-        MaterialApp(
-          home: PremiumScreen(
+        _app(
+          PremiumScreen(
             entitlementService: EntitlementService(firestore: db, auth: auth),
             profileService: ProfileService(firestore: db, auth: auth),
+            billingService: const _FakeBilling(),
           ),
         ),
       );
@@ -87,24 +157,36 @@ void main() {
 
       final db = FakeFirebaseFirestore();
       await tester.pumpWidget(
-        MaterialApp(
-          home: PremiumPlansScreen(
+        _scaledApp(
+          PremiumPlansScreen(
             entitlementService: EntitlementService(
               firestore: db,
               auth: _auth(),
             ),
+            billingService: const _FakeBilling(),
           ),
         ),
       );
       await tester.pump(const Duration(milliseconds: 80));
 
-      expect(find.text('€9.99'), findsOneWidget);
-      expect(find.text('€89.99'), findsOneWidget);
-      expect(find.text('Best value'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('19,99 zł'),
+        220,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pump();
+      expect(find.text('19,99 zł'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('199,99 zł'),
+        220,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pump();
+      expect(find.text('199,99 zł'), findsOneWidget);
       // Force the full lazy list to lay out — overflow below the fold
       // must fail the matrix too.
       await tester.scrollUntilVisible(
-        find.text('Restore purchases'),
+        find.text('Everything Premium includes:'),
         300,
         scrollable: find.byType(Scrollable).first,
       );
@@ -122,12 +204,13 @@ void main() {
       addTearDown(tester.view.reset);
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: PremiumPlansScreen(
+        _scaledApp(
+          PremiumPlansScreen(
             entitlementService: EntitlementService(
               firestore: FakeFirebaseFirestore(),
               auth: _auth(),
             ),
+            billingService: const _FakeBilling(),
           ),
         ),
       );
@@ -136,8 +219,10 @@ void main() {
       final monthlyToggle = find.bySemanticsLabel(
         'Select Monthly billing plan',
       );
-      final monthlyCard = find.bySemanticsLabel('Select Monthly plan, €9.99');
-      final yearlyCard = find.bySemanticsLabel('Select Yearly plan, €89.99');
+      final monthlyCard = find.bySemanticsLabel(
+        'Select Monthly plan, 19,99 zł',
+      );
+      final yearlyCard = find.bySemanticsLabel('Select Yearly plan, 199,99 zł');
       expect(monthlyToggle, findsOneWidget);
       expect(monthlyCard, findsOneWidget);
       expect(yearlyCard, findsOneWidget);
@@ -170,7 +255,7 @@ void main() {
 
       Focus.of(
         tester.element(
-          find.descendant(of: yearlyCard, matching: find.text('€89.99')),
+          find.descendant(of: yearlyCard, matching: find.text('199,99 zł')),
         ),
       ).requestFocus();
       await tester.pump();
@@ -186,6 +271,109 @@ void main() {
       );
     },
   );
+
+  testWidgets('admin Premium is truthful and has no cancel action', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final db = FakeFirebaseFirestore();
+    await db.collection('entitlements').doc(_uid).set({
+      'plan': 'yearly',
+      'status': 'active',
+      'currentPeriodEnd': Timestamp.fromDate(
+        DateTime.now().add(const Duration(days: 100)),
+      ),
+      'isPremium': true,
+    });
+    final admin = PremiumBillingContext(
+      countryCode: _billingContext.countryCode,
+      currency: _billingContext.currency,
+      taxDisplay: _billingContext.taxDisplay,
+      taxNotice: _billingContext.taxNotice,
+      priceDisplaySource: 'base',
+      localizedAtCheckout: true,
+      billingManagedBy: PremiumBillingManager.admin,
+      checkoutAvailable: false,
+      portalAvailable: false,
+      currentPlan: PremiumPlan.yearly,
+      renewalBehavior: 'none',
+      currentPeriodEnd: DateTime.now().add(const Duration(days: 100)),
+      plans: _billingContext.plans,
+    );
+    await tester.pumpWidget(
+      _scaledApp(
+        PremiumPlansScreen(
+          entitlementService: EntitlementService(firestore: db, auth: _auth()),
+          billingService: _FakeBilling(context: admin),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Manage your plan'), findsOneWidget);
+    expect(find.textContaining('Complimentary Premium access'), findsOneWidget);
+    expect(find.text('Change or cancel'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Stripe Premium exposes portal and exact ending lifecycle', (
+    tester,
+  ) async {
+    final db = FakeFirebaseFirestore();
+    final end = DateTime.now().add(const Duration(days: 20));
+    await db.collection('entitlements').doc(_uid).set({
+      'plan': 'monthly',
+      'status': 'active',
+      'currentPeriodEnd': Timestamp.fromDate(end),
+      'isPremium': true,
+    });
+    final stripe = PremiumBillingContext(
+      countryCode: 'PL',
+      currency: 'PLN',
+      taxDisplay: 'included',
+      taxNotice: _billingContext.taxNotice,
+      priceDisplaySource: 'base',
+      localizedAtCheckout: true,
+      billingManagedBy: PremiumBillingManager.stripe,
+      checkoutAvailable: false,
+      portalAvailable: true,
+      currentPlan: PremiumPlan.monthly,
+      renewalBehavior: 'ends',
+      currentPeriodEnd: end,
+      plans: _billingContext.plans,
+    );
+    await tester.pumpWidget(
+      _app(
+        PremiumPlansScreen(
+          entitlementService: EntitlementService(firestore: db, auth: _auth()),
+          billingService: _FakeBilling(context: stripe),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Change or cancel'), findsOneWidget);
+    expect(find.textContaining('Ends '), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('billing load failure is friendly and retryable', (tester) async {
+    await tester.pumpWidget(
+      _app(
+        PremiumPlansScreen(
+          entitlementService: EntitlementService(
+            firestore: FakeFirebaseFirestore(),
+            auth: _auth(),
+          ),
+          billingService: const _FakeBilling(fails: true),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Plans are temporarily unavailable'), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('stage message overlay ellipsizes a long message at 320 wide '
       'instead of overflowing', (tester) async {

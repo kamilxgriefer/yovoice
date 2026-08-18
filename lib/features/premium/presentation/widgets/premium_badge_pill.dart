@@ -23,11 +23,13 @@ class PremiumBadgePill extends StatelessWidget {
           ),
         ],
       ),
-      child: const Row(
-        mainAxisSize: MainAxisSize.min,
+      child: const Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 7,
+        runSpacing: 4,
         children: [
           Icon(Icons.auto_awesome_rounded, size: 12, color: Color(0xFFE9B8FF)),
-          SizedBox(width: 7),
           Text(
             'YO VOICE PREMIUM',
             style: TextStyle(

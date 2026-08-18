@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'package:yovoice/features/profile/data/models/profile_visibility.dart';
+
 enum AccountType {
   personal,
   creator,
@@ -54,6 +56,7 @@ class UserProfile {
     required this.unlockedTitleTimestamps,
     required this.createdAt,
     this.displayNameChangedAt,
+    this.profileVisibility = ProfileVisibility.public,
   });
 
   final String uid;
@@ -105,6 +108,12 @@ class UserProfile {
   /// Function remains authoritative and re-checks the 30-day window in a
   /// transaction for every actual change.
   final DateTime? displayNameChangedAt;
+
+  /// Who may read the server-owned full public-profile projection.
+  ///
+  /// Missing legacy values intentionally decode as [ProfileVisibility.public]
+  /// because that was the product's behaviour before this preference existed.
+  final ProfileVisibility profileVisibility;
 
   DateTime? get nextDisplayNameChangeAt =>
       displayNameChangedAt?.add(const Duration(days: 30));
@@ -169,6 +178,7 @@ class UserProfile {
       displayNameChangedAt: data['displayNameChangedAt'] is Timestamp
           ? (data['displayNameChangedAt'] as Timestamp).toDate()
           : null,
+      profileVisibility: ProfileVisibility.fromValue(data['profileVisibility']),
     );
   }
 

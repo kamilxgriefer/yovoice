@@ -1275,7 +1275,7 @@ write allowlist with no gate. No billing/IAP code existed anywhere.
 - `entitlements/{uid}` is the trusted subscription document. Written
   exclusively by Cloud Functions (`premium/entitlements.js`); rules deny
   all client writes and allow reads only by the owner. It stores plan
-  (monthly €9.99 / yearly €89.99, centralized in Flutter's
+  (monthly €9.99 / yearly €89.99 at the time, centralized in Flutter's
   `premium_plans.dart`), status (`active|trialing|grace|expired`),
   `currentPeriodEnd`, and derived flags (creatorEnabled, canCreateClubs,
   premiumIdentityEnabled, maxOwnedClubs=3) so future tiers can vary
@@ -1626,9 +1626,10 @@ marketing portrait — production must not ship fake people.
   implementation; the frame's subtle in-product treatment is unchanged.
 - Copy lives in `PremiumPlans` (data layer): 3 presentation benefit
   cards, the per-plan checklist, and the "Everything Premium includes"
-  list — one source so app and marketing surfaces can't drift. Pricing
-  is untouched: €9.99 / €89.99 (Best value, ≈ €7.50/month), store
-  pricing authoritative once billing adapters exist.
+  list — one source so app and marketing surfaces can't drift. This ADR's
+  historical €9.99 / €89.99 placeholder was superseded by ADR-067: PLN
+  19.99/month and PLN 199.99/year (17% saving; ≈ PLN 16.67/month), with Stripe
+  Checkout authoritative for the final localized web price.
 - Both screens take optional injected services (`entitlementService`,
   `profileService`) so widget tests run against fakes.
 
@@ -4401,3 +4402,148 @@ retry closes that outage without weakening the limit.
 - The cooldown is 30 exact 24-hour days, not a calendar-month calculation.
 - Deploy Functions, then Rules, then clients. The Rules step is the authority
   cutoff; source and production behavior differ until it is deployed.
+
+## ADR-067: Stripe owns payment and cancellation; Firestore owns access; localized prices are finalized only in Checkout
+
+**Status:** accepted in source, not deployed (2026-08-18).
+
+YO Voice web billing uses two immutable recurring Stripe Prices on one Product:
+PLN 19.99/month and PLN 199.99/year, both `tax_behavior=inclusive`. The app may
+show those truthful base prices, but it never performs exchange-rate or tax
+math. Stripe Checkout Adaptive Pricing selects and displays the final local
+currency/tax before payment. This is deliberately not Stripe manual
+`currency_options`, and the catalog says `priceDisplaySource=base` and
+`localizedAtCheckout=true`.
+
+Checkout accepts only a plan id. Server configuration supplies the Price,
+customer, success/cancel URLs, automatic tax and card payment method. Stripe's
+hosted Customer Portal is the only change/cancel surface and its fixed
+configuration must allow cancellation plus switching between exactly the two
+validated Prices. Suspended users retain Portal access because product access
+and the payer's right to cancel are different permissions.
+
+Signed webhooks re-read the canonical Subscription and latest Invoice. A first
+grant requires a paid Invoice; an unpaid renewal can retain only the already
+paid entitlement window. The private customer binding, entitlement projection
+and event receipt commit in one Firestore transaction. Metadata cannot create a
+binding. The production Firebase project hard-fails unless Stripe mode, key,
+Price and webhook are all live. Auth deletion immediately expires open Checkout
+and cancels the canonical customer's subscriptions while retaining the private
+binding for refund/dispute/replay reconciliation; late events never recreate a
+deleted profile.
+
+`billingAccounts`, `billingRateLimits`, `billingCheckoutLocks` and
+`stripeWebhookEvents` are Admin-SDK-only. App Check stays unenforced until the
+existing monitored cutover; auth, canonical binding, rate limits, Stripe
+signatures and idempotency remain mandatory independently.
+
+The access policy is intentionally narrower than the unresolved financial
+policy: `charge.dispute.created` and a full `charge.refunded` immediately revoke
+access and cancel every nonterminal subscription for the canonical Customer. A
+partial refund preserves access and records a server-only support-review audit;
+it never guesses whether the remaining payment merits a prorated entitlement.
+Seller-of-record, VAT registration, customer money-return timing and B2B tax-ID
+policy remain production blockers until legally approved and configured.
+
+## ADR-068: OAuth handlers are provider-registered endpoints; unavailable identity providers fail closed
+
+**Status:** accepted in source (2026-08-18).
+
+Flutter Web previously used the branded `auth.yovoice.app` domain as its
+Firebase `authDomain`, even though Google's OAuth client did not register
+`https://auth.yovoice.app/__/auth/handler`. A Firebase authorized domain is not
+automatically an OAuth redirect URI; the result was a deterministic Google 400
+`redirect_uri_mismatch`.
+
+Flutter Web therefore uses Firebase's registered
+`yovoice-ec54a.firebaseapp.com` popup handler. The branded Auth domain remains
+valid for email action links and can only become the popup handler after the
+exact redirect is registered and proven end to end. Android release and debug
+certificate fingerprints are separately registered; Play App Signing will add
+another identity at store-distribution time.
+
+Apple Auth is additive but must never be represented as available from source
+code alone. The client uses Firebase's `AppleAuthProvider` and the same
+server-backed social-profile bootstrap as Google, guarded by both a disabled-by-
+default build flag and a runtime Firebase provider probe. Missing, malformed or
+unreachable provider configuration disables the control. Enabling Apple
+requires a dedicated Apple Service ID/key, Firebase provider configuration,
+the Apple App ID capability, a regenerated release provisioning profile and
+real-account smoke tests. Notification/APNs keys are not interchangeable with
+Sign in with Apple keys.
+
+## ADR-069: Profile visibility is private source authority, not a cosmetic projection flag
+
+**Status:** accepted in source, not deployed (2026-08-18).
+
+`users/{uid}.profileVisibility` has the exact server-owned values `public`,
+`friends` and `private`. Missing legacy state means public; any unknown stored
+value fails closed. Clients change it only through the rate-limited
+`setMyProfileVisibility` callable. Firestore known-id profile reads, callable
+search and the signed-out website showcase all re-check this private source;
+`friends` requires two exact server-owned friendship guards.
+
+The public projection is never used as privacy authority. Switching away from
+public atomically revokes website consent, clears people from the anonymous
+showcase and advances a backend-only privacy generation. A scheduled publisher
+that computed against the older generation aborts rather than re-publishing a
+newly hidden person. Existing chats remain accessible under their own rules and
+use their stored participant label if the profile projection is no longer
+readable. Rooms, clubs and existing conversations can still show participation,
+which is stated explicitly in the UI.
+
+## ADR-070: Direct-message privacy is recipient-authoritative on every new send
+
+**Status:** accepted in source, not deployed (2026-08-18).
+
+The recipient stores one exact `users/{uid}.messagePrivacy` value:
+`everyone`, `peopleYouFollow`, `friends`, or `nobody`. A missing field means
+`everyone` only for accounts created before the setting shipped. Any unknown
+stored value fails closed. `peopleYouFollow` is deliberately directional: the
+recipient must follow the sender. `friends` requires both server-owned
+`friendshipGuards`; a client-writable historical friend/follow mirror is never
+authorization.
+
+The setting controls delivery, not history. It is re-evaluated when opening a
+canonical direct conversation and for every text, photo, and voice send in an
+existing conversation. Media reservation and media finalization both recheck
+it, so changing the setting during an upload cannot create a message. Existing
+history, read receipts, reactions, edits, and deletes remain usable. A block,
+inactive account, verification requirement, or sanction remains a separate
+stricter denial and always wins.
+
+Callable Functions are the primary authority. Firestore Rules apply the same
+recipient check to the legacy direct message-create path so an old or modified
+client cannot bypass it. The client may write only its own exact enum value and
+shows a responsive settings route; it does not decide whether any sender is
+eligible. Relationship checks and the recipient profile are read inside the
+same transaction as the canonical write.
+
+This change requires Functions, Firestore Rules, then client deployment. Until
+all three ship together, the production UI and production enforcement must not
+be described as live.
+
+## ADR-071: Two-factor authentication uses Firebase TOTP and fails closed
+
+**Status:** accepted in source, not deployed (2026-08-18).
+
+YO Voice uses Firebase Identity Platform's TOTP factor rather than implementing
+an OTP secret store or choosing SMS. The client asks Firebase for an enrollment
+session and secret, presents the standard `otpauth` URI plus a deliberate copy
+action, then enrolls only after Firebase validates a six-digit assertion. The
+temporary secret remains in memory and is discarded after completion or
+cancellation; it is never copied into Firestore, Storage, analytics or logs.
+
+Every primary sign-in surface catches Firebase's multi-factor exception and
+resolves the provider-supplied session with the selected canonical TOTP factor.
+Settings reads enrolled factors directly from Firebase Auth, supports removal,
+and performs primary-provider reauthentication when Firebase requires a recent
+login. Unknown or unsupported factor types fail closed with a support message
+instead of bypassing the challenge.
+
+The project MFA switch and both client resolvers are one release boundary. TOTP
+must not be enabled before compatible Flutter and website clients are deployed,
+and the UI must not claim it is live while the project provider is disabled.
+SMS MFA remains out of scope because of SIM-swap risk, per-message cost and the
+additional phone-data surface. Recovery codes and support recovery require a
+separate decision.

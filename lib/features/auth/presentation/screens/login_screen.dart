@@ -4,6 +4,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/widgets/check_inbox_sheet.dart';
+import 'package:yovoice/features/auth/presentation/screens/totp_challenge_screen.dart';
 import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
 import 'package:yovoice/features/auth/presentation/screens/register_screen.dart';
 
@@ -69,7 +70,7 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      _showMessage(_authService.getErrorMessage(error));
+      await _handleAuthenticationError(error);
     } finally {
       if (mounted) {
         setState(() {
@@ -97,7 +98,7 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      _showMessage(_authService.getErrorMessage(error));
+      await _handleAuthenticationError(error);
     } finally {
       if (mounted) {
         setState(() {
@@ -137,7 +138,7 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      _showMessage(_authService.getErrorMessage(error));
+      await _handleAuthenticationError(error);
     } finally {
       if (mounted) {
         setState(() {
@@ -204,6 +205,25 @@ class _LoginScreenState extends State<LoginScreen> {
     Navigator.of(
       context,
     ).push(MaterialPageRoute<void>(builder: (_) => const RegisterScreen()));
+  }
+
+  Future<void> _handleAuthenticationError(Object error) async {
+    if (error is FirebaseAuthMultiFactorException) {
+      final challenge = _authService.createTotpSignInChallenge(error);
+      if (challenge.factors.isEmpty) {
+        _showMessage(
+          'This account requires a second factor that this app cannot verify. Contact support.',
+        );
+        return;
+      }
+      await Navigator.of(context).push<bool>(
+        MaterialPageRoute<bool>(
+          builder: (_) => TotpChallengeScreen(challenge: challenge),
+        ),
+      );
+      return;
+    }
+    _showMessage(_authService.getErrorMessage(error));
   }
 
   void _showMessage(String message) {

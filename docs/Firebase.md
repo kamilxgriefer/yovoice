@@ -24,6 +24,14 @@ Firebase Authentication (email/password + Google Sign-In), shared across
 this Flutter app and `yovoice-website` via the custom Auth domain
 `auth.yovoice.app` — one account works everywhere.
 
+The Flutter client and website implement Firebase Identity Platform TOTP MFA.
+The enrollment secret exists only for the in-progress setup UI and is discarded
+after Firebase accepts the first code. Sign-in catches Firebase's multi-factor
+exception, uses its resolver and submits a TOTP assertion for the selected
+enrolled factor. Production must not expose enrollment until `mfa.state` and the
+TOTP provider are enabled in the project; see
+[ADR-071](Decisions.md#adr-071-two-factor-authentication-uses-firebase-totp-and-fails-closed).
+
 `email_verified` is a real gate, not just a UI banner: Firestore rules and
 Cloud Functions check `request.auth.token.email_verified` (or the
 equivalent server-side claim) before allowing content-creation/outbound
@@ -233,6 +241,15 @@ canonical message. Reads require an active authenticated participant in the
 same schema-v2 conversation. Backend cleanup uses the canonical bucket from
 Firebase configuration rather than synthesizing a suffix from `GCLOUD_PROJECT`.
 
+Direct-message delivery also reads `users/{recipientId}.messagePrivacy`.
+Accepted values are `everyone`, `peopleYouFollow`, `friends`, and `nobody`.
+Missing means `everyone` for legacy accounts; unknown values fail closed.
+`peopleYouFollow` checks the recipient-to-sender `following` edge, while
+`friends` checks both server-owned `friendshipGuards`. Owner create/update
+rules accept only the exact enum. The legacy client-direct message create rule
+performs the same recipient check as Functions; reads and non-create message
+operations keep existing conversation history usable.
+
 ## Firebase App Check
 
 Integrated client-side in the Flutter app
@@ -258,8 +275,8 @@ cd firestore-tests && npm install && npm test
 ```
 
 Full details in [`firestore-tests/README.md`](../firestore-tests/README.md)
-and [TESTING.md](TESTING.md) — **301** checks as of 2026-08-16 (this file
-said 265 until then), plus 46 Storage and 11 family-media checks;
+and [TESTING.md](TESTING.md) — **396** checks as of 2026-08-18, plus 46
+Storage and 11 family-media checks;
 regression + attack-scenario coverage. Always run against a
 freshly-started emulator before trusting a "green" result; see
 [ADR-007](Decisions.md#adr-007-firestore-rules-changes-are-always-emulator-tested-against-a-real-collectiongroup-query)
@@ -274,3 +291,29 @@ command in one place. Note that `npm run deploy` inside `functions/` is a
 full `firebase deploy --only functions` against whatever project
 `firebase use` points at — it is not the single-function shortcut this doc
 tree described it as before 2026-08-16.
+
+## Stripe billing data boundary (source only; not deployed)
+
+- `entitlements/{uid}` remains the owner-readable, server-written access
+  projection and now includes `cancelAtPeriodEnd` and an exact
+  `renewalBehavior` (`renews`, `ends`, or `none`).
+- `billingAccounts/{uid}` is the canonical Firebase uid ↔ Stripe Customer/
+  Subscription binding plus provider lifecycle and pending Checkout recovery.
+- `billingRateLimits/{uid_action}`, `billingCheckoutLocks/{uid}` and
+  `stripeWebhookEvents/{eventId}` are operational anti-abuse/idempotency state.
+- Firestore Rules deny every client read and write to all four operational
+  collections. Only Admin SDK Functions access them.
+
+No new composite index is required. The Rules emulator command in this file
+passes 396 checks, including read/create/update/delete denial for each billing
+collection.
+
+## Profile visibility (source only; not deployed)
+
+The canonical preference is the private `users/{uid}.profileVisibility` field;
+it is not accepted by any client create/update allowlist. The
+`setMyProfileVisibility` callable writes it and revokes incompatible marketing
+consent. `publicProfiles/{uid}` remains the minimal projection, but its exact-id
+read rule re-checks active source state, visibility, blocks and—when set to
+`friends`—both `friendshipGuards` rows. `privateShowcaseControl/live` is an
+Admin-only monotonic generation used to reject stale website publication.

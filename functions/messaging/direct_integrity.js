@@ -60,6 +60,92 @@ const ALLOWED_DIRECT_REACTIONS = Object.freeze([
   "😢",
   "👍",
 ]);
+const DIRECT_MESSAGE_PRIVACY = Object.freeze({
+  everyone: "everyone",
+  peopleYouFollow: "peopleYouFollow",
+  friends: "friends",
+  nobody: "nobody",
+});
+
+function directMessagePrivacy(profileSnapshot) {
+  const profile = profileSnapshot?.data?.() ?? {};
+  if (!("messagePrivacy" in profile)) return DIRECT_MESSAGE_PRIVACY.everyone;
+  const value = profile.messagePrivacy;
+  if (!Object.values(DIRECT_MESSAGE_PRIVACY).includes(value)) {
+    fail("data-loss", "The recipient's message privacy setting is invalid.");
+  }
+  return value;
+}
+
+function exactFollowingEdge(snapshot, targetId) {
+  if (!snapshot?.exists) return false;
+  const data = snapshot.data() ?? {};
+  const keys = Object.keys(data).sort();
+  const expected = ["followedAt", "uid"];
+  return keys.length === expected.length &&
+    keys.every((key, index) => key === expected[index]) &&
+    data.uid === targetId && timestampMillis(data.followedAt) !== null;
+}
+
+function exactFriendshipGuard(snapshot, ownerId, friendId) {
+  if (!snapshot?.exists) return false;
+  const data = snapshot.data() ?? {};
+  const keys = Object.keys(data).sort();
+  const expected = ["establishedAt", "friendId", "ownerId", "schemaVersion"];
+  return keys.length === expected.length &&
+    keys.every((key, index) => key === expected[index]) &&
+    data.ownerId === ownerId && data.friendId === friendId &&
+    data.schemaVersion === 1 && timestampMillis(data.establishedAt) !== null;
+}
+
+function assertDirectMessagePrivacy({
+  actorId,
+  recipientId,
+  recipientProfile,
+  recipientFollowsActor,
+  actorFriendGuard,
+  recipientFriendGuard,
+}) {
+  const privacy = directMessagePrivacy(recipientProfile);
+  const allowed = privacy === DIRECT_MESSAGE_PRIVACY.everyone ||
+    (privacy === DIRECT_MESSAGE_PRIVACY.peopleYouFollow &&
+      exactFollowingEdge(recipientFollowsActor, actorId)) ||
+    (privacy === DIRECT_MESSAGE_PRIVACY.friends &&
+      exactFriendshipGuard(actorFriendGuard, actorId, recipientId) &&
+      exactFriendshipGuard(recipientFriendGuard, recipientId, actorId));
+  if (!allowed) {
+    fail(
+      "permission-denied",
+      "This person is not accepting direct messages from you.",
+    );
+  }
+  return { actorId, recipientId, privacy };
+}
+
+function directMessagePrivacyReferences(db, actorId, recipientId) {
+  return [
+    db.doc(`users/${recipientId}/following/${actorId}`),
+    db.doc(`friendshipGuards/${actorId}/friends/${recipientId}`),
+    db.doc(`friendshipGuards/${recipientId}/friends/${actorId}`),
+  ];
+}
+
+function assertDirectMessagePrivacyFromRelated({
+  actorId,
+  recipientId,
+  recipientProfile,
+  related,
+  offset,
+}) {
+  return assertDirectMessagePrivacy({
+    actorId,
+    recipientId,
+    recipientProfile,
+    recipientFollowsActor: related[offset],
+    actorFriendGuard: related[offset + 1],
+    recipientFriendGuard: related[offset + 2],
+  });
+}
 
 function canonicalConversationId(firstId, secondId) {
   const pair = canonicalPair(firstId, secondId);
@@ -495,6 +581,11 @@ function createDirectMessagingService({
       const targetRestrictionRef = db.doc(`restrictions/${targetUserId}`);
       const actorBlockRef = db.doc(`users/${auth.uid}/blocked/${targetUserId}`);
       const targetBlockRef = db.doc(`users/${targetUserId}/blocked/${auth.uid}`);
+      const privacyRefs = directMessagePrivacyReferences(
+        db,
+        auth.uid,
+        targetUserId,
+      );
       const [
         ledger,
         rate,
@@ -507,6 +598,9 @@ function createDirectMessagingService({
         targetRestriction,
         actorBlock,
         targetBlock,
+        targetFollowsActor,
+        actorFriendGuard,
+        targetFriendGuard,
       ] = await transactionGetAll(
         transaction,
         ledgerRef,
@@ -520,6 +614,7 @@ function createDirectMessagingService({
         targetRestrictionRef,
         actorBlockRef,
         targetBlockRef,
+        ...privacyRefs,
       );
 
       const replay = assertLedgerReplay(ledger, {
@@ -534,6 +629,14 @@ function createDirectMessagingService({
       assertNotRestricted(actorRestriction, "Your", timing.nowMs);
       assertNotRestricted(targetRestriction, "The selected", timing.nowMs);
       assertNotBlocked(actorBlock, targetBlock);
+      assertDirectMessagePrivacy({
+        actorId: auth.uid,
+        recipientId: targetUserId,
+        recipientProfile: targetProfileSnapshot,
+        recipientFollowsActor: targetFollowsActor,
+        actorFriendGuard,
+        recipientFriendGuard: targetFriendGuard,
+      });
       let conversationId = defaultConversationId;
       if (pairGuard.exists) {
         const guard = pairGuard.data() ?? {};
@@ -661,6 +764,7 @@ function createDirectMessagingService({
         db.doc(`directConversationPairs/${canonicalPairKey(
           ...preliminary.participants,
         )}`),
+        ...directMessagePrivacyReferences(db, auth.uid, recipientId),
       ];
       if (replyToMessageId) {
         refs.push(conversationRef.collection("messages").doc(replyToMessageId));
@@ -668,6 +772,7 @@ function createDirectMessagingService({
       const related = await transactionGetAll(transaction, ...refs);
       const [actorProfile, recipientProfile, actorRestriction,
         recipientRestriction, actorBlock, recipientBlock, pairGuard,
+        recipientFollowsActor, actorFriendGuard, recipientFriendGuard,
         replySnapshot] = related;
       const context = validateConversation(
         conversation,
@@ -680,6 +785,14 @@ function createDirectMessagingService({
       assertNotRestricted(actorRestriction, "Your", timing.nowMs);
       assertNotRestricted(recipientRestriction, "The recipient", timing.nowMs);
       assertNotBlocked(actorBlock, recipientBlock);
+      assertDirectMessagePrivacy({
+        actorId: auth.uid,
+        recipientId,
+        recipientProfile,
+        recipientFollowsActor,
+        actorFriendGuard,
+        recipientFriendGuard,
+      });
       consume(transaction, rate, rateRef, "send", auth.uid, timing);
 
       if (existingMessage.exists) {
@@ -829,6 +942,7 @@ function createDirectMessagingService({
         db.doc(`directConversationPairs/${canonicalPairKey(
           ...preliminary.participants,
         )}`),
+        ...directMessagePrivacyReferences(db, auth.uid, recipientId),
       );
       validateConversation(conversation, conversationId, auth.uid, related[6]);
       activeProfile(related[0], "Your");
@@ -836,6 +950,13 @@ function createDirectMessagingService({
       assertNotRestricted(related[2], "Your", timing.nowMs);
       assertNotRestricted(related[3], "The recipient", timing.nowMs);
       assertNotBlocked(related[4], related[5]);
+      assertDirectMessagePrivacyFromRelated({
+        actorId: auth.uid,
+        recipientId,
+        recipientProfile: related[1],
+        related,
+        offset: 7,
+      });
       consume(transaction, rate, rateRef, "uploadReserve", auth.uid, timing);
       if (existing.exists) {
         fail("data-loss", "An attachment reservation exists without its ledger.");
@@ -998,6 +1119,7 @@ function createDirectMessagingService({
         db.doc(`directConversationPairs/${canonicalPairKey(
           ...preliminary.participants,
         )}`),
+        ...directMessagePrivacyReferences(db, auth.uid, recipientId),
       );
       const context = validateConversation(
         conversation,
@@ -1010,6 +1132,13 @@ function createDirectMessagingService({
       assertNotRestricted(related[2], "Your", timing.nowMs);
       assertNotRestricted(related[3], "The recipient", timing.nowMs);
       assertNotBlocked(related[4], related[5]);
+      assertDirectMessagePrivacyFromRelated({
+        actorId: auth.uid,
+        recipientId,
+        recipientProfile: related[1],
+        related,
+        offset: 7,
+      });
       const sequence = incrementCanonicalCount(
         context.data.lastMessageSequence,
         "lastMessageSequence",

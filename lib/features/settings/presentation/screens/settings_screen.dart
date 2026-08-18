@@ -15,10 +15,14 @@ import 'package:yovoice/features/marketing/data/services/public_showcase_consent
 import 'package:yovoice/features/notifications/presentation/screens/notification_preferences_screen.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
+import 'package:yovoice/features/premium/presentation/screens/premium_plans_screen.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
+import 'package:yovoice/features/settings/presentation/screens/profile_visibility_screen.dart';
+import 'package:yovoice/features/settings/presentation/screens/two_factor_authentication_screen.dart';
+import 'package:yovoice/features/settings/presentation/widgets/message_privacy_settings_tile.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 const _background = Color(0xFF080711);
@@ -455,7 +459,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ? 'Payment issue — check your billing details'
                       : periodEnd == null
                       ? 'Active'
-                      : 'Renews or ends '
+                      : 'Active through '
                             '${periodEnd.day}.${periodEnd.month}.${periodEnd.year}',
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
@@ -466,25 +470,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _SettingsTile(
                   icon: Icons.manage_accounts_outlined,
                   title: 'Manage subscription',
-                  // Apple/Google subscriptions can only be cancelled in
-                  // the platform's own subscription manager — linking
-                  // there is the honest flow, not a fake in-app cancel.
+                  // The unified manager decides from trusted billing state
+                  // whether this is Stripe, App Store, Play or an admin grant.
                   subtitle: kIsWeb
                       ? 'Purchases and billing management'
-                      : 'Opens your store subscription settings',
+                      : 'View your plan and billing options',
                   onTap: () {
-                    if (kIsWeb) {
-                      Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => const PremiumScreen(),
-                        ),
-                      );
-                      return;
-                    }
-                    _openUrl(
-                      Theme.of(context).platform == TargetPlatform.iOS
-                          ? 'https://apps.apple.com/account/subscriptions'
-                          : 'https://play.google.com/store/account/subscriptions',
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const PremiumPlansScreen(),
+                      ),
                     );
                   },
                 ),
@@ -517,11 +512,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 );
               },
             ),
-            const _SettingsTile(
+            _SettingsTile(
               icon: Icons.visibility_outlined,
               title: 'Profile visibility',
-              subtitle: 'Choose who can view your profile',
-              comingSoon: true,
+              subtitle: profile.profileVisibility.label,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ProfileVisibilityScreen(
+                    initialVisibility: profile.profileVisibility,
+                  ),
+                ),
+              ),
             ),
             StreamBuilder<PublicProfileShowcaseConsent>(
               stream: _showcaseConsentService.watchProfileConsent(profile.uid),
@@ -569,12 +570,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 );
               },
             ),
-            const _SettingsTile(
-              icon: Icons.forum_outlined,
-              title: 'Who can message you',
-              subtitle: 'Restrict direct messages',
-              comingSoon: true,
-            ),
+            const MessagePrivacySettingsTile(),
           ],
         ),
         const SizedBox(height: 22),
@@ -610,11 +606,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ? null
                   : () => _showVerificationSheet(context),
             ),
-            const _SettingsTile(
+            _SettingsTile(
               icon: Icons.security_rounded,
               title: 'Two-factor authentication',
-              subtitle: 'Add an extra layer of security',
-              comingSoon: true,
+              subtitle: 'Use an authenticator code when you sign in',
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const TwoFactorAuthenticationScreen(),
+                ),
+              ),
             ),
           ],
         ),

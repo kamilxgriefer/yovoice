@@ -237,6 +237,24 @@ describe("public showcase people projection", () => {
       person("no-consent", {
         consent: consent({ showProfileOnWebsite: false }),
       }),
+      person("friends-only", {
+        user: {
+          ...person("friends-only").user,
+          profileVisibility: "friends",
+        },
+      }),
+      person("private-profile", {
+        user: {
+          ...person("private-profile").user,
+          profileVisibility: "private",
+        },
+      }),
+      person("invalid-visibility", {
+        user: {
+          ...person("invalid-visibility").user,
+          profileVisibility: "future-value",
+        },
+      }),
       person("bad-profile", {
         profile: { ...person("bad-profile").profile, uid: "somebody-else" },
       }),

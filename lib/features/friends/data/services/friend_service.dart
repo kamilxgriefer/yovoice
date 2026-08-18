@@ -190,14 +190,26 @@ class FriendService {
                 profileSubscriptions[id] = _publicProfiles
                     .doc(id)
                     .snapshots()
-                    .listen((document) {
-                      if (!document.exists || document.data() == null) {
+                    .listen(
+                      (document) {
+                        if (!document.exists || document.data() == null) {
+                          profiles.remove(id);
+                        } else {
+                          profiles[id] = FriendUser.fromFirestore(document);
+                        }
+                        emit();
+                      },
+                      onError: (_) {
+                        // A friend may make their full profile private. The
+                        // canonical relationship remains, but this complete
+                        // projection is no longer authorised. Fail closed per
+                        // row instead of turning the entire Friends surface
+                        // into an error (or retaining a stale cached profile).
                         profiles.remove(id);
-                      } else {
-                        profiles[id] = FriendUser.fromFirestore(document);
-                      }
-                      emit();
-                    }, onError: controller.addError);
+                        presences.remove(id);
+                        emit();
+                      },
+                    );
                 presenceSubscriptions[id] = _socialPresence
                     .doc(id)
                     .snapshots()

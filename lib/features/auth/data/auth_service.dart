@@ -7,6 +7,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:yovoice/features/auth/data/action_code_settings.dart';
+import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/models/app_user.dart';
@@ -52,6 +53,10 @@ class AuthService {
   User? get currentUser => _firebaseAuth.currentUser;
 
   Stream<User?> get authStateChanges => _firebaseAuth.authStateChanges();
+
+  TotpSignInChallenge createTotpSignInChallenge(
+    FirebaseAuthMultiFactorException exception,
+  ) => TotpSignInChallenge(exception.resolver);
 
   Future<UserCredential> signIn({
     required String email,

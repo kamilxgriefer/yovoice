@@ -181,6 +181,19 @@ bucket. `functions/index.js` therefore lets `FIREBASE_CONFIG` select the
 canonical bucket unless an operator explicitly sets one of the documented
 bucket override environment variables.
 
+### Recipient-authoritative direct-message privacy
+
+`openDirectConversation`, `sendDirectMessage`,
+`reserveDirectMessageAttachment`, and `finalizeDirectMessageAttachment` read
+the recipient's private `messagePrivacy` value inside their Firestore
+transaction. `peopleYouFollow` requires
+`users/{recipient}/following/{sender}`; `friends` requires both canonical
+`friendshipGuards`. Those graph records are server-owned. The checks run again
+on existing threads and at both ends of a media upload, so neither a stale UI
+nor an upload reserved before a preference change can bypass the recipient.
+Missing values preserve the legacy Everyone behavior; malformed values return
+`data-loss` and do not widen access.
+
 ## Clubs
 
 - `transferClubOwnershipSelf` — self-service ownership transfer (owner
@@ -242,6 +255,43 @@ Every function currently sets `enforceAppCheck: false` — see
 [SECURITY.md](SECURITY.md#firebase-app-check),
 [ADR-004](Decisions.md#adr-004-firebase-app-check-integrated-client-side-enforcement-deliberately-off),
 and [Bugs.md](Bugs.md) for current status and why it's not flipped yet.
+
+## Stripe Premium billing (source only; not deployed)
+
+`functions/premium/stripe_billing.js` exposes a deterministic billing catalog,
+server-created Checkout and Customer Portal sessions, a signed webhook, and an
+Auth-deletion cancellation trigger. Base Prices are PLN 19.99 monthly and PLN
+199.99 yearly including tax. Checkout Adaptive Pricing—not client conversion
+and not manual `currency_options`—produces the final local currency.
+
+The webhook validates both configured Prices (amount, interval, inclusive tax,
+same Product and live/test mode), then re-reads Subscription + latest Invoice.
+It writes the private billing lifecycle, `entitlements/{uid}`, cosmetic user
+mirror and event receipt atomically. New access requires a paid Invoice; an
+unpaid renewal cannot extend the prior paid period. Customer metadata is never
+accepted as ownership authority.
+
+A dispute or full refund cancels every nonterminal subscription returned for
+the canonical Customer and atomically revokes access. A partial refund does not
+make an automatic access decision; it marks `billingReviewRequired` and writes
+a replay-safe support-review receipt. Auth deletion also expires open Checkout,
+pages all Customer subscriptions and cancels each nonterminal one.
+
+Required server parameters/secrets: `STRIPE_SECRET_KEY`,
+`STRIPE_WEBHOOK_SECRET`, `STRIPE_MONTHLY_PRICE_ID`,
+`STRIPE_YEARLY_PRICE_ID`, `STRIPE_PORTAL_CONFIGURATION_ID` and
+`STRIPE_EXPECTED_MODE`. The production project `yovoice-ec54a` accepts only
+`live`. See DEPLOYMENT.md for the blocked rollout.
+
+## Profile visibility (source only; not deployed)
+
+`setMyProfileVisibility({visibility})` accepts only `public`, `friends` or
+`private`, requires an active authenticated profile and uses a private
+per-minute rate limit. A non-public transition atomically changes the canonical
+private preference, disables website marketing consent, clears public showcase
+people and advances `privateShowcaseControl/live.privacyGeneration`. Public
+profile search filters candidates against the same canonical value and exact
+bilateral friendship guards before returning a bounded projection.
 
 ## Deploying
 

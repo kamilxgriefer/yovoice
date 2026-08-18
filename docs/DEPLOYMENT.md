@@ -440,6 +440,47 @@ auth.yovoice.app        → Firebase Hosting — shared Auth domain, live
 app.yovoice.app          → Firebase Hosting — LIVE as of 2026-08-16
 ```
 
+`auth.yovoice.app` remains the branded domain for Auth action links. It is not
+currently the Flutter Web OAuth popup handler: Google Sign-In must use the
+registered `https://yovoice-ec54a.firebaseapp.com/__/auth/handler` through the
+web `authDomain` in `firebase_options.dart`. Do not switch that value back to
+the custom domain unless the exact redirect is first added to the Google OAuth
+client and verified with a real popup flow.
+
+### Social sign-in release gates
+
+- Google: confirm the Firebase Android app contains debug and release/upload
+  SHA-1 plus SHA-256 fingerprints, download the resulting
+  `google-services.json`, deploy the Flutter Hosting build, and verify that the
+  production popup reaches Google's account chooser without
+  `redirect_uri_mismatch`. Add the Google Play App Signing fingerprints before
+  distributing a Play-signed build.
+- Apple: keep `YOVOICE_APPLE_SIGN_IN_ENABLED` false until the Apple Service ID,
+  dedicated Sign in with Apple key, Firebase `apple.com` provider, App ID
+  capability and matching provisioning profile all exist. Then build with the
+  flag enabled, deploy, and smoke-test web plus signed iOS/Android. The APNs key
+  documented below is notification-only and is not valid for Apple Auth.
+
+### TOTP two-factor release gate
+
+Do not enable project MFA ahead of compatible Flutter and website clients. The
+order is:
+
+1. Run the TOTP enrollment/challenge suites, full `flutter analyze`, website
+   tests/lint, and both production builds.
+2. Verify both clients handle Firebase's `multi-factor-auth-required` resolver
+   for email/password sign-in.
+3. Enable Identity Platform MFA with only the TOTP provider and one adjacent
+   interval; do not enable SMS implicitly.
+4. Deploy Firebase Hosting and the website immediately, invalidate caches, and
+   smoke-test with a dedicated account: enroll, fresh sign-in challenge on both
+   clients, wrong code, correct code, removal and sign-in after removal.
+5. Confirm an account without an enrolled factor still signs in normally.
+
+If either client or smoke test fails, stop new enrollment before changing the
+provider. Never disable the only resolver for already-enrolled accounts and
+strand them without a separately approved recovery process.
+
 **CORRECTION, 2026-08-16.** This block, [Roadmap.md](Roadmap.md) and
 [Bugs.md](Bugs.md) all described `app.yovoice.app` as blocked on a
 Cloudflare DNS record only the domain owner could add. **It is no longer
@@ -919,3 +960,57 @@ infrastructure short of the Firestore emulator (rules only) — see
 [Bugs.md](Bugs.md) and consider this a candidate for a future "add a
 staging Firebase project" decision if the team or user base ever grows
 enough to justify the added complexity.
+
+## Stripe Premium rollout (blocked; no live mutations performed)
+
+Do not deploy billing until seller/VAT/refund/dispute decisions are approved.
+Then roll out in this order:
+
+1. In live Stripe create one Premium Product and two recurring PLN Prices:
+   1999/month and 19999/year, both `tax_behavior=inclusive`. Do not add manual
+   `currency_options`; this implementation uses Checkout Adaptive Pricing.
+2. Configure Stripe Tax registrations/business identity and verify the final
+   customer receipt/invoice wording. Tax ID collection remains off until a B2B
+   policy exists.
+3. Create one active Customer Portal configuration. Enable cancellation and
+   Price updates; allow exactly both Prices on the same Product. Verify both
+   have the identical inclusive tax behavior.
+4. Set Firebase parameters `STRIPE_MONTHLY_PRICE_ID`,
+   `STRIPE_YEARLY_PRICE_ID`, `STRIPE_PORTAL_CONFIGURATION_ID` and
+   `STRIPE_EXPECTED_MODE=live`; set Secret Manager values
+   `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`. Never point
+   `yovoice-ec54a` at test mode.
+5. Deploy Firestore Rules first (operational billing collections are denied to
+   clients), then only the billing Functions plus Auth-deletion cancellation,
+   then clients. Register the live Stripe webhook endpoint for Checkout
+   completed/async succeeded/async failed, Subscription lifecycle and Invoice
+   paid/payment failed events, plus `charge.refunded` and
+   `charge.dispute.created`.
+6. Smoke with a new disposable account: monthly Checkout in PLN and a Stripe-
+   localized country, paid entitlement, Portal monthly→yearly, cancel-at-period
+   end showing `ends`, cancellation, failed payment, webhook replay, suspended
+   payer Portal access, and Auth deletion canceling the subscription. Confirm
+   no duplicate Customers/subscriptions and no recreated deleted `users` doc.
+   Send signed test events for a full refund (access revoked, all subscriptions
+   canceled), partial refund (access preserved, support review recorded), and
+   dispute creation (access revoked).
+7. Reconcile Stripe subscriptions against `billingAccounts` and
+   `entitlements`; every Stripe Customer must map to exactly one uid, every
+   active entitlement must have a paid canonical latest Invoice, and all event
+   failures must be retried to a `stripeWebhookEvents` receipt.
+
+Predeploy gates:
+
+```bash
+node --check functions/premium/stripe_billing.js
+node --test functions/test/stripe_billing.test.js
+firebase emulators:exec --only firestore --project demo-yovoice \
+  "node firestore-tests/rules.test.js"
+```
+
+Rollback: disable new Checkout entry points first, keep Portal and webhook
+available so existing payers can cancel, restore the prior Functions/rules
+from the predeploy snapshot, and continue processing signed provider events.
+Do not delete `billingAccounts` or webhook receipts; they are required for
+reconciliation, refunds and replay. Stripe Product/Prices should be archived
+only after no active subscription references them.

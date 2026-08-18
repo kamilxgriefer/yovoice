@@ -159,13 +159,32 @@ class NotificationRouter {
     );
     if (otherUserId.isEmpty) return;
 
-    final otherUserDoc = await FirebaseFirestore.instance
-        .collection('publicProfiles')
-        .doc(otherUserId)
-        .get();
-    if (!otherUserDoc.exists) return;
-    final otherUserData = otherUserDoc.data() ?? const <String, dynamic>{};
-    final displayName = (otherUserData['displayName'] as String?)?.trim();
+    final conversationData =
+        conversationDoc.data() ?? const <String, dynamic>{};
+    final participantNames = Map<String, dynamic>.from(
+      conversationData['participantNames'] as Map? ?? const {},
+    );
+    var displayName = (participantNames[otherUserId] as String?)?.trim();
+    var photoUrl = '';
+
+    // An existing conversation remains usable when the other participant
+    // makes their public profile private. Attempt the separately authorised
+    // projection for fresh presentation data, but fall back to the immutable
+    // conversation label rather than treating profile privacy as chat access.
+    try {
+      final otherUserDoc = await FirebaseFirestore.instance
+          .collection('publicProfiles')
+          .doc(otherUserId)
+          .get();
+      if (otherUserDoc.exists) {
+        final otherUserData = otherUserDoc.data() ?? const <String, dynamic>{};
+        final projectedName = (otherUserData['displayName'] as String?)?.trim();
+        if (projectedName?.isNotEmpty == true) displayName = projectedName;
+        photoUrl = otherUserData['photoUrl'] as String? ?? '';
+      }
+    } on FirebaseException catch (error) {
+      if (error.code != 'permission-denied') rethrow;
+    }
 
     navigator.push(
       MaterialPageRoute(
@@ -178,7 +197,7 @@ class NotificationRouter {
           // Email is private account data and is never part of the public
           // profile projection or a new conversation payload.
           otherEmail: '',
-          otherPhotoUrl: otherUserData['photoUrl'] as String? ?? '',
+          otherPhotoUrl: photoUrl,
         ),
       ),
     );

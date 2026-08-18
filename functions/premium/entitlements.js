@@ -35,13 +35,50 @@ const MAX_PREMIUM_EXPIRY_PAGES = 50;
  * deliberately absent from the client-writable field allowlist in
  * firestore.rules.
  */
-async function applyEntitlements(uid, { plan, status, currentPeriodEnd, source }) {
+async function applyEntitlements(
+  uid,
+  {
+    plan,
+    status,
+    currentPeriodEnd,
+    source,
+    cancelAtPeriodEnd = false,
+  },
+) {
+  const entitlementData = buildEntitlements({
+    plan,
+    status,
+    currentPeriodEnd,
+    source,
+    cancelAtPeriodEnd,
+  });
+  const premiumActive = entitlementData.isPremium;
+
+  const userRef = db.collection("users").doc(uid);
+  await db.runTransaction(async (transaction) => {
+    const userSnapshot = await transaction.get(userRef);
+    applyEntitlementsInTransaction(transaction, uid, entitlementData, {
+      user: userSnapshot.data() ?? {},
+    });
+  });
+
+  logger.info("entitlements applied", { uid, plan, status, premiumActive });
+  return entitlementData;
+}
+
+function buildEntitlements({
+  plan,
+  status,
+  currentPeriodEnd,
+  source,
+  cancelAtPeriodEnd = false,
+}) {
   const premiumActive =
     ACTIVE_STATUSES.includes(status) &&
     currentPeriodEnd instanceof Timestamp &&
     currentPeriodEnd.toMillis() > Date.now();
 
-  const entitlements = {
+  return {
     plan,
     status,
     currentPeriodEnd,
@@ -54,16 +91,35 @@ async function applyEntitlements(uid, { plan, status, currentPeriodEnd, source }
     premiumIdentityEnabled: premiumActive,
     maxOwnedClubs: DEFAULT_MAX_OWNED_CLUBS,
     source: source ?? "unknown",
+    // Billing lifecycle truth for first-party billing surfaces. Admin grants
+    // have a validity end but no renewal/cancellation lifecycle. Stripe
+    // webhooks set this from the canonical Subscription object.
+    cancelAtPeriodEnd: source === "stripe" && cancelAtPeriodEnd === true,
+    renewalBehavior:
+      source === "stripe" && premiumActive
+        ? cancelAtPeriodEnd === true
+          ? "ends"
+          : "renews"
+        : "none",
     updatedAt: FieldValue.serverTimestamp(),
   };
+}
 
-  const entitlementRef = db.collection("entitlements").doc(uid);
-  const userRef = db.collection("users").doc(uid);
-  const pinnedPostRef = db.collection("creatorPinnedPosts").doc(uid);
-  await db.runTransaction(async (transaction) => {
-    const userSnapshot = await transaction.get(userRef);
-    const user = userSnapshot.data() ?? {};
-    transaction.set(entitlementRef, entitlements, { merge: true });
+function applyEntitlementsInTransaction(
+  transaction,
+  uid,
+  entitlements,
+  { user = {}, firestore = db, writeUserProjection = true } = {},
+) {
+  const premiumActive = entitlements.isPremium === true;
+  const entitlementRef = firestore.collection("entitlements").doc(uid);
+  const userRef = firestore.collection("users").doc(uid);
+  const pinnedPostRef = firestore.collection("creatorPinnedPosts").doc(uid);
+  transaction.set(entitlementRef, entitlements, { merge: true });
+  // A late provider event must never recreate a deleted/missing profile.
+  // The server-only entitlement and billing ledger still reconcile so
+  // refunds/cancellation remain auditable and idempotent.
+  if (writeUserProjection) {
     transaction.set(
       userRef,
       {
@@ -77,11 +133,8 @@ async function applyEntitlements(uid, { plan, status, currentPeriodEnd, source }
       },
       { merge: true },
     );
-    if (!premiumActive) transaction.delete(pinnedPostRef);
-  });
-
-  logger.info("entitlements applied", { uid, plan, status, premiumActive });
-  return entitlements;
+  }
+  if (!premiumActive) transaction.delete(pinnedPostRef);
 }
 
 /**
@@ -330,4 +383,6 @@ module.exports = {
   PREMIUM_EXPIRY_PAGE_SIZE,
   MAX_PREMIUM_EXPIRY_PAGES,
   applyEntitlements,
+  buildEntitlements,
+  applyEntitlementsInTransaction,
 };

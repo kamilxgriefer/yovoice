@@ -75,14 +75,19 @@ class FollowService {
               final uid = (data['uid'] as String?)?.trim().isNotEmpty == true
                   ? data['uid'] as String
                   : edge.id;
-              final profile = await _firestore
-                  .collection('publicProfiles')
-                  .doc(uid)
-                  .get();
-              return FollowUser.fromEdgeAndProfile(
-                edge: edge,
-                profile: profile,
-              );
+              try {
+                final profile = await _firestore
+                    .collection('publicProfiles')
+                    .doc(uid)
+                    .get();
+                return FollowUser.fromEdgeAndProfile(
+                  edge: edge,
+                  profile: profile,
+                );
+              } on FirebaseException catch (error) {
+                if (error.code == 'permission-denied') return null;
+                rethrow;
+              }
             }),
           );
           return resolved.whereType<FollowUser>().toList(growable: false);

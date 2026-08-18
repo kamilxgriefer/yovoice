@@ -239,6 +239,14 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     return StreamBuilder<UserProfile>(
       stream: _profileService.watchProfile(widget.friend.id),
       builder: (context, profileSnapshot) {
+        if (profileSnapshot.hasError) {
+          return _UnavailableProfile(
+            onBack: () => Navigator.of(context).maybePop(),
+          );
+        }
+        if (!profileSnapshot.hasData) {
+          return const _ProfileLoading();
+        }
         final profile = profileSnapshot.data;
         return StreamBuilder<bool>(
           stream: _followService.watchIsFollowing(widget.friend.id),
@@ -726,6 +734,104 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ProfileLoading extends StatelessWidget {
+  const _ProfileLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: _FriendProfileScreenState._background,
+      body: Center(child: CircularProgressIndicator(color: Color(0xFFB348FF))),
+    );
+  }
+}
+
+class _UnavailableProfile extends StatelessWidget {
+  const _UnavailableProfile({required this.onBack});
+
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _FriendProfileScreenState._background,
+      body: SafeArea(
+        child: ResponsiveContentFrame(
+          width: ResponsiveContentWidth.list,
+          alignment: ResponsiveContentAlignment.topCenter,
+          child: Column(
+            key: const ValueKey('friend-profile-unavailable'),
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: IconButton(
+                  tooltip: 'Back',
+                  onPressed: onBack,
+                  icon: const Icon(
+                    Icons.arrow_back_ios_new_rounded,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 480),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 64,
+                            height: 64,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: _FriendProfileScreenState._surface,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: _FriendProfileScreenState._border,
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.lock_outline_rounded,
+                              color: Color(0xFFB348FF),
+                              size: 30,
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          const Text(
+                            'This profile isn\'t available',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'The person may have changed who can view their profile.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: _FriendProfileScreenState._muted,
+                              height: 1.45,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

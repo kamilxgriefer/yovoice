@@ -116,6 +116,14 @@ async function reset() {
       await Promise.all([
         db.doc(`users/${USERS[index]}/blocked/${USERS[other]}`).delete(),
         db.doc(`users/${USERS[other]}/blocked/${USERS[index]}`).delete(),
+        db.doc(`users/${USERS[index]}/following/${USERS[other]}`).delete(),
+        db.doc(`users/${USERS[other]}/following/${USERS[index]}`).delete(),
+        db.doc(
+          `friendshipGuards/${USERS[index]}/friends/${USERS[other]}`,
+        ).delete(),
+        db.doc(
+          `friendshipGuards/${USERS[other]}/friends/${USERS[index]}`,
+        ).delete(),
       ]);
     }
   }
@@ -586,6 +594,159 @@ test("blocks, sanctions, inactive users and unverified actors fail closed", asyn
     }, false)),
     (error) => error.code === "failed-precondition",
   );
+});
+
+test("direct-message privacy modes are enforced from server-owned graph state", async () => {
+  const service = directService();
+
+  // Existing accounts have no field, so the documented backwards-compatible
+  // default remains everyone.
+  const defaultOpen = await open(service, A, B, "privacy-default");
+  assert.equal(defaultOpen.created, true);
+
+  await db.doc(`users/${D}`).update({ messagePrivacy: "peopleYouFollow" });
+  await assert.rejects(
+    open(service, C, D, "privacy-follow-deny"),
+    (error) => error.code === "permission-denied",
+  );
+  // The direction is recipient D -> sender C. C following D is not enough.
+  await db.doc(`users/${C}/following/${D}`).set({
+    uid: D,
+    followedAt: Timestamp.now(),
+  });
+  await assert.rejects(
+    open(service, C, D, "privacy-follow-wrong-way"),
+    (error) => error.code === "permission-denied",
+  );
+  await db.doc(`users/${D}/following/${C}`).set({
+    uid: C,
+    followedAt: Timestamp.now(),
+  });
+  const followedOpen = await open(service, C, D, "privacy-follow-allow");
+  assert.equal(followedOpen.created, true);
+
+  await db.doc(`users/${B}`).update({ messagePrivacy: "friends" });
+  await db.doc(`friendshipGuards/${A}/friends/${B}`).set({
+    ownerId: A,
+    friendId: B,
+    schemaVersion: 1,
+    establishedAt: Timestamp.now(),
+  });
+  await assert.rejects(
+    service.sendDirectMessage(request(A, {
+      conversationId: defaultOpen.conversationId,
+      requestId: "privacy-one-guard",
+      text: "one forged or stranded half must not be enough",
+    })),
+    (error) => error.code === "permission-denied",
+  );
+  await db.doc(`friendshipGuards/${B}/friends/${A}`).set({
+    ownerId: B,
+    friendId: A,
+    schemaVersion: 1,
+    establishedAt: Timestamp.now(),
+  });
+  const friendSend = await service.sendDirectMessage(request(A, {
+    conversationId: defaultOpen.conversationId,
+    requestId: "privacy-two-guards",
+    text: "both canonical halves allow a friend",
+  }));
+  assert.equal(friendSend.created, true);
+
+  await db.doc(`users/${B}`).update({ messagePrivacy: "nobody" });
+  await assert.rejects(
+    service.sendDirectMessage(request(A, {
+      conversationId: defaultOpen.conversationId,
+      requestId: "privacy-nobody",
+      text: "an existing thread is not a bypass",
+    })),
+    (error) => error.code === "permission-denied",
+  );
+  await assert.rejects(
+    service.reserveDirectMessageAttachment(request(A, {
+      conversationId: defaultOpen.conversationId,
+      type: "voice",
+      contentType: "audio/mp4",
+      durationSeconds: 1,
+      requestId: "privacy-nobody-media",
+    })),
+    (error) => error.code === "permission-denied",
+  );
+  await db.doc(`users/${D}`).update({ messagePrivacy: "nobody" });
+  await assert.rejects(
+    open(service, C, D, "privacy-nobody-open"),
+    (error) => error.code === "permission-denied",
+  );
+  await db.doc(`users/${B}`).update({ messagePrivacy: "future-unknown-value" });
+  await assert.rejects(
+    service.sendDirectMessage(request(A, {
+      conversationId: defaultOpen.conversationId,
+      requestId: "privacy-malformed",
+      text: "unknown values fail closed",
+    })),
+    (error) => error.code === "data-loss",
+  );
+});
+
+test("changing message privacy during an upload prevents media finalization", async () => {
+  const metadata = new Map();
+  const service = directService({}, {
+    storage: {
+      async getMetadata(path) {
+        return metadata.get(path);
+      },
+      getObjectReference(path) {
+        return `gs://yovoice-test.appspot.com/${path}`;
+      },
+    },
+  });
+  const { conversationId } = await open(service, A, B, "privacy-media-open");
+  const reserved = await service.reserveDirectMessageAttachment(request(A, {
+    conversationId,
+    type: "image",
+    contentType: "image/png",
+    requestId: "privacy-media-reserve",
+  }));
+  metadata.set(reserved.storagePath, {
+    size: "2048",
+    contentType: "image/png",
+    generation: "21",
+    metadata: {
+      yovoiceConversationId: conversationId,
+      yovoiceMessageId: reserved.messageId,
+      yovoiceMessagePath:
+        `conversations/${conversationId}/messages/${reserved.messageId}`,
+      yovoiceMediaType: "image",
+      yovoiceOwnerUid: A,
+    },
+  });
+
+  await db.doc(`users/${B}`).update({ messagePrivacy: "nobody" });
+  const finalizeInput = request(A, {
+    conversationId,
+    messageId: reserved.messageId,
+    objectGeneration: "21",
+    requestId: "privacy-media-finalize",
+  });
+  await assert.rejects(
+    service.finalizeDirectMessageAttachment(finalizeInput),
+    (error) => error.code === "permission-denied",
+  );
+  assert.equal((await db.doc(
+    `conversations/${conversationId}/messages/${reserved.messageId}`,
+  ).get()).exists, false);
+  assert.equal((await db.doc(
+    `directMessageUploadReservations/${reserved.messageId}`,
+  ).get()).exists, true);
+
+  // The failed finalization is retry-safe: once the recipient deliberately
+  // re-opens DMs, the same reservation/request id can complete exactly once.
+  await db.doc(`users/${B}`).update({ messagePrivacy: "everyone" });
+  const result = await service.finalizeDirectMessageAttachment(finalizeInput);
+  assert.equal(result.created, true);
+  assert.equal((await db.collection(
+    `conversations/${conversationId}/messages`,
+  ).get()).size, 1);
 });
 
 test("malformed canonical counters prevent partial sends", async () => {
