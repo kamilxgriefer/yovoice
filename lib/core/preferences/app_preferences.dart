@@ -40,18 +40,22 @@ class AppPreferences {
   const AppPreferences({
     this.theme = AppThemePreference.dark,
     this.language = AppLanguagePreference.english,
+    this.soundEffectsEnabled = true,
   });
 
   final AppThemePreference theme;
   final AppLanguagePreference language;
+  final bool soundEffectsEnabled;
 
   AppPreferences copyWith({
     AppThemePreference? theme,
     AppLanguagePreference? language,
+    bool? soundEffectsEnabled,
   }) {
     return AppPreferences(
       theme: theme ?? this.theme,
       language: language ?? this.language,
+      soundEffectsEnabled: soundEffectsEnabled ?? this.soundEffectsEnabled,
     );
   }
 }
@@ -87,6 +91,7 @@ class AppPreferencesController extends ChangeNotifier {
 
   static const _themeKey = 'appearance.theme.v1';
   static const _languageKey = 'appearance.language.v1';
+  static const _soundEffectsKey = 'audio.sound_effects.enabled.v1';
 
   static final instance = AppPreferencesController(
     store: SharedPreferencesAppPreferencesStore(),
@@ -103,10 +108,12 @@ class AppPreferencesController extends ChangeNotifier {
     final values = await Future.wait([
       _store.read(_themeKey),
       _store.read(_languageKey),
+      _store.read(_soundEffectsKey),
     ]);
     _value = AppPreferences(
       theme: _parseTheme(values[0]),
       language: _parseLanguage(values[1]),
+      soundEffectsEnabled: _parseSoundEffects(values[2]),
     );
     _loaded = true;
     notifyListeners();
@@ -140,6 +147,20 @@ class AppPreferencesController extends ChangeNotifier {
     }
   }
 
+  Future<void> setSoundEffectsEnabled(bool enabled) async {
+    if (_value.soundEffectsEnabled == enabled) return;
+    final previous = _value;
+    _value = _value.copyWith(soundEffectsEnabled: enabled);
+    notifyListeners();
+    try {
+      await _store.write(_soundEffectsKey, enabled.toString());
+    } catch (_) {
+      _value = previous;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
   static AppThemePreference _parseTheme(String? value) {
     return AppThemePreference.values.firstWhere(
       (candidate) => candidate.name == value,
@@ -152,6 +173,14 @@ class AppPreferencesController extends ChangeNotifier {
       (candidate) => candidate.name == value,
       orElse: () => AppLanguagePreference.english,
     );
+  }
+
+  static bool _parseSoundEffects(String? value) {
+    return switch (value) {
+      'false' => false,
+      'true' || null => true,
+      _ => true,
+    };
   }
 }
 

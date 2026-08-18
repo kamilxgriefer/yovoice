@@ -88,11 +88,11 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   bool _roleReconnectInFlight = false;
 
   Future<void> _reconnectForRole() async {
-    await _voice.disconnect();
-    await _connectVoice();
+    await _voice.disconnect(playSound: false);
+    await _connectVoice(playSound: false);
   }
 
-  Future<void> _connectVoice() async {
+  Future<void> _connectVoice({bool playSound = true}) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
     final name = user.displayName?.trim().isNotEmpty == true
@@ -104,6 +104,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
           roomId: widget.room.id,
           roomName: widget.room.name,
           participantName: name,
+          playSound: playSound,
         );
       }
     } catch (_) {

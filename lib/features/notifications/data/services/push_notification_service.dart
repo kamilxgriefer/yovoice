@@ -285,11 +285,12 @@ class PushNotificationService {
 
     if (Platform.isAndroid) {
       const channel = AndroidNotificationChannel(
-        'yovoice_default',
+        'yovoice_activity_v2',
         'YO Voice notifications',
         description: 'Messages, invitations and activity from YO Voice',
         importance: Importance.high,
         playSound: true,
+        sound: RawResourceAndroidNotificationSound('yovoice_notification'),
         enableVibration: true,
       );
       await _localNotifications
@@ -320,20 +321,21 @@ class PushNotificationService {
         body: notification.body,
         notificationDetails: const NotificationDetails(
           android: AndroidNotificationDetails(
-            'yovoice_default',
+            'yovoice_activity_v2',
             'YO Voice notifications',
             channelDescription:
                 'Messages, invitations and activity from YO Voice',
             importance: Importance.high,
             priority: Priority.high,
             playSound: true,
+            sound: RawResourceAndroidNotificationSound('yovoice_notification'),
             enableVibration: true,
           ),
           iOS: DarwinNotificationDetails(
             presentAlert: true,
             presentBadge: true,
             presentSound: true,
-            sound: 'default',
+            sound: 'yovoice_notification.wav',
           ),
         ),
         payload:

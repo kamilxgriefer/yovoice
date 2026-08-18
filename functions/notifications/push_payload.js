@@ -18,15 +18,15 @@ function buildPushMessage({
     android: {
       priority: "high",
       notification: {
-        channelId: "yovoice_default",
-        sound: "default",
+        channelId: "yovoice_activity_v2",
+        sound: "yovoice_notification",
         defaultVibrateTimings: true,
       },
     },
     apns: {
       payload: {
         aps: {
-          sound: "default",
+          sound: "yovoice_notification.wav",
           interruptionLevel: "active",
         },
       },

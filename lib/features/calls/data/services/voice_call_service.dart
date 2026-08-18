@@ -4,6 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'package:yovoice/core/audio/ui_sound.dart';
+import 'package:yovoice/core/audio/ui_sound_service.dart';
+
 import 'voice_token_service.dart';
 
 enum VoiceCallStatus {
@@ -46,6 +49,7 @@ class VoiceCallService extends ChangeNotifier {
   // shell's RoomMiniBar) — including in widget tests with no Firebase
   // app. Nothing needs the token service until an actual join().
   late final VoiceTokenService _tokenService = VoiceTokenService();
+  final UiSoundService _sounds = UiSoundService.instance;
 
   Room? _room;
   EventsListener<RoomEvent>? _events;
@@ -163,6 +167,7 @@ class VoiceCallService extends ChangeNotifier {
     required String roomId,
     required String roomName,
     required String participantName,
+    bool playSound = true,
   }) async {
     if (_roomId == roomId && isConnected) return;
 
@@ -202,6 +207,12 @@ class VoiceCallService extends ChangeNotifier {
           _status = VoiceCallStatus.disconnected;
           _isMuted = false;
           notifyListeners();
+        })
+        ..on<ParticipantConnectedEvent>((_) {
+          unawaited(_sounds.play(UiSound.participantJoined));
+        })
+        ..on<ParticipantDisconnectedEvent>((_) {
+          unawaited(_sounds.play(UiSound.participantLeft));
         });
 
       await room.connect(
@@ -226,6 +237,9 @@ class VoiceCallService extends ChangeNotifier {
       }
       _startAudioMeter();
       _setStatus(VoiceCallStatus.connected);
+      if (playSound) {
+        unawaited(_sounds.play(UiSound.roomJoined));
+      }
     } catch (error) {
       _errorMessage = _friendlyError(error);
       _setStatus(VoiceCallStatus.failed);
@@ -250,6 +264,11 @@ class VoiceCallService extends ChangeNotifier {
     notifyListeners();
     try {
       await localParticipant.setMicrophoneEnabled(!muted);
+      unawaited(
+        _sounds.play(
+          muted ? UiSound.microphoneMuted : UiSound.microphoneUnmuted,
+        ),
+      );
     } catch (_) {
       _isMuted = previous;
       rethrow;
@@ -274,6 +293,11 @@ class VoiceCallService extends ChangeNotifier {
 
     try {
       await localParticipant.setMicrophoneEnabled(!next);
+      unawaited(
+        _sounds.play(
+          next ? UiSound.microphoneMuted : UiSound.microphoneUnmuted,
+        ),
+      );
     } catch (_) {
       _isMuted = previous;
       rethrow;
@@ -283,7 +307,8 @@ class VoiceCallService extends ChangeNotifier {
     }
   }
 
-  Future<void> disconnect() async {
+  Future<void> disconnect({bool playSound = true}) async {
+    final wasConnected = isConnected;
     _status = VoiceCallStatus.disconnected;
     _errorMessage = null;
     _isMuted = false;
@@ -293,6 +318,9 @@ class VoiceCallService extends ChangeNotifier {
     notifyListeners();
 
     await _disposeRoom();
+    if (playSound && wasConnected) {
+      unawaited(_sounds.play(UiSound.roomLeft));
+    }
   }
 
   void _startAudioMeter() {

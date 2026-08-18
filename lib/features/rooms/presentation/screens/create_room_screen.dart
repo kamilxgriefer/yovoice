@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'package:yovoice/core/audio/ui_sound.dart';
+import 'package:yovoice/core/audio/ui_sound_service.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
@@ -253,6 +256,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
       }
 
       if (!mounted) return;
+      unawaited(UiSoundService.instance.play(UiSound.roomCreated));
       await Navigator.of(context).pushReplacement(
         MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
       );

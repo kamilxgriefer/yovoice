@@ -327,6 +327,14 @@ someone decide what to pick up next.
   320, 390 and 430 px. See
   [ADR-050](Decisions.md#adr-050-push-presentation-is-explicit-per-platform-and-focused-web-tabs-use-an-in-app-banner).
 
+- Original event sound system (2026-08-18): synthesized eight compact YO Voice
+  cues for room creation, local room join/leave, remote participant join/leave,
+  microphone mute/unmute and notifications. Playback is lazy, failure-isolated,
+  burst-coalesced and controlled by one device-local Sound effects preference.
+  Android/iOS notification payloads use the matching packaged cue, while the
+  web foreground banner uses the in-app player. See
+  [ADR-076](Decisions.md#adr-076-product-sounds-are-original-bounded-and-reserved-for-meaningful-events).
+
 - Achievements end-to-end repair (2026-08-15): fixed the Firestore self-write
   allowlist that rejected every atomic achievement update because
   `unlockedTitleTimestamps` was missing, added an emulator regression for the

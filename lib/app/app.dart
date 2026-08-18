@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/audio/ui_sound.dart';
+import 'package:yovoice/core/audio/ui_sound_service.dart';
 import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
@@ -108,7 +111,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
         };
     PushNotificationService.instance.onWebForegroundNotification =
         (title, body, type, targetId, actorId) {
-          SystemSound.play(SystemSoundType.alert);
+          unawaited(UiSoundService.instance.play(UiSound.notification));
           final messenger = _messengerKey.currentState;
           if (messenger == null) return;
           final navigatorContext = notificationNavigatorKey.currentContext;

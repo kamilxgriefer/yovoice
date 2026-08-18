@@ -26,6 +26,10 @@ Both: host/speaker/listener roles, live participant management, real-time
 audio via LiveKit (see [Backend.md](Backend.md) for token minting).
 Publish permission (`canPublish`) is computed server-side from the
 caller's actual participant role — never trusted from the client.
+Meaningful voice actions have original, short YO Voice cues: room creation,
+the local join/leave transition, remote participant join/leave, and confirmed
+microphone mute/unmute. The cues are throttled during bursts and can be turned
+off with the device-local **Sound effects** setting.
 
 **Legacy note**: room documents may still contain `experience: 'podcast'`
 from before the room-type rename; the client maps that to `broadcast` for
@@ -230,4 +234,7 @@ real push delivery via the `onNotificationCreated` Cloud Function trigger
 (see [Backend.md](Backend.md)). Triggered from real friend/follow/club/
 room/message events, not simulated. Native foreground and background pushes
 use an audible high-priority system notification; a focused web tab shows a
-compact floating banner with an Open action and an alert sound request.
+compact floating banner with an Open action. Android, iOS and the focused web
+app use the same original YO Voice notification motif rather than a generic
+system beep; Android uses a versioned notification channel because installed
+channel sound settings are immutable.

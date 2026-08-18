@@ -16,6 +16,7 @@ void main() {
         final store = _MemoryStore({
           'appearance.theme.v1': 'light',
           'appearance.language.v1': 'polish',
+          'audio.sound_effects.enabled.v1': 'false',
         });
         final controller = AppPreferencesController(store: store);
 
@@ -24,31 +25,37 @@ void main() {
         expect(controller.isLoaded, isTrue);
         expect(controller.value.theme, AppThemePreference.light);
         expect(controller.value.language, AppLanguagePreference.polish);
+        expect(controller.value.soundEffectsEnabled, isFalse);
 
         final invalidController = AppPreferencesController(
           store: _MemoryStore({
             'appearance.theme.v1': 'sepia',
             'appearance.language.v1': 'klingon',
+            'audio.sound_effects.enabled.v1': 'not-a-bool',
           }),
         );
         await invalidController.load();
         expect(invalidController.value.theme, AppThemePreference.dark);
         expect(invalidController.value.language, AppLanguagePreference.english);
+        expect(invalidController.value.soundEffectsEnabled, isTrue);
       },
     );
 
-    test('persists theme and language independently', () async {
+    test('persists theme, language and sound independently', () async {
       final store = _MemoryStore();
       final controller = AppPreferencesController(store: store);
 
       await controller.setTheme(AppThemePreference.light);
       await controller.setTheme(AppThemePreference.dark);
       await controller.setLanguage(AppLanguagePreference.polish);
+      await controller.setSoundEffectsEnabled(false);
 
       expect(store.values['appearance.theme.v1'], 'dark');
       expect(store.values['appearance.language.v1'], 'polish');
+      expect(store.values['audio.sound_effects.enabled.v1'], 'false');
       expect(controller.value.theme, AppThemePreference.dark);
       expect(controller.value.language, AppLanguagePreference.polish);
+      expect(controller.value.soundEffectsEnabled, isFalse);
     });
 
     test('rolls back optimistic state when persistence fails', () async {
@@ -62,10 +69,15 @@ void main() {
         controller.setLanguage(AppLanguagePreference.polish),
         throwsA(isA<StateError>()),
       );
+      await expectLater(
+        controller.setSoundEffectsEnabled(false),
+        throwsA(isA<StateError>()),
+      );
 
       expect(controller.value, isA<AppPreferences>());
       expect(controller.value.theme, AppThemePreference.dark);
       expect(controller.value.language, AppLanguagePreference.english);
+      expect(controller.value.soundEffectsEnabled, isTrue);
     });
   });
 

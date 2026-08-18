@@ -4774,3 +4774,42 @@ Flutter.
   fail closed server-side.
 - Functions must be deployed before the client so the new senior-role matrix
   is authoritative when the mobile control becomes visible.
+
+## ADR-076: Product sounds are original, bounded and reserved for meaningful events
+
+**Status:** Accepted on 2026-08-18.
+
+### Context
+
+Voice interactions had no consistent confirmation beyond visuals, while push
+notifications used generic platform sounds. Copying a recognisable competitor
+sound would create an identity and licensing problem; adding a sound to every
+tap would create fatigue and unnecessary audio work.
+
+### Decision
+
+1. YO Voice owns eight oscillator-synthesized WAV cues: room created, local
+   joined/left, participant joined/left, microphone muted/unmuted and
+   notification. No sampled or copied competitor audio is included.
+2. In-app playback uses at most one lazy `audioplayers` instance for each of
+   three channels: room, controls and notifications. It catches every playback
+   failure so a browser autoplay policy or unavailable audio device can never
+   fail the underlying product action.
+3. Repeated events are coalesced with per-sound and per-channel cooldowns.
+   There is deliberately no generic navigation or button-click sound.
+4. Sound effects default on and are controlled by a device-local preference.
+   Disabling them allocates no player and suppresses room, microphone and
+   focused-web notification cues.
+5. Native background notifications package the same notification motif.
+   Android moves to the versioned `yovoice_activity_v2` channel because an
+   existing installed channel's sound cannot be changed; APNs references the
+   packaged WAV by exact name.
+
+### Consequences
+
+- The eight shared assets total well under 300 KB; each is mono PCM and shorter
+  than one second. They add no database, network request or background loop.
+- A burst of participant changes produces a restrained cue rather than one
+  overlapping sound per event.
+- Platform notification settings remain authoritative for background push
+  sound; the in-app preference controls cues rendered by the focused app.

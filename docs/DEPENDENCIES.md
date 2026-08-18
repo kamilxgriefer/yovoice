@@ -75,9 +75,11 @@ delivery channel.
   audio recording pipeline. `path_provider` also supplies the native
   application-support directory for account-isolated offline Voice Moment
   files; `audioplayers` receives the local file path directly so ordinary
-  native playback does not duplicate the whole file in Dart memory. Web uses
-  the browser's Cache Storage API instead of adding another persistence
-  package.
+  playback does not duplicate the whole file in Dart memory. The same package
+  also plays the tiny bundled YO Voice event cues through three lazy channels;
+  no player is allocated until a cue is actually requested.
+  Web uses the browser's Cache Storage API instead of adding another
+  persistence package.
 
 ## Local preferences and localization
 

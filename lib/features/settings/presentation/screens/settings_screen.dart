@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -131,6 +132,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               : const Color(0xFF3A1958),
         ),
       );
+  }
+
+  Future<void> _setSoundEffectsEnabled(bool enabled) async {
+    try {
+      await AppPreferencesScope.of(context).setSoundEffectsEnabled(enabled);
+    } catch (_) {
+      _notify('Could not save the sound preference.', isError: true);
+    }
   }
 
   Future<void> _requestOrOpenPermission(Permission permission) async {
@@ -641,6 +650,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: 'System notifications',
               status: _permissionStatus[Permission.notification],
               onTap: () => _requestOrOpenPermission(Permission.notification),
+            ),
+            _SettingsTile(
+              icon: Icons.graphic_eq_rounded,
+              title: 'Sound effects',
+              subtitle: 'Room, microphone and in-app activity cues',
+              trailing: Switch.adaptive(
+                value: AppPreferencesScope.of(
+                  context,
+                ).value.soundEffectsEnabled,
+                activeTrackColor: _primary,
+                onChanged: _setSoundEffectsEnabled,
+              ),
             ),
           ],
         ),
