@@ -4469,11 +4469,12 @@ Apple Auth is additive but must never be represented as available from source
 code alone. The client uses Firebase's `AppleAuthProvider` and the same
 server-backed social-profile bootstrap as Google, guarded by both a disabled-by-
 default build flag and a runtime Firebase provider probe. Missing, malformed or
-unreachable provider configuration disables the control. Enabling Apple
-requires a dedicated Apple Service ID/key, Firebase provider configuration,
-the Apple App ID capability, a regenerated release provisioning profile and
-real-account smoke tests. Notification/APNs keys are not interchangeable with
-Sign in with Apple keys.
+unreachable provider configuration disables the control. Production enables
+the flag only after the dedicated `app.yovoice.web` Service ID, Sign in with
+Apple key, Firebase `apple.com` provider, App ID capability and regenerated
+release provisioning profile have all been verified. Real-account web/iOS
+smoke tests remain release evidence. Notification/APNs keys are not
+interchangeable with Sign in with Apple keys.
 
 ## ADR-069: Profile visibility is private source authority, not a cosmetic projection flag
 

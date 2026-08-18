@@ -16,6 +16,15 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Sign in with Apple provider and dedicated password-reset route**
+  (2026-08-18, source/configuration ready; Hosting deployment and real-account
+  smoke pending): the former Apple placeholder now uses Firebase's real Apple
+  provider with a dedicated Service ID/key, enabled App ID capability,
+  regenerated release provisioning profile and runtime availability probe.
+  Production web builds enable the otherwise fail-closed compile-time gate.
+  “Forgot password?” now opens its own responsive email form instead of
+  requiring a value in the login screen. See ADR-068.
+
 - **Owner and senior-staff room deletion has mobile/desktop parity**
   (2026-08-18, `e524497`, DEPLOYED): every room host now sees
   the same Room settings and typed-name Delete room action from a compact

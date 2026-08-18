@@ -455,11 +455,13 @@ client and verified with a real popup flow.
   production popup reaches Google's account chooser without
   `redirect_uri_mismatch`. Add the Google Play App Signing fingerprints before
   distributing a Play-signed build.
-- Apple: keep `YOVOICE_APPLE_SIGN_IN_ENABLED` false until the Apple Service ID,
-  dedicated Sign in with Apple key, Firebase `apple.com` provider, App ID
-  capability and matching provisioning profile all exist. Then build with the
-  flag enabled, deploy, and smoke-test web plus signed iOS/Android. The APNs key
-  documented below is notification-only and is not valid for Apple Auth.
+- Apple: the `app.yovoice.web` Service ID, dedicated Sign in with Apple key,
+  enabled Firebase `apple.com` provider, `app.yovoice` capability and matching
+  `YO Voice App Store` provisioning profile are configured. Production Hosting
+  builds pass `YOVOICE_APPLE_SIGN_IN_ENABLED=true`; local/default builds remain
+  fail-closed. After each auth release, smoke-test a real Apple account on web
+  and a signed iOS build. The APNs key documented below is notification-only
+  and is not valid for Apple Auth.
 
 ### TOTP two-factor release gate
 

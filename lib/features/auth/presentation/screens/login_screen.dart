@@ -4,7 +4,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
-import 'package:yovoice/features/auth/presentation/widgets/check_inbox_sheet.dart';
+import 'package:yovoice/features/auth/presentation/screens/forgot_password_screen.dart';
 import 'package:yovoice/features/auth/presentation/screens/totp_challenge_screen.dart';
 import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
 import 'package:yovoice/features/auth/presentation/screens/register_screen.dart';
@@ -26,7 +26,6 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
   bool _isGoogleLoading = false;
   bool _isAppleLoading = false;
-  bool _isResettingPassword = false;
   AppleSignInAvailability? _appleSignInAvailability;
 
   bool get _isAuthenticationLoading =>
@@ -149,53 +148,16 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  Future<void> _resetPassword() async {
-    if (_isResettingPassword || _isAuthenticationLoading) {
-      return;
-    }
-
+  void _openForgotPasswordScreen() {
+    if (_isAuthenticationLoading) return;
     FocusScope.of(context).unfocus();
-
-    final email = _emailController.text.trim();
-
-    if (email.isEmpty) {
-      _showMessage('Enter your email address.');
-      return;
-    }
-
-    setState(() {
-      _isResettingPassword = true;
-    });
-
-    try {
-      await _authService.sendPasswordResetEmail(email);
-
-      if (!mounted) {
-        return;
-      }
-
-      await showCheckInboxSheet(context, email: email);
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
-      // user-not-found takes the same "Check your inbox" path as success:
-      // a distinct error here would let anyone probe which addresses have
-      // YO Voice accounts. Genuine problems (bad email format, rate
-      // limits, network) still surface normally.
-      if (error is FirebaseAuthException && error.code == 'user-not-found') {
-        await showCheckInboxSheet(context, email: email);
-      } else {
-        _showMessage(_authService.getErrorMessage(error));
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isResettingPassword = false;
-        });
-      }
-    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        settings: const RouteSettings(name: '/forgot-password'),
+        builder: (_) =>
+            ForgotPasswordScreen(initialEmail: _emailController.text.trim()),
+      ),
+    );
   }
 
   void _openRegisterScreen() {
@@ -526,10 +488,9 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 16),
                         Center(
                           child: TextButton(
-                            onPressed:
-                                _isResettingPassword || _isAuthenticationLoading
+                            onPressed: _isAuthenticationLoading
                                 ? null
-                                : _resetPassword,
+                                : _openForgotPasswordScreen,
                             style: ButtonStyle(
                               mouseCursor:
                                   WidgetStateProperty.resolveWith<MouseCursor>((
@@ -556,23 +517,14 @@ class _LoginScreenState extends State<LoginScreen> {
                                     return Colors.transparent;
                                   }),
                             ),
-                            child: _isResettingPassword
-                                ? const SizedBox(
-                                    width: 22,
-                                    height: 22,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Color(0xFFA02BFF),
-                                    ),
-                                  )
-                                : Text(
-                                    copy.forgotPassword,
-                                    style: const TextStyle(
-                                      color: Color(0xFFA02BFF),
-                                      fontSize: 16.5,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
+                            child: Text(
+                              copy.forgotPassword,
+                              style: const TextStyle(
+                                color: Color(0xFFA02BFF),
+                                fontSize: 16.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                           ),
                         ),
                         const SizedBox(height: 28),

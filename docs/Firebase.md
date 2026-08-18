@@ -20,7 +20,7 @@ for the security principles this schema and its rules are held to, see
 
 ## Auth
 
-Firebase Authentication (email/password + Google Sign-In), shared across
+Firebase Authentication (email/password + Google Sign-In + Sign in with Apple), shared across
 this Flutter app and `yovoice-website` via the custom Auth domain
 `auth.yovoice.app` — one account works everywhere.
 

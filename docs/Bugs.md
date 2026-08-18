@@ -1232,11 +1232,11 @@ permission flags).
   branded error, hostile continueUrl stripped by allowlist). Requires the
   one-time console steps in docs/email-templates/README.md before it's
   live for real emails. See ADR-022.
-- **Fixed: login's "Forgot password?" ended in a bare SnackBar and could
-  leak account existence.** Now opens a dark "Check your inbox" sheet with
-  neutral copy and a 60s resend cooldown; `user-not-found` deliberately
-  takes the same path as success so the reset form can't be used to probe
-  which emails have accounts.
+- **Fixed: login's "Forgot password?" required the login form's email and
+  only answered with a SnackBar.** It now opens a dedicated responsive
+  reset-password route with its own email form, then a neutral "Check your
+  inbox" result. `user-not-found` deliberately takes the same path as success
+  so the form cannot probe which emails have accounts.
 - **Fixed: user-facing copy wrote the brand as "YoVoice" in ~30 strings**
   (share messages, fallback display names, settings copy). All user-facing
   occurrences are now "YO Voice"; code identifiers (`YoVoiceApp`) and
@@ -1380,16 +1380,15 @@ permission flags).
   has both debug and release/upload SHA-1 and SHA-256 fingerprints, and the
   checked-in SDK config contains the release OAuth client. Production web will
   remain broken until the auth-only Hosting build is deployed and smoke-tested.
-- **OPEN operational dependency — Sign in with Apple is not configured in
-  Firebase or in the Apple release profile.** The former login button was a
-  placeholder. The client now contains the real Firebase Apple provider flow,
-  shared profile provisioning and a runtime provider probe, but the feature is
-  fail-closed behind `YOVOICE_APPLE_SIGN_IN_ENABLED=false`. Do not enable it
-  until a Sign in with Apple Service ID/key is configured in Firebase, the
-  Apple capability is added to the App ID and release provisioning profile,
-  and web/iOS/Android real-account smoke tests pass. The existing
-  `AuthKey_3288VCBHFD.p8` is an APNs key and must not be reused as an Apple
-  sign-in key.
+- **Fixed in source and provider configuration — Sign in with Apple was a
+  placeholder.** Apple App ID `app.yovoice` now has the capability, Service ID
+  `app.yovoice.web` owns the three verified web domains and Firebase callback,
+  a dedicated Sign in with Apple key configures the enabled Firebase
+  `apple.com` provider, and the regenerated `YO Voice App Store` profile
+  carries the entitlement. The client has a real Firebase Apple flow, shared
+  profile provisioning and a runtime provider probe; production Hosting builds
+  now enable its compile-time gate. Deployment and a real-account web/iOS
+  smoke test remain the release evidence, not the existence of source code.
 - **Fixed in source — Profile visibility was a disabled placeholder.** The
   reusable Settings surface now persists `public`/`friends`/`private` through a
   server-authoritative callable. Rules, search and website publication enforce

@@ -15,11 +15,12 @@ const int _kResendCooldownSeconds = 60;
 /// whether the address has an account), a resend button with a cooldown,
 /// and a way back to login. The emailed link opens the website's branded
 /// /auth/action flow — see docs/email-templates/README.md.
-Future<void> showCheckInboxSheet(
+Future<bool?> showCheckInboxSheet(
   BuildContext context, {
   required String email,
+  AuthService? authService,
 }) {
-  return showModalBottomSheet<void>(
+  return showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
@@ -27,21 +28,22 @@ Future<void> showCheckInboxSheet(
       context,
       maxWidth: 480,
     ),
-    builder: (_) => _CheckInboxSheet(email: email),
+    builder: (_) => _CheckInboxSheet(email: email, authService: authService),
   );
 }
 
 class _CheckInboxSheet extends StatefulWidget {
-  const _CheckInboxSheet({required this.email});
+  const _CheckInboxSheet({required this.email, this.authService});
 
   final String email;
+  final AuthService? authService;
 
   @override
   State<_CheckInboxSheet> createState() => _CheckInboxSheetState();
 }
 
 class _CheckInboxSheetState extends State<_CheckInboxSheet> {
-  final AuthService _authService = AuthService();
+  late final AuthService _authService;
 
   Timer? _cooldownTimer;
   int _cooldownSeconds = _kResendCooldownSeconds;
@@ -50,6 +52,7 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
   @override
   void initState() {
     super.initState();
+    _authService = widget.authService ?? AuthService();
     // The first email was just sent by the caller — start cooling down
     // immediately so "Resend" can't double-fire within seconds.
     _startCooldown();
@@ -201,7 +204,7 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  onPressed: () => Navigator.of(context).pop(),
+                  onPressed: () => Navigator.of(context).pop(true),
                   style: FilledButton.styleFrom(
                     backgroundColor: const Color(0xFF7B2FF7),
                     padding: const EdgeInsets.symmetric(vertical: 15),

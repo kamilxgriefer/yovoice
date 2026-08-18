@@ -49,6 +49,12 @@ app.*.map.json
 # Keychain. Never commit the upload keystore itself.
 /android/app/yovoice-upload-keystore.jks
 
+# Apple signing material is installed through Keychain / provisioning profiles
+# and stored outside the repository. Never commit private Sign in with Apple
+# keys or downloaded provisioning profiles.
+*.p8
+*.mobileprovision
+
 # Widget Preview related
 .widget_preview/
 

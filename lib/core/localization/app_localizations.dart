@@ -64,6 +64,14 @@ class AppLocalizations {
   String get noAccount => text("Don't have an account?", 'Nie masz konta?');
   String get signUp => text('Sign up', 'Zarejestruj się');
   String get forgotPassword => text('Forgot password?', 'Nie pamiętasz hasła?');
+  String get resetPassword => text('Reset password', 'Zresetuj hasło');
+  String get resetPasswordIntro => text(
+    'Enter the email address for your YO Voice account. We will send a secure reset link if an account exists.',
+    'Wpisz adres e-mail konta YO Voice. Jeśli konto istnieje, wyślemy bezpieczny link do zresetowania hasła.',
+  );
+  String get emailAddress => text('Email address', 'Adres e-mail');
+  String get sendResetLink => text('SEND RESET LINK', 'WYŚLIJ LINK RESETUJĄCY');
+  String get backToLogin => text('Back to log in', 'Wróć do logowania');
   String get createAccount => text('CREATE ACCOUNT', 'UTWÓRZ KONTO');
   String get username => text('Username', 'Nazwa użytkownika');
   String get confirmPassword => text('Confirm password', 'Powtórz hasło');

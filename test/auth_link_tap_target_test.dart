@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/auth/presentation/screens/login_screen.dart';
 import 'package:yovoice/features/auth/presentation/screens/register_screen.dart';
+import 'package:yovoice/features/auth/presentation/screens/forgot_password_screen.dart';
 
 // Both LoginScreen and RegisterScreen previously shrank their
 // "Sign up" / "Log in" cross-links to a near-zero hit box (padding:
@@ -81,6 +82,29 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
 
       expect(find.byType(RegisterScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Forgot password opens its own email form without requiring login email',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(402, 874));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(const MaterialApp(home: LoginScreen()));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      final link = find.text('Forgot password?');
+      await tester.ensureVisible(link);
+      await tester.pump();
+      await tester.tap(link);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.byType(ForgotPasswordScreen), findsOneWidget);
+      expect(find.byKey(const Key('forgot-password-email')), findsOneWidget);
+      expect(find.byKey(const Key('send-reset-link')), findsOneWidget);
+      expect(find.text('Enter your email address.'), findsNothing);
     },
   );
 
