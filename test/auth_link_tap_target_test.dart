@@ -21,12 +21,15 @@ import 'package:yovoice/features/auth/presentation/screens/register_screen.dart'
 // depending on firebase_core's internal Pigeon channel wire format.
 class _FakeFirebaseApp extends FirebaseAppPlatform {
   _FakeFirebaseApp()
-    : super(defaultFirebaseAppName, const FirebaseOptions(
-        apiKey: 'test-api-key',
-        appId: 'test-app-id',
-        messagingSenderId: 'test-sender-id',
-        projectId: 'test-project-id',
-      ));
+    : super(
+        defaultFirebaseAppName,
+        const FirebaseOptions(
+          apiKey: 'test-api-key',
+          appId: 'test-app-id',
+          messagingSenderId: 'test-sender-id',
+          projectId: 'test-project-id',
+        ),
+      );
 }
 
 class _FakeFirebasePlatform extends FirebasePlatform {
@@ -80,6 +83,54 @@ void main() {
       expect(find.byType(RegisterScreen), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'Apple Sign-In is honest and disabled until production is configured',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(402, 874));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(const MaterialApp(home: LoginScreen()));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      final label = find.text('Continue with Apple — Coming soon');
+      expect(label, findsOneWidget);
+
+      final button = tester.widget<OutlinedButton>(
+        find.ancestor(of: label, matching: find.byType(OutlinedButton)),
+      );
+      expect(button.onPressed, isNull);
+    },
+  );
+
+  for (final width in <double>[320, 390, 768, 1100, 1440]) {
+    testWidgets(
+      'social sign-in controls fit at ${width.toInt()}px with 200% text',
+      (tester) async {
+        await tester.binding.setSurfaceSize(Size(width, 1100));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        await tester.pumpWidget(
+          MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 1100),
+              textScaler: const TextScaler.linear(2),
+            ),
+            child: const MaterialApp(home: LoginScreen()),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 500));
+
+        final appleLabel = find.text('Continue with Apple — Coming soon');
+        await tester.ensureVisible(appleLabel);
+        await tester.pump();
+
+        expect(find.text('Continue with Google'), findsOneWidget);
+        expect(appleLabel, findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets(
     'tapping "Log in" at its default TextButton hit box pops RegisterScreen',

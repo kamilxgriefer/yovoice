@@ -45,7 +45,10 @@ class DefaultFirebaseOptions {
     appId: '1:80235878542:web:d0710da80b23e6051351df',
     messagingSenderId: '80235878542',
     projectId: 'yovoice-ec54a',
-    authDomain: 'auth.yovoice.app',
+    // OAuth popups must return through a redirect URI registered on the
+    // project's Google web client. The Firebase-managed handler is registered
+    // by default; the custom Hosting domain currently is not.
+    authDomain: 'yovoice-ec54a.firebaseapp.com',
     storageBucket: 'yovoice-ec54a.firebasestorage.app',
     measurementId: 'G-N66FNT890Y',
   );

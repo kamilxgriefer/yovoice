@@ -1,6 +1,10 @@
+import 'dart:convert';
+
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:http/http.dart' as http;
 
 import 'package:yovoice/features/auth/data/action_code_settings.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
@@ -8,17 +12,42 @@ import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/models/app_user.dart';
 import 'package:yovoice/services/firestore_service.dart';
 
+enum AppleSignInAvailability {
+  available,
+  notConfigured,
+  temporarilyUnavailable,
+}
+
+typedef AppleProviderProbe = Future<AppleSignInAvailability> Function();
+
 class AuthService {
-  AuthService({FirebaseAuth? firebaseAuth, FirestoreService? firestoreService})
-    : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance,
-      _firestoreService = firestoreService ?? FirestoreService();
+  AuthService({
+    FirebaseAuth? firebaseAuth,
+    FirestoreService? firestoreService,
+    @visibleForTesting bool? appleSignInFeatureEnabled,
+    @visibleForTesting bool? appleUseWebPopup,
+    @visibleForTesting AppleProviderProbe? appleProviderProbe,
+  }) : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance,
+       _firestoreService = firestoreService ?? FirestoreService(),
+       _appleSignInFeatureEnabled =
+           appleSignInFeatureEnabled ??
+           const bool.fromEnvironment(
+             'YOVOICE_APPLE_SIGN_IN_ENABLED',
+             defaultValue: false,
+           ),
+       _appleUseWebPopup = appleUseWebPopup,
+       _appleProviderProbe = appleProviderProbe;
 
   final FirebaseAuth _firebaseAuth;
   final FirestoreService _firestoreService;
+  final bool _appleSignInFeatureEnabled;
+  final bool? _appleUseWebPopup;
+  final AppleProviderProbe? _appleProviderProbe;
 
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
 
   Future<void>? _googleSignInInitialization;
+  Future<AppleSignInAvailability>? _appleSignInAvailability;
 
   User? get currentUser => _firebaseAuth.currentUser;
 
@@ -78,7 +107,10 @@ class AuthService {
         credential = await _firebaseAuth.signInWithCredential(googleCredential);
       }
 
-      await _createSocialUserProfileIfNeeded(credential);
+      await _createSocialUserProfileIfNeeded(
+        credential,
+        providerName: 'Google',
+      );
 
       return credential;
     } on GoogleSignInException catch (error) {
@@ -119,6 +151,51 @@ class AuthService {
     } catch (_) {
       throw const AuthServiceException(
         'An unexpected error occurred during Google Sign-In.',
+      );
+    }
+  }
+
+  /// Returns whether Firebase's production configuration can start an Apple
+  /// OAuth flow. The build flag is intentionally necessary as well: enabling
+  /// the provider in the Firebase console before the Apple Service ID,
+  /// signing capability and release profile are ready must not expose a
+  /// half-configured button to users.
+  Future<AppleSignInAvailability> getAppleSignInAvailability() {
+    if (!_appleSignInFeatureEnabled) {
+      return Future.value(AppleSignInAvailability.notConfigured);
+    }
+
+    return _appleSignInAvailability ??= _probeAppleProvider();
+  }
+
+  Future<UserCredential> signInWithApple() async {
+    final availability = await getAppleSignInAvailability();
+    if (availability != AppleSignInAvailability.available) {
+      throw const AuthServiceException(
+        'Apple Sign-In is not available right now.',
+      );
+    }
+
+    try {
+      final appleProvider = AppleAuthProvider()
+        ..addScope('email')
+        ..addScope('name');
+
+      final useWebPopup = _appleUseWebPopup ?? kIsWeb;
+      final credential = useWebPopup
+          ? await _firebaseAuth.signInWithPopup(appleProvider)
+          : await _firebaseAuth.signInWithProvider(appleProvider);
+
+      await _createSocialUserProfileIfNeeded(credential, providerName: 'Apple');
+
+      return credential;
+    } on FirebaseAuthException {
+      rethrow;
+    } on AuthServiceException {
+      rethrow;
+    } catch (_) {
+      throw const AuthServiceException(
+        'An unexpected error occurred during Apple Sign-In.',
       );
     }
   }
@@ -265,8 +342,9 @@ class AuthService {
   }
 
   Future<void> _createSocialUserProfileIfNeeded(
-    UserCredential credential,
-  ) async {
+    UserCredential credential, {
+    required String providerName,
+  }) async {
     final isNewUser = credential.additionalUserInfo?.isNewUser ?? false;
 
     if (!isNewUser) {
@@ -276,16 +354,16 @@ class AuthService {
     final user = credential.user;
 
     if (user == null) {
-      throw const AuthServiceException(
-        'Unable to retrieve the signed-in Google user.',
+      throw AuthServiceException(
+        'Unable to retrieve the signed-in $providerName user.',
       );
     }
 
     final email = user.email?.trim();
 
     if (email == null || email.isEmpty) {
-      throw const AuthServiceException(
-        'Google did not provide an email address.',
+      throw AuthServiceException(
+        '$providerName did not provide an email address.',
       );
     }
 
@@ -307,9 +385,51 @@ class AuthService {
         await _firebaseAuth.signOut();
       }
 
-      throw const AuthServiceException(
-        'Google account was authenticated, but the user profile could not be created.',
+      throw AuthServiceException(
+        '$providerName account was authenticated, but the user profile could not be created.',
       );
+    }
+  }
+
+  Future<AppleSignInAvailability> _probeAppleProvider() async {
+    final injectedProbe = _appleProviderProbe;
+    if (injectedProbe != null) {
+      return injectedProbe();
+    }
+
+    try {
+      final apiKey = Firebase.app().options.apiKey;
+      if (apiKey.isEmpty) {
+        return AppleSignInAvailability.temporarilyUnavailable;
+      }
+
+      final uri = Uri.https(
+        'identitytoolkit.googleapis.com',
+        '/v1/accounts:createAuthUri',
+        {'key': apiKey},
+      );
+      final continueUri = kIsWeb && Uri.base.hasScheme
+          ? Uri.base.origin
+          : 'https://auth.yovoice.app';
+      final response = await http
+          .post(
+            uri,
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'providerId': AppleAuthProvider.PROVIDER_ID,
+              'continueUri': continueUri,
+            }),
+          )
+          .timeout(const Duration(seconds: 6));
+
+      return parseAppleProviderProbeResponse(
+        response.statusCode,
+        response.body,
+      );
+    } catch (_) {
+      // Availability is a fail-closed UI gate. Network and malformed-response
+      // failures must never turn the sign-in button on optimistically.
+      return AppleSignInAvailability.temporarilyUnavailable;
     }
   }
 
@@ -373,11 +493,12 @@ class AuthService {
         return 'An account already exists with this email using another sign-in method.';
 
       case 'popup-blocked':
-        return 'The browser blocked the Google Sign-In window. Allow pop-ups and try again.';
+        return 'The browser blocked the sign-in window. Allow pop-ups and try again.';
 
+      case 'canceled':
       case 'popup-closed-by-user':
       case 'cancelled-popup-request':
-        return 'Google Sign-In was cancelled.';
+        return 'Sign-in was cancelled.';
 
       case 'unauthorized-domain':
         return 'This website domain is not authorized in Firebase Authentication.';
@@ -386,6 +507,45 @@ class AuthService {
         return error.message ?? 'Firebase authentication error.';
     }
   }
+}
+
+@visibleForTesting
+AppleSignInAvailability parseAppleProviderProbeResponse(
+  int statusCode,
+  String responseBody,
+) {
+  try {
+    final decoded = jsonDecode(responseBody);
+    if (decoded is! Map<String, dynamic>) {
+      return AppleSignInAvailability.temporarilyUnavailable;
+    }
+
+    if (statusCode == 200) {
+      final authUri = Uri.tryParse(decoded['authUri'] as String? ?? '');
+      final providerId = decoded['providerId'];
+      final isAppleAuthorization =
+          authUri != null &&
+          authUri.scheme == 'https' &&
+          authUri.host == 'appleid.apple.com' &&
+          providerId == AppleAuthProvider.PROVIDER_ID;
+
+      return isAppleAuthorization
+          ? AppleSignInAvailability.available
+          : AppleSignInAvailability.temporarilyUnavailable;
+    }
+
+    final error = decoded['error'];
+    final message = error is Map<String, dynamic>
+        ? error['message'] as String? ?? ''
+        : '';
+    if (statusCode == 400 && message.startsWith('OPERATION_NOT_ALLOWED')) {
+      return AppleSignInAvailability.notConfigured;
+    }
+  } catch (_) {
+    // Parsed below as unavailable.
+  }
+
+  return AppleSignInAvailability.temporarilyUnavailable;
 }
 
 class AuthServiceException implements Exception {

@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "80235878542-6je19ta60s4rvdr8idbkfep3p0f7nauo.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "app.yovoice",
+            "certificate_hash": "afe0bf45dc1336c2cc1d72ee554bd9aec7094485"
+          }
+        },
+        {
           "client_id": "80235878542-vcrcafdpgm1p3nbqe1b58emar3toqd9n.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {

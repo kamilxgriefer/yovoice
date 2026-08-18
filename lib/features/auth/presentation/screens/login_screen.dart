@@ -23,9 +23,18 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePassword = true;
   bool _isLoading = false;
   bool _isGoogleLoading = false;
+  bool _isAppleLoading = false;
   bool _isResettingPassword = false;
+  AppleSignInAvailability? _appleSignInAvailability;
 
-  bool get _isAuthenticationLoading => _isLoading || _isGoogleLoading;
+  bool get _isAuthenticationLoading =>
+      _isLoading || _isGoogleLoading || _isAppleLoading;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAppleSignInAvailability();
+  }
 
   @override
   void dispose() {
@@ -93,6 +102,46 @@ class _LoginScreenState extends State<LoginScreen> {
       if (mounted) {
         setState(() {
           _isGoogleLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadAppleSignInAvailability() async {
+    final availability = await _authService.getAppleSignInAvailability();
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _appleSignInAvailability = availability;
+    });
+  }
+
+  Future<void> _signInWithApple() async {
+    if (_isAuthenticationLoading ||
+        _appleSignInAvailability != AppleSignInAvailability.available) {
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+
+    setState(() {
+      _isAppleLoading = true;
+    });
+
+    try {
+      await _authService.signInWithApple();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      _showMessage(_authService.getErrorMessage(error));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAppleLoading = false;
         });
       }
     }
@@ -223,9 +272,11 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                         const SizedBox(height: 0),
-                        const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.center,
+                        const Wrap(
+                          alignment: WrapAlignment.center,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 11,
+                          runSpacing: 6,
                           children: [
                             Text(
                               'YO',
@@ -237,7 +288,6 @@ class _LoginScreenState extends State<LoginScreen> {
                                 letterSpacing: 0.4,
                               ),
                             ),
-                            SizedBox(width: 11),
                             Text(
                               'VOICE',
                               style: TextStyle(
@@ -341,16 +391,26 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(height: 14),
                         _LoginSocialButton(
-                          label: 'Continue with Apple',
+                          label:
+                              _appleSignInAvailability ==
+                                  AppleSignInAvailability.notConfigured
+                              ? 'Continue with Apple — Coming soon'
+                              : _appleSignInAvailability ==
+                                    AppleSignInAvailability
+                                        .temporarilyUnavailable
+                              ? 'Continue with Apple — Unavailable'
+                              : 'Continue with Apple',
                           materialIcon: Icons.apple,
                           iconSize: 34,
-                          onPressed: _isAuthenticationLoading
+                          isLoading:
+                              _isAppleLoading ||
+                              _appleSignInAvailability == null,
+                          onPressed:
+                              _isAuthenticationLoading ||
+                                  _appleSignInAvailability !=
+                                      AppleSignInAvailability.available
                               ? null
-                              : () {
-                                  _showMessage(
-                                    'Apple Sign-In will be added in the next stage.',
-                                  );
-                                },
+                              : _signInWithApple,
                         ),
                         const SizedBox(height: 28),
                         Row(
