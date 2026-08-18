@@ -202,6 +202,27 @@ permission flags).
 
 ## Data integrity
 
+- **[OPEN — needs a product decision] Three direct-conversation threads and
+  ~30 rooms belong to dead Auth accounts.** `SqEQ493FrDUnD8l7j0egaoNCHnk2`
+  ("Griefer") and `hMwXnWimPQOYhk50TPPw62towbc2` ("testGriefer") no longer
+  exist in Firebase Auth, but their `users` docs, empty `publicProfiles`,
+  three legacy DM threads (33 messages) and dozens of test rooms remain.
+  The 2026-08-18 migration correctly refused those threads
+  (`invalidPublicProfile`); the living-party UX is a chat row that cannot
+  be operated on. Decide: retire/delete dead-party threads and orphan
+  rooms, or keep them frozen. 25 of 43 `users` docs are Auth orphans in
+  total. A pre-decision snapshot exists in
+  `~/Documents/YO Voice Backups/2026-08-18-pre-dm-migration.json`.
+
+- **[FIXED 2026-08-18] The "beyb" zombie room** (`mwrohOrlGAHQQBfCX2sn`,
+  `status: closed`, `deletionInProgress: true`): a `deleteRoomSelf` crash
+  (ADR-078) committed the closing transaction and died before teardown.
+  The callable fix is deployed; the host's next Delete retry completes the
+  removal (verified retryable: `closed` ∈ ROOM_STATUSES and
+  `deletionInProgress` does not block deletion). Home no longer renders
+  mid-deletion rooms as startable.
+
+
 - **FIXED IN SOURCE 2026-08-17, NOT YET DEPLOYED — a `not-found` from any
   messaging callable disabled the entire server-side guard set, and a
   failed conversation open wrote a thread the backend can never touch
@@ -592,6 +613,25 @@ permission flags).
   rate.
 
 ## UI
+
+- **FIXED IN SOURCE 2026-08-18 — the full Profile screen opened on a huge,
+  mostly-empty gradient banner with the Back arrow floating alone in the far
+  corner.** `ProfileHeader` was a fixed 300–320px banner Stack (38–56% of a
+  phone viewport, worse on desktop where the empty gradient stretched across
+  the window). It is now a compact, content-sized header: a toolbar row
+  (Back when the route can pop — min 44px target, safe-area aware — the
+  title, and Edit) aligned with the 18px content gutter inside the same
+  bounded frame as the page panels, a slim 104/132px banner accent card
+  that keeps the cosmic gradient and any user-uploaded banner, and one
+  readable identity block (avatar overlapping the card, name, @username,
+  badges, title). The Premium/account-type chips also gained
+  Flexible+ellipsis labels, which previously overflowed at 320px width with
+  2.0 text scale. Pinned by test/profile_header_compact_test.dart
+  (320/390/768/1100/1440, 2.0 text scale at 320 and 1440, header ≤ 30% of a
+  390x844 viewport, Back pops) alongside the existing
+  test/profile_header_layout_test.dart matrix, and rendered for visual
+  proof via test/profile_header_screenshot.dart. Live verification on a
+  deployed build is still pending.
 
 - **OPEN migration limit — Light mode is a working Beta, not yet a complete
   app-wide light theme.** The root `MaterialApp` now follows System/Dark/Light

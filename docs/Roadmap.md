@@ -16,6 +16,40 @@ someone decide what to pick up next.
 
 ## Done
 
+- **The 2026-08-18 production-regression wave: room callables, friend
+  lists, legacy DM roots, missing indexes** (2026-08-18, `3f28462` →
+  `4cad282`, backend DEPLOYED same evening; client fixes in the same-day
+  Hosting release): seven room callables (`deleteRoomSelf`,
+  `leaveRoomSelf`, `setRoomStatusSelf`, `endRoomVoiceSelf`,
+  `setOwnRoomParticipantMute`, `moderateRoomParticipantSelf`,
+  `removeRoomParticipantSelf`) had been broken in production since
+  2026-08-16 by the firebase-functions v2 two-argument calling convention
+  (ADR-078) — room deletion returned INTERNAL and stranded zombie rooms,
+  Leave errored after removing the roster row, server-authoritative mute
+  failed from the main room screen. Friend-request/friends owner LISTs were
+  denied wholesale by wildcard liveness reads in list evaluation (ADR-079)
+  — no accept/decline controls anywhere and a 0 friend counter. Every DM
+  send and mark-read failed permission-denied on unmigrated legacy
+  conversation roots; the 2 threads between living accounts were migrated
+  in place (item 0m). The two moment-cleanup schedules had never once
+  succeeded (missing composite indexes, ADR-055's failure class —
+  `4cad282`). Client side, one shared `RoomMuteCoordinator` now serves the
+  room screens and the mini bar (stale sessions are torn down instead of
+  looping "not currently live"), `RoomLeaveCoordinator` navigates
+  immediately with background cleanup, room deletion uses a simple
+  name+cannot-be-undone confirm with friendly errors, Home hides
+  mid-deletion rooms and disables ended ones, Discover's empty state stops
+  blaming the search phrase for an empty universe, add-friend routes
+  requestReceived to a real accept with a decline affordance, watchFriends
+  degrades unreadable profiles instead of dropping them, chat mark-read
+  runs once per newest message with a visible failure notice, and the
+  foreground notification banner is driven by the Firestore stream, not
+  FCM. Profile's full-screen header became a compact toolbar + slim banner
+  accent (header ≤30% of a phone viewport). Website: PR #2 merged after an
+  adversarial review (single-login app hand-off, no tokens in URLs) plus a
+  same-PR hardening of `resolveAuthRedirect` against the backslash open
+  redirect. See ADR-078, ADR-079, ADR-080.
+
 - **Sign in with Apple provider and dedicated password-reset route**
   (2026-08-18, source/configuration ready; Hosting deployment and real-account
   smoke pending): the former Apple placeholder now uses Firebase's real Apple
@@ -734,9 +768,15 @@ someone decide what to pick up next.
 
 Ordered by rough priority — re-prioritize freely, this isn't a queue.
 
-### 0a. Run the public-profile backfill (32 accounts currently invisible)
+### 0a. ~~Run the public-profile backfill~~ VERIFIED CONSISTENT (2026-08-18)
 
-- **Status**: Blocked on credentials; the unblock is committed and unrun.
+- **Status**: Closed. A dry run with Application Default Credentials on
+  2026-08-18 scanned all 43 `users` documents and planned **zero writes**:
+  every live account already has its projection (18 real accounts = 18
+  `publicProfiles`), and the other 25 are Auth orphans whose projections are
+  intentionally absent/empty. The projection layer drained itself as owners
+  signed in. Original description kept below for history.
+- **Original status**: Blocked on credentials; the unblock is committed and unrun.
 - **Description**: After the ADR-054 cutover, production holds 33 `users`
   documents and 1 `publicProfiles` document. `users` is owner-`get`-only
   and non-listable, so the other 32 accounts cannot be seen by any other
@@ -763,7 +803,20 @@ different and much smaller problem.
 
 ### 0m. Run the direct-conversation migration, there are stranded legacy roots in production
 
-- **Status**: Not started. **There is no record of this migration ever
+- **Status**: **RUN on 2026-08-18 for every migratable thread.** A local
+  ADC runner reused `createDirectMigrationService` verbatim: scan found 5
+  legacy roots; the 2 whose participants all still exist in Firebase Auth
+  were migrated (dry-run → apply → `alreadyMigrated` idempotency re-run;
+  verified 18-key roots, `schemaVersion: 2`, both `directConversationPairs`
+  guards). The remaining 3 are **unmigratable by design**: each involves
+  `SqEQ493FrDUnD8l7j0egaoNCHnk2` and/or `hMwXnWimPQOYhk50TPPw62towbc2`,
+  whose Firebase Auth accounts no longer exist (Auth orphans with empty
+  projections), so `canonicalPublicProfile` correctly refuses
+  (`invalidPublicProfile`). Their fate — retire/delete the dead-party
+  threads or keep them frozen — is a product decision, tracked in
+  Bugs.md. A pre-migration JSON snapshot of all 5 roots + 52 messages is at
+  `~/Documents/YO Voice Backups/2026-08-18-pre-dm-migration.json`.
+- **Original status**: Not started. **There is no record of this migration ever
   having been run**, which is itself the finding — the callables
   (`migrateDirectIntegrityConversation`, `scanDirectIntegrityMigration`)
   have existed and been tested since the Stage B work, and nothing has

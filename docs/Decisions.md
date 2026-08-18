@@ -4865,3 +4865,83 @@ one dependency that a local emulator cannot represent.
   Functions and indexes.
 - Removing the role intentionally disables every affected upload path until it
   is restored; this is preferable to silently widening access.
+
+## ADR-078: An onCall handler takes exactly one parameter; dependency injection never rides the handler signature
+
+**Status:** accepted, deployed (2026-08-18).
+
+**Context.** firebase-functions v2 invokes every callable handler as
+`handler(request, responseProxy)` — the second argument is the streaming
+`CallableResponse`, passed unconditionally
+(`lib/common/providers/https.js`). Seven room callables in
+`rooms/participants.js` registered their multi-parameter `execute*`
+functions directly (`onCall(OPTS, executeDeleteRoom)`), so in production the
+response proxy landed in the `roomControl` dependency-injection slot and
+`roomControl ?? getProductionLiveKitControl()` selected the proxy. Every
+LiveKit method call on it threw `TypeError: ….endRoom is not a function`
+AFTER the Firestore transaction had committed: `deleteRoomSelf` stranded
+rooms as `status:"closed" / deletionInProgress:true` zombies (the "beyb"
+room), `leaveRoomSelf` errored after deleting the roster row (users pressed
+Leave and stayed in the room UI), `setOwnRoomParticipantMute` wrote the
+roster then failed ("Could not change microphone state"), and ended rooms
+produced "This room is not currently live" on rejoin. All seven had been
+broken since the 2026-08-16 18:24 deploy. The tests never saw it because
+every suite called `executeX(request, fakeControl)` directly — the framework
+calling convention itself was uncovered.
+
+**Decision.** Callable registrations pass one-argument wrappers only:
+`onCall(OPTS, (request) => executeX(request))`. The injectable signature
+stays for tests. Two permanent guards in
+`functions/test/callable_invocation_contract.test.js`: invoking the
+REGISTERED callables via `.run(request, proxy)` must never treat the second
+argument as a dependency, and a structural scan fails if any `onCall`
+anywhere registers a multi-parameter named handler.
+
+**Consequences.** Fixed and deployed 2026-08-18 ~20:36 UTC. Zombie rooms
+remain deletable: `"closed"` is in `ROOM_STATUSES` and `deletionInProgress`
+does not block `executeDeleteRoom`, so a host retry completes the deletion.
+
+## ADR-079: Owner-scoped social lists split get from list; wildcard liveness reads never run inside list evaluation
+
+**Status:** accepted, deployed (2026-08-18).
+
+**Context.** `users/{u}/friendRequests/{senderId}`, `sentFriendRequests` and
+`friends` each had a single `allow read` calling
+`accountIsActive(<wildcard>)`. A list query evaluates that per candidate
+row; one denied row — or the query access-call budget — fails the whole
+list. In production the Notifications screen lost every accept/decline
+control ("Friend requests and unread messages could not be loaded"), and
+the Friends counter read 0 while search said "Friends". The prior
+regression test claimed to cover "the incoming request list" but executed a
+single `getDoc`.
+
+**Decision.** `get` keeps the cross-party liveness checks; `list` is
+`isActiveAccount() && isOwner(userId)` — already path-scoped to the owner's
+own subcollection, where a per-sender liveness read adds nothing. New rules
+tests execute the real LIST queries; the pre-fix rules fail exactly the
+three owner-list regressions (400/3) and pass all denial cases, proving the
+change loosens nothing.
+
+**Consequences.** Owner lists work under the deployed ruleset
+(2026-08-18T20:38Z, byte-identical to HEAD). Any rule whose read condition
+dereferences a document-ID wildcard must either split get/list or prove a
+list query is impossible.
+
+## ADR-080: Unconfigured billing endpoints stay out of the deploy manifest behind an explicit operator flag
+
+**Status:** accepted (2026-08-18).
+
+**Context.** The Functions CLI validates every secret declared by any
+discovered endpoint at deploy time — even endpoints excluded from `--only`.
+The five ADR-067 Stripe endpoints declare `STRIPE_SECRET_KEY`, which
+deliberately does not exist yet, so their mere presence in `index.js`
+blocked deploying the entire codebase non-interactively.
+
+**Decision.** `functions/index.js` requires and exports the Stripe module
+only when `STRIPE_BILLING_EXPORTS=enabled` is set (functions/.env) — 125
+exports with the flag off, 130 with it on. The flag is flipped only as part
+of the real ADR-067 go-live, after live Stripe configuration exists.
+
+**Consequences.** The codebase deploys without fake secrets and without
+half-configured billing endpoints appearing in production. The go-live
+checklist gains one explicit step.
