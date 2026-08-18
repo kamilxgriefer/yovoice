@@ -53,7 +53,13 @@ void main() {
       final cardRect = tester.getRect(card);
       expect(cardRect.left, greaterThanOrEqualTo(0));
       expect(cardRect.right, lessThanOrEqualTo(size.width));
-      expect(cardRect.width, lessThanOrEqualTo(720));
+      expect(
+        cardRect.width,
+        moreOrLessEquals(size.width - 36, epsilon: 0.01),
+        reason:
+            'the journey panel must use the same full content width as '
+            'the neighbouring profile panels',
+      );
       for (final keyName in const [
         'communities',
         'messages',

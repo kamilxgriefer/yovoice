@@ -50,49 +50,42 @@ class ProfileJourneyCard extends StatelessWidget {
       ),
     ];
 
-    return Align(
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 720),
-        child: Container(
-          key: const ValueKey('profile-journey-card'),
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: AppColors.border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.auto_awesome_rounded, color: AppColors.secondary),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Your YO Voice journey',
-                      style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w900,
-                      ),
+    return SizedBox(
+      width: double.infinity,
+      child: Container(
+        key: const ValueKey('profile-journey-card'),
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.auto_awesome_rounded, color: AppColors.secondary),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Your YO Voice journey',
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              for (var index = 0; index < items.length; index++) ...[
-                if (index > 0)
-                  const Divider(
-                    height: 1,
-                    indent: 34,
-                    color: AppColors.divider,
-                  ),
-                _JourneyRow(item: items[index]),
+                ),
               ],
+            ),
+            const SizedBox(height: 8),
+            for (var index = 0; index < items.length; index++) ...[
+              if (index > 0)
+                const Divider(height: 1, indent: 34, color: AppColors.divider),
+              _JourneyRow(item: items[index]),
             ],
-          ),
+          ],
         ),
       ),
     );
