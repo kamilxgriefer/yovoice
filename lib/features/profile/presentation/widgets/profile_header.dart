@@ -8,13 +8,21 @@ import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
-/// The profile hero: banner, avatar, name, username, account badge and
-/// the Edit button.
+/// The profile hero — compact edition: a toolbar row (Back when the
+/// route can pop, the screen title, Edit), a SLIM banner accent card,
+/// and one readable identity block (avatar + name + username + badges).
+///
+/// The previous incarnation was a fixed 300–320px banner Stack: at
+/// desktop sizes most of it was empty gradient with a lone Back arrow
+/// floating in the corner. The banner is now a bounded accent (104px on
+/// phones, 132px wide) that the avatar overlaps, and the header sizes
+/// itself to its content instead of claiming a fixed viewport share.
 ///
 /// Public (not private to profile_screen.dart) so the same widget — not a
 /// hand-mirrored copy — is rendered by the Profile screen, the
-/// lib/dev/profile_preview.dart harness, and the width-matrix layout test
-/// in test/profile_header_layout_test.dart. The mobile avatar-clipping
+/// lib/dev/profile_preview.dart harness, and the layout tests in
+/// test/profile_header_layout_test.dart and
+/// test/profile_header_compact_test.dart. The mobile avatar-clipping
 /// regression shipped precisely because the harness mirrored this layout
 /// instead of importing it: the real screen collapsed while the mirror
 /// looked plausible.
@@ -30,227 +38,237 @@ class ProfileHeader extends StatelessWidget {
   final AchievementDefinition? title;
   final VoidCallback onEdit;
 
+  /// Matches the 18px gutter of the content panels below
+  /// (profile_screen's SliverPadding), so the toolbar and banner card
+  /// line up with the rest of the page instead of the screen edge.
+  static const double _gutter = 18;
+
   @override
   Widget build(BuildContext context) {
-    // Full-bleed banner on phones; on wide viewports the same banner
-    // becomes a centered, rounded cover card so a 1440px browser window
-    // doesn't stretch one image across the entire screen. Breakpoint via
-    // LayoutBuilder, proportions via constraints — no scaling transforms.
+    // Breakpoint via LayoutBuilder — available width, never device
+    // labels. Inside the screen's ResponsiveContentFrame (1040px feed
+    // measure) the 1100 self-cap is a no-op; it exists so bare hosts
+    // (the dev harness, tests) never stretch the header across 1440px.
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 900;
+        final bannerHeight = isWide ? 132.0 : 104.0;
+        final avatarOverlap = isWide ? 44.0 : 40.0;
 
-        final scrim = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.black.withValues(alpha: .05),
-            const Color(0xFF09050F),
-          ],
-        );
-
-        final bannerLayer = isWide
-            ? Positioned.fill(
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 1100),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(26),
-                        child: ProfileBanner(
-                          bannerUrl: profile.bannerUrl,
-                          overlay: scrim,
-                        ),
-                      ),
-                    ),
-                  ),
+        return Align(
+          alignment: Alignment.topCenter,
+          heightFactor: 1,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1100),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _toolbar(context),
+                const SizedBox(height: 6),
+                _bannerAndIdentity(
+                  bannerHeight: bannerHeight,
+                  avatarOverlap: avatarOverlap,
                 ),
-              )
-            : Positioned.fill(
-                child: ProfileBanner(
-                  bannerUrl: profile.bannerUrl,
-                  overlay: scrim,
-                ),
-              );
-
-        return SizedBox(
-          height: isWide ? 300 : 320,
-          child: Stack(
-            children: [bannerLayer, _headerContent(context, isWide)],
+                const SizedBox(height: 8),
+              ],
+            ),
           ),
         );
       },
     );
   }
 
-  Widget _headerContent(BuildContext context, bool isWide) {
-    // ALWAYS wrapped in Positioned.fill. The inner Stack must fill the
-    // header box so the identity row's `bottom: 20` anchors to the
-    // header's bottom edge. When the mobile branch returned this Stack
-    // unpositioned, it collapsed to the title row's height and the
-    // avatar was drawn (and clipped) above the top of the page — the
-    // production mobile bug.
-    final content = Stack(children: [_titleRow(), _identityRow()]);
-
-    if (!isWide) {
-      return Positioned.fill(child: content);
-    }
-
-    // On wide screens the text/avatar content tracks the same 1100px cap
-    // as the banner card so they read as one composition. SizedBox.expand
-    // is load-bearing: ConstrainedBox only caps the WIDTH, and without a
-    // tight height the inner Stack collapses to the title row exactly
-    // like the mobile bug — the width-matrix layout test caught the wide
-    // variant of the same failure at 1024/1440.
-    return Positioned.fill(
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1100),
-          child: SizedBox.expand(child: content),
-        ),
-      ),
-    );
-  }
-
-  Widget _titleRow() {
+  Widget _toolbar(BuildContext context) {
+    final canPop = Navigator.of(context).canPop();
     return SafeArea(
       bottom: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-        child: Builder(
-          builder: (context) => Row(
-            children: [
-              // A physical Back control whenever there IS somewhere to go
-              // back to. Profile is pushed as a route from the avatar, the
-              // profile card and More, and previously offered no way out
-              // but a system gesture — which desktop web does not have.
-              if (Navigator.of(context).canPop())
-                Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: IconButton(
-                    onPressed: () => Navigator.of(context).maybePop(),
-                    icon: const Icon(Icons.arrow_back_rounded),
-                    color: Colors.white,
-                    tooltip: 'Back',
-                    style: IconButton.styleFrom(
-                      backgroundColor: Colors.black.withValues(alpha: .28),
-                    ),
+        padding: const EdgeInsets.fromLTRB(6, 6, _gutter, 0),
+        child: Row(
+          children: [
+            // A physical Back control whenever there IS somewhere to go
+            // back to. Profile is pushed as a route from the avatar, the
+            // profile card and More, and previously offered no way out
+            // but a system gesture — which desktop web does not have.
+            if (canPop)
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: IconButton(
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  color: Colors.white,
+                  tooltip: 'Back',
+                  constraints: const BoxConstraints(
+                    minWidth: 44,
+                    minHeight: 44,
+                  ),
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.black.withValues(alpha: .28),
                   ),
                 ),
-              const Expanded(
-                child: Text(
-                  'Profile',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 31,
-                    fontWeight: FontWeight.w900,
-                  ),
+              )
+            else
+              // Keeps the title on the 18px content gutter when there is
+              // no Back button (6 + 12 = 18).
+              const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Profile',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
                 ),
               ),
-              IconButton.filled(
-                onPressed: onEdit,
-                style: IconButton.styleFrom(
-                  backgroundColor: const Color(0xFFAE22FF),
-                ),
-                icon: const Icon(Icons.edit_rounded, color: Colors.white),
+            ),
+            IconButton.filled(
+              onPressed: onEdit,
+              tooltip: 'Edit profile',
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              style: IconButton.styleFrom(
+                backgroundColor: const Color(0xFFAE22FF),
               ),
-            ],
-          ),
+              icon: const Icon(Icons.edit_rounded, color: Colors.white),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _identityRow() {
-    return Positioned(
-      left: 20,
-      right: 20,
-      bottom: 20,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Container(
-            key: const Key('profile-header-avatar'),
-            padding: const EdgeInsets.all(4),
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
-              ),
+  /// Slim banner accent + identity block. The Stack is sized by the
+  /// (non-positioned) Column, never by the banner: the banner is a
+  /// Positioned backdrop with an explicit height, so this layout cannot
+  /// reproduce the collapsed-Stack avatar-clipping bug.
+  Widget _bannerAndIdentity({
+    required double bannerHeight,
+    required double avatarOverlap,
+  }) {
+    // Bottom-weighted scrim: keeps the banner's lower edge dark enough
+    // that the name stays legible when it rides over the card's bottom
+    // seam, on the gradient fallback and on user-uploaded images alike.
+    final scrim = LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      stops: const [0, .55, 1],
+      colors: [
+        Colors.black.withValues(alpha: .04),
+        Colors.black.withValues(alpha: .16),
+        const Color(0xFF09050F).withValues(alpha: .68),
+      ],
+    );
+
+    return Stack(
+      children: [
+        Positioned(
+          top: 0,
+          left: _gutter,
+          right: _gutter,
+          height: bannerHeight,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: ProfileBanner(bannerUrl: profile.bannerUrl, overlay: scrim),
+          ),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(height: bannerHeight - avatarOverlap),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(_gutter + 12, 0, _gutter, 0),
+              child: _identityBlock(),
             ),
-            child: UserAvatar(
-              radius: 55,
-              photoUrl: profile.photoUrl,
-              displayName: profile.displayName,
-              backgroundColor: const Color(0xFF281133),
-              premium: profile.premiumIdentity,
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _identityBlock() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Container(
+          key: const Key('profile-header-avatar'),
+          padding: const EdgeInsets.all(4),
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              colors: [Color(0xFF6A00FF), Color(0xFFD12CFF)],
             ),
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
+          child: UserAvatar(
+            radius: 44,
+            photoUrl: profile.photoUrl,
+            displayName: profile.displayName,
+            backgroundColor: const Color(0xFF281133),
+            premium: profile.premiumIdentity,
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 2),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  profile.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                if (profile.username.isNotEmpty)
                   Text(
-                    profile.displayName,
+                    '@${profile.username.replaceAll(' ', '').toLowerCase()}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 29,
-                      fontWeight: FontWeight.w900,
+                      color: Color(0xFFB8ADC1),
+                      fontSize: 14,
                     ),
                   ),
-                  if (profile.username.isNotEmpty)
-                    Text(
-                      '@${profile.username.replaceAll(' ', '').toLowerCase()}',
-                      style: const TextStyle(
-                        color: Color(0xFFB8ADC1),
-                        fontSize: 15,
+                // The identity chips row (board screen 5). The official
+                // role badge leads and ALWAYS renders — an ordinary
+                // account reads USER — with VIP beside it when held,
+                // both resolved from the server-written public badge
+                // projection. After them: account type + the
+                // server-mirrored Premium mark. Only truthful chips —
+                // premiumIdentity is written by Cloud Functions, never
+                // computed locally.
+                Padding(
+                  padding: const EdgeInsets.only(top: 7),
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      UserIdentityBadges(
+                        uid: profile.uid,
+                        variant: IdentityBadgeVariant.full,
                       ),
-                    ),
-                  // The identity chips row (board screen 5). The official
-                  // role badge leads and ALWAYS renders — an ordinary
-                  // account reads USER — with VIP beside it when held,
-                  // both resolved from the server-written public badge
-                  // projection. After them: account type + the
-                  // server-mirrored Premium mark. Only truthful chips —
-                  // premiumIdentity is written by Cloud Functions, never
-                  // computed locally.
-                  Padding(
-                    padding: const EdgeInsets.only(top: 7),
-                    child: Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        UserIdentityBadges(
-                          uid: profile.uid,
-                          variant: IdentityBadgeVariant.full,
-                        ),
-                        if (profile.accountType != AccountType.personal)
-                          AccountTypeBadge(accountType: profile.accountType),
-                        if (profile.premiumIdentity)
-                          const PremiumIdentityChip(),
-                      ],
-                    ),
+                      if (profile.accountType != AccountType.personal)
+                        AccountTypeBadge(accountType: profile.accountType),
+                      if (profile.premiumIdentity) const PremiumIdentityChip(),
+                    ],
                   ),
-                  if (title != null) ...[
-                    const SizedBox(height: 8),
-                    TitleBadge(achievement: title!),
-                  ],
+                ),
+                if (title != null) ...[
+                  const SizedBox(height: 8),
+                  TitleBadge(achievement: title!),
                 ],
-              ),
+              ],
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -280,12 +298,19 @@ class PremiumIdentityChip extends StatelessWidget {
           children: [
             Icon(Icons.workspace_premium_rounded, size: 13, color: color),
             SizedBox(width: 4),
-            Text(
-              'Premium',
-              style: TextStyle(
-                color: color,
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
+            // Flexible + ellipsis: at 2.0 text scale on a 320px viewport
+            // the badges column is narrower than the scaled label, and a
+            // rigid Text overflows the chip.
+            Flexible(
+              child: Text(
+                'Premium',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
           ],
@@ -339,12 +364,18 @@ class AccountTypeBadge extends StatelessWidget {
           children: [
             Icon(icon, size: 13, color: color),
             const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                color: color,
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
+            // Same rationale as PremiumIdentityChip: shrink, never
+            // overflow, when text scaling outgrows the badges column.
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
           ],
