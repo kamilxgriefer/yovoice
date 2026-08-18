@@ -14,13 +14,10 @@ import 'package:yovoice/features/premium/data/services/premium_billing_service.d
 import 'package:yovoice/features/premium/presentation/screens/premium_plans_screen.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
-import 'package:yovoice/features/rooms/data/services/room_service.dart';
-import 'package:yovoice/features/rooms/presentation/widgets/recent_room_messages.dart';
 
-/// Responsive matrix (320 → 1440) for the mockup-pass Premium surfaces
-/// and the shared stage message overlay: the REAL screens, pumped at
-/// every width in the device matrix, must lay out without overflow
-/// exceptions and keep their core content present. This is the
+/// Responsive matrix (320 → 1440) for the mockup-pass Premium surfaces.
+/// The real screens, pumped at every width in the device matrix, must lay out
+/// without overflow exceptions and keep their core content present. This is the
 /// repo-established pattern (see profile_header_layout_test.dart) for
 /// responsive verification of signed-in surfaces that no headless
 /// browser can reach.
@@ -372,54 +369,6 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('Plans are temporarily unavailable'), findsOneWidget);
     expect(find.text('Try again'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('stage message overlay ellipsizes a long message at 320 wide '
-      'instead of overflowing', (tester) async {
-    tester.view.physicalSize = const Size(320, 568);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    final db = FakeFirebaseFirestore();
-    await db.collection('rooms').doc('room-1').collection('messages').add({
-      'senderId': 'other',
-      'senderName': 'Someone',
-      'senderPhotoUrl': null,
-      'text':
-          'an extremely long room message that could never fit on one '
-          'line of a narrow phone and must be ellipsized cleanly',
-      'createdAt': Timestamp.now(),
-      'reactions': <String, List<String>>{},
-    });
-
-    var opens = 0;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: RecentRoomMessages(
-            roomId: 'room-1',
-            service: RoomService(firestore: db, auth: _auth()),
-            onOpenChat: () => opens += 1,
-          ),
-        ),
-      ),
-    );
-    await tester.pump(const Duration(milliseconds: 80));
-
-    expect(find.byType(RecentRoomMessages), findsOneWidget);
-    expect(find.textContaining('extremely long room message'), findsOneWidget);
-    final bubble = find.bySemanticsLabel(
-      RegExp('Open room chat.*extremely long room message'),
-    );
-    expect(bubble, findsOneWidget);
-    expect(tester.getSize(bubble).height, greaterThanOrEqualTo(44));
-    Focus.of(
-      tester.element(find.textContaining('extremely long room message')),
-    ).requestFocus();
-    await tester.pump();
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    expect(opens, 1);
     expect(tester.takeException(), isNull);
   });
 }

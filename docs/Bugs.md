@@ -7,6 +7,16 @@ about things that are broken, risky, or need verification.
 
 ## Security
 
+- **FIXED IN SOURCE 2026-08-18 — live rooms wasted desktop space and left a
+  detached chat bubble behind after chat closed.** Community, Podcast, Club
+  and Family rooms now use one bounded responsive workspace: desktop keeps a
+  readable stage on the left and a permanent chat rail on the right, while
+  phones and compact tablets switch between full-width Stage and Chat views.
+  The floating latest-message overlay and the synthetic “room is quiet”
+  prompt were removed. Responsive tests cover the four room identities,
+  desktop split geometry, 320/390/768 compact widths and 200% text. Pending
+  the Flutter Hosting deploy for live verification.
+
 - **FIXED LIVE 2026-08-18 — every Firestore-backed Storage upload was denied
   despite green emulator tests.** Production was missing the
   `roles/firebaserules.firestoreServiceAgent` binding on

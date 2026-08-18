@@ -544,10 +544,13 @@ someone decide what to pick up next.
   real-data-conditional; no XP bar or Moments/Activity tabs — those
   systems don't exist and honesty wins over the mockup); board screen 6
   club room rebuild — lounges route into the shared community shell with
-  club banner/teal identity and lounge-aware leave, plus the shared
-  `RecentRoomMessages` stage overlay (board screen 2, live-verified in a
-  production two-user room) and the canonical-identity fix for all room
-  writes ([ADR-032](Decisions.md#adr-032-club-lounges-are-club-identity-rooms-on-the-shared-community-shell-room-writers-source-identity-from-the-profile-document)).
+  club banner/teal identity and lounge-aware leave, plus the canonical-
+  identity fix for all room writes
+  ([ADR-032](Decisions.md#adr-032-club-lounges-are-club-identity-rooms-on-the-shared-community-shell-room-writers-source-identity-from-the-profile-document)).
+  The later responsive room-workspace pass replaced the detached recent-
+  message overlay with a bounded desktop stage + chat rail and full-width
+  Stage/Chat views on compact devices; it also removed synthetic silence
+  prompts from every room identity.
   Still open: live club-room verification (blocked on a Premium grant —
   `adminSetPremiumEntitlements` has no caller UI), responsive matrix,
   remaining two-user checks.
@@ -556,8 +559,8 @@ someone decide what to pick up next.
   + mute-race fix; Podcast rename (ADR-029); scalable stage system
   replacing the orbit, verified at 2/10/50/500 participants (ADR-030);
   promotion/demotion token refresh; floating navigation dock with
-  Friends as a primary tab. Remaining milestones (covers/cards, room
-  chat, whiteboard, reactions, permissions, analytics, Spotify
+  Friends as a primary tab. Remaining milestones (covers/cards,
+  whiteboard, permissions, analytics, Spotify
   feasibility, landing page) tracked in the session task ledger.
 
 - Product-audit hardening pass (2026-08-08) — CI now gates deploys on

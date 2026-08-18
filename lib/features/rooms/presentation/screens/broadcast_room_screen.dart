@@ -52,6 +52,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   bool _wasSeenAsParticipant = false;
 
   bool _ending = false;
+  bool _showCompactChat = false;
 
   /// Guards the server removal-confirmation against re-entry while an
   /// in-flight check is pending (the roster stream keeps emitting).
@@ -545,6 +546,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final desktop = RoomWorkspace.usesDesktopLayout(context);
     return Scaffold(
       backgroundColor: BroadcastRoomColors.background,
       body: SafeArea(
@@ -610,7 +612,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                   children: [
                     Center(
                       child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 1040),
+                        constraints: const BoxConstraints(maxWidth: 1120),
                         child: BroadcastTopBar(
                           title: widget.room.name,
                           count: participants.length,
@@ -623,72 +625,79 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                       ),
                     ),
                     Expanded(
-                      child: Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 1040),
-                          child: ListView(
-                            padding: const EdgeInsets.fromLTRB(18, 12, 18, 22),
-                            children: [
-                              RoomIdentityCard(
-                                roomName: widget.room.name,
-                                topic: widget.room.description.trim().isNotEmpty
-                                    ? widget.room.description
-                                    : widget.room.category,
-                                identity: SpaceIdentity.podcast,
-                                imageUrl: widget.room.imageUrl,
-                                quiet: !anyoneSpeaking,
-                                trailing: BroadcastLiveBadge(
-                                  isLive: widget.room.isLive,
-                                ),
+                      child: RoomWorkspace(
+                        showCompactChat: _showCompactChat,
+                        stage: ListView(
+                          padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
+                          children: [
+                            RoomIdentityCard(
+                              roomName: widget.room.name,
+                              topic: widget.room.description.trim().isNotEmpty
+                                  ? widget.room.description
+                                  : widget.room.category,
+                              identity: SpaceIdentity.podcast,
+                              imageUrl: widget.room.imageUrl,
+                              quiet: !anyoneSpeaking,
+                              trailing: BroadcastLiveBadge(
+                                isLive: widget.room.isLive,
                               ),
-                              if (_isHost) ...[
-                                const SizedBox(height: 16),
-                                BroadcastOwnerQuickActions(
-                                  raisedHands: raised.length,
-                                  onParticipants: () =>
-                                      _openParticipants(participants),
-                                  onHands: () => _openParticipants(
-                                    participants,
-                                    initialFilter: 'hands',
-                                  ),
-                                  onManage: () => _openOwnerMenu(participants),
-                                  onShare: _openShareSheet,
-                                ),
-                              ],
-                              const SizedBox(height: 14),
-                              RoomStagePanel(
-                                speakers: stageSpeakers,
-                                identity: SpaceIdentity.podcast,
-                                onOverflowTap: () => _openParticipants(
+                            ),
+                            if (_isHost) ...[
+                              const SizedBox(height: 16),
+                              BroadcastOwnerQuickActions(
+                                raisedHands: raised.length,
+                                onParticipants: () =>
+                                    _openParticipants(participants),
+                                onHands: () => _openParticipants(
                                   participants,
-                                  initialFilter: 'speakers',
+                                  initialFilter: 'hands',
                                 ),
-                                onSpeakerTap: (speaker) => showProfilePreview(
-                                  context,
-                                  userId: speaker.userId,
-                                  displayName: speaker.displayName,
-                                  photoUrl: speaker.photoUrl,
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              ListenersStrip(
-                                count: listeners.length,
-                                identity: SpaceIdentity.podcast,
-                                onTap: () => _openParticipants(
-                                  participants,
-                                  initialFilter: 'listeners',
-                                ),
-                                previewPhotoUrls: [
-                                  for (final listener in listeners.take(4))
-                                    listener.photoUrl,
-                                ],
-                                previewNames: [
-                                  for (final listener in listeners.take(4))
-                                    listener.displayName,
-                                ],
+                                onManage: () => _openOwnerMenu(participants),
+                                onShare: _openShareSheet,
                               ),
                             ],
-                          ),
+                            const SizedBox(height: 14),
+                            RoomStagePanel(
+                              speakers: stageSpeakers,
+                              identity: SpaceIdentity.podcast,
+                              onOverflowTap: () => _openParticipants(
+                                participants,
+                                initialFilter: 'speakers',
+                              ),
+                              onSpeakerTap: (speaker) => showProfilePreview(
+                                context,
+                                userId: speaker.userId,
+                                displayName: speaker.displayName,
+                                photoUrl: speaker.photoUrl,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            ListenersStrip(
+                              count: listeners.length,
+                              identity: SpaceIdentity.podcast,
+                              onTap: () => _openParticipants(
+                                participants,
+                                initialFilter: 'listeners',
+                              ),
+                              previewPhotoUrls: [
+                                for (final listener in listeners.take(4))
+                                  listener.photoUrl,
+                              ],
+                              previewNames: [
+                                for (final listener in listeners.take(4))
+                                  listener.displayName,
+                              ],
+                            ),
+                          ],
+                        ),
+                        chat: RoomChatPanel(
+                          roomId: widget.room.id,
+                          isHost: _isHost,
+                          accent: BroadcastRoomColors.accent,
+                          currentUserId: _uid,
+                          onClose: desktop
+                              ? null
+                              : () => setState(() => _showCompactChat = false),
                         ),
                       ),
                     ),
@@ -707,12 +716,8 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                       onParticipants: () => _openParticipants(participants),
                       onEnd: _confirmEndBroadcast,
                       onLeave: _leaveRoom,
-                      onChat: () => showRoomChatSheet(
-                        context,
-                        roomId: widget.room.id,
-                        isHost: _isHost,
-                        accent: BroadcastRoomColors.accent,
-                      ),
+                      showChat: !desktop,
+                      onChat: () => setState(() => _showCompactChat = true),
                     ),
                   ],
                 ),

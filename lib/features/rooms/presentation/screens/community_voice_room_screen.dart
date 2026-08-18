@@ -12,7 +12,6 @@ import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/voice_room_identity.dart';
-import 'package:yovoice/features/rooms/presentation/widgets/recent_room_messages.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
@@ -54,6 +53,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   bool _joinedDocumentSeen = false;
   bool _leaving = false;
   bool _roomOver = false;
+  bool _showCompactChat = false;
 
   /// Guards the server confirmation below against re-entry while an
   /// in-flight check is pending (the roster stream keeps emitting).
@@ -62,12 +62,6 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
   bool get _isHost => _uid == widget.room.hostId;
   bool get _isClubRoom => widget.room.isClubRoom;
-
-  Club? _latestClub;
-
-  SpaceIdentity get _identity {
-    return voiceRoomIdentity(widget.room, club: _latestClub);
-  }
 
   @override
   void initState() {
@@ -272,9 +266,8 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
         .toList(growable: false);
     final anyoneSpeaking = stageSpeakers.any((s) => s.isSpeaking);
 
-    final horizontal = MediaQuery.sizeOf(context).width >= 600 ? 24.0 : 16.0;
     return ListView(
-      padding: EdgeInsets.fromLTRB(horizontal, 12, horizontal, 104),
+      padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
       children: [
         RoomIdentityCard(
           roomName: widget.room.name,
@@ -324,12 +317,8 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   List<RoomParticipant> _latestParticipants = const [];
 
   void _openChat() {
-    showRoomChatSheet(
-      context,
-      roomId: widget.room.id,
-      isHost: _isHost,
-      accent: _identity.primary,
-    );
+    if (RoomWorkspace.usesDesktopLayout(context)) return;
+    setState(() => _showCompactChat = true);
   }
 
   @override
@@ -343,8 +332,8 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   }
 
   Widget _buildRoom(Club? club) {
-    _latestClub = club;
     final identity = voiceRoomIdentity(widget.room, club: club);
+    final desktop = RoomWorkspace.usesDesktopLayout(context);
     return StreamBuilder<List<RoomParticipant>>(
       stream: _participants,
       builder: (context, snapshot) {
@@ -386,7 +375,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
                   children: [
                     Center(
                       child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 1040),
+                        constraints: const BoxConstraints(maxWidth: 1120),
                         child: _TopBar(
                           roomName: club?.name ?? widget.room.name,
                           subtitle: club?.isFamilyRoom == true
@@ -409,38 +398,18 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
                       ),
                     ),
                     Expanded(
-                      child: Stack(
-                        children: [
-                          Positioned.fill(
-                            child: Center(
-                              child: ConstrainedBox(
-                                constraints: const BoxConstraints(
-                                  maxWidth: 1040,
-                                ),
-                                child: _buildStage(roomParticipants, club),
-                              ),
-                            ),
-                          ),
-                          // Board screens 2/6: the newest chat floats over
-                          // the stage so talk stays visible mid-room.
-                          Positioned(
-                            left: 16,
-                            right: 16,
-                            bottom: 8,
-                            child: Center(
-                              child: ConstrainedBox(
-                                constraints: const BoxConstraints(
-                                  maxWidth: 880,
-                                ),
-                                child: RecentRoomMessages(
-                                  roomId: widget.room.id,
-                                  service: _rooms,
-                                  onOpenChat: _openChat,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
+                      child: RoomWorkspace(
+                        showCompactChat: _showCompactChat,
+                        stage: _buildStage(roomParticipants, club),
+                        chat: RoomChatPanel(
+                          roomId: widget.room.id,
+                          isHost: _isHost,
+                          accent: identity.primary,
+                          currentUserId: _uid,
+                          onClose: desktop
+                              ? null
+                              : () => setState(() => _showCompactChat = false),
+                        ),
                       ),
                     ),
                     _BottomControls(
@@ -452,6 +421,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
                       onMicBlocked: _explainMicState,
                       onChat: _openChat,
                       onPeople: () => _openParticipants(_latestParticipants),
+                      showChat: !desktop,
                     ),
                   ],
                 ),
@@ -663,6 +633,7 @@ class _BottomControls extends StatelessWidget {
     required this.onChat,
     required this.onPeople,
     required this.identity,
+    this.showChat = true,
   });
 
   final MicState micState;
@@ -672,6 +643,7 @@ class _BottomControls extends StatelessWidget {
   final VoidCallback onChat;
   final VoidCallback onPeople;
   final SpaceIdentity identity;
+  final bool showChat;
 
   /// Tapping the mic while it genuinely can't publish explains WHY
   /// instead of silently doing nothing.
@@ -738,17 +710,19 @@ class _BottomControls extends StatelessWidget {
                       : () async => onMicBlocked(),
                 ),
               ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: _RoundControl(
-                  icon: Icons.forum_rounded,
-                  label: 'Chat',
-                  enabled: true,
-                  micStyle: _MicStyle.info,
-                  identity: identity,
-                  onTap: () async => onChat(),
+              if (showChat) ...[
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _RoundControl(
+                    icon: Icons.forum_rounded,
+                    label: 'Chat',
+                    enabled: true,
+                    micStyle: _MicStyle.info,
+                    identity: identity,
+                    onTap: () async => onChat(),
+                  ),
                 ),
-              ),
+              ],
               const SizedBox(width: 6),
               Expanded(
                 child: _RoundControl(

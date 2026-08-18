@@ -39,9 +39,9 @@ class StageSpeaker {
 }
 
 /// Room identity, painted into the stage instead of a black void: the
-/// cover (or a premium gradient fallback), the topic, and — when the
-/// room is quiet — a conversation prompt, so an empty stage still says
-/// what this place is about.
+/// cover (or a premium gradient fallback) and the topic. Speaking state
+/// belongs to the participant tiles, not to decorative copy in the room
+/// identity surface.
 class RoomIdentityCard extends StatelessWidget {
   const RoomIdentityCard({
     required this.roomName,
@@ -59,8 +59,8 @@ class RoomIdentityCard extends StatelessWidget {
   final String? imageUrl;
   final Widget? trailing;
 
-  /// True when nobody is speaking — the card leans in with the topic
-  /// instead of receding behind speakers.
+  /// True when nobody is speaking. This only lets a longer topic breathe;
+  /// it never adds a synthetic activity prompt.
   final bool quiet;
 
   @override
@@ -158,51 +158,86 @@ class RoomIdentityCard extends StatelessWidget {
                       ),
                     ),
                   ],
-                  if (quiet) ...[
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 7,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: .3),
-                        borderRadius: BorderRadius.circular(30),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: .14),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.graphic_eq_rounded,
-                            size: 14,
-                            color: accent,
-                          ),
-                          const SizedBox(width: 7),
-                          const Flexible(
-                            child: Text(
-                              'The room is quiet — your voice can start it',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Responsive room workspace shared by every live-room family.
+///
+/// Desktop keeps the voice stage readable on the left and gives chat a
+/// permanent, bounded rail on the right. Compact layouts show either the
+/// stage or a full-width chat surface, so neither side is squeezed into an
+/// unusable mini-column.
+class RoomWorkspace extends StatelessWidget {
+  const RoomWorkspace({
+    required this.stage,
+    required this.chat,
+    required this.showCompactChat,
+    this.desktopBreakpoint = 900,
+    super.key,
+  });
+
+  final Widget stage;
+  final Widget chat;
+  final bool showCompactChat;
+  final double desktopBreakpoint;
+
+  static bool usesDesktopLayout(BuildContext context) =>
+      MediaQuery.sizeOf(context).width >= 900;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final desktop = constraints.maxWidth >= desktopBreakpoint;
+        if (!desktop) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: SizedBox.expand(
+              child: KeyedSubtree(
+                key: ValueKey(
+                  showCompactChat ? 'room-chat-pane' : 'room-stage-pane',
+                ),
+                child: showCompactChat ? chat : stage,
+              ),
+            ),
+          );
+        }
+
+        return Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1120),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: KeyedSubtree(
+                      key: const ValueKey('room-stage-pane'),
+                      child: stage,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  SizedBox(
+                    width: 350,
+                    child: KeyedSubtree(
+                      key: const ValueKey('room-chat-pane'),
+                      child: chat,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

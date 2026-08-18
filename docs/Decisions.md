@@ -1579,9 +1579,16 @@ participants via `lib/dev/stage_preview.dart`:
   silent stage is a still stage (the orbit's perpetual AnimationController
   is gone).
 - The room's identity (name, description/topic, future cover via
-  VoiceRoom.imageUrl) is painted INTO the stage; when nobody speaks the
-  identity card leans in with a conversation prompt instead of an empty
-  center.
+  VoiceRoom.imageUrl) is painted INTO the stage. Silence is represented by
+  the real, still stage state; the identity card never invents a
+  conversation prompt.
+- At desktop widths the bounded workspace is split into a readable voice
+  stage on the left and a permanent 350 px room-chat rail on the right. On
+  phones and compact tablets, Stage and Chat are separate full-width views,
+  so neither is compressed into a miniature column.
+- Chat messages live only in the chat surface. Closing compact chat returns
+  to the stage; it does not leave a floating latest-message bubble over the
+  listener strip.
 - One People drawer (host → speakers → listeners) replaces the two
   separate speaker/listener sheets.
 
@@ -1594,8 +1601,8 @@ to both room types.
 ### Consequences
 
 - ~440 lines of orbit/cosmic painting deleted from the community screen.
-- The podcast room keeps its red editorial stage (already list-based and
-  scalable); it adopts RoomIdentityCard when covers land (M4).
+- Community, Podcast, Club and Family rooms share the same responsive
+  stage/chat workspace while retaining their own identity palette.
 - Stage tiles open the profile preview; moderation stays in the drawer.
 
 ## ADR-031: Premium is two surfaces — presentation and plans; the hero is the member's real identity
@@ -1688,10 +1695,11 @@ chat rows.
   accent (`AppColors.accent` — same identity language as the room
   cards), and a lounge-aware leave (`leaveClubLounge`, which finally has
   a caller — lounges no longer stay live forever).
-- New shared `RecentRoomMessages` widget floats the newest two chat
-  messages over the stage (board screens 2 and 6) — a window onto the
-  existing `rooms/{id}/messages` backend, tap-through to the chat sheet,
-  renders nothing when the room has no messages.
+- Room chat uses the existing `rooms/{id}/messages` backend in the shared
+  responsive workspace from ADR-030: a permanent desktop rail and a
+  full-width compact view. The earlier floating latest-message overlay was
+  removed because it detached messages from their conversation and collided
+  with the listener strip and room controls.
 - `RoomService._identity()`: all identity writes read `users/{uid}`
   (canonical) with FirebaseAuth as the unseeded fallback.
   `VoiceCallScreen` remains for 1:1 calls only.

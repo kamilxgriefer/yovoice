@@ -14,55 +14,42 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 /// rules-backed message reactions — not ephemeral confetti.
 const roomReactionEmojis = ['❤️', '😂', '👏', '🔥', '💯'];
 
-/// Opens the live room chat as a draggable sheet over the stage — chat
-/// belongs to the room, the audio never stops, and every row uses the
-/// canonical avatar component. [accent] matches the room's visual
-/// family; [isHost] unlocks moderation (delete).
-Future<void> showRoomChatSheet(
-  BuildContext context, {
-  required String roomId,
-  required bool isHost,
-  Color accent = const Color(0xFF9D20FF),
-}) {
-  return showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    backgroundColor: Colors.transparent,
-    constraints: ResponsiveContentFrame.adaptiveModalConstraints(
-      context,
-      maxWidth: 720,
-    ),
-    builder: (_) =>
-        RoomChatSheet(roomId: roomId, isHost: isHost, accent: accent),
-  );
-}
-
-class RoomChatSheet extends StatefulWidget {
-  const RoomChatSheet({
+/// The real room chat surface. It is permanently visible beside the stage on
+/// desktop and fills the room workspace when selected on a compact viewport.
+class RoomChatPanel extends StatefulWidget {
+  const RoomChatPanel({
     required this.roomId,
     required this.isHost,
     required this.accent,
+    this.onClose,
+    this.scrollController,
+    this.service,
+    this.currentUserId,
     super.key,
   });
 
   final String roomId;
   final bool isHost;
   final Color accent;
+  final VoidCallback? onClose;
+  final ScrollController? scrollController;
+  final RoomService? service;
+  final String? currentUserId;
 
   @override
-  State<RoomChatSheet> createState() => _RoomChatSheetState();
+  State<RoomChatPanel> createState() => _RoomChatPanelState();
 }
 
-class _RoomChatSheetState extends State<RoomChatSheet> {
-  final _service = RoomService();
+class _RoomChatPanelState extends State<RoomChatPanel> {
+  late final _service = widget.service ?? RoomService();
   final _composer = TextEditingController();
   late final Stream<List<RoomMessage>> _messages = _service.watchRoomMessages(
     widget.roomId,
   );
   bool _sending = false;
 
-  String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
+  String get _uid =>
+      widget.currentUserId ?? FirebaseAuth.instance.currentUser?.uid ?? '';
 
   @override
   void dispose() {
@@ -175,170 +162,153 @@ class _RoomChatSheetState extends State<RoomChatSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      initialChildSize: .62,
-      minChildSize: .4,
-      maxChildSize: .92,
-      expand: false,
-      builder: (context, scrollController) {
-        return Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFF120C1B),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-            border: Border(
-              top: BorderSide(color: widget.accent.withValues(alpha: .4)),
+    return Container(
+      key: const ValueKey('room-chat-surface'),
+      decoration: BoxDecoration(
+        color: const Color(0xFF120C1B),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: widget.accent.withValues(alpha: .32)),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 12, 8),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Room chat',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                Icon(Icons.forum_rounded, color: widget.accent, size: 20),
+                if (widget.onClose != null) ...[
+                  const SizedBox(width: 4),
+                  IconButton(
+                    tooltip: 'Back to stage',
+                    onPressed: widget.onClose,
+                    icon: const Icon(Icons.close_rounded),
+                    color: Colors.white70,
+                  ),
+                ],
+              ],
             ),
           ),
-          child: Column(
-            children: [
-              const SizedBox(height: 10),
-              Container(
-                width: 44,
-                height: 5,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF51475E),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
-                child: Row(
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        'Room chat',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
+          Expanded(
+            child: StreamBuilder<List<RoomMessage>>(
+              stream: _messages,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Text(
+                      friendlyErrorMessage(
+                        snapshot.error!,
+                        fallback: "Couldn't load the chat.",
+                      ),
+                      style: const TextStyle(color: Color(0xFFA69CAF)),
+                    ),
+                  );
+                }
+                final messages = snapshot.data ?? const <RoomMessage>[];
+                if (messages.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      'Say something — the room can hear you type.',
+                      style: TextStyle(color: Color(0xFF9E92A8)),
+                    ),
+                  );
+                }
+                return ListView.builder(
+                  controller: widget.scrollController,
+                  reverse: true,
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  itemCount: messages.length,
+                  itemBuilder: (context, index) {
+                    final message = messages[index];
+                    return _MessageRow(
+                      message: message,
+                      accent: widget.accent,
+                      isMine: message.senderId == _uid,
+                      onLongPress: () => _messageActions(message),
+                      onAvatarTap: () => showProfilePreview(
+                        context,
+                        userId: message.senderId,
+                        displayName: message.senderName,
+                        photoUrl: message.senderPhotoUrl,
+                      ),
+                      onReactionTap: (emoji) => _toggleReaction(message, emoji),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: EdgeInsets.only(left: 14, right: 14, top: 8, bottom: 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _composer,
+                      maxLength: 500,
+                      style: const TextStyle(color: Colors.white),
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (_) => _send(),
+                      decoration: InputDecoration(
+                        counterText: '',
+                        hintText: 'Say something…',
+                        hintStyle: const TextStyle(color: Color(0xFF766B80)),
+                        filled: true,
+                        fillColor: const Color(0xFF1C1428),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(22),
+                          borderSide: const BorderSide(
+                            color: Color(0xFF3A2C49),
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(22),
+                          borderSide: const BorderSide(
+                            color: Color(0xFF3A2C49),
+                          ),
                         ),
                       ),
                     ),
-                    Icon(Icons.forum_rounded, color: widget.accent, size: 20),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: StreamBuilder<List<RoomMessage>>(
-                  stream: _messages,
-                  builder: (context, snapshot) {
-                    if (snapshot.hasError) {
-                      return Center(
-                        child: Text(
-                          friendlyErrorMessage(
-                            snapshot.error!,
-                            fallback: "Couldn't load the chat.",
-                          ),
-                          style: const TextStyle(color: Color(0xFFA69CAF)),
-                        ),
-                      );
-                    }
-                    final messages = snapshot.data ?? const <RoomMessage>[];
-                    if (messages.isEmpty) {
-                      return const Center(
-                        child: Text(
-                          'Say something — the room can hear you type.',
-                          style: TextStyle(color: Color(0xFF9E92A8)),
-                        ),
-                      );
-                    }
-                    return ListView.builder(
-                      controller: scrollController,
-                      reverse: true,
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                      itemCount: messages.length,
-                      itemBuilder: (context, index) {
-                        final message = messages[index];
-                        return _MessageRow(
-                          message: message,
-                          accent: widget.accent,
-                          isMine: message.senderId == _uid,
-                          onLongPress: () => _messageActions(message),
-                          onAvatarTap: () => showProfilePreview(
-                            context,
-                            userId: message.senderId,
-                            displayName: message.senderName,
-                            photoUrl: message.senderPhotoUrl,
-                          ),
-                          onReactionTap: (emoji) =>
-                              _toggleReaction(message, emoji),
-                        );
-                      },
-                    );
-                  },
-                ),
-              ),
-              SafeArea(
-                top: false,
-                child: Padding(
-                  padding: EdgeInsets.only(
-                    left: 14,
-                    right: 14,
-                    top: 8,
-                    bottom: 10 + MediaQuery.viewInsetsOf(context).bottom,
                   ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _composer,
-                          maxLength: 500,
-                          style: const TextStyle(color: Colors.white),
-                          textInputAction: TextInputAction.send,
-                          onSubmitted: (_) => _send(),
-                          decoration: InputDecoration(
-                            counterText: '',
-                            hintText: 'Say something…',
-                            hintStyle: const TextStyle(
-                              color: Color(0xFF766B80),
+                  const SizedBox(width: 8),
+                  IconButton.filled(
+                    onPressed: _sending ? null : _send,
+                    style: IconButton.styleFrom(
+                      backgroundColor: widget.accent,
+                      minimumSize: const Size(46, 46),
+                    ),
+                    icon: _sending
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
                             ),
-                            filled: true,
-                            fillColor: const Color(0xFF1C1428),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(22),
-                              borderSide: const BorderSide(
-                                color: Color(0xFF3A2C49),
-                              ),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(22),
-                              borderSide: const BorderSide(
-                                color: Color(0xFF3A2C49),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filled(
-                        onPressed: _sending ? null : _send,
-                        style: IconButton.styleFrom(
-                          backgroundColor: widget.accent,
-                          minimumSize: const Size(46, 46),
-                        ),
-                        icon: _sending
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(Icons.send_rounded, size: 20),
-                      ),
-                    ],
+                          )
+                        : const Icon(Icons.send_rounded, size: 20),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 }

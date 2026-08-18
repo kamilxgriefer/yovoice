@@ -156,6 +156,10 @@ void main() {
           expect(find.text(identity.label.toUpperCase()), findsOneWidget);
           expect(find.text('On stage'), findsOneWidget);
           expect(
+            find.text('The room is quiet — your voice can start it'),
+            findsNothing,
+          );
+          expect(
             tester
                 .getSize(
                   find.byKey(ValueKey('room-stage-${identity.kind.name}')),
@@ -209,6 +213,81 @@ void main() {
     expect((groupCenter - panelRect.center.dx).abs(), lessThanOrEqualTo(1));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('desktop workspace gives stage and chat purposeful widths', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1440, 900);
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: RoomWorkspace(
+            showCompactChat: false,
+            stage: ColoredBox(
+              key: ValueKey('test-stage'),
+              color: Colors.purple,
+            ),
+            chat: ColoredBox(key: ValueKey('test-chat'), color: Colors.blue),
+          ),
+        ),
+      ),
+    );
+
+    final stageRect = tester.getRect(find.byKey(const ValueKey('test-stage')));
+    final chatRect = tester.getRect(find.byKey(const ValueKey('test-chat')));
+    expect(chatRect.width, 350);
+    expect(stageRect.width, lessThan(740));
+    expect(stageRect.right, lessThan(chatRect.left));
+    expect(chatRect.right - stageRect.left, lessThanOrEqualTo(1120));
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final width in const [320.0, 390.0, 768.0]) {
+    testWidgets(
+      'compact workspace shows one full-width pane at ${width.toInt()}',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = Size(width, 844);
+        addTearDown(tester.view.reset);
+
+        Widget app(bool chat) => MaterialApp(
+          home: Scaffold(
+            body: RoomWorkspace(
+              showCompactChat: chat,
+              stage: const ColoredBox(
+                key: ValueKey('compact-stage'),
+                color: Colors.purple,
+              ),
+              chat: const ColoredBox(
+                key: ValueKey('compact-chat'),
+                color: Colors.blue,
+              ),
+            ),
+          ),
+        );
+
+        await tester.pumpWidget(app(false));
+        expect(find.byKey(const ValueKey('compact-stage')), findsOneWidget);
+        expect(find.byKey(const ValueKey('compact-chat')), findsNothing);
+        expect(
+          tester.getSize(find.byKey(const ValueKey('compact-stage'))).width,
+          width - 24,
+        );
+
+        await tester.pumpWidget(app(true));
+        expect(find.byKey(const ValueKey('compact-stage')), findsNothing);
+        expect(find.byKey(const ValueKey('compact-chat')), findsOneWidget);
+        expect(
+          tester.getSize(find.byKey(const ValueKey('compact-chat'))).width,
+          width - 24,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   for (final viewport in const [
     (320.0, 844.0),
