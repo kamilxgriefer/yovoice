@@ -170,6 +170,19 @@ for anything touching `collectionGroup()` queries.
 firebase deploy --only firestore:rules,firestore:indexes --project yovoice-ec54a
 ```
 
+### Before editing `fieldOverrides`, read the trap
+
+A `fieldOverrides` entry **replaces** Firestore's automatic single-field
+indexing for that field instead of adding to it, and three of the four
+overrides live today declare `COLLECTION_GROUP` scope only — so
+`rooms.roomId`, `participants.userId` and `roomMembers.userId` currently
+have **no collection-scoped index in production**. Harmless right now (no query
+needs one), invisible in every emulator run, and a `FAILED_PRECONDITION`
+in production the day someone adds one. When that day comes, extend the
+existing entry rather than adding a second one. Full explanation, the
+verified per-field state and the correct entry shape:
+[Firebase.md](Firebase.md#a-fieldoverrides-entry-replaces-automatic-single-field-indexing).
+
 ### Reading the deployed ruleset: the verification standard
 
 **The deployed ruleset can be read back exactly.** Until 2026-08-17 this
@@ -593,7 +606,7 @@ curl -s https://app.yovoice.app/main.dart.js | wc -c   # fingerprint the client
 | Target | State | Evidence |
 |---|---|---|
 | Cloud Functions | **111 deployed** (was 51) | `firebase functions:list`. The ~60 new ones are the whole ADR-054 privacy layer (`onUserPrivacySourceChanged`, `searchPublicProfiles`, `onAuthUserDeleted`), every social-graph callable (`setFollow`, `sendFriendRequest`, `setUserBlock`, …), every `onAchievement*` trigger, the club and room self-service callables, and the entire Stage B set from `c1d6cd9`. `functions/index.js` names 87 exports directly and adds the rest via `Object.assign(exports, createStageBFunctions())` |
-| Firestore indexes | **15 composites, 3 fieldOverrides** (was 14 / 1) | `firebase firestore:indexes` |
+| Firestore indexes | **15 composites, 3 fieldOverrides** (was 14 / 1). Re-read 2026-08-17: still 3, and all three declare `COLLECTION_GROUP` scope *only* — see the [indexing trap](Firebase.md#a-fieldoverrides-entry-replaces-automatic-single-field-indexing) | `firebase firestore:indexes` |
 | `firestore.rules` | **Deployed twice on 2026-08-16** — 20:40 by the operator, 21:06 covering `952d8e4` | Console → Firestore → Rules version history. *(This row said "still no read-only CLI command; the Console remains the only way to check" until 2026-08-17. The Firebase Rules API returns the full deployed source — see [Reading the deployed ruleset](#reading-the-deployed-ruleset-the-verification-standard).)* |
 | `storage.rules` | **Deployed** | includes `validClubImageUpload()` accepting the timestamped `{kind}_{millis}.{ext}` names the shipped client actually writes |
 | Hosting (Flutter web) | **Deployed and fingerprinted** | `https://app.yovoice.app/main.dart.js` is 5,139,256 bytes and contains `publicProfiles`, `searchPublicProfiles`, `selectMyAchievementTitle`. Production previously served commit `9fdd8a9` |
@@ -614,7 +627,8 @@ does not require composite indexes.
 | `firestore.rules` | **Deployed, covering `c75720a`** (account-status gating on four room write paths) | The released ruleset source was fetched through the Firebase Rules API and diffed against `firestore.rules` at HEAD: **byte-identical**. This is stronger evidence than the version-history timestamp used on 2026-08-16 |
 | Hosting (Flutter web) | **Deployed from `6ef4380`** — the first build in which recording works on web at all | Released before the accessibility and visual reviews returned; see the note below |
 | Hosting — does production carry `cefa81a`? | **YES, verified 2026-08-17** | Fingerprinted, not inferred from deploy output: the served `https://app.yovoice.app/main.dart.js` is 5,159,938 bytes, byte-for-byte the size of the local `build/web/main.dart.js`, and contains `No sound detected`, `No microphone was found` and `Discard this take` — three strings that exist only in `cefa81a`. The accessibility and visual fixes are live |
-| Cloud Functions, indexes, `storage.rules` | **Unchanged since 2026-08-16** | No `functions/`, index or Storage-rules change landed in either 2026-08-17 round |
+| Cloud Functions, indexes, `storage.rules` | **Unchanged in production since 2026-08-16** | No `functions/`, index or Storage-rules deploy happened in either 2026-08-17 round |
+| `firestore.indexes.json` vs production | **A gap opened here and closed the next day.** `invites.inviteeId` was added to the file by `84d1feb` (2026-08-17 07:44) *after* that day's production reading, so for a day the repo was one `fieldOverrides` entry ahead of production while `84d1feb` was fixing a production defect. The 2026-08-18 index deploy landed it | A live `firebase firestore:indexes` read on **2026-08-19** returned **19 composites, 4 fieldOverrides** — identical to the repo file, `invites.inviteeId` included. The lesson stands: a superset file is by design, but committing an index that fixes a production defect is not the same as deploying it |
 
 **A process failure worth recording plainly.** The web client was deployed
 from `6ef4380` *before* the accessibility and visual reviews returned, on
@@ -853,7 +867,10 @@ Reversible by redeploying the previous revision from git history:
   text retained). The retained text IS the audit evidence.
 
 Removing an index is safe but not instant to rebuild; removing a
-Function only makes its clients fail, it destroys nothing.
+Function only makes its clients fail, it destroys nothing. Note that
+editing a `fieldOverrides` entry can *remove* indexes without looking
+like a removal in the diff — see the
+[indexing trap](Firebase.md#a-fieldoverrides-entry-replaces-automatic-single-field-indexing).
 
 ## Web push configuration (required before web push works)
 

@@ -176,13 +176,85 @@ document, never trust the request — are collected in
 
 ## Composite indexes
 
-`firestore.indexes.json` holds **15** composite indexes and **3**
-`fieldOverrides` as of 2026-08-16 (14 and 1 before that day's deploy).
+`firestore.indexes.json` holds **19** composite indexes and **4**
+`fieldOverrides` (14 and 1 before the 2026-08-16 deploy; the fourth
+override, `invites.inviteeId`, arrived with `84d1feb`; the four newest
+composites with `9b54c22` and `4cad282`). A live reading on **2026-08-19**
+(`firebase firestore:indexes --project yovoice-ec54a`) returned exactly
+the same **19 and 4** — file and production are currently in sync.
 The file is deliberately kept a **superset** of production, so an index
 deploy can never be the thing that removes one.
 
 The `fieldOverrides` exist to enable `COLLECTION_GROUP` scope on
 `rooms.roomId`, `participants.userId` and `roomMembers.userId`.
+
+### A `fieldOverrides` entry *replaces* automatic single-field indexing
+
+This is a **latent trap, not a current defect** — write it down now
+because the day it bites, nothing in the test suite will say so.
+
+Firestore indexes every field of every document automatically, but those
+automatic single-field indexes are **`COLLECTION` scope only**:
+"Automatic indexes with collection group scope are not maintained by
+default" ([index overview](https://firebase.google.com/docs/firestore/query-data/index-overview)).
+That is the entire reason a `COLLECTION_GROUP` override has to be written
+by hand. The trap is what happens to the automatic indexes when you do:
+a `fieldOverrides` entry **replaces** automatic indexing for that field
+rather than adding to it. Declaring only `COLLECTION_GROUP` orders
+therefore *removes* the field's automatic collection-scoped
+ascending/descending indexes.
+
+Verified against the live project with
+`firebase firestore:indexes --project yovoice-ec54a` on 2026-08-17 and
+again on 2026-08-19 (after the 2026-08-18 index deploy) — all three
+overrides below declare `COLLECTION_GROUP` and nothing else, so the
+collection-scope indexes for those three fields **do not exist in
+production**:
+
+| Field | Deployed scopes | The one query it exists for |
+|---|---|---|
+| `rooms.roomId` | `COLLECTION_GROUP` ASC | `collectionGroup("rooms").where("roomId", "==", …)` in `deleteActiveVoiceSessionsForRoom` (`functions/livekit/sessions.js:63`) |
+| `participants.userId` | `COLLECTION_GROUP` ASC | `collectionGroup("participants").where("userId", "==", …)` (`functions/staff/voice_enforcement.js:248`) |
+| `roomMembers.userId` | `COLLECTION_GROUP` ASC + `CONTAINS` | `collectionGroup('roomMembers').where('userId', isEqualTo: …)` in `RoomService` (`lib/features/rooms/data/services/room_service.dart:226`) |
+
+Each override is exactly what its query needs, and **nothing anywhere runs
+a collection-scoped `where`/`orderBy` on any of those three fields** — the
+collection-scoped uses of `rooms` and `participants` are all `doc()` gets
+or whole-subcollection reads. Adding the collection-scope orders back
+would cost storage on every document to serve queries that do not exist,
+so the correct action here is this paragraph, **not an index change**.
+
+**What will go wrong, and when.** The first time anyone writes a
+collection-scoped query or `orderBy` on `rooms.roomId`,
+`participants.userId` or `roomMembers.userId` — including an innocuous
+`.collection('participants').where('userId', …)` on a single room — it
+will fail in production with `FAILED_PRECONDITION` and **pass in every
+emulator test**, because the emulator does not require indexes. It is the
+same failure mode that kept Premium expiry broken (below), reached by a
+different route: there the index was missing because nobody deployed it,
+here it is missing because an override quietly withdrew it.
+
+**The fix at that point is to add the `COLLECTION`-scope orders to the
+existing `fieldOverrides` entry — not to add a second entry.** One entry
+owns the field's entire index configuration. The `invites.inviteeId`
+override already in the same file is the shape to copy: `COLLECTION` ASC +
+`COLLECTION` DESC + `COLLECTION_GROUP` ASC, i.e. it re-declares the
+automatic indexes it displaced *and* adds the group scope.
+
+**A `fieldOverrides` entry keys off the collection *group* id**, so
+`collectionGroup: "rooms"` covers the root `rooms` collection **and** every
+`activeVoiceSessions/{uid}/rooms` subcollection — which is precisely why
+the mirror query above works, and a reason to think twice before assuming
+an override touches only the collection you had in mind. The same aliasing
+is what [ADR-005](Decisions.md#adr-005-roomsroomidmembers-renamed-to-roommembers)
+renamed `members` to `roomMembers` to avoid.
+
+Related and already known: `publishPublicStatsSchedule` runs
+`collectionGroup("rooms").where("expiresAt", ">", …)`
+(`functions/stats/public_stats.js:224`), which needs a `COLLECTION_GROUP`
+index on `rooms.expiresAt` that no override declares — one of the
+preconditions on that function's deploy, see
+[DEPLOYMENT.md](DEPLOYMENT.md).
 
 **One of these indexes fixed a live, silent production defect.** The
 scheduled `expirePremiumIdentity` sweep queries
