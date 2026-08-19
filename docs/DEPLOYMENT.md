@@ -801,6 +801,27 @@ they host and press Start voice.**
 This is the evidence the emulator could not supply: the fixtures were designed
 around a legacy shape, and the legacy shape is in fact the majority.
 
+**Every production room type is covered by the fix**, which is what the "check
+every room type" request actually needed answering:
+
+| `roomKind` / `experience` in production | Count | Screen it opens |
+|---|---:|---|
+| no `roomKind`, no `experience` | 27 | Community — `RoomExperience.fromValue` defaults there |
+| `experience: community` | 8 | Community |
+| `experience: podcast` | 4 | **Broadcast** — `fromValue` maps the legacy `podcast` value onto `broadcast`, so these are Broadcast Rooms, not a third product |
+| `experience: broadcast` | 3 | Broadcast |
+| `roomKind: clubLounge`, `experience: community` | 3 | Community, with lounge teardown |
+
+45 of 45. Both screens received the liveness, authority, ended-state and
+audio-ownership fixes, so there is no room in production that reaches the old
+"This room is not currently live." path on unmute.
+
+The room from the original report is `club_lounge_family_H6S…` — `clubLounge`,
+`isLive: false`, `status: active`, `participantCount: 0`,
+`membersCanStartVoice: true`, not deleting. That is exactly the dormant-startable
+state photographed in `voice-family-dormant-startable-390.png`: it now offers
+**Start voice**, not a microphone that fails.
+
 **The two Moments indexes finished building at 01:53 and were then EXERCISED,
 not merely read as `READY`.** Both feed queries were run against production
 through the Admin SDK — `where('isPublished','==',true).orderBy('likeCount','desc')`
