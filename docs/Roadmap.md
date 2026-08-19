@@ -16,15 +16,25 @@ someone decide what to pick up next.
 
 ## Done
 
-> **Read the deploy status on each 2026-08-19/20 entry below.** Every item in
-> that wave is **fixed in source and unverified in production** — no rules
-> deploy, no Functions deploy, no index deploy and no Hosting release has
-> been made from this work, and several of them fix defects that were live.
-> "Done" here means the change landed on `main`, not that a user is getting
-> it. See [DEPLOYMENT.md](DEPLOYMENT.md#pending-release-the-2026-08-1920-reachability-wave)
-> for the rollout order and
+> **DEPLOYED 2026-08-20.** This banner previously said the whole 2026-08-19/20
+> wave was fixed in source and unreachable in production. That is no longer
+> true: rules, Cloud Functions, Firestore indexes and the Flutter web client
+> were all released on 2026-08-20, in that order. The individual
+> "**NOT DEPLOYED**" markers on the entries below date from before that release
+> and are stale — treat
+> [DEPLOYMENT.md](DEPLOYMENT.md#released-2026-08-20-the-reachability-wave) as
+> authoritative, since it records what was deployed and how each artifact was
+> verified.
+>
+> **Still true, and the reason ADR-082 exists:** reachability was verified by
+> reading production back, not by using the product. The deployed ruleset and
+> the deployed `main.dart.js` were each compared byte for byte against the
+> working tree, the Moments feed queries were executed against production, and
+> 45 rooms were measured read-only. **No signed-in round trip was performed** —
+> nobody has yet opened a dormant room and pressed Start voice against the live
+> backend. See
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it)
-> for why the distinction is the whole point of this wave.
+> for why that distinction is the whole point of this wave.
 
 - **Rooms can go live at all — voice now starts in Community rooms and
   lounges** (2026-08-20, `b0f1062`, **NOT DEPLOYED**): opening a Family Room
