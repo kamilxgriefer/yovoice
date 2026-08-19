@@ -5,6 +5,7 @@ import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_voice_entry_coordinator.dart';
+import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
 import 'package:yovoice/features/rooms/presentation/screens/community_voice_room_screen.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room_screen.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
@@ -82,12 +83,19 @@ class _RoomEntryScreenState extends State<RoomEntryScreen> {
           return Scaffold(
             backgroundColor: AppColors.background,
             body: SafeArea(
-              child: RoomEndedState(
-                roomName: entry.room.name,
-                accent: entry.room.isBroadcast
-                    ? const Color(0xFFFF4D6D)
-                    : const Color(0xFF9D20FF),
-              ),
+              child: entry.room.isBroadcast
+                  // The palette is the single source of truth (CLAUDE.md).
+                  // This used to carry a remembered 0xFFFF4D6D that had
+                  // already drifted from the real broadcast accent.
+                  ? RoomEndedState(
+                      roomName: entry.room.name,
+                      accent: BroadcastRoomColors.accent,
+                    )
+                  // Community keeps RoomEndedState's own default, which is
+                  // what CommunityVoiceRoomScreen's ended state already uses
+                  // — changing it here would make the same room end in two
+                  // different colours depending on which screen caught it.
+                  : RoomEndedState(roomName: entry.room.name),
             ),
           );
         }

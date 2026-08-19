@@ -162,6 +162,31 @@ const removeRoomParticipantSelf = onCall(CALLABLE_OPTIONS, (request) =>
  * row cannot leave an already-issued LiveKit identity connected. The roster,
  * root counter and active-session mirror move atomically; control-plane
  * revocation happens immediately afterwards and is safe to retry.
+ *
+ * THE LAST PERSON OUT ENDS THE VOICE SESSION — IN EVERY ROOM, NOT ONLY A
+ * LOUNGE. This used to drop `isLive` for `roomKind == 'clubLounge'` and for
+ * nothing else, which was survivable only because nothing in the app ever
+ * set `isLive: true` on an ordinary room. The moment the client can start
+ * one, the omission becomes a permanent stuck state: a Community room whose
+ * host opted into `membersCanStartVoice`, started by a MEMBER who then
+ * leaves last, has no other exit — `endRoomVoiceSelf` is host-only and there
+ * is no scheduled sweeper — so it stays `isLive: true, participantCount: 0`
+ * and keeps advertising itself on `watchLivePublicRooms` (Home, Discover) as
+ * a live room nobody is in.
+ *
+ * THE ROSTER, NOT THE COUNTER, IS WHAT PROVES A ROOM IS EMPTY on the new
+ * branch. `participantCount` is a denormalised field maintained by several
+ * writers, and a stale-LOW value would turn one person's leave into an
+ * eviction of everyone still talking — `endRoom()` disconnects the LiveKit
+ * room for all of them. Re-reading the roster inside the same transaction
+ * costs one small query and removes that failure mode entirely; it is read
+ * before any write in the transaction because the Admin SDK refuses a read
+ * that follows one.
+ *
+ * THE LOUNGE BRANCH IS UNCHANGED, deliberately: `isClubLounge && nextCount
+ * === 0` is character-for-character what it was, because the client's own
+ * lounge leave path (`roomParticipantLeaveRootExists` in firestore.rules)
+ * mirrors that exact transition and the two must not drift.
  */
 async function executeLeaveRoom(request, roomControl = null) {
   const auth = await requireActiveCaller(request);
@@ -173,9 +198,14 @@ async function executeLeaveRoom(request, roomControl = null) {
   const participantReference = roomReference
     .collection("participants")
     .doc(auth.uid);
-  let endedLounge = false;
+  // limit(2) is all the question needs: the caller's own row is still visible
+  // to a transactional read, so "anyone else here?" is answered by the first
+  // document that is not theirs.
+  const rosterProbe = roomReference.collection("participants").limit(2);
+  let endedVoiceSession = false;
 
   await db.runTransaction(async (transaction) => {
+    endedVoiceSession = false;
     const [roomSnapshot, participantSnapshot] = await transaction.getAll(
       roomReference,
       participantReference,
@@ -196,6 +226,10 @@ async function executeLeaveRoom(request, roomControl = null) {
       );
     }
 
+    const roster = participantSnapshot.exists
+      ? await transaction.get(rosterProbe)
+      : null;
+
     deleteActiveVoiceSession(transaction, auth.uid, roomId);
     if (!participantSnapshot.exists) return;
     const participant = participantSnapshot.data() ?? {};
@@ -209,11 +243,23 @@ async function executeLeaveRoom(request, roomControl = null) {
     const currentCount = Math.max(Number(room.participantCount ?? 0), 0);
     const nextCount = Math.max(currentCount - 1, 0);
     const isClubLounge = room.roomKind === "clubLounge" && !!room.clubId;
-    endedLounge = isClubLounge && nextCount === 0;
+    // Legacy documents carry neither `status` nor `deletionInProgress`;
+    // default them the way firestore.rules' own `.get(field, default)` reads
+    // do, or 24 of the 45 production rooms would never qualify.
+    const voiceIsRunning =
+      room.isLive === true &&
+      String(room.status ?? "active") === "active" &&
+      room.deletionInProgress !== true;
+    const rosterIsEmptyAfterLeave = !(roster?.docs ?? []).some(
+      (document) => document.id !== auth.uid,
+    );
+    endedVoiceSession =
+      nextCount === 0 &&
+      (isClubLounge || (voiceIsRunning && rosterIsEmptyAfterLeave));
     transaction.delete(participantReference);
     transaction.update(roomReference, {
       participantCount: nextCount,
-      ...(endedLounge
+      ...(endedVoiceSession
         ? {
             isLive: false,
             endedAt: FieldValue.serverTimestamp(),
@@ -224,13 +270,13 @@ async function executeLeaveRoom(request, roomControl = null) {
   });
 
   const control = roomControl ?? getProductionLiveKitControl();
-  if (endedLounge) {
+  if (endedVoiceSession) {
     await control.endRoom(roomId);
     await deleteActiveVoiceSessionsForRoom(roomId);
   } else {
     await control.revokeParticipant(roomId, auth.uid);
   }
-  return { success: true, roomId };
+  return { success: true, roomId, endedVoiceSession };
 }
 
 const leaveRoomSelf = onCall(CALLABLE_OPTIONS, (request) =>
@@ -285,17 +331,55 @@ const setRoomStatusSelf = onCall(CALLABLE_OPTIONS, (request) =>
   executeSetRoomStatus(request),
 );
 
+/**
+ * The host's "end the session for everyone" control — and, when the caller
+ * asks for it, the teardown a leave performs on its way out.
+ *
+ * DEFAULT BEHAVIOUR IS UNCHANGED AND DELIBERATE. A host ending their own room
+ * ends it for the people in it; that is what the control means, and adding a
+ * "somebody else is still here" refusal would break the one lever a host has
+ * over their own room.
+ *
+ * `onlyIfEmpty` EXISTS BECAUSE THE CLIENT ALSO CALLS THIS ON LEAVE.
+ * room_service.dart's `shouldEndVoiceOnLeaving()` reads `participantCount`,
+ * concludes "I am the last one", and then calls this callable — so a join
+ * landing in between, or a counter that is merely stale-low, silently evicts
+ * a real participant from a live room and recursive-deletes their roster row.
+ *
+ * The reviewed suggestion was an `expectedParticipantCount` precondition.
+ * That is rejected: it makes a CLIENT-SUPPLIED count authoritative, it adds
+ * no authority the host does not already have, and it fails LOUDLY — a host
+ * whose count moved would get `failed-precondition` from the one control that
+ * ends a room, stranding it `isLive: true` with nobody in it, which is
+ * precisely the defect `executeLeaveRoom` above exists to stop creating.
+ *
+ * What the caller actually means is "end this only if it is really empty",
+ * and the server can answer that itself: re-read the roster inside the
+ * transaction. An occupied room is then left exactly as it was and the call
+ * returns `{ ended: false }` — a SUCCESS, because a leave must never surface
+ * as a failure, and because the room is still live for a good reason rather
+ * than being stranded.
+ */
 async function executeEndRoomVoice(
   request,
   roomControl = null,
 ) {
   const auth = await requireActiveCaller(request);
   const roomId = normalizeText(request.data?.roomId, 128);
+  const onlyIfEmpty = request.data?.onlyIfEmpty === true;
   if (!SAFE_DOCUMENT_ID.test(roomId)) {
     throw new HttpsError("invalid-argument", "A valid room is required.");
   }
   const roomReference = db.collection("rooms").doc(roomId);
+  // Two rows are enough to distinguish "nobody but the caller" from "somebody
+  // else is here". The caller's own row may or may not still exist: the client
+  // leave path calls this AFTER `leaveRoomSelf` has removed it, while a direct
+  // caller still holds one. Filtering the caller's own id below covers both,
+  // so an empty roster and a roster holding only the caller read the same.
+  const rosterProbe = roomReference.collection("participants").limit(2);
+  let ended = false;
   await db.runTransaction(async (transaction) => {
+    ended = false;
     const room = await requireHostRoom(transaction, roomReference, auth.uid);
     if (room.status !== "active" || room.deletionInProgress === true) {
       throw new HttpsError(
@@ -303,6 +387,14 @@ async function executeEndRoomVoice(
         "Only an active room can end its voice session.",
       );
     }
+    if (onlyIfEmpty) {
+      const roster = await transaction.get(rosterProbe);
+      const othersRemain = roster.docs.some(
+        (document) => document.id !== auth.uid,
+      );
+      if (othersRemain) return;
+    }
+    ended = true;
     transaction.update(roomReference, {
       isLive: false,
       participantCount: 0,
@@ -310,10 +402,11 @@ async function executeEndRoomVoice(
       updatedAt: FieldValue.serverTimestamp(),
     });
   });
+  if (!ended) return { success: true, roomId, ended: false };
   await (roomControl ?? getProductionLiveKitControl()).endRoom(roomId);
   await deleteActiveVoiceSessionsForRoom(roomId);
   await recursiveDelete(roomReference.collection("participants"));
-  return { success: true, roomId };
+  return { success: true, roomId, ended: true };
 }
 
 const endRoomVoiceSelf = onCall(CALLABLE_OPTIONS, (request) =>

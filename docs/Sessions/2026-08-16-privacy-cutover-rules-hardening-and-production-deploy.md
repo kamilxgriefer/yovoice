@@ -265,7 +265,7 @@ Several docs had drifted badly against these: TESTING.md claimed 268 and
 43, Firebase.md claimed 265, Bugs.md and Roadmap.md claimed 225, and
 Bugs.md additionally asserted that Cloud Functions had *zero* automated
 coverage while 510 tests were passing. Counts now live in one table,
-[TESTING.md](../TESTING.md#current-counts-2026-08-16), so there is a
+[TESTING.md](../TESTING.md#current-counts), so there is a
 single place to correct.
 
 ## 8. Documentation corrections made in this pass

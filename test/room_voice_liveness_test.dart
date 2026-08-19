@@ -3,6 +3,7 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 
 /// THE LIVENESS TRANSITION, from the only client API that ever performed it.
@@ -73,17 +74,18 @@ void main() {
 
   group('starting voice', () {
     test(
-      'a Family Room member opens the mics in a legacy lounge document — the '
-      'reported bug: no membersCanStartVoice, no roomType, no experience, no '
-      'clubId field, and the caller is not the host',
+      'a Family Room member opens the mics — the reported bug: no '
+      'membersCanStartVoice, no roomType and no experience, and the caller '
+      'is not the host',
       () async {
-        // Exactly the shape of the reported room: a club lounge whose only
-        // link to its Club is the document id, written before the newer
-        // fields existed.
+        // Exactly the shape of the reported room, minus the fields that
+        // postdate it. `clubId` IS present: all three club_lounge_ rooms in
+        // production carry it, and roomVoiceStartAllowed() reads the FIELD.
         await seedRoom('club_lounge_family_host', {
           'category': 'club',
           'visibility': 'private',
           'name': 'The Family Lounge',
+          'clubId': 'family_host',
         });
         await db.collection('clubs').doc('family_host').set({
           'ownerId': 'host',
@@ -256,7 +258,10 @@ void main() {
     test(
       'a lounge member of a Club that is being deleted cannot start voice',
       () async {
-        await seedRoom('club_lounge_dying', {'visibility': 'private'});
+        await seedRoom('club_lounge_dying', {
+          'visibility': 'private',
+          'clubId': 'dying',
+        });
         await db.collection('clubs').doc('dying').set({
           'ownerId': 'host',
           'status': 'active',
@@ -280,7 +285,10 @@ void main() {
     test(
       'a banned lounge member keeps the row and loses the authority',
       () async {
-        await seedRoom('club_lounge_family_host', {'visibility': 'private'});
+        await seedRoom('club_lounge_family_host', {
+          'visibility': 'private',
+          'clubId': 'family_host',
+        });
         await db.collection('clubs').doc('family_host').set({
           'ownerId': 'host',
           'status': 'active',
@@ -314,6 +322,101 @@ void main() {
       final room = await readRoom('broadcast-room');
       expect(room['isLive'], isTrue);
       expect(room['experience'], 'broadcast');
+    });
+
+    test(
+      'a lounge whose clubId FIELD is absent refuses a member, because the '
+      'rule reads the field and not the club_lounge_ id prefix',
+      () async {
+        // The `clubId` fallback in VoiceRoom.fromFirestore is for identity
+        // and routing. roomVoiceStartAllowed() gates on
+        // resource.data.get('clubId',''), so a fieldless lounge cannot
+        // satisfy the Club branch on the server for anybody. Offering the
+        // control anyway would auto-write straight into a denial.
+        await seedRoom('club_lounge_fieldless', {'visibility': 'private'});
+        await db.collection('clubs').doc('fieldless').set({
+          'ownerId': 'host',
+          'status': 'active',
+        });
+        await db
+            .collection('clubs')
+            .doc('fieldless')
+            .collection('members')
+            .doc('relative')
+            .set({'userId': 'relative', 'role': 'member'});
+
+        expect(
+          await serviceFor('relative').resolveVoiceStartAuthority(
+            await serviceFor('relative').getRoom('club_lounge_fieldless'),
+          ),
+          RoomVoiceStartAuthority.none,
+        );
+        await expectLater(
+          serviceFor('relative').startCommunityVoice('club_lounge_fieldless'),
+          throwsA(isA<StateError>()),
+        );
+        expect((await readRoom('club_lounge_fieldless'))['isLive'], isFalse);
+      },
+    );
+
+    test(
+      'the same fieldless lounge still starts for its HOST — the host branch '
+      'never reads clubId',
+      () async {
+        await seedRoom('club_lounge_fieldless', {'visibility': 'private'});
+        await serviceFor('host').startCommunityVoice('club_lounge_fieldless');
+        expect((await readRoom('club_lounge_fieldless'))['isLive'], isTrue);
+      },
+    );
+
+    test('a banned account is offered nothing, on every branch', () async {
+      await db.collection('users').doc('host').set({
+        'displayName': 'host',
+        'photoUrl': null,
+        'banned': true,
+      });
+      await seedRoom('room-1', {'roomType': 'community'});
+
+      final service = serviceFor('host');
+      expect(
+        await service.resolveVoiceStartAuthority(
+          await service.getRoom('room-1'),
+        ),
+        RoomVoiceStartAuthority.none,
+        reason:
+            'hostRoomUpdateAllowed() opens with isActiveAccount(); offering '
+            'a control the server refuses is the defect class this mirrors '
+            'against',
+      );
+      await expectLater(
+        service.startCommunityVoice('room-1'),
+        throwsA(isA<StateError>()),
+      );
+      expect((await readRoom('room-1'))['isLive'], isFalse);
+    });
+
+    test('a disabled account is refused the same way', () async {
+      await db.collection('users').doc('host').set({
+        'displayName': 'host',
+        'photoUrl': null,
+        'disabled': true,
+      });
+      await seedRoom('room-1', {'roomType': 'community'});
+
+      await expectLater(
+        serviceFor('host').startCommunityVoice('room-1'),
+        throwsA(isA<StateError>()),
+      );
+      expect((await readRoom('room-1'))['isLive'], isFalse);
+    });
+
+    test('an account with no profile document is refused', () async {
+      await seedRoom('room-1', {'hostId': 'ghost', 'roomType': 'community'});
+      await expectLater(
+        serviceFor('ghost').startCommunityVoice('room-1'),
+        throwsA(isA<StateError>()),
+      );
+      expect((await readRoom('room-1'))['isLive'], isFalse);
     });
 
     test('a closed room is refused before anything is written', () async {

@@ -4,18 +4,32 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
-## Current counts (2026-08-17)
+## Current counts
 
-One table, so there is a single place to correct when these move. Every
-figure is a suite run, not an estimate; file counts are `find`.
+**As of 2026-08-20.** One table, so there is a single place to correct when
+these move. Every figure is a suite run, not an estimate; file counts are
+`find`. *(The date used to live in the heading; it moved into the body on
+2026-08-20 because three other docs deep-link to this section and every
+correction silently broke all three anchors.)*
 
 | Suite | Command | Count |
 |---|---|---|
-| Firestore rules | `npm --prefix firestore-tests test` | **363** checks |
+| Firestore rules | `npm --prefix firestore-tests test` | **466** checks |
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **52** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
-| Cloud Functions | `npm --prefix functions test` | **593** tests across **98** suites (49 `*.test.js` files) |
-| Flutter | `flutter test` | **622** tests across **65** files |
+| Cloud Functions | `npm --prefix functions test` | **699** tests (56 `*.test.js` files) |
+| Flutter | `flutter test` | **1036** tests (105 `*_test.dart` files) |
+
+**Where these numbers came from.** Rules 466, Functions 699 and Flutter 1036
+were measured by the engineering sessions that landed `b0f1062` and its
+predecessors, and confirmed by the primary agent for this documentation pass;
+`flutter analyze` was clean at the same point. The `*.test.js` and
+`*_test.dart` file counts are `find` over the working tree at `b0f1062`, so
+they are exact but do not carry the suite-count breakdown earlier rows had —
+that breakdown is dropped rather than carried forward as a guess. **Storage
+52 and family-media 11 were last measured 2026-08-17 and were not re-run in
+this pass**; `storage.rules` has not changed since `4f27b21` (2026-08-17), so
+they are stated as carried forward, not as re-verified.
 
 > **Correction, 2026-08-16.** These numbers were wrong in several docs for
 > most of a week — TESTING.md claimed 268 rules checks and 43 Storage
@@ -103,11 +117,93 @@ figure is a suite run, not an estimate; file counts are `find`.
 > review; the website separately passed its exact-schema parser tests, lint and
 > a 42-route production build.
 
+> **Correction and movement, 2026-08-20 (the reachability wave).** The table
+> above had drifted again — it claimed **593/98** for Cloud Functions, **363**
+> for rules and **622/65** for Flutter, all of which predate several rounds of
+> work. Corrected figures and their provenance are stated under the table.
+> Movement across `3d54bc3` → `b0f1062`, from the commit messages that
+> measured each step:
+>
+> - **Firestore rules 403 → 446** (`b3c27fd`, club chat moderation: two
+>   disjoint authority branches plus the forged-tombstone create allowlist;
+>   22 cases fail against HEAD's ruleset) **→ 466** (`01c0ab2`, room chat
+>   write validation and the club `list` rule; the 12 new cases fail against
+>   HEAD's ruleset). The 363 → 403 step was never recorded here.
+> - **Cloud Functions 690 → 699** (`2c086c7`; seven of nine new tests fail
+>   against the unmodified function, and the two that passed did so for the
+>   wrong reason and now pass for the right one). 593 → 690 was never
+>   recorded here; 690 is the figure ADR-081's session measured.
+> - **Flutter 885 → 1036.** The intermediate figures are *checkpoints from
+>   parallel sessions*, not a single chain, so they are recorded as each
+>   commit measured them rather than reconciled into one sequence:
+>   **885** after sign-out cleanup (`3d54bc3`, 8 of 10 new tests fail
+>   pre-fix) and club chat moderation (`b3c27fd`, 31 new client tests, 11
+>   failing against the reverted behaviour); **898** after the
+>   club-moderation accessibility pass (`f817b41`) and the Moments discovery
+>   feed (`cef05e6`); **978** reached independently by club-discovery rail
+>   states (`155ad61`, 948 → 978, 29 new) and by reporting (`9f3ce7f`,
+>   898 → 978, 51 new); **1036** after room voice liveness (`b0f1062`, 978 →
+>   1036, three cases failing against the pre-fix service). Only the
+>   endpoints — 885 and 1036 — are chain-consistent.
+>
+> The fail-before discipline is worth noting as the thing that makes these
+> counts mean something: several of these rounds demonstrated failure by
+> restoring the old behaviour and re-running (`9f3ce7f` restored the report
+> read-back for 4 failures and the hardcoded reason for 6, then reverted).
+> A count that only ever ran green proves less than a smaller count that was
+> shown to fail first.
+
+## The stated limitation: a green suite can coexist with a feature that cannot work
+
+Read this before trusting any number in the table above. It is not a
+hypothetical — between 2026-08-19 and 2026-08-20, **four separate features
+were found to exist in source, pass their tests, and (where a backend was
+involved) be deployed and ACTIVE, while being unusable by any user**: voice
+in Community rooms and lounges, club chat moderation, message reporting, and
+Home's club-discovery rail. See
+[Bugs.md](Bugs.md) and
+[ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
+
+Three properties of these suites are the mechanism, and each is a real
+limitation of the tool rather than a gap someone forgot to fill:
+
+1. **The emulator does not enforce composite indexes.** A query that throws
+   `FAILED_PRECONDITION` in production runs green locally. This has already
+   cost the project twice — `expirePremiumIdentity` (Premium never expired
+   for any account) and the two moment-cleanup schedules (never once
+   succeeded).
+2. **Rules tests exercise fixtures the test author wrote, not what the client
+   actually sends.** A rules test written from the rule's own text proves the
+   rule is self-consistent. It cannot notice that the shipped client sends a
+   different shape, queries different fields, or never calls the path at all
+   — which is exactly how an author-only club-chat delete rule and a
+   moderator-authorising client both passed their own suites for months.
+3. **`fake_cloud_firestore` does not evaluate rules at all.** Every Dart test
+   asserting "the client may do X" proves the client's *mirror* of the rule,
+   never the server's answer. Where a Dart class deliberately mirrors a
+   deployed rule branch — `RoomVoiceStartAuthority` is the current example —
+   the test proves the mirror and the mirror only.
+
+Each layer is honest about itself and silent about the seam. Three habits
+close most of it, and they are cheap:
+
+- **Assert on the client's real payload or query.** Copy it out of the
+  service rather than writing it from the rule.
+- **Name the caller.** If a feature depends on a state transition, a role
+  claim, an index or a verified email, name the code that satisfies it. "It
+  is in the file" is not an answer; `HomeScreen` is in the file and mounted
+  nowhere.
+- **Demonstrate failure before success.** Several rounds in this wave
+  restored the old behaviour and re-ran to show the new tests fail against it
+  (`9f3ce7f`: 4 failures from restoring the report read-back, 6 from
+  restoring the hardcoded reason). A test that has never been seen red is a
+  test whose subject is unproven.
+
 ## Firestore rules — the most mature coverage in the project
 
 `firestore-tests/` — a standalone Node project running regression and
 attack-scenario checks against `firestore.rules` via
-`@firebase/rules-unit-testing` and the Firestore emulator — **363 checks
+`@firebase/rules-unit-testing` and the Firestore emulator — **466 checks
 passing** — plus `storage.test.js`, the same treatment for `storage.rules`
 against the Storage emulator (52 checks: path ownership, size caps,
 content-type allowlists, read gating, default deny), plus 11 combined
@@ -151,7 +247,7 @@ of the 40 checks exercised that path
 Any rule touching a collection that's ever queried via `collectionGroup()`
 needs a real `collectionGroup()` check, not just a direct-path one.
 
-The current 351-case rules suite also pins the Premium boundary introduced in
+The rules suite also pins the Premium boundary introduced in
 ADR-053: a normal full profile bootstrap and a partial presence-first create
 are allowed, forged Creator/Premium/staff first documents are denied, and an
 active subscription with a disabled Creator or Clubs feature flag cannot use
@@ -234,7 +330,7 @@ wrong reason.
 
 ## Cloud Functions — real coverage, unevenly distributed
 
-`functions/test/` — **593 tests across 98 suites in 49 files**, run with
+`functions/test/` — **699 tests across 56 `*.test.js` files**, run with
 `node --test test/*.test.js` against the Auth + Firestore emulators, and
 gating the Hosting release in CI like the rules suites do. A separate
 `npm --prefix functions run test:smoke` drives three trigger smoke scripts
@@ -260,8 +356,8 @@ absolute count over a collection your file does not exclusively own.
 
 ## Dart tests — real, but narrow
 
-`test/` — **622 tests across 65 files**, green in local verification,
-grown mostly
+`test/` — **1036 tests across 105 `*_test.dart` files**, green in local
+verification, grown mostly
 out of real bugs rather than an even coverage discipline. The
 pattern throughout: fake the Firebase backends
 (`firebase_auth_mocks` / `fake_cloud_firestore` /
@@ -323,11 +419,35 @@ pattern throughout: fake the Firebase backends
   refuses in the way the mapping expects, or that a real microphone
   produces bytes Storage accepts.
 
+- **`room_voice_entry_coordinator_test.dart`**,
+  **`room_voice_liveness_test.dart`**, **`room_voice_entry_screen_test.dart`**,
+  **`room_mic_affordance_test.dart`** and **`room_voice_teardown_test.dart`**
+  (2026-08-20) — the room liveness path from
+  [ADR-088](Decisions.md#adr-088-entering-a-room-performs-the-liveness-transition-through-one-ordered-coordinator-that-mirrors-the-deployed-rule):
+  the ordered liveness → roster → token coordinator, the client authority
+  mirroring each deployed rule branch, legacy documents defaulting rather
+  than raising, and a mute control being unrepresentable in a dormant room.
+  **What they cannot prove**: that the deployed rules accept the write.
+  `fake_cloud_firestore` evaluates no rules, so these pin the mirror.
+- **`club_chat_moderation_test.dart`**, **`content_report_test.dart`**,
+  **`report_failure_copy_test.dart`**, **`moment_report_reachability_test.dart`**,
+  **`home_discover_clubs_test.dart`**, **`moments_discovery_test.dart`** and
+  **`sign_out_cleanup_test.dart`** (2026-08-19/20) — the reachability wave.
+  Two are worth copying as patterns: `sign_out_cleanup_test.dart` asserts
+  **when** rather than whether, recording `_auth.currentUser != null` at the
+  moment of each write so a write outside a live session is a write the
+  deployed ruleset denies; and `home_discover_clubs_test.dart` proves a
+  denial *after* a successful emission replaces the stale list rather than
+  hiding behind it, which is the `StreamBuilder`-retains-data trap.
+
 **What this means in practice**: coverage is regression-driven — deep
 where something once broke (profile media, notifications, navigation,
-error copy, moment recording), absent where nothing has broken yet (rooms,
-clubs, moment feeds and services). `test/widget_test.dart` is still the
-generated boilerplate and provides nothing.
+error copy, moment recording, and since 2026-08-19 rooms, club chat
+moderation, reporting and the Moments feed), thin where nothing has broken
+yet. `test/widget_test.dart` is still the generated boilerplate and provides
+nothing. Growth is not the same as reach: the wave that took this suite from
+622 to 1036 was largely spent proving that features which already had green
+tests could not be used.
 
 Run with:
 
@@ -401,9 +521,12 @@ Worth naming plainly rather than leaving implicit:
   `functions/index.js`, so the voice-achievement category and Creator
   Studio's "Voice time" tile are permanently zero. See
   [Bugs.md](Bugs.md#achievements).
-- Broad service coverage remains uneven despite the 52 regression files;
-  rooms, live audio and multi-user club flows still rely heavily on manual
-  checks.
+- Broad service coverage remains uneven despite the 105 regression files;
+  **live audio in particular has none.** The room *liveness* path gained real
+  coverage on 2026-08-20, but audio quality, reconnect, device routing and
+  the web microphone permission path are untouched and unretested, and no
+  test in this repo has ever held a real LiveKit connection. Multi-user club
+  flows still rely on manual checks.
 - Any cross-cutting integration flow (the join-room → LiveKit token flow
   described in [Architecture.md](Architecture.md#data-flow-a-concrete-example-joining-a-broadcast-room),
   for example) is verified manually end-to-end, not by any test.

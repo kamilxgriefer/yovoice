@@ -27,6 +27,10 @@ const db = getFirestore();
 const P = "rhc-";
 const HOST = `${P}host`;
 const GUEST = `${P}guest`;
+// A third identity that never calls anything: it exists only to be STILL IN
+// THE ROOM while somebody else leaves or ends it, which is what separates
+// "the room is empty" from "the counter says the room is empty".
+const OTHER = `${P}other`;
 
 function request(uid, data) {
   return { auth: { uid, token: {} }, data };
@@ -76,9 +80,27 @@ async function wipeOwn() {
     db.collection("restrictions").doc(GUEST).delete(),
     db.collection("users").doc(HOST).delete(),
     db.collection("users").doc(GUEST).delete(),
+    db.collection("users").doc(OTHER).delete(),
     db.recursiveDelete(db.collection("activeVoiceSessions").doc(HOST)),
     db.recursiveDelete(db.collection("activeVoiceSessions").doc(GUEST)),
+    db.recursiveDelete(db.collection("activeVoiceSessions").doc(OTHER)),
   ]);
+}
+
+// seedRoom() always writes `status`. A large share of production rooms
+// predate `roomType`, `experience` and `status` entirely, and the liveness
+// drop has to default them the way firestore.rules' own `.get(field,
+// default)` reads do — so this seeder writes the bare document instead.
+async function seedLegacyRoom(roomId, overrides = {}) {
+  await db.collection("rooms").doc(roomId).set({
+    hostId: HOST,
+    name: "Legacy room",
+    visibility: "public",
+    isLive: true,
+    participantCount: 1,
+    membersCanStartVoice: true,
+    ...overrides,
+  });
 }
 
 async function seedRoom(roomId, overrides = {}) {
@@ -366,5 +388,253 @@ describe("host room control", () => {
       executeEndRoomVoice(request(HOST, { roomId }), control),
       (error) => error?.code === "failed-precondition",
     );
+  });
+
+  // --- The last person out ends the session, in EVERY room ------------
+  //
+  // `isLive` used to drop at zero participants only for a Club lounge. A
+  // Community room whose host enabled `membersCanStartVoice`, started by a
+  // MEMBER who then leaves last, had no exit at all: `endRoomVoiceSelf` is
+  // host-only and there is no scheduled sweeper. It stayed `isLive: true,
+  // participantCount: 0` forever and kept advertising itself through
+  // `watchLivePublicRooms` on Home and Discover.
+
+  test("a member-started Community room drops liveness when its last participant leaves", async () => {
+    const roomId = `${P}member-started`;
+    const control = fakeControl();
+    await seedRoom(roomId, {
+      participantCount: 1,
+      roomType: "community",
+      membersCanStartVoice: true,
+    });
+    // The member who started the voice session is the only one in it; the
+    // host never joined.
+    await seedParticipant(roomId, GUEST, { role: "listener", isSpeaker: false });
+    await seedSession(roomId, GUEST);
+
+    const result = await executeLeaveRoom(request(GUEST, { roomId }), control);
+
+    const room = await db.collection("rooms").doc(roomId).get();
+    assert.equal(room.data().isLive, false);
+    assert.equal(room.data().participantCount, 0);
+    assert.notEqual(room.data().endedAt, undefined);
+    assert.equal(result.endedVoiceSession, true);
+    // The LiveKit room is torn down rather than one identity revoked, so an
+    // already-issued token cannot keep publishing into an ended session.
+    assert.deepEqual(control.calls, [["endRoom", roomId]]);
+    assert.equal(
+      (await db.collection("activeVoiceSessions").doc(GUEST)
+        .collection("rooms").doc(roomId).get()).exists,
+      false,
+    );
+  });
+
+  test("the legacy room shape — no roomType, no experience, no status — ends the same way", async () => {
+    const roomId = `${P}legacy-shape`;
+    const control = fakeControl();
+    await seedLegacyRoom(roomId);
+    await seedParticipant(roomId, GUEST, { role: "listener", isSpeaker: false });
+
+    const result = await executeLeaveRoom(request(GUEST, { roomId }), control);
+
+    const room = await db.collection("rooms").doc(roomId).get();
+    assert.equal(room.data().status, undefined);
+    assert.equal(room.data().isLive, false);
+    assert.equal(room.data().participantCount, 0);
+    assert.equal(result.endedVoiceSession, true);
+    assert.deepEqual(control.calls, [["endRoom", roomId]]);
+  });
+
+  test("a room that is not live, or already being deleted, is not re-ended on leave", async () => {
+    const control = fakeControl();
+    const dormantId = `${P}leave-dormant`;
+    await seedRoom(dormantId, { isLive: false, participantCount: 1 });
+    await seedParticipant(dormantId, GUEST);
+    await executeLeaveRoom(request(GUEST, { roomId: dormantId }), control);
+    const dormant = await db.collection("rooms").doc(dormantId).get();
+    assert.equal(dormant.data().endedAt, undefined);
+    assert.equal(dormant.data().participantCount, 0);
+
+    const deletingId = `${P}leave-deleting`;
+    await seedRoom(deletingId, {
+      participantCount: 1,
+      deletionInProgress: true,
+    });
+    await seedParticipant(deletingId, GUEST);
+    await executeLeaveRoom(request(GUEST, { roomId: deletingId }), control);
+    const deleting = await db.collection("rooms").doc(deletingId).get();
+    // executeDeleteRoom owns this room's teardown; the leave must not write a
+    // second endedAt over it or call endRoom a second time.
+    assert.equal(deleting.data().endedAt, undefined);
+    assert.deepEqual(control.calls, [
+      ["revokeParticipant", dormantId, GUEST],
+      ["revokeParticipant", deletingId, GUEST],
+    ]);
+  });
+
+  test("ANTI-TRAP: a stale-low participantCount cannot evict the people still in the room", async () => {
+    const roomId = `${P}stale-counter`;
+    const control = fakeControl();
+    // The counter says one person is here. The roster says two are.
+    await seedRoom(roomId, { participantCount: 1 });
+    await seedParticipant(roomId, GUEST);
+    await seedParticipant(roomId, OTHER);
+
+    // Deliberately asserts state only, with no reference to the new return
+    // field: this case must read identically before and after the change,
+    // because what it pins is that the generalised drop is roster-derived.
+    // A counter-only generalisation passes every other case here and fails
+    // this one by ending a room two people are still talking in.
+    await executeLeaveRoom(request(GUEST, { roomId }), control);
+
+    const room = await db.collection("rooms").doc(roomId).get();
+    assert.equal(room.data().isLive, true);
+    assert.equal(room.data().endedAt, undefined);
+    assert.deepEqual(control.calls, [["revokeParticipant", roomId, GUEST]]);
+    assert.equal(
+      (await db.collection("rooms").doc(roomId)
+        .collection("participants").doc(OTHER).get()).exists,
+      true,
+    );
+  });
+
+  test("REGRESSION: the Club lounge drop stays counter-derived, exactly as it was", async () => {
+    const roomId = `${P}lounge-leave`;
+    const control = fakeControl();
+    await seedRoom(roomId, {
+      participantCount: 1,
+      clubId: `${P}club`,
+      roomKind: "clubLounge",
+    });
+    await seedParticipant(roomId, GUEST);
+    // A stale row the lounge branch deliberately does NOT consult: its
+    // condition is `roomKind == 'clubLounge' && nextCount === 0`, unchanged,
+    // because the client's own lounge leave transaction mirrors it and the
+    // two must not drift.
+    await seedParticipant(roomId, OTHER);
+
+    await executeLeaveRoom(request(GUEST, { roomId }), control);
+
+    const room = await db.collection("rooms").doc(roomId).get();
+    assert.equal(room.data().isLive, false);
+    assert.notEqual(room.data().endedAt, undefined);
+    assert.deepEqual(control.calls, [["endRoom", roomId]]);
+  });
+
+  // --- Ending voice on a room somebody just joined ---------------------
+
+  test("onlyIfEmpty leaves an occupied room live instead of evicting whoever just joined", async () => {
+    const roomId = `${P}end-occupied`;
+    const control = fakeControl();
+    // Exactly the shape room_service.dart's shouldEndVoiceOnLeaving() hits:
+    // it read participantCount as 1, decided it was the last one out, and by
+    // the time the callable runs somebody else is on the roster.
+    await seedRoom(roomId, { participantCount: 1 });
+    await seedParticipant(roomId, HOST, { role: "host" });
+    await seedParticipant(roomId, GUEST);
+    await seedSession(roomId, GUEST);
+
+    const result = await executeEndRoomVoice(
+      request(HOST, { roomId, onlyIfEmpty: true }),
+      control,
+    );
+
+    const room = await db.collection("rooms").doc(roomId).get();
+    assert.equal(room.data().isLive, true);
+    assert.equal(room.data().participantCount, 1);
+    assert.equal(result.ended, false);
+    assert.equal(result.success, true);
+    assert.equal(
+      (await db.collection("rooms").doc(roomId)
+        .collection("participants").doc(GUEST).get()).exists,
+      true,
+    );
+    assert.equal(
+      (await db.collection("activeVoiceSessions").doc(GUEST)
+        .collection("rooms").doc(roomId).get()).exists,
+      true,
+    );
+    assert.deepEqual(control.calls, []);
+  });
+
+  test("onlyIfEmpty still ends a room holding nothing but the caller's own row", async () => {
+    const roomId = `${P}end-empty`;
+    const control = fakeControl();
+    await seedRoom(roomId, { participantCount: 1 });
+    await seedParticipant(roomId, HOST, { role: "host" });
+
+    const result = await executeEndRoomVoice(
+      request(HOST, { roomId, onlyIfEmpty: true }),
+      control,
+    );
+
+    const room = await db.collection("rooms").doc(roomId).get();
+    assert.equal(result.ended, true);
+    assert.equal(room.data().isLive, false);
+    assert.equal(room.data().participantCount, 0);
+    assert.equal((await room.ref.collection("participants").get()).empty, true);
+    assert.deepEqual(control.calls, [["endRoom", roomId]]);
+  });
+
+  // THE SHAPE THE CLIENT ACTUALLY PRODUCES. room_service.dart's leave path
+  // calls `leaveRoomSelf` FIRST and only then this callable, so by the time
+  // `onlyIfEmpty` is evaluated the caller holds no participant row at all.
+  // The two cases below pin both outcomes of that ordering.
+  test("onlyIfEmpty ends the room when the caller has ALREADY left and nobody remains", async () => {
+    const roomId = `${P}end-empty-after-leave`;
+    const control = fakeControl();
+    await seedRoom(roomId, { participantCount: 0 });
+
+    const result = await executeEndRoomVoice(
+      request(HOST, { roomId, onlyIfEmpty: true }),
+      control,
+    );
+
+    const room = await db.collection("rooms").doc(roomId).get();
+    assert.equal(result.ended, true);
+    assert.equal(room.data().isLive, false);
+    assert.deepEqual(control.calls, [["endRoom", roomId]]);
+  });
+
+  test("onlyIfEmpty leaves the room live when the caller has already left but a guest remains", async () => {
+    const roomId = `${P}end-occupied-after-leave`;
+    const control = fakeControl();
+    // A stale-LOW counter is the whole hazard: it says empty, the roster does
+    // not, and the roster is what must win.
+    await seedRoom(roomId, { participantCount: 0 });
+    await seedParticipant(roomId, GUEST);
+
+    const result = await executeEndRoomVoice(
+      request(HOST, { roomId, onlyIfEmpty: true }),
+      control,
+    );
+
+    const room = await db.collection("rooms").doc(roomId).get();
+    assert.equal(result.ended, false);
+    assert.equal(room.data().isLive, true);
+    assert.equal(
+      (await room.ref.collection("participants").doc(GUEST).get()).exists,
+      true,
+    );
+    assert.deepEqual(control.calls, []);
+  });
+
+  test("REGRESSION: the host's explicit End Room still ends it for everyone", async () => {
+    const roomId = `${P}end-explicit`;
+    const control = fakeControl();
+    await seedRoom(roomId, { participantCount: 2 });
+    await seedParticipant(roomId, HOST, { role: "host" });
+    await seedParticipant(roomId, GUEST);
+
+    // No reference to the new return field: an omitted `onlyIfEmpty` must
+    // behave exactly as it did before, so this case reads identically on
+    // both sides of the change.
+    await executeEndRoomVoice(request(HOST, { roomId }), control);
+
+    const room = await db.collection("rooms").doc(roomId).get();
+    assert.equal(room.data().isLive, false);
+    assert.equal(room.data().participantCount, 0);
+    assert.equal((await room.ref.collection("participants").get()).empty, true);
+    assert.deepEqual(control.calls, [["endRoom", roomId]]);
   });
 });

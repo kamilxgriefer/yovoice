@@ -116,17 +116,25 @@ class RoomVoiceEntry {
       (outcome == RoomVoiceEntryOutcome.dormant ||
           outcome == RoomVoiceEntryOutcome.failed);
 
+  /// Distinguishes "leave the message alone" from "clear it".
+  ///
+  /// A plain `String? message` parameter cannot express the second, so a
+  /// stale failure string survived every later state change and was what the
+  /// microphone control explained on tap — "This room is full." long after
+  /// the room had emptied and gone dormant.
+  static const Object _keep = Object();
+
   RoomVoiceEntry copyWith({
     RoomVoiceEntryOutcome? outcome,
     VoiceRoom? room,
     RoomVoiceStartAuthority? authority,
-    String? message,
+    Object? message = _keep,
   }) {
     return RoomVoiceEntry(
       outcome: outcome ?? this.outcome,
       room: room ?? this.room,
       authority: authority ?? this.authority,
-      message: message ?? this.message,
+      message: identical(message, _keep) ? this.message : message as String?,
     );
   }
 }

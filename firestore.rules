@@ -905,9 +905,30 @@ service cloud.firestore {
           );
     }
 
+    // A ROOM BEING TORN DOWN CANNOT BE BROUGHT BACK TO LIFE.
+    //
+    // `deletionInProgress` is set by executeDeleteRoom() in the SAME
+    // transaction that closes the room, and everything after that write —
+    // LiveKit endRoom, the active-session mirrors, Storage media cleanup, the
+    // recursive document delete — happens outside it. That window is exactly
+    // when a stale client's start would land, and it would land on a document
+    // whose subtree is being deleted underneath it.
+    //
+    // Every other branch of this ruleset that touches a room already reads
+    // the flag (roomActivityTouchAllowed, roomMemberJoinTransitionAllowed,
+    // hostRoomUpdateAllowed's metadata branch); the two START branches were
+    // the omission, and they were unreachable only for as long as nothing in
+    // the app ever flipped `isLive`. The client refuses this itself now, but
+    // the client is a mirror, not the authority.
+    //
+    // `.get(field, default)`, NOT a bare read: a bare `resource.data.
+    // deletionInProgress` RAISES on the 24-of-45 production rooms that
+    // predate the field, and a rule that errors denies — so the bare form
+    // would have locked legacy rooms out of voice altogether.
     function roomVoiceStartAllowed(roomId) {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return resource.data.get('status', 'active') == 'active' &&
+          resource.data.get('deletionInProgress', false) != true &&
           resource.data.get('isLive', false) == false &&
           request.resource.data.isLive == true &&
           request.resource.data.updatedAt == request.time &&
@@ -971,7 +992,14 @@ service cloud.firestore {
             resource.data.get('roomKind', '') != 'clubLounge' ||
             request.resource.data.visibility == 'private'
           );
+      // The host's start branch reads `deletionInProgress` for the same
+      // reason roomVoiceStartAllowed() above does, and for one more: the
+      // metadata branch three lines up has always read it, so without this
+      // the SAME host was refused a rename on a deleting room and allowed to
+      // restart its voice session. Ownership is not a licence to reanimate a
+      // room whose teardown has already committed.
       let start = resource.data.get('status', 'active') == 'active' &&
+          resource.data.get('deletionInProgress', false) != true &&
           resource.data.get('isLive', false) == false &&
           request.resource.data.isLive == true &&
           request.resource.data.updatedAt == request.time &&

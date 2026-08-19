@@ -23,6 +23,7 @@ class BroadcastBottomControls extends StatelessWidget {
     required this.onMic,
     required this.onStartVoice,
     required this.onNotLive,
+    required this.onMicBlocked,
     required this.onRaiseHand,
     required this.onShare,
     required this.onParticipants,
@@ -58,6 +59,12 @@ class BroadcastBottomControls extends StatelessWidget {
 
   /// Explains a dormant room instead of leaving a dead control.
   final VoidCallback onNotLive;
+
+  /// Explains a mic that genuinely cannot publish right now — connecting,
+  /// listen-only, or failed audio. The community room has always offered
+  /// this; the broadcast dock greyed the button out and said nothing, which
+  /// reads as a broken app rather than as a state with a reason.
+  final VoidCallback onMicBlocked;
   final VoidCallback onRaiseHand;
   final VoidCallback onShare;
   final VoidCallback onParticipants;
@@ -105,12 +112,29 @@ class BroadcastBottomControls extends StatelessWidget {
             else if (canSpeak)
               Expanded(
                 child: BroadcastHostBottomAction(
-                  icon: micMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
-                  label: micMuted ? 'Unmute' : 'Mute',
-                  highlighted: !micMuted,
-                  onTap: ending || micBusy || !connected || !affordance.isMuteControl
+                  icon: switch (affordance) {
+                    RoomMicAffordance.listenOnly => Icons.headphones_rounded,
+                    RoomMicAffordance.connecting => Icons.mic_rounded,
+                    _ =>
+                      micMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                  },
+                  label: switch (affordance) {
+                    RoomMicAffordance.connecting => 'Connecting…',
+                    RoomMicAffordance.listenOnly => 'Listening',
+                    RoomMicAffordance.unavailable => 'Audio off',
+                    _ => micMuted ? 'Unmute' : 'Mute',
+                  },
+                  highlighted: affordance == RoomMicAffordance.live,
+                  // A blocked mic explains itself instead of sitting dead.
+                  // Only `connecting` is genuinely untappable — there is
+                  // nothing to say that the label is not already saying.
+                  onTap: ending
                       ? null
-                      : onMic,
+                      : affordance.isMuteControl
+                      ? (micBusy || !connected ? null : onMic)
+                      : affordance == RoomMicAffordance.connecting
+                      ? null
+                      : onMicBlocked,
                 ),
               )
             else

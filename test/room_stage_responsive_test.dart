@@ -340,6 +340,7 @@ void main() {
                     onMic: () {},
                     onStartVoice: () {},
                     onNotLive: () {},
+                    onMicBlocked: () {},
                     onRaiseHand: () {},
                     onShare: () {},
                     onParticipants: () {},

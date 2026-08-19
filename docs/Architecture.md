@@ -151,7 +151,7 @@ required, because there was only ever one account.
 
 Role/permission state (`superAdmin`, moderator roles used by the admin
 Cloud Functions) rides on **Firebase Auth custom claims**, never on a
-Firestore field — see [SECURITY.md](SECURITY.md#roles-live-in-custom-claims-not-firestore)
+Firestore field — see [SECURITY.md](SECURITY.md#identity-and-roles)
 for why that specific choice closes off the most common privilege-
 escalation path in a Firebase app (a user can always write their own
 `users/{uid}` document; a user can never write their own auth token).
@@ -200,6 +200,22 @@ actually happens:
    PLUS a LiveKit Server API call to revoke already-issued permissions
    — the token itself doesn't expire just because Firestore changed.
 ```
+
+**The step this diagram used to omit, and what it cost.** Step 2 reads the
+room doc and *checks* that it is active and live; nothing above says who
+makes it live. That transition is the **caller's** job, and until `b0f1062`
+only `enterClubLounge` ever performed it — so `createLiveKitToken` refused a
+token and **voice did not work in any Community room or lounge**, for the
+product's life (production at the time: 45 rooms, 3 live). A liveness step
+now runs first, in one coordinator ordering **liveness → roster → token**,
+for anyone the deployed rules would accept. Read it as **step 1.5** of the
+flow above. The generalizable form: when a server precondition exists,
+document the caller that satisfies it in the same place you document the
+check, or the check reads as if something else guarantees it. See
+[ADR-088](Decisions.md#adr-088-entering-a-room-performs-the-liveness-transition-through-one-ordered-coordinator-that-mirrors-the-deployed-rule)
+and [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
+This is **source state, not production state** — see
+[DEPLOYMENT.md](DEPLOYMENT.md#pending-release-the-2026-08-1920-reachability-wave).
 
 The pattern to notice: **step 2 is a plain client-direct write** (the
 default per ADR-013), while **step 3–4 is a Cloud Function** specifically

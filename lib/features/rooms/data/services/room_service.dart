@@ -524,6 +524,17 @@ class RoomService {
     }
 
     final uid = _user.uid;
+
+    // ACCOUNT STATUS IS PART OF EVERY BRANCH, not a separate concern.
+    // `hostRoomUpdateAllowed()` opens with `isActiveAccount()`, and both
+    // `isRoomMember()` and `isActiveClubRoomMember()` call it too, so a
+    // banned or disabled account satisfies none of the three. Without this
+    // read the app offers such an account a "Start voice" control and the
+    // server answers with a denial — the precise mismatch this mirror
+    // exists to prevent. Mirrors accountIsActive(): the profile must exist
+    // and carry neither flag.
+    if (!await _isActiveAccount(uid)) return RoomVoiceStartAuthority.none;
+
     if (room.hostId.isNotEmpty && room.hostId == uid) {
       return RoomVoiceStartAuthority.host;
     }
@@ -541,13 +552,24 @@ class RoomService {
     // rows at all — and erring toward the Club's own membership on a private
     // Club room is the safe direction. Anything that starts minting lounge
     // roomMembers rows must revisit this.
-    final clubId = room.clubId;
+    //
+    // `storedClubId`, NOT `clubId`: the rule reads the document FIELD
+    // (`resource.data.get('clubId','')`), so a lounge identified only by its
+    // `club_lounge_` id prefix cannot satisfy the Club branch on the server
+    // no matter who the caller is. Resolving from the prefix-derived getter
+    // would offer a Start control and then eat a permission-denied.
+    final clubId = room.storedClubId;
     if (clubId != null && clubId.isNotEmpty) {
       return await _isActiveClubMember(clubId, uid)
           ? RoomVoiceStartAuthority.clubMember
           : RoomVoiceStartAuthority.none;
     }
 
+    // A fieldless lounge falls THROUGH rather than returning none, because
+    // `roomVoiceStartAllowed()` is a disjunction: its second branch is still
+    // open to a roomMembers holder if the host set membersCanStartVoice.
+    // Lounges carry neither, so in practice this resolves to host-only —
+    // which is exactly what the server would decide for the same document.
     if (room.membersCanStartVoice && await _isMember(room.id, uid)) {
       return RoomVoiceStartAuthority.roomMember;
     }
@@ -608,9 +630,25 @@ class RoomService {
     await joinRoom(roomId);
   }
 
-  Future<void> endCommunityVoice(String roomId) async {
+  /// Ends the voice session for everyone in the room.
+  ///
+  /// [onlyIfEmpty] is the difference between the two callers. A host pressing
+  /// "End room" MEANS "end it for the people in it", so the default stays
+  /// false and that control is unchanged. The leave path passes true, and the
+  /// server then re-reads the ROSTER inside its own transaction and writes
+  /// nothing if anyone else is present — returning success, not an error,
+  /// because a leave must never surface as a failure. Without the flag a
+  /// leave decided on the denormalised `participantCount` could disconnect
+  /// people who were still talking.
+  Future<void> endCommunityVoice(
+    String roomId, {
+    bool onlyIfEmpty = false,
+  }) async {
     final callable = _functions.httpsCallable('endRoomVoiceSelf');
-    await callable.call<Map<Object?, Object?>>({'roomId': roomId});
+    await callable.call<Map<Object?, Object?>>({
+      'roomId': roomId,
+      if (onlyIfEmpty) 'onlyIfEmpty': true,
+    });
   }
 
   DocumentReference<Map<String, dynamic>> clubLoungeReference(String clubId) {
@@ -894,35 +932,83 @@ class RoomService {
       await endCommunityVoice(roomId);
       return;
     }
-    if (currentData != null && await shouldEndVoiceOnLeaving(roomId)) {
-      // The last person out of a PERSISTENT room they host closes the voice
-      // session behind them. Without this the room stays `isLive: true` with
-      // nobody in it and keeps advertising itself on the live feeds
-      // (watchLivePublicRooms), which is the empty-live-room state the
-      // server only cleans up for Club lounges — `executeLeaveRoom` drops
-      // `isLive` at zero participants when `roomKind == 'clubLounge'` and
-      // for no other room. `endRoomVoiceSelf` is host-only, so this is the
-      // only room the client can close, and the room itself survives:
-      // status stays `active`, members keep it, and it can be started again.
-      await endCommunityVoice(roomId);
-      return;
-    }
+    // Cheap pre-check only. It decides whether closing the session is even
+    // this caller's business; it does NOT decide that the room is empty.
+    final mayCloseAfterLeaving =
+        currentData != null && await shouldEndVoiceOnLeaving(roomId);
+
+    // LEAVE FIRST, ALWAYS. `executeEndRoomVoice` re-checks nothing before it
+    // sets `participantCount: 0`, ends the LiveKit room and recursive-deletes
+    // every participant document, so calling it while still holding a
+    // participant row — on a count that was only ever a denormalized hint —
+    // evicts anyone who joined between the read and the call. Removing
+    // ourselves through the ordinary path first means the count we then read
+    // already reflects our own departure.
     final callable = _functions.httpsCallable('leaveRoomSelf');
     await callable.call<Map<Object?, Object?>>({'roomId': roomId});
+
+    if (!mayCloseAfterLeaving) return;
+
+    // A SELF-DISABLING FALLBACK, not a second writer.
+    //
+    // `executeLeaveRoom` now ends the voice session for the last person out
+    // of any room, and it proves the room is empty by reading the ROSTER
+    // inside its own transaction — strictly better evidence than the
+    // denormalised counter this client can see. When that server build is
+    // live, the call above has already dropped `isLive`, so the re-read below
+    // finds `isLive != true` and this whole branch does nothing.
+    //
+    // It stays for the deploy window: the app and Cloud Functions ship
+    // separately, and until the new `leaveRoomSelf` is deployed a host
+    // leaving their own persistent room is the only thing that can close it.
+    // Deploy Functions BEFORE the app and this is dead code on arrival.
+    //
+    // The re-read is what keeps it safe either way: it happens AFTER our own
+    // removal committed and demands a genuine zero, so it cannot evict
+    // someone who joined while we were leaving.
+    if (!await canCloseEmptyRoom(roomId)) return;
+    try {
+      // `onlyIfEmpty` makes the SERVER re-prove emptiness from the roster.
+      // Our own `canCloseEmptyRoom` check reads `participantCount`, which is
+      // denormalised; if it is stale-low while someone is genuinely still in
+      // the room, this flag is what stops a housekeeping close from becoming
+      // an eviction.
+      await endCommunityVoice(roomId, onlyIfEmpty: true);
+    } catch (error) {
+      // We have already left. A refused close is a housekeeping miss, never
+      // a failed leave, and must not surface as one.
+      debugPrint(
+        'Empty-room voice close skipped for $roomId: $error. '
+        'The leave itself already committed.',
+      );
+    }
   }
 
   /// True only when the caller hosts a live, non-lounge, persistent room and
-  /// is the last participant in it.
+  /// is the last participant still in it — the cheap gate asked BEFORE
+  /// leaving.
   ///
-  /// The participant count is re-read from the SERVER: the decision closes
-  /// the session for everyone, and a cache-served snapshot taken while
-  /// someone else was joining would close a room that is not actually empty.
-  /// A failed read answers false — a leave must never become an eviction
-  /// because a count could not be confirmed. Club lounges are excluded
-  /// deliberately: `leaveRoomSelf` already performs their teardown
-  /// atomically with the participant delete, and duplicating it here would
-  /// race the server for the same transition.
-  Future<bool> shouldEndVoiceOnLeaving(String roomId) async {
+  /// Club lounges are excluded deliberately: `leaveRoomSelf` already performs
+  /// their teardown atomically with the participant delete, and duplicating
+  /// it here would race the server for the same transition.
+  Future<bool> shouldEndVoiceOnLeaving(String roomId) =>
+      _closableByHost(roomId, maxRemaining: 1);
+
+  /// True only when the same room is now genuinely EMPTY — asked after the
+  /// caller's own participant row is gone, immediately before the host-only
+  /// `endRoomVoiceSelf` callable.
+  Future<bool> canCloseEmptyRoom(String roomId) =>
+      _closableByHost(roomId, maxRemaining: 0);
+
+  /// The participant count is read from the SERVER: the decision closes the
+  /// session for everyone, and a cache-served snapshot taken while someone
+  /// was joining would close a room that is not actually empty. A failed read
+  /// answers false — a leave must never become an eviction because a count
+  /// could not be confirmed.
+  Future<bool> _closableByHost(
+    String roomId, {
+    required int maxRemaining,
+  }) async {
     try {
       final snapshot = await _rooms
           .doc(roomId)
@@ -944,7 +1030,7 @@ class RoomService {
           roomId.startsWith('club_lounge_')) {
         return false;
       }
-      return ((data['participantCount'] as num?)?.toInt() ?? 0) <= 1;
+      return ((data['participantCount'] as num?)?.toInt() ?? 0) <= maxRemaining;
     } catch (_) {
       return false;
     }
@@ -979,6 +1065,21 @@ class RoomService {
             .doc(userId)
             .get())
         .exists;
+  }
+
+  /// Mirrors `accountIsActive()` in firestore.rules: the profile document
+  /// must exist and carry neither `banned` nor `disabled`. A read failure
+  /// answers FALSE — an account whose status cannot be confirmed is not
+  /// offered authority it may not have.
+  Future<bool> _isActiveAccount(String userId) async {
+    try {
+      final data = (await _firestore.collection('users').doc(userId).get())
+          .data();
+      if (data == null) return false;
+      return data['banned'] != true && data['disabled'] != true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Mirrors `isActiveClubRoomMember()` in firestore.rules: the membership

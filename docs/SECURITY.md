@@ -153,6 +153,40 @@ production-shipped bug:
    disabled accounts — a helper that fails open on an absent document is a
    different check from the one its name implies. Fixed 2026-08-17
    (`c75720a`), deployed and verified by diffing the live ruleset source.
+10. **A `list` rule is evaluated against the QUERY'S CONSTRAINTS, never
+    against the documents it would return — so never write a clause with a
+    default.** `get('type', 'community') == 'community'` was **measured to
+    ADMIT a family club**, because with no matching filter in the query the
+    clause satisfies itself and the rule permits exactly the listing it was
+    written to exclude. Write every clause as a **bare field access**
+    (`resource.data.type == 'community'`), which forces the caller's query
+    to carry the matching equality or be denied. The corollary is a client
+    obligation: **the query's filters ARE the authorization**, not defensive
+    narrowing, so they can never be "optimised away" as redundant — reverting
+    the club-discovery query to a privacy-only filter leaks a family room, a
+    suspended club and a club with no status. Measured 2026-08-19
+    (`01c0ab2`); see
+    [ADR-083](Decisions.md#adr-083-a-firestore-list-rule-is-evaluated-against-the-querys-constraints-so-every-clause-is-a-bare-field-access-and-the-clients-query-carries-the-equality).
+11. **CEL absorbs errors through `||`, so authorization branches must be
+    disjoint by construction.** `<error> || true` **ALLOWS**: a branch that
+    errors on a missing document, a failed `get` or a type mismatch silently
+    hands its decision to the other side of the `||`, which may be permitting
+    for reasons that have nothing to do with the erroring case. Select
+    branches on a cheap, total predicate **before any document read** — the
+    club-chat delete rule tests `senderId == request.auth.uid` on one side and
+    `!=` on the other — so exactly one branch is applicable to any document
+    and absorption cannot produce an unintended permit. Measured 2026-08-19
+    (`b3c27fd`); see
+    [ADR-085](Decisions.md#adr-085-authorization-branches-in-a-rule-are-disjoint-by-construction-because-cels--absorbs-errors).
+12. **A create rule with no field allowlist can be used to write a state no
+    update rule will ever repair.** The club-chat create rule accepted
+    arbitrary fields, so a plain member could post a message that was
+    *already* a forged moderation tombstone — and the delete rule refuses
+    already-deleted documents, `delete` is `if false`, and the admin callable
+    short-circuits on `isDeleted`, so nothing short of a raw Admin SDK script
+    could clear it. **Before shipping a rule that refuses to act on documents
+    in some state, check who can create a document already in that state.**
+    Discovered 2026-08-19 in review, fixed in the same commit (`b3c27fd`).
 
 Full schema and the exact current rules structure: [Firebase.md](Firebase.md).
 
@@ -345,14 +379,37 @@ model in one place. Full reasoning:
   24-hour window with the same batched-state mechanism. Reporting is
   deliberately NOT gated on email verification: it is a safety action and
   follows the blocking precedent, not the publishing one.
-- **Deletion**: soft only, author or `role`-claim moderator, content and
-  authorship frozen. Hard delete is `if false` for everyone; the Admin
-  SDK remains the only way to purge.
+- **Deletion**: **no client can delete a Global Chat message at all.**
+  *(Corrected 2026-08-20; the finding is from `b3c27fd`, 2026-08-19, which
+  cited this passage by line number as stale. This entry read "soft only, author or
+  `role`-claim moderator, content and authorship frozen" and described a
+  live capability; the `allow update` block is written `if false && …` and
+  has been dead throughout since
+  [ADR-048](Decisions.md#adr-048-global-chat-is-retired-from-the-app-ui-and-home-previews-three-real-private-conversations)
+  retired Global Chat from the app UI. The soft-delete clauses are still in
+  the file behind that `false`, which is why the doc drifted.)* Hard delete
+  is `if false` for everyone; removal runs through the `removeAndResolve`
+  callable on the Admin SDK, which is also the only path that produces an
+  audit record.
 - **Audit**: `onGlobalMessageModerated` writes an `adminAuditLogs` entry
-  whenever the remover is not the author.
-- **Reports**: `reports` is create-only for verified members with their
-  own uid and a server timestamp; members cannot read, edit or delete
-  reports, including their own.
+  whenever the remover is not the author. This is the **only** chat surface
+  with that trigger — a club-chat moderator removal is currently recorded
+  nowhere (see the club chat section below).
+- **Reports**: `reports` is create-only for **any active account**, with
+  their own uid and a server timestamp; members cannot read, edit or delete
+  reports, including their own. *(Corrected 2026-08-20: this said "verified
+  members", contradicting the verification bullet three lines above it and
+  the rule's own comment. Reporting is a safety action and follows the
+  blocking precedent — see
+  [ADR-086](Decisions.md#adr-086-a-safety-action-is-never-gated-on-email-verification-and-every-moderation-endpoint-checks-access-before-existence).)*
+- **Two report schemas now coexist in `reports/`.** The client-direct v1
+  path documented here constrains `reason` to a closed eight-value enum in
+  the rule. The v2 path — `createContentReport`, which is how a DM, room
+  message, club message, Voice Moment or comment is reported — **does not**,
+  because a callable running on the Admin SDK bypasses these rules and the
+  function does no equivalent validation. A report whose reason is off-list
+  is therefore invisible to the Moderation Center's equality filter. Tracked
+  in [Bugs.md](Bugs.md#moderation--safety) and Roadmap item 0o.
 - **Blocking is NOT a read boundary.** Global Chat content is public to
   every active authenticated account. Firestore returns every message in
   the channel to every such reader, including messages from accounts
@@ -513,6 +570,84 @@ the message has landed, because `sendRoomMessage()` bumps the room root's
 ordering on Home never advances from non-host conversation. See
 [Bugs.md](Bugs.md#security) and
 [Roadmap 0l](Roadmap.md#0l-non-host-room-messages-always-throw-after-the-message-lands).
+
+## Chat write shape and moderation authority (hardened 2026-08-19, NOT DEPLOYED)
+
+Everything in this section is **fixed in source and not deployed**. Until
+the rules deploy in
+[DEPLOYMENT.md](DEPLOYMENT.md#pending-release-the-2026-08-1920-reachability-wave),
+production still runs the pre-`b3c27fd` ruleset.
+
+**Room chat was the largest unguarded client write surface in the product.**
+The rule checked `senderId` and membership and nothing else about the
+document, so an ordinary member could write another member's `senderName`
+and photo, a 60,000-character body, arbitrary extra fields, and a `sentAt`
+in 2099 that pinned a message to the top of every member's list
+permanently. Every other client-authored identity snapshot in
+`firestore.rules` was already pinned; this was the exception, and the
+client compensating is why it never surfaced. It now carries an exact
+six-key allowlist, `senderName` pinned to the canonical `users` document,
+`createdAt` pinned to `request.time`, a 500-character content cap and a
+32-key bound on reactions updates.
+
+Two residual gaps are stated rather than hidden, because both need a client
+change first:
+
+- **`senderPhotoUrl` is deliberately not pinned.** The client falls back to
+  the Firebase Auth mirror when the profile field is empty, so a pin would
+  refuse a legitimate send. **An avatar can still point at another member's
+  image** — much weaker impersonation with the name pinned, but real.
+- **The uid list under each reaction key is still caller-authored and
+  unbounded.** Rules cannot iterate map values; the real fix is a
+  `reactions/{uid}` subcollection, which is a schema change.
+
+**Club chat moderation** is authorized by two **disjoint** rule branches —
+the author retracts their own message, a moderator removes someone else's —
+separated on `senderId == request.auth.uid` vs `!=` **before any document
+read**. Disjointness is load-bearing rather than stylistic: CEL absorbs
+errors through `||` (`<error> || true` **ALLOWS**), so overlapping branches
+let an erroring guard silently hand its decision to the other branch. Both
+branches pin `content` to the empty string, so **editing is not expressible
+by anyone** — removal and editing are separate authorities structurally, not
+by convention. Attribution is checked against the post-write document, never
+the diff, which is what catches a `deletedBy` planted at create and left
+unchanged (principle 6's `hasAny` hole). The moderator branch restates the
+communication-mute and email-verification sanctions the author branch
+carries, because an earlier version restated only account status and a
+muted moderator kept full reach over every non-owner message in every club
+where they held a role.
+
+The change that made this safe to ship is the **create** allowlist, not the
+delete rule. Without `clubMessageCreateShapeAllowed`, a plain member could
+write a message that was already a forged tombstone — "removed by the club
+owner", `deletedByRole: superAdmin`, `senderName` "YO Voice Support",
+`sentAt` in 2099 — and **no client path could ever repair it**: the update
+rule refuses already-deleted documents, `delete` is `if false`, and
+`adminDeleteMessage` short-circuits on `isDeleted`. This is the standing
+reason the rules and client halves could not ship apart. See
+[ADR-084](Decisions.md#adr-084-client-authored-writes-carry-an-exact-key-allowlist-and-identity-and-time-are-pinned-to-canonical-server-values-or-the-remaining-gap-is-stated)
+and
+[ADR-085](Decisions.md#adr-085-authorization-branches-in-a-rule-are-disjoint-by-construction-because-cels--absorbs-errors).
+
+**Accepted gaps, named in the rule's own comment**: a club-chat removal is
+recorded **nowhere** (the only trigger on that collection is
+`onAchievementClubMessageCreated`, an `onDocumentCreated`, so there is no
+`adminAuditLogs` entry — the client writes `deletedBy`/`deletedAt` from day
+one so an audit trigger has what it needs when one is written); no rate
+limit; no restore path; and **no rank ordering**, so a moderator can clear
+an admin's or a co-owner's messages.
+
+**Two pins deliberately not added**, because each would break sending today:
+club `senderName` cannot be pinned to the canonical profile while the client
+reads it from a club member row that nothing re-syncs on rename, and
+`sentAt` cannot be pinned to `request.time` while the client writes
+`Timestamp.now()`. Neither can now produce unrepairable state.
+
+**One measured fact worth reusing when writing caps**: rules
+`String.size()` counts **UTF-16 code units**, the same unit as Dart's
+`String.length`. A 500-character cap in a rule is therefore the same 500 the
+app's own composer counts, and emoji-heavy messages are not rejected by a
+rule counting a different unit than the UI the user is looking at.
 
 ## Current status
 

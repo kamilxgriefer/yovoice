@@ -1,3 +1,4 @@
+import 'package:firebase_core/firebase_core.dart' show FirebaseException;
 import 'package:cloud_functions/cloud_functions.dart';
 
 import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
@@ -166,11 +167,35 @@ class RoomVoiceEntryCoordinator {
   /// Server refusals carry product copy in `.message`; the
   /// "[firebase_functions/…]" and "Bad state: " prefixes are developer noise
   /// and must never reach a person.
+  ///
+  /// This is the delivery vehicle for EVERY failure on the entry path — the
+  /// room screen now announces the message on arrival, not only when the
+  /// control is tapped — so anything falling through to `toString()` is
+  /// shown to the user verbatim.
   static String _friendly(Object error, String fallback) {
     if (error is FirebaseFunctionsException) {
       final message = error.message?.trim();
       if (message != null && message.isNotEmpty) return message;
       return fallback;
+    }
+    // Ordered AFTER the callable branch on purpose: FirebaseFunctionsException
+    // IS a FirebaseException, and its `.message` carries real product copy
+    // while a raw Firestore one carries "[cloud_firestore/permission-denied]
+    // The caller does not have permission…". Map the code instead.
+    if (error is FirebaseException) {
+      return switch (error.code) {
+        'permission-denied' =>
+          'You do not have access to this room right now.',
+        'not-found' => 'This room no longer exists.',
+        'unavailable' || 'deadline-exceeded' || 'network-request-failed' =>
+          'You appear to be offline. Check your connection and try again.',
+        'resource-exhausted' => 'Voice is busy right now. Try again shortly.',
+        'unauthenticated' => 'Please sign in again to join this room.',
+        'aborted' || 'failed-precondition' =>
+          'The room changed while you were joining. Try again.',
+        'cancelled' => fallback,
+        _ => fallback,
+      };
     }
     if (error is StateError) {
       final message = error.message.trim();

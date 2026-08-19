@@ -725,6 +725,98 @@ pagination/fair-sampling design before raising the current cap; never silently
 publish a partial cohort. Removing an account/Club or transferring Club
 ownership deletes its grant server-side.
 
+### Pending release: the 2026-08-19/20 reachability wave
+
+`3d54bc3` → `b0f1062`. **Nothing in this wave has been deployed**, and **no
+production read was performed while writing this section** — the deployed
+state below is the last recorded reading (2026-08-19 for indexes), not a
+fresh one. Confirm with the DevOps and Release Engineer before treating any
+row as current.
+
+**This manifest is not final.** At the time of writing there were uncommitted
+working-tree changes to `firestore.rules` and `functions/rooms/participants.js`
+from a concurrent session (room voice teardown — Roadmap item 0p). Re-derive
+the rules check count and the Functions deploy list from `git log` at the
+moment of the release rather than from this section.
+
+What is waiting, and what each piece is:
+
+| Artifact | Change | Absence today |
+|---|---|---|
+| `firestore.indexes.json` | Two composites for the Moments discovery feed: `isPublished`+`likeCount` desc and `isPublished`+`createdAt` desc (`cef05e6`). The repo file now holds **21 composites, 4 fieldOverrides**; the last production read, 2026-08-19, returned **19 and 4**, so the file is exactly these two ahead | The feed's queries throw `FAILED_PRECONDITION` on first run. The emulator does not require composite indexes, so no suite can catch this — same failure mode as `expirePremiumIdentity` |
+| Cloud Functions | `createContentReport` only (`2c086c7`): email-verification gate relaxed, `roomMessage`/`clubMessage` targets added, access checked before existence, optional bounded `note` | Reporting stays verified-only, room/club messages stay unreportable, and the endpoint stays an existence oracle |
+| `firestore.rules` | 403 → 446 → **466**: club chat moderation with disjoint branches and a create allowlist (`b3c27fd`), room chat write validation and the `clubs` `list` rule (`01c0ab2`) | Club owners cannot remove abusive messages; room chat stays forgeable; club discovery stays denied for everyone |
+| Hosting (Flutter web) | Room voice liveness (`b0f1062`), reporting UI (`9f3ce7f`), Moments as a primary destination (`cef05e6`), club moderation UI (`b3c27fd`/`f817b41`), sign-out cleanup (`3d54bc3`), club-discovery rail states (`155ad61`) | Voice does not work in any Community room or lounge; nothing is reportable; a signed-out account stays online to its friends |
+
+**Release blockers — these are gates, not cautions.**
+
+1. **ADR-059 blocks the Hosting release on two of these changes.** The club
+   moderation UI (`f817b41`) and the Moments destination and feed
+   (`cef05e6`) have **never been rendered** — both sessions' visual and
+   accessibility reviews died on a session limit. ADR-059 is explicit that a
+   UI change is reviewed before it is deployed, on the same terms as a rules
+   change, and it exists because this project shipped an unreviewed screen
+   once already. Room voice is the exception: 45 screenshots were rendered
+   with the real typeface at 320/390/768/1100/1440 and 200% text and
+   inspected.
+2. **Room voice has had no round trip of any kind.** Rules were read, not
+   executed; `fake_cloud_firestore` evaluates no rules, so every "the client
+   may start voice" test proves the client's mirror of the rule and not the
+   server's answer. Before or immediately after the Hosting release,
+   `startRoomVoice`'s three-key liveness update must be exercised against the
+   emulator or a real account. No real LiveKit connection, device run,
+   reconnect or device-routing check has happened.
+3. **Confirm the deployed client's payloads against the two new create
+   allowlists before deploying rules.** The room-message rule now demands an
+   exact six-key document and the club-message rule an exact shape. If the
+   client currently in production writes anything else, the rules deploy
+   turns working sends into permission denials. This is the one ordering
+   decision in this wave that can break a live surface.
+
+**Order.** ADR-055's rule still applies — deploy the thing whose absence is a
+silent no-op before the thing whose absence is a denial:
+
+1. **Indexes first.** They build asynchronously and the discovery feed's
+   first query fails until they are READY. Watch Console → Firestore →
+   Indexes and wait for Enabled.
+2. **`createContentReport`.** Its absence is a no-op for every existing
+   client, and the new client cannot report anything until it is live.
+   Verify with `firebase functions:list`, not the deploy log. The
+   idempotency-hash change is backward compatible **by construction** — new
+   fields fold into the ledger hash only when the target carries them, pinned
+   by a regression test that recomputes the legacy hash
+   ([ADR-087](Decisions.md#adr-087-an-idempotency-key-derived-from-a-request-payload-is-a-compatibility-surface--new-fields-fold-in-only-when-the-target-carries-them)) —
+   so reports already filed in production keep replaying rather than
+   answering `already-exists`.
+3. **Blocker 3 above**, then **`firestore.rules`** against a freshly started
+   emulator (466 checks), then deploy. Verify by fetching the released
+   ruleset through the Firebase Rules API and diffing it byte-for-byte
+   against `firestore.rules` at HEAD — the standard set on 2026-08-17, which
+   is stronger than a version-history timestamp. The `clubs` `list` widening
+   is safe in either order (it is currently `if false`, so no client can be
+   relying on it); the two create allowlists are the restrictive half.
+4. **Hosting**, once blocker 1 is cleared. Fingerprint the served bytes
+   rather than trusting the deploy output: `curl -s
+   https://app.yovoice.app/main.dart.js` and grep for a symbol that exists
+   only in this build.
+
+**Verification that will still be outstanding after a clean deploy**, and
+should be stated as such rather than assumed:
+
+- Presence actually flipping when a user signs out — needs two real accounts
+  on two devices (`3d54bc3`).
+- Voice actually connecting in a Community room, and a room's liveness
+  transition being accepted by the deployed rules (`b0f1062`).
+- The Moments empty state at any width — the state most users on a
+  pre-launch product will hit (`cef05e6`).
+- The Moderation Center's handling of a v2 report. It is known to render one
+  badly today: `targetType` parses to null so the queue title is blank, and
+  `reportedUserId` defaults to empty so the detail pane says "This account no
+  longer exists". That is a **client-side defect this wave introduces the
+  data for**, and it lands the moment `createContentReport` is deployed and a
+  v2 report is filed. See Roadmap item 0o — it is a reasonable argument for
+  fixing the queue in the same release.
+
 ---
 
 ## Historical: the 2026-08-11 selective manifest (SUPERSEDED)

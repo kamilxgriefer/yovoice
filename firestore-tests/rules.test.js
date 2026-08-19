@@ -11826,6 +11826,267 @@ async function main() {
     }
   }
 
+  // === VOICE START vs. A ROOM WHOSE TEARDOWN HAS ALREADY COMMITTED =====
+  //
+  // executeDeleteRoom() sets `deletionInProgress: true` in the transaction
+  // that closes the room; LiveKit endRoom, the active-session mirrors, the
+  // Storage media sweep and the recursive document delete all happen AFTER
+  // that transaction commits. Everything else in this ruleset that moves a
+  // room reads the flag — roomActivityTouchAllowed, the member-leave
+  // transition, hostRoomUpdateAllowed's metadata branch. The two START
+  // branches did not, and that was invisible only because nothing in the app
+  // ever set `isLive: true` on an ordinary room. The client now performs
+  // that transition, so the omission became reachable.
+  //
+  // EVERY FIXTURE HERE IS A LEGACY DOCUMENT, on purpose. 24 of the 45
+  // production rooms carry neither `roomType` nor `experience`, and none
+  // carries `deletionInProgress` at all — so these rooms omit those fields
+  // rather than setting them to false. That is the shape the existing lounge
+  // and room fixtures in this file never exercise, and it is exactly the
+  // shape a guard written as a bare field read would break: a bare read of a
+  // missing field RAISES, and a raising rule DENIES, which would have locked
+  // every legacy room out of voice while pretending to protect deleting
+  // ones. The final PROOF case builds that variant and measures it.
+  const LEGACY_ROOM = {
+    hostId: "vsd-host-uid",
+    hostName: "Legacy Host",
+    name: "Legacy room",
+    visibility: "public",
+    isLive: false,
+    participantCount: 0,
+    memberCount: 1,
+    maxParticipants: null,
+    // Deliberately absent: roomType, experience, status, deletionInProgress.
+  };
+
+  // The exact write room_service.dart's startRoomVoice() performs — the key
+  // set both start branches allowlist, and nothing else. `endedAt` deletes a
+  // field these documents do not have, so it contributes no affected key.
+  const startVoice = (db, roomId) =>
+    updateDoc(doc(db, `rooms/${roomId}`), {
+      isLive: true,
+      updatedAt: serverTimestamp(),
+      endedAt: deleteField(),
+    });
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await Promise.all([
+      setDoc(doc(db, "users/vsd-host-uid"), {
+        displayName: "Legacy Host",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/vsd-member-uid"), {
+        displayName: "Legacy Member",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/vsd-club-uid"), {
+        displayName: "Legacy Club Member",
+        banned: false,
+      }),
+      setDoc(doc(db, "clubs/vsd-club"), {
+        ownerId: "vsd-host-uid",
+        name: "Legacy Club",
+        status: "active",
+      }),
+      setDoc(doc(db, "clubs/vsd-club/members/vsd-club-uid"), {
+        userId: "vsd-club-uid",
+        role: "member",
+        displayName: "Legacy Club Member",
+      }),
+    ]);
+    await Promise.all([
+      setDoc(doc(db, "rooms/vsd-deleting-member"), {
+        ...LEGACY_ROOM,
+        membersCanStartVoice: true,
+        deletionInProgress: true,
+      }),
+      setDoc(doc(db, "rooms/vsd-live-member"), {
+        ...LEGACY_ROOM,
+        membersCanStartVoice: true,
+      }),
+      setDoc(doc(db, "rooms/vsd-deleting-host"), {
+        ...LEGACY_ROOM,
+        deletionInProgress: true,
+      }),
+      setDoc(doc(db, "rooms/vsd-live-host"), { ...LEGACY_ROOM }),
+      setDoc(doc(db, "rooms/vsd-deleting-lounge"), {
+        ...LEGACY_ROOM,
+        visibility: "private",
+        roomKind: "clubLounge",
+        clubId: "vsd-club",
+        deletionInProgress: true,
+      }),
+      setDoc(doc(db, "rooms/vsd-live-lounge"), {
+        ...LEGACY_ROOM,
+        visibility: "private",
+        roomKind: "clubLounge",
+        clubId: "vsd-club",
+      }),
+    ]);
+    await Promise.all([
+      setDoc(doc(db, "rooms/vsd-deleting-member/roomMembers/vsd-member-uid"), {
+        userId: "vsd-member-uid",
+        role: "member",
+        displayName: "Legacy Member",
+      }),
+      setDoc(doc(db, "rooms/vsd-live-member/roomMembers/vsd-member-uid"), {
+        userId: "vsd-member-uid",
+        role: "member",
+        displayName: "Legacy Member",
+      }),
+    ]);
+  });
+
+  const legacyRoomMember = testEnv.authenticatedContext("vsd-member-uid", {
+    email_verified: true,
+  });
+  const legacyRoomHost = testEnv.authenticatedContext("vsd-host-uid", {
+    email_verified: true,
+  });
+  const legacyClubMember = testEnv.authenticatedContext("vsd-club-uid", {
+    email_verified: true,
+  });
+
+  await check(
+    "SECURITY VOICE START: a roomMembers holder cannot reanimate a LEGACY " +
+      "room whose deletion already committed — and the identical legacy " +
+      "document without the flag still starts, so the deny is the flag and " +
+      "not the missing roomType/experience/status",
+    async () => {
+      const db = legacyRoomMember.firestore();
+      await assertFails(startVoice(db, "vsd-deleting-member"));
+      await assertSucceeds(startVoice(db, "vsd-live-member"));
+    },
+  );
+
+  await check(
+    "SECURITY VOICE START: the HOST cannot reanimate a deleting room " +
+      "either — hostRoomUpdateAllowed()'s start branch now reads the flag " +
+      "its own metadata branch has always read",
+    async () => {
+      const db = legacyRoomHost.firestore();
+      // The metadata branch already refused this; the two branches now agree
+      // instead of the same host being denied a rename and allowed a restart.
+      await assertFails(
+        updateDoc(doc(db, "rooms/vsd-deleting-host"), {
+          name: "Renamed mid-teardown",
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(startVoice(db, "vsd-deleting-host"));
+      await assertSucceeds(startVoice(db, "vsd-live-host"));
+    },
+  );
+
+  await check(
+    "SECURITY VOICE START: a Club lounge being torn down refuses its own " +
+      "active canonical member's start, and an identical lounge without " +
+      "the flag still starts",
+    async () => {
+      const db = legacyClubMember.firestore();
+      await assertFails(startVoice(db, "vsd-deleting-lounge"));
+      await assertSucceeds(startVoice(db, "vsd-live-lounge"));
+    },
+  );
+
+  // The `.get(field, default)` form is not stylistic. This builds the bare
+  // read a reviewer might "simplify" it into and measures what it does to a
+  // room that predates the field — the majority shape in production.
+  async function legacyVoiceStartUnderVariantRules(projectId, edits) {
+    const source = fs.readFileSync(RULES_PATH, "utf8");
+    let variant = source;
+    for (const [find, replaceWith] of edits) {
+      if (!variant.includes(find)) {
+        throw new Error(
+          `rule text drifted — variant snippet not found:\n${find}`,
+        );
+      }
+      variant = variant.replace(find, replaceWith);
+    }
+    if (variant === source) {
+      throw new Error(
+        "rule text drifted — the variant transform matched nothing",
+      );
+    }
+    const variantEnv = await initializeTestEnvironment({
+      projectId,
+      firestore: { rules: variant, host: EMULATOR_HOST, port: EMULATOR_PORT },
+    });
+    try {
+      await variantEnv.clearFirestore();
+      await variantEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, "users/vsd-probe-uid"), {
+          displayName: "Legacy probe",
+          banned: false,
+        });
+        await setDoc(doc(db, "rooms/vsd-probe-room"), {
+          ...LEGACY_ROOM,
+          hostId: "vsd-probe-host",
+          membersCanStartVoice: true,
+        });
+        await setDoc(
+          doc(db, "rooms/vsd-probe-room/roomMembers/vsd-probe-uid"),
+          { userId: "vsd-probe-uid", role: "member" },
+        );
+      });
+      const db = variantEnv
+        .authenticatedContext("vsd-probe-uid", { email_verified: true })
+        .firestore();
+      return await startVoice(db, "vsd-probe-room");
+    } finally {
+      await variantEnv.cleanup();
+    }
+  }
+
+  const VOICE_START_GUARD =
+    "      return resource.data.get('status', 'active') == 'active' &&\n" +
+    "          resource.data.get('deletionInProgress', false) != true &&\n" +
+    "          resource.data.get('isLive', false) == false &&\n" +
+    "          request.resource.data.isLive == true &&\n" +
+    "          request.resource.data.updatedAt == request.time &&\n" +
+    "          changed.hasOnly(['isLive', 'endedAt', 'updatedAt']) &&";
+
+  await check(
+    "PROOF: the same legacy room starts voice under the shipped rules — " +
+      "the `.get(…, false)` default is what keeps a document that predates " +
+      "`deletionInProgress` startable",
+    async () => {
+      await assertSucceeds(
+        legacyVoiceStartUnderVariantRules("demo-yovoice-vsd-a", [
+          // A no-op edit elsewhere: this run must differ from the source only
+          // so the drift guard above stays honest, while the guard under test
+          // is left exactly as shipped.
+          [
+            "    function roomVoiceStartAllowed(roomId) {",
+            "    // variant marker (behaviourally identical)\n" +
+              "    function roomVoiceStartAllowed(roomId) {",
+          ],
+        ]),
+      );
+    },
+  );
+
+  await check(
+    "PROOF: rewriting that guard as a bare `resource.data.deletionInProgress " +
+      "!= true` DENIES the very same legacy room — the bare form fails on " +
+      "the majority production shape, which is why it is not used",
+    async () => {
+      await assertFails(
+        legacyVoiceStartUnderVariantRules("demo-yovoice-vsd-b", [
+          [
+            VOICE_START_GUARD,
+            VOICE_START_GUARD.replace(
+              "resource.data.get('deletionInProgress', false) != true",
+              "resource.data.deletionInProgress != true",
+            ),
+          ],
+        ]),
+      );
+    },
+  );
+
   const TOP_LEVEL_ROOM_MEMBERS =
     "    match /{path=**}/roomMembers/{memberId} {\n" +
     "      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;\n" +

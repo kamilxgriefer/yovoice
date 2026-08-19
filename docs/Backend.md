@@ -25,6 +25,12 @@ permissions are computed server-side, not trusted from the request. See
 [Architecture.md](Architecture.md#data-flow-a-concrete-example-joining-a-broadcast-room)
 for how this fits into the full join-a-room flow, start to finish:
 
+0. **Requires the room to say status active and `isLive` true.** The
+   function performs no transition of its own — making the room live is the
+   *caller's* job, and until `b0f1062` no reachable caller did it for an
+   ordinary Community room, so this refusal was the product's actual voice
+   behaviour (45 rooms, 3 live in production). See
+   [ADR-088](Decisions.md#adr-088-entering-a-room-performs-the-liveness-transition-through-one-ordered-coordinator-that-mirrors-the-deployed-rule).
 1. Looks up the room (`rooms/{roomId}`) and the caller's own participant
    doc (`rooms/{roomId}/participants/{uid}`) — 404s if either is missing.
 2. Derives `canPublish` from real state: `(isHost || isSpeaker) &&
@@ -66,7 +72,7 @@ badge metadata.
   `socialPresence/{uid}` documents from current state, heals extra fields and
   removes both for inactive/deleted accounts. The production backfill reuses
   the same pure derivation in bounded, cursor-resumable pages; see the strict
-  rollout sequence in [DEPLOYMENT.md](DEPLOYMENT.md#private-profile-projection-cutover-strict-order).
+  rollout sequence in [DEPLOYMENT.md](DEPLOYMENT.md#private-profile-projection-cutover-strict-order--executed-2026-08-16).
 - `onAuthUserDeleted` — Auth deletion trigger that retires public identity,
   badges/directory projections and marks any lingering private account record
   inactive, preventing an Auth orphan from being republished.
@@ -216,6 +222,45 @@ Missing values preserve the legacy Everyone behavior; malformed values return
 Creator Analytics has no backend endpoint: it is a clearly labelled snapshot
 computed from the already loaded canonical profile/room/Club/Moment streams.
 
+## Content reporting
+
+`createContentReport` (`functions/moments/integrity.js`) is the callable
+behind every in-product report of a piece of content. **It has been deployed
+and ACTIVE since the 2026-08-16 cutover; until `9f3ce7f` no Dart file called
+it** — a deployed function nothing invokes looks identical, in every console,
+to a working one (ADR-055's lesson, in its second instance).
+
+Target types: `directMessage`, `voiceMoment`, `voiceMomentComment`, and — in
+source at `2c086c7`, **not yet redeployed** — `roomMessage` and `clubMessage`.
+The two new names are exactly the ones `admin/messages.js` already uses for
+the callable a moderator uses to *remove* a message, so a report and the
+action taken on it name the same thing with the same ids.
+
+Three contract properties worth knowing before changing it:
+
+- **It runs for any active account, verified or not.** Reporting is a safety
+  action and follows the blocking precedent, matching the policy written into
+  `firestore.rules`. The relaxation carries a comment ending "Do not restore
+  the default here" —
+  [ADR-086](Decisions.md#adr-086-a-safety-action-is-never-gated-on-email-verification-and-every-moderation-endpoint-checks-access-before-existence).
+- **Access is checked before existence**, for every target type. Answering
+  `not-found` first made the endpoint an existence oracle for private room,
+  club, channel and message ids.
+- **Deduplication rides the operation ledger, keyed on the target rather than
+  the attempt**, and the client derives its `requestId` the same way. New
+  fields fold into the ledger's `inputHash` **only when the target carries
+  them**, because folding them in unconditionally re-keys every report
+  already filed in production —
+  [ADR-087](Decisions.md#adr-087-an-idempotency-key-derived-from-a-request-payload-is-a-compatibility-surface--new-fields-fold-in-only-when-the-target-carries-them).
+  The cost, inherited from the previous deterministic-id path: a report
+  cannot be re-filed after a moderator dismisses it.
+
+`reason` is **not** validated server-side here — only the client-direct v1
+`reports` create rule constrains it to eight values — so two report schemas
+now coexist in `reports/` and the Moderation Center does not yet render the
+v2 shape correctly. See [Bugs.md](Bugs.md#moderation--safety) and Roadmap
+item 0o.
+
 ## Admin
 
 **Deployment status (verified against `firebase functions:list`,
@@ -301,5 +346,5 @@ firebase deploy --only functions --project yovoice-ec54a
 
 No CI/CD path deploys functions automatically, and
 `functions/package.json`'s own `npm run deploy` only deploys one function,
-not all of them — see [DEPLOYMENT.md](DEPLOYMENT.md#deploying-functions-manual)
+not all of them — see [DEPLOYMENT.md](DEPLOYMENT.md#cloud-functions-manual)
 before assuming otherwise.

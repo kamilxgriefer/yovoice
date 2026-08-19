@@ -57,6 +57,7 @@ class VoiceRoom {
     required this.updatedAt,
     this.experience = 'community',
     this.clubId,
+    this.storedClubId,
     this.targetAudience = TargetAudience.everyone,
     this.topicTags = const <String>[],
     this.roomGuidelines = '',
@@ -114,7 +115,24 @@ class VoiceRoom {
   /// Set on club-lounge rooms (written by ensureClubLounge). Older lounge
   /// documents may predate the field, so fromFirestore falls back to the
   /// `club_lounge_` id prefix those rooms have always carried.
+  ///
+  /// PRESENTATION AND ROUTING ONLY. This is the forgiving value — it decides
+  /// whether the room renders club identity, which club overview the banner
+  /// opens, and whether leaving runs lounge bookkeeping. It must NOT be used
+  /// to decide authority: see [storedClubId].
   final String? clubId;
+
+  /// The `clubId` FIELD exactly as the document stores it — null when the
+  /// document has no such field, even for a `club_lounge_`-prefixed id.
+  ///
+  /// AUTHORITY READS THIS ONE. `roomVoiceStartAllowed()` in firestore.rules
+  /// gates its Club branch on `resource.data.get('clubId','')` being
+  /// non-empty, and `isActiveClubRoomMember()` resolves membership through
+  /// the same field. A lounge that carries only the id prefix therefore
+  /// cannot satisfy that branch at all, so resolving Club start authority
+  /// from [clubId] would offer a control the server refuses — which is the
+  /// exact defect class this whole path exists to remove.
+  final String? storedClubId;
 
   bool get isClubRoom => clubId != null;
 
@@ -164,6 +182,7 @@ class VoiceRoom {
       updatedAt: updatedAt,
       experience: experience,
       clubId: clubId,
+      storedClubId: storedClubId,
       targetAudience: targetAudience,
       topicTags: topicTags,
       roomGuidelines: roomGuidelines,
@@ -222,11 +241,16 @@ class VoiceRoom {
       newcomerFriendly: data['newcomerFriendly'] as bool? ?? false,
       showFormat: ShowFormat.fromValue(data['showFormat']),
       deletionInProgress: data['deletionInProgress'] as bool? ?? false,
+      // The forgiving value, for identity and routing.
       clubId:
           data['clubId'] as String? ??
           (document.id.startsWith('club_lounge_')
               ? document.id.substring('club_lounge_'.length)
               : null),
+      // The literal field, for authority. Deliberately NOT prefix-derived.
+      storedClubId: (data['clubId'] as String?)?.trim().isNotEmpty == true
+          ? (data['clubId'] as String).trim()
+          : null,
     );
   }
 

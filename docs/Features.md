@@ -22,6 +22,22 @@ languages and interaction patterns:
   speaker invitations. Same clickable-counters/participant-sheet pattern.
   Owner moderation: mute, move-to-audience, and remove.
 
+**Going live** (source `b0f1062`, **not yet released** — this is the state of
+the repository, not of production): `createLiveKitToken` refuses a token
+unless the room says status active and `isLive` true, and **entering a room
+performs that transition** for anyone the deployed rules would accept, through
+one coordinator running liveness → roster → token. There is no lobby and no
+second tap: the room board labels a dormant room's button "Start", and the
+screen renders a stage, a live status line and a microphone the moment it
+opens. Exposure is host-opt-in — `membersCanStartVoice` defaults false, so
+only the host starts an ordinary room; Club and Family lounges are private and
+auto-started. Someone without authority sees a "Not live" state that explains
+itself on tap, with chat and People intact. Legacy room documents are
+tolerated by design (most production rooms predate these fields), so every
+read defaults rather than raising. **Until this ships, voice does not work in
+any Community room or lounge**, and did not for the product's life — see
+[ADR-088](Decisions.md#adr-088-entering-a-room-performs-the-liveness-transition-through-one-ordered-coordinator-that-mirrors-the-deployed-rule).
+
 Both: host/speaker/listener roles, live participant management, real-time
 audio via LiveKit (see [Backend.md](Backend.md) for token minting).
 Publish permission (`canPublish`) is computed server-side from the
@@ -64,6 +80,19 @@ Creation is one atomic seven-document batch (Club, owner member, user
 projection, three default channels and lounge room); rules validate the new
 root with `getAfter()` so the dependent writes see the same commit.
 
+**Club chat moderation** (source `b3c27fd`/`f817b41`, **not yet released**):
+a club owner, admin or moderator can remove another member's message from
+club chat; an author can retract their own. Removal freezes content to empty
+and records `deletedBy`/`deletedAt`; **editing is not available to anyone**,
+by construction rather than by convention. The action is offered only where it
+would succeed — a moderator who is communication-muted or whose email is
+unverified is not shown it, matching what the rules would answer, and the
+club owner's own messages are refused locally with product copy rather than a
+round-trip. Removals are **not** audit-logged today, there is no rate limit,
+no restore path, and no rank ordering (a moderator can clear a co-owner's
+messages) — all four named as accepted gaps. Not yet rendered and reviewed;
+see [Bugs.md](Bugs.md#moderation--safety).
+
 ## Friends & Social
 
 `lib/features/friends/`: friend requests (must exist before a friendship
@@ -91,6 +120,23 @@ conversations as `Your recent chats`. Global Chat is retired from the app
 UI; its existing backend data remains compatibility-only for older clients
 and historical moderation records.
 
+**Reporting content** (source `9f3ce7f`/`2c086c7`, **not yet released**):
+a message, Voice Moment or comment can be reported from every surface where
+that content appears — DM chat, both Moments feeds and the comment thread —
+through `createContentReport`. Reporting is never offered on your own
+content. A reason picker (spam, harassment, hate, sexual, violence,
+self-harm, impersonation, other) replaces what used to be a hardcoded
+`harassment` label, with self-harm drawn differently so a distressed reporter
+finds it without reading eight rows; there is no free text and no
+confirmation step, deliberately. Failures say why: nine callable status codes
+map to nine distinct sentences, and the 30-second cooldown is told apart from
+the 20-per-day cap through the reporter's own `reportLimits` document. It is
+available to **any active account**, verified or not, because reporting is a
+safety action. **Until this ships, no message anywhere in the product can be
+reported.** Room and club message reports can be triaged but not yet actioned
+by a moderator, and the Moderation Center does not yet render them correctly
+— see [Bugs.md](Bugs.md#moderation--safety) and Roadmap item 0o.
+
 ## Voice Moments
 
 Short (≤60s) recorded audio posts (`lib/features/moments/`): likes,
@@ -99,6 +145,17 @@ comments including voice replies, a public feed
 (`MomentService.watchMyMoments`, published + drafts) used by Creator
 Studio. Like/comment counters are transactionally validated against the
 actual `likes` subcollection — not client-settable to an arbitrary value.
+
+**Moments is a primary destination** (source `cef05e6`, **not yet released
+and not yet rendered**): it sits directly above Discover in the desktop rail
+and takes a slot in the mobile dock, which displaced Friends from the
+five-slot dock — Friends keeps its desktop rail entry, its More entry, its
+screen and its state. The screen behind it is a global discovery feed showing
+Moments from every user rather than only people you follow: a bounded popular
+pool weighted by engagement, shuffled under a held seed so paging stays
+stable, with authors spaced apart. Ranking happens client-side because
+Firestore can neither order by a computed sum nor randomise server-side. See
+[ADR-089](Decisions.md#adr-089-moments-is-a-primary-destination-and-its-discovery-feed-ranks-client-side-because-firestore-can-neither-order-by-a-computed-sum-nor-randomise).
 
 **Recording platform support** (2026-08-17): native and Chromium-based
 browsers record; **Firefox cannot** and shows an explicit unavailable panel

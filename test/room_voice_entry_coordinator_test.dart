@@ -1,4 +1,5 @@
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
@@ -236,6 +237,82 @@ void main() {
       expect(entry.outcome, RoomVoiceEntryOutcome.live);
     },
   );
+
+  test(
+    'a raw Firestore refusal is translated, never shown verbatim — this is '
+    'the delivery vehicle for every failure on the entry path',
+    () async {
+      final harness = _Harness(
+        joinError: FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'permission-denied',
+          message:
+              'The caller does not have permission to execute the specified '
+              'operation.',
+        ),
+      );
+
+      final entry = await harness.coordinator.enter(_room());
+
+      expect(entry.outcome, RoomVoiceEntryOutcome.failed);
+      expect(entry.message, 'You do not have access to this room right now.');
+      expect(entry.message, isNot(contains('cloud_firestore')));
+      expect(entry.message, isNot(contains('permission-denied')));
+    },
+  );
+
+  test('an offline refusal says so in words a person can act on', () async {
+    final harness = _Harness(
+      startError: FirebaseException(
+        plugin: 'cloud_firestore',
+        code: 'unavailable',
+        message: 'Failed to get document because the client is offline.',
+      ),
+    );
+
+    final entry = await harness.coordinator.enter(_room());
+
+    expect(
+      entry.message,
+      'You appear to be offline. Check your connection and try again.',
+    );
+    expect(entry.canStartVoice, isTrue);
+  });
+
+  test(
+    'a callable refusal still wins over the generic Firestore mapping — '
+    'FirebaseFunctionsException IS a FirebaseException, so order matters',
+    () async {
+      final harness = _Harness(
+        startError: _ServerRefusal('This room is not currently live.'),
+      );
+
+      final entry = await harness.coordinator.enter(_room());
+
+      expect(entry.message, 'This room is not currently live.');
+    },
+  );
+
+  test('a cleared message does not survive into the next state', () {
+    final failed = RoomVoiceEntry(
+      outcome: RoomVoiceEntryOutcome.failed,
+      room: _room(),
+      authority: RoomVoiceStartAuthority.host,
+      message: 'This room is full.',
+    );
+
+    final recovered = failed.copyWith(
+      outcome: RoomVoiceEntryOutcome.dormant,
+      message: null,
+    );
+
+    expect(recovered.message, isNull);
+    expect(
+      failed.copyWith(outcome: RoomVoiceEntryOutcome.dormant).message,
+      'This room is full.',
+      reason: 'omitting the argument still means "leave it alone"',
+    );
+  });
 
   test('every non-live outcome speaks product copy, never an error code', () {
     const refusal = 'This room is not currently live.';

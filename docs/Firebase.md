@@ -176,14 +176,19 @@ document, never trust the request — are collected in
 
 ## Composite indexes
 
-`firestore.indexes.json` holds **19** composite indexes and **4**
+`firestore.indexes.json` holds **21** composite indexes and **4**
 `fieldOverrides` (14 and 1 before the 2026-08-16 deploy; the fourth
-override, `invites.inviteeId`, arrived with `84d1feb`; the four newest
-composites with `9b54c22` and `4cad282`). A live reading on **2026-08-19**
-(`firebase firestore:indexes --project yovoice-ec54a`) returned exactly
-the same **19 and 4** — file and production are currently in sync.
-The file is deliberately kept a **superset** of production, so an index
-deploy can never be the thing that removes one.
+override, `invites.inviteeId`, arrived with `84d1feb`; four composites with
+`9b54c22` and `4cad282`, and the two newest with `cef05e6` —
+`isPublished`+`likeCount` desc and `isPublished`+`createdAt` desc, for the
+Moments discovery feed). A live reading on **2026-08-19**
+(`firebase firestore:indexes --project yovoice-ec54a`) returned **19 and
+4** — so as of 2026-08-20 the file is **exactly two composites ahead of
+production**, and the Moments feed's queries will throw
+`FAILED_PRECONDITION` until they are deployed and Enabled. The file is
+deliberately kept a **superset** of production, so an index deploy can never
+be the thing that removes one; being ahead is expected, and the thing to
+check is whether a *feature* depends on the gap.
 
 The `fieldOverrides` exist to enable `COLLECTION_GROUP` scope on
 `rooms.roomId`, `participants.userId` and `roomMembers.userId`.
@@ -347,7 +352,9 @@ cd firestore-tests && npm install && npm test
 ```
 
 Full details in [`firestore-tests/README.md`](../firestore-tests/README.md)
-and [TESTING.md](TESTING.md) — **396** checks as of 2026-08-18, plus 46
+and [TESTING.md](TESTING.md) — **466** checks as of 2026-08-20 (396 on
+2026-08-18 → 403 → 446 with club chat moderation, `b3c27fd` → 466 with room
+chat write validation and the `clubs` `list` rule, `01c0ab2`), plus 52
 Storage and 11 family-media checks;
 regression + attack-scenario coverage. Always run against a
 freshly-started emulator before trusting a "green" result; see
@@ -377,7 +384,8 @@ tree described it as before 2026-08-16.
   collections. Only Admin SDK Functions access them.
 
 No new composite index is required. The Rules emulator command in this file
-passes 396 checks, including read/create/update/delete denial for each billing
+passed 396 checks when this was written (2026-08-18) — the suite is **466** as
+of 2026-08-20 — including read/create/update/delete denial for each billing
 collection.
 
 ## Profile visibility (source only; not deployed)

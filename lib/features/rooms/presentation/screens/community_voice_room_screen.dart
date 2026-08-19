@@ -155,24 +155,63 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     if (mounted) setState(() {});
   }
 
+  /// Whether an AUTOMATIC audio action from this screen is legitimate.
+  ///
+  /// [VoiceCallService] is process-wide and a room screen stays MOUNTED
+  /// beneath a pushed route, so room A's liveness listener would otherwise
+  /// reach into the session the user is having in room B — `join()`
+  /// disconnects whatever is connected, so A going live yanked B's audio, and
+  /// A going dormant hung B up. A user-initiated start may still take the
+  /// session over: that is intent. A background document change is not.
+  bool get _mayAutoConnectAudio {
+    final connected = _voice.roomId;
+    if (connected == widget.room.id) return true;
+    if (connected != null) return false;
+    // Nothing is connected: only the screen actually in front of the user
+    // may claim the session.
+    if (!mounted) return false;
+    return ModalRoute.of(context)?.isCurrent ?? true;
+  }
+
+  /// This screen may only cut audio it actually owns. Deliberately NOT
+  /// route-gated: a moderator ending the room has to reach the microphone
+  /// even while a sheet or profile preview sits on top.
+  bool get _ownsAudioSession => _voice.roomId == widget.room.id;
+
   /// The room document is the authority on liveness, and it moves while
   /// people are on this screen: a host can end voice, and a member with
   /// start authority can begin it. Following it means someone waiting in a
   /// dormant room is connected the moment it opens, instead of having to
   /// leave and come back.
   void _handleRoomState(VoiceRoom room) {
-    final live = room.isLive && room.isActive && !room.deletionInProgress;
+    // A closed, archived, suspended or half-deleted room is NOT "dormant" —
+    // dormant means "no session yet, one could start". Collapsing the two
+    // put a Start control on an ended room for anyone who never held a
+    // participant row, which snackbarred "This room has ended." and then
+    // restored the button on the next snapshot: the exact dead control this
+    // path exists to remove.
+    final gone = !room.isActive || room.deletionInProgress;
+    final live = room.isLive && !gone;
     final wasLive = _live;
     _live = live;
     if (mounted) {
       setState(() {
         _entry = _entry.copyWith(
           room: room,
-          outcome: live
+          outcome: gone
+              ? RoomVoiceEntryOutcome.unavailable
+              : live
               ? _entry.outcome == RoomVoiceEntryOutcome.started
                     ? RoomVoiceEntryOutcome.started
                     : RoomVoiceEntryOutcome.live
               : RoomVoiceEntryOutcome.dormant,
+          // Clear any stale failure copy: it described a moment that has
+          // passed, and it is what the control would explain on tap.
+          message: gone
+              ? (room.deletionInProgress
+                    ? 'This room is being deleted.'
+                    : 'This room has ended.')
+              : null,
         );
       });
     }
@@ -181,8 +220,8 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
       // Someone else opened the mics. Re-run the shared entry path rather
       // than connecting directly: this account may still have no participant
       // row, and the token function refuses a caller who has not joined.
-      unawaited(_enterVoice());
-    } else {
+      if (_mayAutoConnectAudio) unawaited(_enterVoice());
+    } else if (_ownsAudioSession) {
       unawaited(_voice.disconnect(playSound: false));
     }
   }
@@ -252,7 +291,10 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
       // microphone, but a (possibly stale) unmuted doc must never
       // auto-unmute someone — that raced the user's own Mute tap and
       // instantly reverted it (doc write lands after the local toggle).
-      if (participant.isMuted && !_voice.isMuted && _voice.isConnected) {
+      if (participant.isMuted &&
+          !_voice.isMuted &&
+          _voice.isConnected &&
+          _ownsAudioSession) {
         await _voice.setMuted(true);
       }
       return;
@@ -274,7 +316,9 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
       // Removed by the host, or the room ended: cut the audio and show
       // the ended state instead of ejecting with a snackbar.
       _leaving = true;
-      await _voice.disconnect();
+      // Only cut audio if it is THIS room's. Being removed from a room the
+      // user left open underneath must not hang up the room they are in.
+      if (_ownsAudioSession) await _voice.disconnect();
       if (!mounted) return;
       setState(() => _roomOver = true);
     }
@@ -521,7 +565,8 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
           micState: _voice.micState,
         );
 
-        if (_roomOver) {
+        if (_roomOver ||
+            _entry.outcome == RoomVoiceEntryOutcome.unavailable) {
           return Scaffold(
             backgroundColor: _background,
             body: SafeArea(child: RoomEndedState(roomName: widget.room.name)),

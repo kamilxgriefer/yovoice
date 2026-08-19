@@ -68,11 +68,21 @@ given a false-precision date.
 | [073](#adr-073-firebase-session-management-exposes-account-wide-revocation-never-a-fabricated-device-list) | Firebase session management exposes account-wide revocation, never a fabricated device list | Accepted in source | 2026-08-18 |
 | [074](#adr-074-offline-voice-moments-are-bounded-account-isolated-device-storage-not-a-server-database) | Offline Voice Moments are bounded, account-isolated device storage, not a server database | Accepted in source | 2026-08-18 |
 | [077](#adr-077-firestore-backed-storage-rules-require-an-explicit-production-iam-gate) | Firestore-backed Storage Rules require an explicit production IAM gate | Accepted and restored in production | 2026-08-18 |
+| [082](#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it) | A feature is not shipped until a user can reach it — reachability is part of done | Accepted | 2026-08-19 → 2026-08-20 |
+| [083](#adr-083-a-firestore-list-rule-is-evaluated-against-the-querys-constraints-so-every-clause-is-a-bare-field-access-and-the-clients-query-carries-the-equality) | A Firestore `list` rule is evaluated against the query's constraints; the client's query carries the equality | Accepted in source | 2026-08-19 |
+| [084](#adr-084-client-authored-writes-carry-an-exact-key-allowlist-and-identity-and-time-are-pinned-to-canonical-server-values-or-the-remaining-gap-is-stated) | Client-authored writes carry an exact key allowlist; identity and time are pinned or the gap is stated | Accepted in source | 2026-08-19 |
+| [085](#adr-085-authorization-branches-in-a-rule-are-disjoint-by-construction-because-cels--absorbs-errors) | Authorization branches in a rule are disjoint by construction, because CEL's `\|\|` absorbs errors | Accepted in source | 2026-08-19 |
+| [086](#adr-086-a-safety-action-is-never-gated-on-email-verification-and-every-moderation-endpoint-checks-access-before-existence) | A safety action is never gated on email verification; access is checked before existence | Accepted in source | 2026-08-20 |
+| [087](#adr-087-an-idempotency-key-derived-from-a-request-payload-is-a-compatibility-surface--new-fields-fold-in-only-when-the-target-carries-them) | An idempotency key derived from a payload is a compatibility surface — fields fold in only when present | Accepted in source | 2026-08-20 |
+| [088](#adr-088-entering-a-room-performs-the-liveness-transition-through-one-ordered-coordinator-that-mirrors-the-deployed-rule) | Entering a room performs the liveness transition, through one ordered coordinator | Accepted in source | 2026-08-20 |
+| [089](#adr-089-moments-is-a-primary-destination-and-its-discovery-feed-ranks-client-side-because-firestore-can-neither-order-by-a-computed-sum-nor-randomise) | Moments is a primary destination; its discovery feed ranks client-side | Accepted in source | 2026-08-19 |
+| [090](#adr-090-session-cleanup-converges-on-authservicesignout-because-a-write-the-rules-authorize-by-session-cannot-live-after-the-session-ends) | Session cleanup converges on `AuthService.signOut()` | Accepted in source | 2026-08-19 |
 
 > **The index is incomplete and has been for a while**: rows for ADR-020
-> through ADR-052 were never added, though the records themselves are all
-> present below. Noted rather than silently left, and not repaired here —
-> it is a mechanical pass of its own. The records are numbered
+> through ADR-052 were never added, and neither were ADR-062–065,
+> ADR-067–071, ADR-075–076 or ADR-078–081, though the records themselves
+> are all present below. Noted rather than silently left, and not repaired
+> here — it is a mechanical pass of its own. The records are numbered
 > chronologically, so browsing the headings works meanwhile.
 
 ---
@@ -3348,7 +3358,7 @@ The rules deploy this ADR required **has happened**; the restrictions are
 live. The 396/396 and 225/225 figures above are kept as the historical
 record of what this ADR shipped against — current counts are 521 Flutter
 tests across 55 files and 318 rules checks, tracked in
-[TESTING.md](TESTING.md#current-counts-2026-08-17).
+[TESTING.md](TESTING.md#current-counts).
 
 The unknown: the scheduled `expirePremiumIdentity` sweep this ADR relies
 on had **never once succeeded in production**. Its query needs a composite
@@ -4098,7 +4108,7 @@ absent deployment. That silently bypassed `assertNotBlocked`,
 `assertNotRestricted` and the rate limits across send, edit, delete,
 react, mark-read and typing — the entire server-authoritative guard set,
 disabled by a missing profile document. The 32 accounts with no public
-profile in [Roadmap 0a](Roadmap.md#0a-run-the-public-profile-backfill-32-accounts-currently-invisible)
+profile in [Roadmap 0a](Roadmap.md#0a-run-the-public-profile-backfill-verified-consistent-2026-08-18)
 are the population most likely to have been in exactly that state.
 
 The conversation root it then wrote is not merely non-canonical, it is
@@ -5031,3 +5041,537 @@ Any future source adapter whose identity collapses recurrences must derive
 *all* canonical content from the identity alone — the sources test now
 asserts fingerprint equality, not just id equality, for same-day activeDay
 events.
+
+## ADR-082: A feature is not shipped until a user can reach it — reachability is part of done, and a green suite cannot prove it
+
+**Status**: Accepted (2026-08-19 → 2026-08-20). The four instances below are
+fixed in source; none is verified in production.
+
+**Context.** Within one wave, four separate features were found to exist in
+source, pass their tests, and — where a backend was involved — be deployed
+and active, while being unusable by any user:
+
+1. **Voice never worked in any Community room or lounge** (`b0f1062`).
+   `createLiveKitToken` refuses a token unless the room says status active
+   and `isLive` true; performing that transition is the *caller's* job, and
+   only `enterClubLounge` ever did it — reachable in practice from the Club
+   overview alone, because `HomeScreen` is not mounted anywhere in the
+   running app (`main_shell` holds it at `_screens[0]`, but `_slotChildren`
+   special-cases index 0 to `MobileHome`/`DesktopHome` and never reads it).
+   `RoomService.startCommunityVoice` had **zero callers**. Nine call sites
+   push `RoomEntryScreen`, whose own comment says callers joined beforehand,
+   and the room screen then asks for a token immediately. Production agreed:
+   **45 rooms, 3 live**.
+2. **Club chat moderation had never worked** (`b3c27fd`). The client
+   authorised moderator, admin and owner; the rule was author-only; and the
+   UI never offered the action at all, wiring `onLongPress` solely to the
+   viewer's own messages. Three layers, three different beliefs.
+3. **No message anywhere in the product could be reported** (`9f3ce7f`).
+   `createContentReport` was deployed and ACTIVE and already accepted
+   `directMessage`, `voiceMoment` and `voiceMomentComment`. No Dart file
+   called it. The only report action in the product was on a profile, with
+   `reason` hardcoded to `harassment`.
+4. **Home's "Discover clubs" rail was denied for everyone** (`01c0ab2`,
+   `155ad61`), including a club owner listing their own club, because
+   `clubs` carried `allow list: if false` — and the denial was swallowed by
+   `snapshot.data ?? []` with no `hasError`, so a permission error rendered
+   as an empty rail whose heading vanished with it. It also lives in the
+   unmounted `HomeScreen`, so it was broken twice over, independently.
+
+**Decision.** Reachability is part of the definition of done, and is stated
+explicitly rather than assumed. Before a feature is called complete:
+
+- **Name the entry point in the *mounted* composition.** A file that exists
+  is not a screen a user can open. `HomeScreen` is the standing
+  counterexample in this repo — grep for the widget in the composition the
+  shell actually builds, not for the class.
+- **Name the caller of every required state transition.** If a server
+  precondition exists (`isLive`, a composite index, a verified email, a role
+  claim), the code that satisfies it is identified by name, or the feature is
+  not wired.
+- **Assert on the payload the client actually sends.** A rules test written
+  from the rule's own text proves the rule is self-consistent, not that the
+  shipped client can satisfy it.
+- **Where none of that can be proved, label it UNVERIFIED** rather than
+  letting a green suite imply it.
+
+**Reasoning.** Four in one wave is a mechanism, not a run of bad luck, and
+the mechanism is that every verification layer this project owns validates a
+layer against a *model* of its neighbour rather than against the seam:
+
+- The **emulator does not enforce composite indexes**, so a query that
+  cannot run in production runs green locally (ADR-055's
+  `expirePremiumIdentity` was the first instance; the moment-cleanup
+  schedules were the second).
+- **Rules tests exercise fixtures the test author wrote**, not what the
+  client sends — which is why an author-only club-chat rule and a
+  moderator-authorising client both passed their own suites.
+- **`fake_cloud_firestore` does not evaluate rules at all**, so every Dart
+  test asserting "the client may do X" proves the client's mirror of the
+  rule, never the server's answer.
+
+Each layer is honest about itself and silent about the join. Nothing in the
+existing gates closes that, so the gate has to be a named step.
+
+**Consequences.** Slower completion claims, and several items in this wave
+are recorded as *fixed in source, unproven in production* rather than fixed —
+which is the point. It also makes the unmounted-`HomeScreen` question a
+blocking product decision rather than a curiosity: three widgets
+(`DiscoverClubsRail`, `FromYourClubs`, `LiveNowHero`) are finished, tested
+and unreachable, and placing them is a Home information-architecture call
+nobody has taken. Recorded in [Bugs.md](Bugs.md) and
+[Roadmap.md](Roadmap.md) as open, not as fixed. The corresponding limitation
+is stated in [TESTING.md](TESTING.md) so the next reader meets it before
+trusting a suite count.
+
+## ADR-083: A Firestore `list` rule is evaluated against the query's constraints, so every clause is a bare field access and the client's query carries the equality
+
+**Status**: Accepted in source (`01c0ab2` rules, `155ad61` client);
+**UNVERIFIED in production** — the ruleset has not been deployed from this
+work, and the rail that consumes it is not reachable (ADR-082).
+
+**Context.** `clubs` had `allow list: if false`, and its comment claimed no
+legitimate listing remained. That was wrong — Home's club-discovery rail is
+a legitimate caller that had simply been missed. Writing the replacement
+rule surfaced a property of the rules evaluator worth pinning down: a `list`
+rule is proved **against the query's constraints, never against the
+documents it would return**. A clause written with a default —
+`get('type', 'community') == 'community'` — was *measured* to **ADMIT a
+family club**, because with no matching filter in the query the clause
+satisfies itself and the rule permits a listing it was written to exclude.
+
+**Decision.** Every clause of a `list` rule is a **bare field access**
+(`resource.data.type == 'community'`, no default), which forces the caller's
+query to carry the matching equality or be denied. The client query is
+written to send exactly those equalities, and its comment records that the
+filters **are the authorization**, not defensive narrowing:
+`watchSuggestedClubs` sends all three. Only the exact three-equality query
+passes; bare listing, privacy alone, privacy+type, private, inviteOnly and a
+banned account are all denied.
+
+**Reasoning.** A default makes an absent filter *succeed*, which inverts the
+rule's intent precisely in the case it exists to catch. A bare access makes
+an absent filter an error, and an erroring clause denies. Reverting the
+client query to the old privacy-only shape fails 4 of the 6 service tests —
+a family room, a suspended club and a club with no status all leak through
+it — which is the property being defended, expressed as a test rather than a
+comment.
+
+**Consequences.** The rule and the client query are now a **matched pair**:
+changing either one alone breaks discovery, and the client's filters can
+never be "optimised away" as redundant. Any future list surface over `clubs`
+must send the same three equalities or get a new, separately-tested rule
+branch. A production probe confirmed the three-equality query needs no
+composite index — it is served by a zigzag merge join — so this shape costs
+nothing to index. The same discipline applies to the failure channel:
+`hasError` is checked **before** any read of `snapshot.data`, because
+`StreamBuilder` retains data alongside an error, and a Firestore
+subscription is terminated by its first error, so a retry affordance must
+re-subscribe rather than rebuild.
+
+## ADR-084: Client-authored writes carry an exact key allowlist, and identity and time are pinned to canonical server values or the remaining gap is stated
+
+**Status**: Accepted in source (`b3c27fd`, `01c0ab2`); **UNVERIFIED in
+production** — rules not deployed from this work.
+
+**Context.** Room chat was the largest unguarded client write surface in the
+product. The rule checked `senderId` and membership and nothing else about
+the document, so an ordinary member could write another member's
+`senderName` and photo, a 60,000-character body, arbitrary extra fields, and
+a `sentAt` in 2099 that pinned the message to the top of every member's list
+permanently. Every other client-authored identity snapshot in
+`firestore.rules` was already pinned; room chat was the exception, and the
+client compensating is why it never surfaced. Club chat had the mirror-image
+hole: no field allowlist on create, so a plain member could write a message
+that was **already a forged tombstone** — reading as "removed by the club
+owner", carrying `deletedByRole: superAdmin` and a `senderName` of
+"YO Voice Support", with `sentAt` in 2099. And it was unrepairable: the new
+update rule refuses already-deleted documents, `delete` is `false`, and
+`adminDeleteMessage` short-circuits on `isDeleted`, so only a raw Admin SDK
+script could clear it.
+
+**Decision.** Every client-authored document write states its **exact key
+set** (`keys().hasOnly([...])`), and each identity or ordering field is
+either pinned to a server-canonical value or explicitly documented as
+unpinned with the reason:
+
+- Room messages: **six keys**, `senderName` pinned to the canonical `users`
+  document, `createdAt` pinned to `request.time`, content capped at 500.
+- `senderPhotoUrl` is **deliberately not pinned** — the client falls back to
+  the Firebase Auth mirror when the profile field is empty, so a pin would
+  refuse a legitimate send. It gets the bounds the server already applies,
+  and the residual gap is stated rather than hidden: **an avatar can still
+  point at another member's image**. Closing it needs the client to drop that
+  fallback first.
+- Reactions updates are bounded at **32 keys**, with the comment saying
+  plainly what that does not cover: the uid list under each key is still
+  caller-authored and unbounded, and rules cannot iterate map values. The
+  real fix is a `reactions/{uid}` subcollection, which is a schema change.
+- Club messages get `clubMessageCreateShapeAllowed`, which is what makes the
+  moderation rule of [ADR-085](#adr-085-authorization-branches-in-a-rule-are-disjoint-by-construction-because-cels--absorbs-errors)
+  safe to ship — a forged tombstone would otherwise be permanent.
+
+**Reasoning.** Two measurements made the allowlist non-negotiable rather
+than tidy.
+
+**(1) Extra-field freedom silently dropped achievement credit.** The six-key
+allowlist is not invented: `functions/achievements/sources.js` already treats
+exactly that key set as canonical, and any extra field made the adapter
+return `null`, so the event was skipped and the sender lost the credit. Rules
+and adapter now agree — the *same* keyset described in two places was already
+a latent divergence, and the write surface is where it gets enforced.
+
+**(2) Rules `String.size()` counts UTF-16 code units**, the same unit as
+Dart's `String.length`. Measured, not assumed: it means a 500-character cap
+in the rule is the same 500 the app's own field counts, so emoji-heavy
+messages are not rejected for being "too long" by a rule counting a
+different unit than the composer the user is looking at.
+
+**Consequences.** Two pins were deliberately **not** added, because each
+would break sending today and each needs a paired client change first:
+`senderName` cannot be pinned to the canonical profile on the *club* side
+while the client reads it from a club member row that nothing re-syncs on
+rename, and `sentAt` cannot be pinned to `request.time` while the client
+writes `Timestamp.now()`. Neither can now produce unrepairable state — a
+message with a forged name or a 2099 timestamp is removable. Any new field
+on a room or club message now requires a rules change *and* an
+`achievements/sources.js` change in the same commit, or the sender silently
+loses achievement credit again.
+
+## ADR-085: Authorization branches in a rule are disjoint by construction, because CEL's `||` absorbs errors
+
+**Status**: Accepted in source (`b3c27fd`); **UNVERIFIED in production** —
+rules not deployed from this work.
+
+**Context.** A club owner could not remove an abusive message from their own
+club. Making that work meant a rule with two authorities in it: the author
+retracting their own message, and a moderator removing someone else's. The
+obvious shape is two overlapping branches joined by `||`. An adversarial
+review measured why that shape is unsafe: **CEL absorbs errors through
+`||`** — `<error> || true` **ALLOWS** — so a branch that errors (a missing
+document, a failed `get`, a type mismatch) silently hands its decision to the
+other branch, which may be permitting for reasons that have nothing to do
+with the erroring case.
+
+**Decision.** The two branches are made **disjoint before any document
+read**: one tests `senderId == request.auth.uid`, the other tests
+`senderId != request.auth.uid`. Exactly one branch is applicable to any
+document, so absorption cannot produce an unintended permit whatever guards
+each side carries. Editing is not expressible by *anyone*: both branches pin
+`content` to the empty string, making removal and editing separate
+authorities structurally rather than by convention. Attribution is checked
+against the **post-write document**, never the diff — which is what catches a
+`deletedBy` planted at create and left unchanged (the `hasAny` hole
+[SECURITY.md](SECURITY.md) principle 6 describes).
+
+**Reasoning.** Disjointness converts a whole class of reasoning ("could this
+guard ever error, and what would the other branch then say?") into a property
+you can read off the first line of each branch. The cheap alternative —
+auditing every `get()` in every guard for error-freedom — has to be redone
+every time either branch grows a clause.
+
+**Consequences.** The moderator branch had to restate the sanctions the
+author branch already carried: an early version restated only account status,
+so a communication-muted moderator and an unverified-email moderator kept
+full reach over every non-owner message in every club where they held a role,
+bypassing the sanction's whole lifecycle. Both are now required on that
+branch. Disjoint branches mean shared conditions cannot be factored out to
+one place — that duplication is the cost, and it is worth it. Accepted gaps
+are named in the rule's own comment rather than left for a reader to
+discover: **removals are recorded nowhere** (the only trigger on that
+collection is `onAchievementClubMessageCreated`, an `onDocumentCreated`, so a
+moderator removal leaves no `adminAuditLogs` entry — the client writes
+`deletedBy`/`deletedAt` from day one so an audit trigger has what it needs
+when one exists), **no rate limit**, **no restore path**, and **no rank
+ordering**, so a moderator can clear an admin's or a co-owner's messages.
+
+## ADR-086: A safety action is never gated on email verification, and every moderation endpoint checks access before existence
+
+**Status**: Accepted in source (`2c086c7`); **UNVERIFIED in production** —
+`createContentReport` has not been redeployed from this work.
+
+**Context.** `createContentReport` required a verified email, so someone
+being harassed on their first day could not report it. `requireActor`
+defaults to `{verified: true}`, and the inner call at
+`functions/moments/integrity.js` overrode an outer binding that already
+passed `{verified: false}`. `firestore.rules` states the opposite policy **in
+writing** on the client-direct `reports` create path: reporting is a SAFETY
+action and sits with blocking, which the same policy explicitly leaves
+available to a freshly-registered account. Separately, the callable answered
+`not-found` *before* checking access, which made the endpoint an **existence
+oracle**: a caller could learn whether a private room, club, channel or
+message id was real by watching which refusal came back.
+
+**Decision.** Two rules, both stated at the call site.
+
+1. **Safety actions run for any active account**, verified or not. The
+   relaxation carries a comment naming the rule it follows, the blocking
+   precedent and the rate budget that bounds it, ending "Do not restore the
+   default here." Volume is bounded by the deterministic id, the 30 s
+   cooldown and the 20-per-window cap, not by verification.
+2. **Access is checked before existence, for every target type.** A caller
+   who cannot read the container gets `permission-denied` and nothing else.
+
+**Reasoning.** Email verification gates *outbound, spam-prone publishing*;
+reporting is inbound and self-protective, and the account most likely to need
+it is exactly the new one. A neighbour audit of **every** `requireActor` call
+site found this was the ONLY tightened safety path — `setUserBlock`,
+`unfollow`, conversation mute/archive, mark-read and both delete paths were
+already correct, and every remaining `verified: true` site is genuinely
+outbound — so this was a local defect against a written policy, not a policy
+disagreement. On ordering: refusing with the most-specific error is good
+product copy and a bad security boundary; the endpoint's job is to accept a
+report, and it can do that without ever confirming an id exists to someone
+who cannot see the container.
+
+**Consequences.** One live behaviour changes: a non-participant reporting a
+DM could previously distinguish a missing message from a real one, and now
+cannot. Room and club messages became reportable in the same change, using
+the target names `roomMessage` and `clubMessage` because `admin/messages.js`
+already uses exactly those for the callable a moderator uses to *remove* the
+message — same vocabulary, same ids, so a report and the action taken on it
+describe the same thing. Membership mirrors the rule governing each
+container's reads, including the Club-lounge case and a participants row
+whose `admittedBy` equals the CURRENT host, which is what refuses a
+self-forged row. Still open and named rather than implied fixed: moderators
+can **triage** room and club message reports but cannot **action** them
+(`removeAndResolve` is still globalChat-only), and `reason` has no
+server-side enum on the callable path — only the client-direct v1 rule
+constrains it — so the Moderation Center's equality filter cannot see a
+report whose reason is off-list.
+
+## ADR-087: An idempotency key derived from a request payload is a compatibility surface — new fields fold in only when the target carries them
+
+**Status**: Accepted in source (`2c086c7`); **UNVERIFIED in production**.
+
+**Context.** `createContentReport` deduplicates through the server's
+operation ledger, whose `inputHash` was computed over a fixed five-key
+target. The client derives its `requestId` from the target too, so the pair
+is what makes a re-tap on an already-reported message replay quietly instead
+of erroring. Adding an optional bounded `note` and the new room/club target
+fields to that hash unconditionally would have **re-keyed every report
+already filed in production**: the next re-tap on an existing report would
+have stopped replaying and started answering `already-exists`.
+
+**Decision.** New fields are folded into the hash **only when the target
+actually carries them**, so a legacy target hashes exactly as it did before.
+A regression test recomputes the legacy hash and pins it.
+
+**Reasoning.** An idempotency hash is a wire format, not an implementation
+detail: it is the shared secret between a client's `requestId` derivation and
+the server's ledger, and it is *retroactive* — changing it silently
+reclassifies every historical entry. Conditional folding keeps old and new
+payloads on their own hashes with no migration and no dual-read window.
+
+**Consequences.** The hash function now has a shape that must be preserved:
+any future field is additive-when-present, and the legacy-hash regression
+test is the thing that says so. One cost is inherited from the previous
+deterministic-id path and restated plainly rather than discovered later: a
+report **cannot be re-filed after a moderator dismisses it**, because the key
+is the target and not the attempt.
+
+## ADR-088: Entering a room performs the liveness transition, through one ordered coordinator that mirrors the deployed rule
+
+**Status**: Accepted in source (`b0f1062`); **UNVERIFIED in production** —
+no production or emulator round trip, no real LiveKit, no device run.
+
+**Context.** Opening a Family Room you created yourself and pressing unmute
+returned "This room is not currently live." It was not a Family Room bug:
+voice had never worked in any Community room or lounge, for the reason
+recorded in [ADR-082](#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it) —
+`createLiveKitToken` requires `isLive`, the transition is the caller's job,
+and no reachable caller performed it. Production: **45 rooms, 3 live**.
+
+**Decision.** **Entering a room performs the liveness transition** for anyone
+the deployed rules would accept, rather than adding a second tap. One
+coordinator (`RoomVoiceEntryCoordinator`) runs the ordered path **liveness →
+roster → token**. `RoomVoiceStartAuthority` mirrors the deployed rule branch
+for branch, and `startRoomVoice` sends exactly the three keys the rule
+permits, as a standalone update so nothing can ride along in the same commit.
+`room_mic_affordance` makes "a mute control in a dormant room"
+unrepresentable rather than merely unlikely.
+
+**Reasoning.** The product already promises liveness on entry: the room board
+labels a dormant room's button "Start", and the screen has no lobby —
+it renders a stage, a live status line and a microphone the moment it opens.
+**A second gate on a screen that already looks live *is* the mismatch**, so
+the fix is to make the screen's promise true rather than to add UI
+explaining why it is false. Exposure stays host-opt-in:
+`membersCanStartVoice` defaults false, so only the host starts an ordinary
+room, and lounges are private and already auto-started.
+
+**Consequences.** **Legacy documents are tolerated deliberately**, because
+most production rooms are legacy — 25 of 45 carry no `membersCanStartVoice`
+and 24 have neither `roomType` nor `experience` — so every read defaults
+rather than raising. Community and Broadcast stay separate screens, separate
+control docks, separate identity; only the lifecycle is shared, which keeps
+the product invariant in CLAUDE.md intact. The client authority is a
+*mirror*: it must be re-checked whenever the rule branch changes, and because
+`fake_cloud_firestore` does not evaluate rules, every "the client may start
+voice" test proves the mirror and not the server. Known and queued rather
+than hidden: a **member-started room can stay live with nobody in it**
+(the server drops `isLive` at zero participants only for lounges),
+`executeEndRoomVoice` re-checks nothing before tearing a room down, and an
+ended room still offers Start voice to someone who never held a participant
+row.
+
+## ADR-089: Moments is a primary destination, and its discovery feed ranks client-side because Firestore can neither order by a computed sum nor randomise
+
+**Status**: Accepted in source (`cef05e6`); **UNVERIFIED** — nothing has been
+rendered at any width, and the two new composite indexes are committed, not
+confirmed deployed.
+
+**Context.** Moments was buried in the More menu while the product it belongs
+to is voice-first, and the screen behind it showed only the people you
+already follow.
+
+**Decision.** Moments becomes a primary destination on both form factors —
+directly above Discover in the desktop rail, and a slot in the mobile dock —
+and the screen behind it shows Moments from every user. The mobile dock has
+five slots and no room for a sixth, so **Moments displaced Friends there**;
+Friends keeps its desktop rail entry, its More entry, its screen and its
+state. Nothing was removed, and the trade is asserted in
+`more_destination_nav_test` rather than left for someone to discover. The
+Voice Trending card's "View all" now reaches Moments instead of Discover.
+
+**Reasoning.** The feed ranks by engagement and then shuffles because
+Firestore can do neither of the two things the brief asked for directly: it
+cannot order by a computed sum, so `likeCount + commentCount` can never be an
+`orderBy`, and it cannot randomise server-side. So the service pulls a
+bounded popular pool, weights each Moment by a strictly increasing function
+of engagement, shuffles under a **held seed** so paging stays stable, and
+spaces authors apart so one prolific account cannot own the stack.
+
+**One Firestore trap worth carrying forward**: `orderBy('likeCount')`
+**SILENTLY OMITS every document missing that field**. A popularity ordering
+would therefore have hidden exactly the Moments that had never been liked —
+which on a pre-launch product is most of them — and the omission would have
+looked like an empty feed rather than a bug. Two composite indexes cover the
+real query shapes: `isPublished`+`likeCount` desc and
+`isPublished`+`createdAt` desc.
+
+**Consequences.** Ranking quality is now a client concern and cannot be tuned
+without shipping a client. The held seed is what makes paging coherent, so it
+must survive any future refactor of the pool fetch. Three defects the design
+pass found in the screen are closed with it: `MomentsScreen` rendered a heart
+and a like count with **no tap target**, so it displayed engagement it would
+not let you create while the same feature worked on Home; both of its
+`StreamBuilder`s used the forbidden `snapshot.data ?? []` with no `hasError`,
+so a permission error, a missing index and a still-connecting stream all
+rendered as the same "No Moments yet"; and the screen imported `AppColors`
+and then hardcoded six off-palette colours anyway. The empty state — the
+state most users on a pre-launch product will actually hit — has still never
+been looked at.
+
+## ADR-090: Session cleanup converges on `AuthService.signOut()`, because a write the rules authorize by session cannot live after the session ends
+
+**Status**: Accepted in source (`3d54bc3`); **UNVERIFIED in production** —
+presence actually flipping needs two real accounts.
+
+**Context.** An adversarial audit traced sign-out end to end. The offline
+presence write lived in the `authStateChanges()` **null branch** — i.e.
+after `FirebaseAuth.signOut()` had already cleared the session — so the
+rule's `isSignedIn()` gate denied it and `presence_service` swallowed the
+denial to a `debugPrint`. `isOnline` stayed true,
+`onUserPrivacySourceChanged` mirrored it into `socialPresence`, and that is
+exactly what the DM header dot and the conversation list read: **a
+signed-out account showed as online to its friends indefinitely.** The
+comment above that code claimed it fixed exactly this. There were two such
+writes; the second, in the account-switch branch, wrote a previous uid under
+a new identity and failed `isOwner()` just as structurally. The FCM token had
+the same shape of bug across **five sign-out entry points with five different
+amounts of cleanup**, so two of them left the previous account receiving push
+on a shared device.
+
+**Decision.** Both cleanups converge into `AuthService.signOut()`,
+immediately **before** `_firebaseAuth.signOut()` — the only place in `lib/`
+where a live session becomes a dead one. Ordering is unregister → presence →
+Google → signOut, each independently try/caught with a named consequence, so
+one failure cannot skip the other and neither can trap a user in a session
+they asked to leave. The two denied writes are **removed rather than
+relocated**: keeping a write the ruleset always rejects is the mistake being
+fixed.
+
+**Reasoning.** A write authorized by `isSignedIn()`/`isOwner()` has a
+precondition the client controls the timing of, and the signed-out branch is
+the one place that precondition is guaranteed false. Convergence is the
+proof: Settings, Profile and the 2FA path needed no edit at all. The
+load-bearing test assertion is not that the write happened but **when** —
+the tests record `_auth.currentUser != null` at the moment of each write, so
+a write recorded outside a live session is a write the deployed ruleset
+denies. 8 of 10 fail against the pre-fix code; 10/10 pass after.
+
+**Consequences.** Any future sign-out-adjacent cleanup belongs in that one
+method, and a swallowed `debugPrint` on a permission denial is now a known
+smell in this codebase rather than a stylistic choice. **Not fixed, and it
+cannot be from the client: process death.** A force-quit or a server-revoked
+refresh token never reaches client code, and no client can write for a
+session that no longer exists. `functions/` has no presence sweeper —
+`public_profiles.js` clears `isOnline` only on account deletion. Closing that
+needs a scheduled function expiring `users/{uid}` on a stale
+`presenceUpdatedAt`, or a staleness cutoff when reading `socialPresence`.
+Flagged in the doc comment rather than approximated.
+
+## ADR-091: The roster, not `participantCount`, decides that a room is empty — and the leave path asks the server to prove it
+
+**Context.** Until this wave nothing in the app ever set `isLive: true` on an
+ordinary room, so `executeLeaveRoom` dropping liveness only for
+`roomKind == 'clubLounge'` was survivable. ADR-088 makes entering a room
+perform the liveness transition, which turns that omission into a permanent
+stuck state: a Community room with `membersCanStartVoice`, started by a member
+who then leaves last, has no exit at all — `endRoomVoiceSelf` is host-only and
+there is no scheduled sweeper — so it keeps advertising itself on
+`watchLivePublicRooms` as a live room nobody is in.
+
+The obvious repair, having the client call the host-only "end voice" callable
+when its `participantCount` read reaches zero, carries a worse failure than
+the one it fixes.
+
+**Decision.** Three parts.
+
+1. `executeLeaveRoom` ends the voice session for the last participant out of
+   **any** room, and proves emptiness by re-reading the participants roster
+   with `limit(2)` **inside the same transaction**, before any write (the
+   Admin SDK refuses a read that follows one).
+2. `executeEndRoomVoice` takes an optional `onlyIfEmpty`. When set it repeats
+   that roster check and, if anyone other than the caller is present, writes
+   nothing and returns `{ success: true, ended: false }` — a success, not an
+   error. Omitting the flag is byte-for-byte the previous behaviour.
+3. `RoomService.endCommunityVoice` gained `onlyIfEmpty`, defaulting to false.
+   The leave path passes true; the host's explicit "End room" control does not.
+
+The Club lounge branch stays counter-derived and character-for-character
+unchanged, because `roomParticipantLeaveRootExists` in `firestore.rules`
+mirrors that exact transition and the two must not drift.
+
+**Reasoning.** `participantCount` is a denormalised field with several
+writers. A stale-**low** value would turn one person's leave into an
+`endRoom()` that disconnects everyone still talking — the client cannot
+distinguish "empty" from "the counter has not caught up", and the server can.
+A client-supplied `expectedParticipantCount` precondition was considered and
+rejected: it makes a stale client authoritative, and it fails **loudly** on
+the one control that ends a room, stranding it `isLive: true` with nobody in
+it — precisely the defect part 1 exists to stop creating. Returning success on
+a no-op is deliberate: a leave must never surface to the user as a failure,
+and a room left live because someone is genuinely in it is correct, not an
+error. The client-side close is retained rather than deleted because the app
+and Cloud Functions ship separately; it is self-disabling, since its re-read
+demands `isLive == true` *after* the leave and the new server build has
+already cleared it. **Deploy Functions before the app and it is dead code on
+arrival.**
+
+**Consequences.** "This room is empty" is now a server-proved claim
+everywhere it causes a disconnect. `leaveRoomSelf` returns an additive
+`endedVoiceSession`; `endRoomVoiceSelf` returns an additive `ended`. No
+Firestore field, collection or document shape moved, and no new index is
+needed. The generalised branch requires the counter **and** the roster to
+agree, so a stale-**high** counter leaves a room live with an empty roster —
+conservative in the safe direction, and self-healing the next time anyone
+enters and leaves. **One residual gap is not closed:** if the liveness write
+succeeds and the following `joinRoom` fails, nobody ever holds a participant
+row, `executeLeaveRoom` returns early, and a room nobody revisits keeps
+advertising itself. Extending the repair to callers with no participant row
+was rejected — it would let any signed-in account drop `isLive` on a live room
+during the start→join window. Closing it properly needs a scheduled sweeper,
+which would be the first scheduled function in `functions/` and adds Cloud
+Scheduler as a new deploy dependency.

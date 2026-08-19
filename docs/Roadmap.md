@@ -16,6 +16,167 @@ someone decide what to pick up next.
 
 ## Done
 
+> **Read the deploy status on each 2026-08-19/20 entry below.** Every item in
+> that wave is **fixed in source and unverified in production** — no rules
+> deploy, no Functions deploy, no index deploy and no Hosting release has
+> been made from this work, and several of them fix defects that were live.
+> "Done" here means the change landed on `main`, not that a user is getting
+> it. See [DEPLOYMENT.md](DEPLOYMENT.md#pending-release-the-2026-08-1920-reachability-wave)
+> for the rollout order and
+> [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it)
+> for why the distinction is the whole point of this wave.
+
+- **Rooms can go live at all — voice now starts in Community rooms and
+  lounges** (2026-08-20, `b0f1062`, **NOT DEPLOYED**): opening a Family Room
+  you created yourself and pressing unmute returned "This room is not
+  currently live," and it was not a Family Room bug — **voice had never
+  worked in any Community room or lounge.** `createLiveKitToken` refuses a
+  token unless the room says status active and `isLive` true; performing that
+  transition is the caller's job, and only `enterClubLounge` ever did it,
+  reachable in practice from the Club overview alone.
+  `RoomService.startCommunityVoice` had **zero callers**. Production
+  confirmed it: **45 rooms, 3 live.** Entering a room now performs the
+  liveness transition for anyone the deployed rules would accept, through one
+  coordinator running liveness → roster → token;
+  `RoomVoiceStartAuthority` mirrors the deployed rule branch for branch and
+  `startRoomVoice` sends exactly the three keys the rule permits, as a
+  standalone update. Exposure stays host-opt-in (`membersCanStartVoice`
+  defaults false; lounges are private and auto-started), and legacy documents
+  are tolerated deliberately because most production rooms are legacy — 25 of
+  45 carry no `membersCanStartVoice` and 24 have neither `roomType` nor
+  `experience`. All 3 club-lounge documents carry `clubId` and `roomKind`,
+  read from production. Fixed in passing:
+  `CommunityVoiceRoomScreen.dispose` never removed its listener from the
+  process-wide `RoomMuteCoordinator` singleton. Flutter 978 → **1036**; 45
+  screenshots rendered with the real typeface at 320/390/768/1100/1440 and
+  200% text. **UNVERIFIED**: no production or emulator round trip, no real
+  LiveKit, no device run — rules were read, not executed. See
+  [ADR-088](Decisions.md#adr-088-entering-a-room-performs-the-liveness-transition-through-one-ordered-coordinator-that-mirrors-the-deployed-rule).
+
+- **Reporting a message is possible at all, and a first-day victim can do
+  it** (2026-08-19 → 2026-08-20, `9f3ce7f` client + `2c086c7` backend,
+  **NOT DEPLOYED**): across the whole product there was no way to report a
+  message — not a DM, not a room message, not a club message.
+  `createContentReport` was deployed and ACTIVE and already accepted
+  `directMessage`, `voiceMoment` and `voiceMomentComment`; **no Dart file
+  called it.** The only report action was on a profile, with `reason`
+  hardcoded to `harassment` and a fabricated note. Every target the callable
+  supports is now reachable from every surface where that content appears
+  (DM chat, both Moments feeds, the comment thread), never on your own
+  content; a reason picker replaces the hardcoded label, argued from
+  triage-response-time rather than convention; provenance moved from an
+  invented note to a `contextPath`; and nine callable status codes map to
+  nine distinct sentences, each traced to a real `fail()` in the deployed
+  function. The backend half relaxed the email-verification gate that
+  contradicted the policy written in `firestore.rules`, added `roomMessage`
+  and `clubMessage` targets using the same vocabulary
+  `admin/messages.js` already uses, and moved the access check **before** the
+  existence check, closing an existence oracle. Functions 690 → **699**.
+  Still open and tracked below: v2 report rendering in the Moderation Center,
+  `removeAndResolve` being globalChat-only, and `reason` having no
+  server-side enum on the callable path. See
+  [ADR-086](Decisions.md#adr-086-a-safety-action-is-never-gated-on-email-verification-and-every-moderation-endpoint-checks-access-before-existence)
+  and [ADR-087](Decisions.md#adr-087-an-idempotency-key-derived-from-a-request-payload-is-a-compatibility-surface--new-fields-fold-in-only-when-the-target-carries-them).
+
+- **Club chat moderation works, and cannot be used to rewrite history**
+  (2026-08-19, `b3c27fd` + `f817b41`, **NOT DEPLOYED**): a club owner could
+  not remove an abusive message from their own club. `ClubChatService`
+  authorised moderator, admin and owner; the rule was author-only; and the UI
+  never offered it. All three halves ship together on purpose. The rule
+  carries two **disjoint** branches — author retracts, moderator removes —
+  separated on `senderId == uid` vs `!=` before any document read, because
+  CEL absorbs errors through `||`. Both branches pin `content` to the empty
+  string, so editing is not expressible by anyone. The blocker the review
+  caught was the mirror image: the create rule had no field allowlist, so a
+  plain member could write a message that was **already a forged tombstone**
+  — reading as "removed by the club owner", carrying `deletedByRole`
+  `superAdmin`, a `senderName` of "YO Voice Support" and a 2099 `sentAt` —
+  and it was **unrepairable** by any client path.
+  `clubMessageCreateShapeAllowed` closes it. The second pass (`f817b41`)
+  fixed an accessibility and visual FAIL: the confirmation dialog silently
+  truncated at large text sizes, the message header erased the sender name at
+  **default** text size whenever the staff badge was wide (the test fixture
+  had been setting `role`/`vip` instead of `staffRole`/`isVip`, so the wide
+  case was never exercised), and long-pressing the club owner's message did
+  nothing at all — the local refusal copy added in the first pass reached
+  nobody. Rules 403 → 446. **UNVERIFIED**: nothing rendered after the
+  reworked header and dialog; both review agents died on a session limit.
+  Accepted gaps named in the rule's own comment: removals are not
+  audit-logged, no rate limit, no restore path, no rank ordering. See
+  [ADR-085](Decisions.md#adr-085-authorization-branches-in-a-rule-are-disjoint-by-construction-because-cels--absorbs-errors).
+
+- **Moments becomes a primary destination with a global discovery feed**
+  (2026-08-19, `cef05e6`, **NOT DEPLOYED**): Moments was buried in the More
+  menu while the product it belongs to is voice-first. It now sits directly
+  above Discover in the desktop rail and takes a slot in the mobile dock —
+  which has five slots and no room for a sixth, so **Moments displaced
+  Friends there**; Friends keeps its desktop rail entry, its More entry, its
+  screen and its state, and the trade is asserted in
+  `more_destination_nav_test`. Nothing was removed. The screen behind it now
+  shows Moments from every user: the service pulls a bounded popular pool,
+  weights each Moment by a strictly increasing function of engagement,
+  shuffles under a held seed so paging stays stable, and spaces authors
+  apart — because Firestore can neither order by a computed sum nor
+  randomise server-side. Two composite indexes were added
+  (`isPublished`+`likeCount` desc, `isPublished`+`createdAt` desc) and are
+  **committed, not confirmed deployed**. Three pre-existing screen defects
+  closed with it: a heart and like count with **no tap target**, two
+  `snapshot.data ?? []` reads with no `hasError`, and six hardcoded
+  off-palette colours in a screen that imports `AppColors`. **UNVERIFIED,
+  and it gates the deploy rather than the commit**: nothing has been rendered
+  at any width, and the empty state — the state most users on a pre-launch
+  product will hit — is unconfirmed. See
+  [ADR-089](Decisions.md#adr-089-moments-is-a-primary-destination-and-its-discovery-feed-ranks-client-side-because-firestore-can-neither-order-by-a-computed-sum-nor-randomise).
+
+- **Room chat can no longer be forged, and club discovery can be listed**
+  (2026-08-19, `01c0ab2` rules + `155ad61` client, **NOT DEPLOYED**): room
+  chat was the largest unguarded client write surface in the product — the
+  rule checked `senderId` and membership and nothing else, so an ordinary
+  member could write another member's `senderName` and photo, a
+  60,000-character body, arbitrary extra fields and a 2099 `sentAt` that
+  pinned a message to the top of every member's list permanently. It now
+  carries a six-key allowlist matching the keyset
+  `functions/achievements/sources.js` already treats as canonical (extra
+  fields had been **silently dropping the sender's achievement credit**),
+  `senderName` pinned to canonical, `createdAt` pinned to `request.time`, a
+  500-character cap and a 32-key bound on reactions. `senderPhotoUrl` is
+  deliberately **not** pinned and the residual gap is stated. Club `list` was
+  `if false`, so Home's "Discover clubs" rail was denied for everyone
+  including a club owner listing their own club; the new rule is written
+  entirely in bare field accesses, so the caller's query must carry the
+  three equalities, and `watchSuggestedClubs` now sends them. The rail gained
+  loading, error, empty and populated states it never had, with `hasError`
+  checked before any read of `data`; the same swallowing was fixed where it
+  was actively lying, in "Rooms for you" and "From your clubs". Rules 446 →
+  **466**; Flutter 948 → 978. **The user-visible defect is not closed**:
+  `HomeScreen` is not mounted in the running app, so the rail is still
+  unreachable — tracked as item 0n below. See
+  [ADR-083](Decisions.md#adr-083-a-firestore-list-rule-is-evaluated-against-the-querys-constraints-so-every-clause-is-a-bare-field-access-and-the-clients-query-carries-the-equality)
+  and [ADR-084](Decisions.md#adr-084-client-authored-writes-carry-an-exact-key-allowlist-and-identity-and-time-are-pinned-to-canonical-server-values-or-the-remaining-gap-is-stated).
+
+- **Signing out now actually takes you offline, on every path** (2026-08-19,
+  `3d54bc3`, **NOT DEPLOYED**): the offline presence write lived in the
+  `authStateChanges()` null branch — after `FirebaseAuth.signOut()` had
+  already cleared the session — so the rule's `isSignedIn()` gate denied it
+  and `presence_service` swallowed the denial to a `debugPrint`. `isOnline`
+  stayed true, `onUserPrivacySourceChanged` mirrored it into
+  `socialPresence`, and **a signed-out account showed as online to its
+  friends indefinitely.** There were two such writes; the second wrote a
+  previous uid under a new identity and failed `isOwner()` just as
+  structurally. Both are removed rather than relocated. The FCM token had the
+  same shape of bug across five sign-out entry points with five different
+  amounts of cleanup, two of which left the previous account receiving push
+  on a shared device. Cleanup converged into `AuthService.signOut()`,
+  immediately before `_firebaseAuth.signOut()`; Settings, Profile and the 2FA
+  path needed no edit at all, which is the convergence working. The tests
+  record `_auth.currentUser != null` at the moment of each write, so a write
+  recorded outside a live session is one the deployed ruleset denies — 8 of
+  10 fail against the pre-fix code. **Not fixed and not fixable from the
+  client: process death** — there is no presence sweeper in `functions/`
+  (item 0q below). **UNVERIFIED**: presence actually flipping in production
+  needs two real accounts. See
+  [ADR-090](Decisions.md#adr-090-session-cleanup-converges-on-authservicesignout-because-a-write-the-rules-authorize-by-session-cannot-live-after-the-session-ends).
+
 - **The 2026-08-18 production-regression wave: room callables, friend
   lists, legacy DM roots, missing indexes** (2026-08-18, `3f28462` →
   `4cad282`, backend DEPLOYED same evening; client fixes in the same-day
@@ -328,7 +489,7 @@ someone decide what to pick up next.
   invitee create an owner/co-owner/admin membership. Verified at the time
   with 396/396 Flutter tests across 41 files and 225/225 Firestore emulator
   cases; current counts are 521 across 55 files and 318 — see
-  [TESTING.md](TESTING.md#current-counts-2026-08-17). **These rules were
+  [TESTING.md](TESTING.md#current-counts). **These rules were
   DEPLOYED on 2026-08-16.** This entry read "The new Firestore rules still
   require a manual deploy" until then. Store verification adapters remain
   unconfigured, so `adminSetPremiumEntitlements` is still the only working
@@ -781,6 +942,103 @@ someone decide what to pick up next.
 ## Planned / Backlog
 
 Ordered by rough priority — re-prioritize freely, this isn't a queue.
+
+### 0n. Place the finished Home widgets, or mount `HomeScreen` — a Home information-architecture decision nobody has taken
+
+- **Status**: Not started, and **blocking three finished features**. This is
+  a product decision first, not an engineering one, which is why the
+  implementing session deliberately did not take it unilaterally.
+- **Description**: `HomeScreen` is **not mounted anywhere in the running
+  app**. `main_shell` holds it at `_screens[0]`, but `_slotChildren`
+  special-cases index 0 to `MobileHome`/`DesktopHome` and never reads it. So
+  `DiscoverClubsRail` (rebuilt with real loading/error/empty/populated states
+  in `155ad61`), `FromYourClubs` and `LiveNowHero` are complete, tested,
+  rendered at three widths and two text scales — and **unreachable by any
+  user**. "Discover clubs" exists in exactly one file, and that file is
+  unreachable; it was broken twice over, since the rule denied it as well
+  until `01c0ab2`.
+- **Dependencies**: A decision about what Home shows and in what order.
+  The widget APIs make the mechanical part about **ten lines per
+  composition** (`mobile_home.dart` and `desktop_home.dart`), so the cost is
+  entirely in the IA call.
+- **Priority**: **High.** Three built features currently deliver nothing,
+  and the club-discovery rules work has no consumer until this lands.
+- **Future considerations**: Whatever the decision is, record whether
+  `HomeScreen` survives at all. A screen that has been dead code through two
+  rebuilds is a maintenance liability, and leaving it in `_screens[0]` is
+  what made this invisible for the product's life. See
+  [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it).
+
+### 0o. The Moderation Center cannot render or action a v2 report
+
+- **Status**: Not started. Introduced by `2c086c7` shipping new report
+  targets ahead of the queue that displays them; **two report schemas now
+  coexist in `reports/`**.
+- **Description**: Three separate gaps, in descending severity.
+  **(1)** A v2 report document renders badly: `targetType` parses to null so
+  the queue title is blank, and `reportedUserId` defaults to empty so the
+  detail pane says **"This account no longer exists"** — actively
+  misleading rather than merely blank. The fix spans Dart and Functions
+  together. **(2)** Moderators can **triage** room and club message reports
+  but cannot **action** them: `removeAndResolve` is still globalChat-only.
+  **(3)** `reason` has no server-side enum on the callable path — only the
+  client-direct v1 rule in `firestore.rules` constrains it to the eight-value
+  list — so the Moderation Center's equality filter cannot see a report whose
+  reason is off-list.
+- **Dependencies**: (1) needs a paired Dart + Functions change. (2) needs
+  `removeAndResolve` to grow room and club branches, in the shape
+  `admin/messages.js` already uses. (3) is a Functions-side validation plus a
+  decision about what the canonical enum is across both schemas.
+- **Priority**: **High** for (1) — a moderator reading "This account no
+  longer exists" about a live account will make wrong calls. Medium for
+  (2) and (3).
+
+### 0p. A member-started room can stay live with nobody in it
+
+- **Status**: **In flight and NOT landed.** As of 2026-08-20, with `HEAD` at
+  `b0f1062`, a concurrent session has **uncommitted working-tree changes** to
+  `functions/rooms/participants.js` and `firestore.rules` that address both
+  halves: `executeLeaveRoom` now ends the voice session when the last
+  participant leaves **any** room rather than only a lounge (proving emptiness
+  from the roster inside the transaction rather than from the denormalised
+  `participantCount`, so a stale-low counter cannot evict people who are still
+  talking), and `executeEndRoomVoice` gains an `onlyIfEmpty` roster re-check.
+  Read from the working tree, not from a commit — **confirm against `git log`
+  before picking this up or citing it as fixed.** The third sub-item below
+  (Start voice offered on an ended room) was not observed in that diff.
+- **Description**: The server drops `isLive` at zero participants **only for
+  lounges**, so an ordinary room started by a member under
+  `membersCanStartVoice` can remain live and empty. Separately,
+  `executeEndRoomVoice` re-checks nothing before tearing a room down, and an
+  ended room still offers Start voice to someone who never held a participant
+  row. All three surfaced while building
+  [ADR-088](Decisions.md#adr-088-entering-a-room-performs-the-liveness-transition-through-one-ordered-coordinator-that-mirrors-the-deployed-rule)
+  and were named there rather than silently left.
+- **Dependencies**: A Functions change to the zero-participant sweep, plus
+  an authority re-check in the teardown callable. Related to item 0h — the
+  unexported LiveKit webhook is the component that would know about a crashed
+  client.
+- **Priority**: Medium-High. It is the same class of defect as the club
+  lounge one fixed in 2026-08-09: a room that looks live and is not.
+
+### 0q. A presence sweeper for process death
+
+- **Status**: Not started. Named in `3d54bc3` rather than approximated.
+- **Description**: `AuthService.signOut()` now clears presence inside the
+  live session ([ADR-090](Decisions.md#adr-090-session-cleanup-converges-on-authservicesignout-because-a-write-the-rules-authorize-by-session-cannot-live-after-the-session-ends)),
+  but a **force-quit or a server-revoked refresh token never reaches client
+  code**, and no client can write for a session that no longer exists.
+  `functions/` has no presence sweeper — `public_profiles.js` clears
+  `isOnline` only on account deletion — so those accounts stay online to
+  their friends indefinitely.
+- **Dependencies**: Either a scheduled function expiring `users/{uid}` on a
+  stale `presenceUpdatedAt`, or a staleness cutoff applied when reading
+  `socialPresence`. The read-side cutoff is cheaper and needs no deploy
+  cadence; the scheduled function is the one that makes the stored value
+  honest.
+- **Priority**: Medium. Bounded blast radius (a wrong dot), but it is the
+  remaining half of a bug that was just fixed, and a partially-fixed bug is
+  the kind that gets re-reported.
 
 ### 0a. ~~Run the public-profile backfill~~ VERIFIED CONSISTENT (2026-08-18)
 

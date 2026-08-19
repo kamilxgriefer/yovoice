@@ -153,26 +153,56 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     await _connectVoice(playSound: false);
   }
 
+  /// Whether an AUTOMATIC audio action from this screen is legitimate.
+  ///
+  /// [VoiceCallService] is process-wide and a room screen stays MOUNTED
+  /// beneath a pushed route, so this broadcast's liveness listener would
+  /// otherwise reach into a session the user is having in another room —
+  /// `join()` disconnects whatever is connected. A user-initiated start may
+  /// still take the session over; a background document change may not.
+  bool get _mayAutoConnectAudio {
+    final connected = _voice.roomId;
+    if (connected == widget.room.id) return true;
+    if (connected != null) return false;
+    if (!mounted) return false;
+    return ModalRoute.of(context)?.isCurrent ?? true;
+  }
+
+  /// This screen may only cut audio it actually owns.
+  bool get _ownsAudioSession => _voice.roomId == widget.room.id;
+
   /// The broadcast's liveness authority, followed live so a host opening the
   /// show reaches everyone already waiting on the stage screen.
   void _handleRoomState(VoiceRoom room) {
-    final live = room.isLive && room.isActive && !room.deletionInProgress;
+    // Closed, archived, suspended or half-deleted is NOT dormant. Collapsing
+    // the two offered a Start control on an ended broadcast that could only
+    // ever answer "This room has ended."
+    final gone = !room.isActive || room.deletionInProgress;
+    final live = room.isLive && !gone;
     final wasLive = _live;
     _live = live;
     if (mounted) {
       setState(() {
         _entry = _entry.copyWith(
           room: room,
-          outcome: live
+          outcome: gone
+              ? RoomVoiceEntryOutcome.unavailable
+              : live
               ? RoomVoiceEntryOutcome.live
               : RoomVoiceEntryOutcome.dormant,
+          // Stale failure copy described a moment that has passed.
+          message: gone
+              ? (room.deletionInProgress
+                    ? 'This room is being deleted.'
+                    : 'This room has ended.')
+              : null,
         );
       });
     }
     if (live == wasLive) return;
     if (live) {
-      unawaited(_enterVoice());
-    } else {
+      if (_mayAutoConnectAudio) unawaited(_enterVoice());
+    } else if (_ownsAudioSession) {
       unawaited(_voice.disconnect(playSound: false));
     }
   }
@@ -224,6 +254,25 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         isError: true,
       );
     }
+  }
+
+  /// The mic can't publish right now — say why instead of a dead control.
+  void _explainMicState(RoomMicAffordance affordance) {
+    final message = switch (affordance) {
+      RoomMicAffordance.connecting => 'Connecting to live audio…',
+      RoomMicAffordance.listenOnly =>
+        "You're listening — the host decides who joins the stage.",
+      RoomMicAffordance.waitingForHost =>
+        _entry.message ?? _entry.authority.waitingExplanation,
+      RoomMicAffordance.unavailable =>
+        _voice.errorMessage ??
+            'Live audio is not connected. Leave and rejoin to retry.',
+      RoomMicAffordance.live ||
+      RoomMicAffordance.muted ||
+      RoomMicAffordance.startVoice => '',
+    };
+    if (message.isEmpty || !mounted) return;
+    _showMessage(message);
   }
 
   Future<void> _toggleMic() async {
@@ -287,7 +336,10 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
       // doc: a stale unmuted flag raced the user's own Mute tap and
       // reverted it (same fix as the community room).
       final me = mine.first;
-      if (_voice.isConnected && me.isMuted && !_voice.isMuted) {
+      if (_voice.isConnected &&
+          me.isMuted &&
+          !_voice.isMuted &&
+          _ownsAudioSession) {
         unawaited(_voice.setMuted(true));
       }
 
@@ -331,7 +383,9 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
             // Removed by a moderator, or the room ended and deleted
             // every participant doc: cut audio, show the ended state.
             _ending = true;
-            unawaited(_voice.disconnect());
+            // Only this room's session. A removal here must not hang up a
+            // room the user is actually in above this route.
+            if (_ownsAudioSession) unawaited(_voice.disconnect());
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (mounted) setState(() => _roomOver = true);
             });
@@ -867,6 +921,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                       onNotLive: () => _showMessage(
                         _entry.message ?? _entry.authority.waitingExplanation,
                       ),
+                      onMicBlocked: () => _explainMicState(affordance),
                       onRaiseHand: () => _toggleHand(me),
                       onShare: _openShareSheet,
                       onParticipants: () => _openParticipants(participants),
@@ -888,7 +943,8 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                       ),
                     ),
                   ),
-                if (_roomOver)
+                if (_roomOver ||
+                    _entry.outcome == RoomVoiceEntryOutcome.unavailable)
                   Positioned.fill(
                     child: RoomEndedState(
                       roomName: widget.room.name,

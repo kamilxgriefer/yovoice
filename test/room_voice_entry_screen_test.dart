@@ -430,6 +430,151 @@ void main() {
     );
   });
 
+    testWidgets(
+      'a room that ENDS underneath shows the ended state, never a Start '
+      'control on a dead room',
+      (tester) async {
+        await seedRoom(isLive: true);
+        final voice = _RecordingVoice();
+        await pumpCommunity(
+          tester,
+          uid: 'relative',
+          voice: voice,
+          entry: RoomVoiceEntry(
+            outcome: RoomVoiceEntryOutcome.live,
+            room: roomModel(isLive: true),
+            authority: RoomVoiceStartAuthority.roomMember,
+          ),
+        );
+        await tester.pump();
+        expect(find.text('Mute'), findsOneWidget);
+
+        // The host closes it. `isActive` is false AND `isLive` is false, and
+        // the second must not be read as "dormant, you may start it".
+        await db.collection('rooms').doc(roomId).update({
+          'status': 'closed',
+          'isLive': false,
+        });
+        await tester.pump();
+        await tester.pump();
+
+        expect(find.text('This room has ended'), findsOneWidget);
+        expect(find.text('Start voice'), findsNothing);
+        expect(find.text('NOT LIVE YET'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'a room going live in the BACKGROUND never steals the audio session '
+      'the user is having somewhere else',
+      (tester) async {
+        await seedRoom(isLive: false);
+        // The user is live in another room; VoiceCallService is a singleton
+        // and join() disconnects whatever is connected.
+        final voice = _RecordingVoice();
+        await voice.join(
+          roomId: 'a-room-the-user-is-actually-in',
+          roomName: 'Elsewhere',
+          participantName: 'Kamil',
+        );
+        voice.joins.clear();
+
+        await pumpCommunity(
+          tester,
+          uid: 'relative',
+          voice: voice,
+          entry: RoomVoiceEntry(
+            outcome: RoomVoiceEntryOutcome.dormant,
+            room: roomModel(isLive: false),
+            authority: RoomVoiceStartAuthority.roomMember,
+          ),
+        );
+
+        await db.collection('rooms').doc(roomId).update({'isLive': true});
+        await tester.pump();
+        await tester.pump();
+
+        expect(
+          voice.joins,
+          isEmpty,
+          reason: 'this screen does not own the session and must not take it',
+        );
+        expect(voice.roomId, 'a-room-the-user-is-actually-in');
+      },
+    );
+
+    testWidgets(
+      'a room going dormant in the BACKGROUND never hangs up the session the '
+      'user is having somewhere else',
+      (tester) async {
+        await seedRoom(isLive: true);
+        final voice = _RecordingVoice();
+
+        // The real sequence: this screen mounts and connects, the user then
+        // walks into another room (whose join() takes the singleton over),
+        // and THIS room — still mounted underneath the pushed route — goes
+        // dormant behind them.
+        await pumpCommunity(
+          tester,
+          uid: 'relative',
+          voice: voice,
+          entry: RoomVoiceEntry(
+            outcome: RoomVoiceEntryOutcome.live,
+            room: roomModel(isLive: true),
+            authority: RoomVoiceStartAuthority.roomMember,
+          ),
+        );
+        await tester.pump();
+        expect(voice.joins, [roomId]);
+
+        await voice.join(
+          roomId: 'a-room-the-user-walked-into',
+          roomName: 'Elsewhere',
+          participantName: 'Kamil',
+        );
+        voice.disconnects.clear();
+
+        await db.collection('rooms').doc(roomId).update({'isLive': false});
+        await tester.pump();
+        await tester.pump();
+
+        expect(
+          voice.disconnects,
+          isEmpty,
+          reason: 'this screen no longer owns the session and must not cut it',
+        );
+        expect(voice.roomId, 'a-room-the-user-walked-into');
+        expect(voice.isConnected, isTrue);
+      },
+    );
+
+    testWidgets('a room it DOES own is disconnected when voice ends', (
+      tester,
+    ) async {
+      await seedRoom(isLive: true);
+      final voice = _RecordingVoice();
+
+      await pumpCommunity(
+        tester,
+        uid: 'relative',
+        voice: voice,
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.live,
+          room: roomModel(isLive: true),
+          authority: RoomVoiceStartAuthority.roomMember,
+        ),
+      );
+      await tester.pump();
+      expect(voice.joins, [roomId]);
+
+      await db.collection('rooms').doc(roomId).update({'isLive': false});
+      await tester.pump();
+      await tester.pump();
+
+      expect(voice.disconnects, [roomId]);
+      expect(find.text('Start voice'), findsOneWidget);
+    });
+
   group('responsive', () {
     // Every width the product supports, plus the accessibility case. The
     // dormant states are new, so they carry the same "no overflow, control

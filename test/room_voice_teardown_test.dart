@@ -117,6 +117,72 @@ void main() {
     },
   );
 
+  test(
+    'the empty-room check is asked AFTER leaving and demands a genuine zero',
+    () async {
+      // The pre-leave gate tolerates our own row; the post-leave gate does
+      // not. `executeEndRoomVoice` re-checks nothing before it sets
+      // participantCount to 0, ends the LiveKit room and recursive-deletes
+      // every participant, so closing on a count of 1 would evict whoever
+      // joined while we were leaving.
+      await seedRoom('room-1', {'participantCount': 1});
+      final service = serviceFor('host');
+
+      expect(await service.shouldEndVoiceOnLeaving('room-1'), isTrue);
+      expect(
+        await service.canCloseEmptyRoom('room-1'),
+        isFalse,
+        reason: 'somebody is still on the roster',
+      );
+
+      await db.collection('rooms').doc('room-1').update({
+        'participantCount': 0,
+      });
+      expect(await service.canCloseEmptyRoom('room-1'), isTrue);
+    },
+  );
+
+  test(
+    'someone joining while the host leaves keeps the room open',
+    () async {
+      await seedRoom('room-1', {'participantCount': 1});
+      final service = serviceFor('host');
+      expect(await service.shouldEndVoiceOnLeaving('room-1'), isTrue);
+
+      // Two people arrive; the host's own departure takes it back to 2.
+      await db.collection('rooms').doc('room-1').update({
+        'participantCount': 2,
+      });
+
+      expect(
+        await service.canCloseEmptyRoom('room-1'),
+        isFalse,
+        reason: 'the room is not empty; closing it would evict them',
+      );
+    },
+  );
+
+  test('the empty-room check keeps every other guard', () async {
+    await seedRoom('club_lounge_x', {
+      'participantCount': 0,
+      'roomKind': 'clubLounge',
+      'clubId': 'x',
+    });
+    expect(
+      await serviceFor('host').canCloseEmptyRoom('club_lounge_x'),
+      isFalse,
+    );
+
+    await seedRoom('room-2', {'participantCount': 0, 'isLive': false});
+    expect(await serviceFor('host').canCloseEmptyRoom('room-2'), isFalse);
+
+    await seedRoom('room-3', {'participantCount': 0});
+    expect(
+      await serviceFor('not-the-host').canCloseEmptyRoom('room-3'),
+      isFalse,
+    );
+  });
+
   test('a room that is not live has no session to close', () async {
     await seedRoom('room-1', {'participantCount': 1, 'isLive': false});
     expect(await serviceFor('host').shouldEndVoiceOnLeaving('room-1'), isFalse);
