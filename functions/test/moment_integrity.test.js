@@ -19,12 +19,22 @@ const {
 const {
   createMomentMigrationService,
 } = require("../moments/migration");
+const { operationIdentity } = require("../integrity/guards");
 
 const db = getFirestore();
 const A = "mmi-alice";
 const B = "mmi-bob";
 const C = "mmi-charlie";
 const USERS = [A, B, C];
+// Report-target fixtures. Rooms and Clubs are not otherwise part of this
+// suite, so every id here is namespaced and torn down in reset().
+const PRIVATE_ROOM = "mmi-report-room";
+const PUBLIC_ROOM = "mmi-report-public";
+const LOUNGE_ROOM = "mmi-report-lounge";
+const REPORT_CLUB = "mmi-report-club";
+const ROOM_MESSAGE = "room-message-0001";
+const CLUB_CHANNEL = "general";
+const CLUB_MESSAGE = "club-message-0001";
 let nowMs = 1_810_000_000_000;
 let storage;
 
@@ -134,6 +144,18 @@ async function reset() {
     }
   }
   await db.doc("conversations/mmi-report-conversation").delete();
+  for (const roomId of [PRIVATE_ROOM, PUBLIC_ROOM, LOUNGE_ROOM]) {
+    await deleteTree(db.doc(`rooms/${roomId}`));
+  }
+  await deleteTree(db.doc(`clubs/${REPORT_CLUB}`));
+}
+
+async function deleteTree(reference) {
+  if (typeof db.recursiveDelete === "function") {
+    await db.recursiveDelete(reference);
+    return;
+  }
+  await reference.delete();
 }
 
 async function seed(uid, overrides = {}) {
@@ -677,6 +699,431 @@ test("content reports are canonical, idempotent and DM participant-bound", async
     requestId: "report-direct1",
   }));
   assert.equal(direct.created, true);
+});
+
+// ---------------------------------------------------------------------------
+// Report targets that are not Moments: room chat and Club channel chat.
+//
+// The membership refusals below are the part that matters. A report target is
+// the one input a caller fully controls, so an endpoint that answers
+// "not-found" for a room or Club the caller cannot see is an existence oracle
+// for private spaces. Every refusal here therefore asserts the CODE, not just
+// that the call failed.
+// ---------------------------------------------------------------------------
+
+async function seedRoom(roomId, { hostId = B, visibility = "private", clubId = "" } = {}) {
+  await db.doc(`rooms/${roomId}`).set({
+    hostId,
+    visibility,
+    ...(clubId ? { clubId } : {}),
+    title: `Room ${roomId}`,
+  });
+  await db.doc(`rooms/${roomId}/messages/${ROOM_MESSAGE}`).set({
+    senderId: hostId,
+    content: "reported room message",
+  });
+}
+
+async function seedClub({
+  status = "active",
+  deletionInProgress = false,
+  ownerId = B,
+} = {}) {
+  await db.doc(`clubs/${REPORT_CLUB}`).set({
+    ownerId,
+    status,
+    deletionInProgress,
+    name: "Report Club",
+  });
+  await db.doc(`clubs/${REPORT_CLUB}/channels/${CLUB_CHANNEL}`).set({
+    name: "general",
+  });
+  await db
+    .doc(`clubs/${REPORT_CLUB}/channels/${CLUB_CHANNEL}/messages/${CLUB_MESSAGE}`)
+    .set({ senderId: ownerId, clubId: REPORT_CLUB, content: "reported club message" });
+}
+
+function roomReport(uid, requestId, overrides = {}) {
+  return request(uid, {
+    targetType: "roomMessage",
+    roomId: PRIVATE_ROOM,
+    messageId: ROOM_MESSAGE,
+    reason: "Harassment",
+    requestId,
+    ...overrides,
+  });
+}
+
+function clubReport(uid, requestId, overrides = {}) {
+  return request(uid, {
+    targetType: "clubMessage",
+    clubId: REPORT_CLUB,
+    channelId: CLUB_CHANNEL,
+    messageId: CLUB_MESSAGE,
+    reason: "Harassment",
+    requestId,
+    ...overrides,
+  });
+}
+
+test("reporting is not gated on email verification", async () => {
+  const service = momentService();
+  const { momentId } = await publish(service);
+  // requireActor's default is { verified: true }; firestore.rules' own
+  // reports/{reportId} create rule is deliberately NOT gated on
+  // isVerified() because reporting is a safety action. The callable must
+  // agree with the written policy.
+  const result = await service.createContentReport(request(A, {
+    targetType: "voiceMoment",
+    momentId,
+    reason: "Harassment",
+    requestId: "report-unverified1",
+  }, false));
+  assert.equal(result.created, true);
+  const report = await db.doc(`reports/${result.reportId}`).get();
+  assert.equal(report.data().reporterId, A);
+});
+
+test("room messages are reportable by people who can see the room", async () => {
+  const service = momentService();
+  await seedRoom(PRIVATE_ROOM);
+
+  // A private room's own host.
+  const byHost = await service.createContentReport(
+    roomReport(B, "report-room-host1"),
+  );
+  assert.equal(byHost.created, true);
+  const hostReport = await db.doc(`reports/${byHost.reportId}`).get();
+  assert.equal(hostReport.data().schemaVersion, 2);
+  assert.equal(hostReport.data().targetType, "roomMessage");
+  assert.equal(hostReport.data().roomId, PRIVATE_ROOM);
+  assert.equal(hostReport.data().messageId, ROOM_MESSAGE);
+  assert.equal(hostReport.data().status, "open");
+
+  // A roomMembers row is authority on its own, exactly as the rules'
+  // `|| isRoomMember(roomId)` branch on rooms/{id}/messages read is.
+  await db.doc(`rooms/${PRIVATE_ROOM}/roomMembers/${A}`).set({
+    userId: A,
+    role: "member",
+  });
+  const byMember = await service.createContentReport(
+    roomReport(A, "report-room-member1"),
+  );
+  assert.equal(byMember.created, true);
+
+  // A host-admitted participant of a non-Club room.
+  await db.doc(`rooms/${PRIVATE_ROOM}/participants/${C}`).set({
+    userId: C,
+    admittedBy: B,
+  });
+  const byParticipant = await service.createContentReport(
+    roomReport(C, "report-room-participant1"),
+  );
+  assert.equal(byParticipant.created, true);
+
+  // A public room's chat is previewable without joining.
+  await seedRoom(PUBLIC_ROOM, { visibility: "public" });
+  const byStranger = await service.createContentReport(
+    roomReport(A, "report-room-public1", { roomId: PUBLIC_ROOM }),
+  );
+  assert.equal(byStranger.created, true);
+});
+
+test("a room message report refuses anyone who cannot read the room", async () => {
+  const service = momentService();
+  await seedRoom(PRIVATE_ROOM);
+
+  // No membership of any kind.
+  await assert.rejects(
+    service.createContentReport(roomReport(A, "report-room-denied1")),
+    (error) => error.code === "permission-denied",
+  );
+
+  // A self-forged participant row: `admittedBy` is not the current host,
+  // which is exactly what isHostAdmittedRoomParticipant() refuses.
+  await db.doc(`rooms/${PRIVATE_ROOM}/participants/${A}`).set({
+    userId: A,
+    admittedBy: A,
+  });
+  await assert.rejects(
+    service.createContentReport(roomReport(A, "report-room-denied2")),
+    (error) => error.code === "permission-denied",
+  );
+
+  // THE ORACLE TEST. A message id that does not exist in a room the
+  // caller cannot read must answer permission-denied, never not-found —
+  // otherwise the endpoint reports on the contents of private rooms.
+  await assert.rejects(
+    service.createContentReport(
+      roomReport(A, "report-room-denied3", { messageId: "no-such-message" }),
+    ),
+    (error) => error.code === "permission-denied",
+  );
+
+  // Same for a room that does not exist at all: the caller must not be
+  // able to tell a missing room from one they are not in.
+  await assert.rejects(
+    service.createContentReport(
+      roomReport(A, "report-room-denied4", { roomId: "mmi-no-such-room" }),
+    ),
+    (error) => error.code === "permission-denied",
+  );
+
+  // A member reporting a message that genuinely is not there still gets
+  // not-found — the oracle is closed by membership, not by hiding every
+  // outcome from everybody.
+  await db.doc(`rooms/${PRIVATE_ROOM}/roomMembers/${A}`).set({
+    userId: A,
+    role: "member",
+  });
+  await assert.rejects(
+    service.createContentReport(
+      roomReport(A, "report-room-missing1", { messageId: "no-such-message" }),
+    ),
+    (error) => error.code === "not-found",
+  );
+});
+
+test("a Club lounge room follows canonical Club membership", async () => {
+  const service = momentService();
+  await seedClub();
+  await seedRoom(LOUNGE_ROOM, { clubId: REPORT_CLUB });
+
+  await assert.rejects(
+    service.createContentReport(
+      roomReport(A, "report-lounge-denied1", { roomId: LOUNGE_ROOM }),
+    ),
+    (error) => error.code === "permission-denied",
+  );
+
+  await db.doc(`clubs/${REPORT_CLUB}/members/${A}`).set({
+    userId: A,
+    role: "member",
+  });
+  const admitted = await service.createContentReport(
+    roomReport(A, "report-lounge-ok1", { roomId: LOUNGE_ROOM }),
+  );
+  assert.equal(admitted.created, true);
+});
+
+test("Club channel messages are reportable by active Club members only", async () => {
+  const service = momentService();
+  await seedClub();
+
+  await assert.rejects(
+    service.createContentReport(clubReport(A, "report-club-denied1")),
+    (error) => error.code === "permission-denied",
+  );
+
+  await db.doc(`clubs/${REPORT_CLUB}/members/${A}`).set({
+    userId: A,
+    role: "member",
+  });
+  const filed = await service.createContentReport(
+    clubReport(A, "report-club-ok1"),
+  );
+  assert.equal(filed.created, true);
+  const stored = await db.doc(`reports/${filed.reportId}`).get();
+  assert.equal(stored.data().schemaVersion, 2);
+  assert.equal(stored.data().targetType, "clubMessage");
+  assert.equal(stored.data().clubId, REPORT_CLUB);
+  assert.equal(stored.data().channelId, CLUB_CHANNEL);
+  assert.equal(stored.data().messageId, CLUB_MESSAGE);
+
+  // A member banned inside the Club keeps the row and loses the read.
+  await db.doc(`clubs/${REPORT_CLUB}/members/${C}`).set({
+    userId: C,
+    role: "member",
+    banned: true,
+  });
+  await assert.rejects(
+    service.createContentReport(clubReport(C, "report-club-denied2")),
+    (error) => error.code === "permission-denied",
+  );
+
+  // A membership row that names somebody else is not this caller's.
+  await db.doc(`clubs/${REPORT_CLUB}/members/${B}`).set({
+    userId: A,
+    role: "member",
+  });
+  await assert.rejects(
+    service.createContentReport(clubReport(B, "report-club-denied3")),
+    (error) => error.code === "permission-denied",
+  );
+
+  // The same oracle test as rooms: a non-member must not learn whether a
+  // Club, a channel or a message exists.
+  await assert.rejects(
+    service.createContentReport(
+      clubReport(C, "report-club-denied4", { clubId: "mmi-no-such-club" }),
+    ),
+    (error) => error.code === "permission-denied",
+  );
+  await assert.rejects(
+    service.createContentReport(
+      clubReport(C, "report-club-denied5", { channelId: "no-such-channel" }),
+    ),
+    (error) => error.code === "permission-denied",
+  );
+});
+
+test("a suspended or deleting Club stops being reportable", async () => {
+  const service = momentService();
+  await seedClub({ status: "suspended" });
+  await db.doc(`clubs/${REPORT_CLUB}/members/${A}`).set({
+    userId: A,
+    role: "member",
+  });
+  await assert.rejects(
+    service.createContentReport(clubReport(A, "report-club-suspended1")),
+    (error) => error.code === "permission-denied",
+  );
+
+  await db.doc(`clubs/${REPORT_CLUB}`).update({ status: "active" });
+  await db.doc(`clubs/${REPORT_CLUB}`).update({ deletionInProgress: true });
+  await assert.rejects(
+    service.createContentReport(clubReport(A, "report-club-deleting1")),
+    (error) => error.code === "permission-denied",
+  );
+});
+
+test("the new report targets reject conflicting id combinations", async () => {
+  const service = momentService();
+  await seedRoom(PRIVATE_ROOM);
+  await seedClub();
+  await db.doc(`rooms/${PRIVATE_ROOM}/roomMembers/${A}`).set({
+    userId: A,
+    role: "member",
+  });
+  await db.doc(`clubs/${REPORT_CLUB}/members/${A}`).set({
+    userId: A,
+    role: "member",
+  });
+
+  await assert.rejects(
+    service.createContentReport(
+      roomReport(A, "report-conflict1", { momentId: "smuggled" }),
+    ),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    service.createContentReport(
+      roomReport(A, "report-conflict2", { clubId: REPORT_CLUB }),
+    ),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    service.createContentReport(
+      clubReport(A, "report-conflict3", { roomId: PRIVATE_ROOM }),
+    ),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    service.createContentReport(
+      clubReport(A, "report-conflict4", { channelId: undefined }),
+    ),
+    (error) => error.code === "invalid-argument",
+  );
+  // The pre-existing targets must stay closed against the new ids.
+  await assert.rejects(
+    service.createContentReport(request(A, {
+      targetType: "voiceMoment",
+      momentId: "whatever",
+      roomId: PRIVATE_ROOM,
+      reason: "Harassment",
+      requestId: "report-conflict5",
+    })),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    service.createContentReport(request(A, {
+      targetType: "roomMessage",
+      roomId: PRIVATE_ROOM,
+      reason: "Harassment",
+      requestId: "report-conflict6",
+    })),
+    (error) => error.code === "invalid-argument",
+  );
+});
+
+test("a report carries an optional bounded reporter note", async () => {
+  const service = momentService();
+  const { momentId } = await publish(service);
+
+  const withNote = await service.createContentReport(request(A, {
+    targetType: "voiceMoment",
+    momentId,
+    reason: "harassment",
+    note: "  They named my employer.  ",
+    requestId: "report-note1",
+  }));
+  const stored = await db.doc(`reports/${withNote.reportId}`).get();
+  assert.equal(stored.data().note, "They named my employer.");
+
+  // Absent and empty both persist as "", the same shape the v1
+  // client-written path uses, so one Moderation Center field renders both.
+  const withoutNote = await service.createContentReport(request(C, {
+    targetType: "voiceMoment",
+    momentId,
+    reason: "harassment",
+    requestId: "report-note2",
+  }));
+  assert.equal(
+    (await db.doc(`reports/${withoutNote.reportId}`).get()).data().note,
+    "",
+  );
+
+  await assert.rejects(
+    service.createContentReport(request(B, {
+      targetType: "voiceMoment",
+      momentId,
+      reason: "harassment",
+      note: "x".repeat(301),
+      requestId: "report-note3",
+    })),
+    (error) => error.code === "invalid-argument",
+  );
+  await assert.rejects(
+    service.createContentReport(request(B, {
+      targetType: "voiceMoment",
+      momentId,
+      reason: "harassment",
+      note: 42,
+      requestId: "report-note4",
+    })),
+    (error) => error.code === "invalid-argument",
+  );
+});
+
+test("the operation identity of an existing report target is unchanged", async () => {
+  // REGRESSION PIN, not a new behaviour. createContentReport is deployed
+  // and live, so every report already filed has a ledger entry whose
+  // inputHash was computed over exactly these six keys. Adding roomId,
+  // clubId, channelId or note to the hashed input for a target that does
+  // not use them would silently re-key every one of those ledgers: the
+  // next replay of an already-filed report would stop replaying and start
+  // answering already-exists. This asserts the composition, so that
+  // cannot happen by accident.
+  const service = momentService();
+  const { momentId } = await publish(service);
+  const result = await service.createContentReport(request(A, {
+    targetType: "voiceMoment",
+    momentId,
+    reason: "Harassment",
+    requestId: "report-hashpin1",
+  }));
+  const identity = operationIdentity("content.report", A, "report-hashpin1", {
+    reason: "Harassment",
+    targetType: "voiceMoment",
+    conversationId: null,
+    messageId: null,
+    momentId,
+    commentId: null,
+  });
+  const ledger = await db.doc(`integrityOperationLedgers/${identity.id}`).get();
+  assert.equal(ledger.exists, true);
+  assert.equal(ledger.data().inputHash, identity.inputHash);
+  assert.deepEqual(ledger.data().result, result);
 });
 
 test("comment and like distinct-id bursts are independently rate limited", async () => {

@@ -34,6 +34,51 @@ const DEFAULT_LIMITS = Object.freeze({
   report: { maxEvents: 10, windowMs: 10 * 60_000 },
 });
 
+// ---------------------------------------------------------------------------
+// Content reports
+//
+// Every surface a report can name, and the ids that surface requires. The
+// table is the allowlist: a targetType that is not a key here is refused
+// before a single read happens, and any id field a target does not name must
+// arrive null, so one report can never carry a second, unrelated path
+// alongside the one it is about.
+//
+// The names match functions/admin/messages.js's MESSAGE_TYPES on purpose.
+// That callable is what a moderator uses to actually remove the reported
+// message, and it derives its path from roomId / clubId + channelId +
+// messageId — the same ids stored below. One vocabulary, so a report and the
+// action taken on it describe the same thing.
+// ---------------------------------------------------------------------------
+const REPORT_TARGETS = Object.freeze({
+  directMessage: Object.freeze(["conversationId", "messageId"]),
+  voiceMoment: Object.freeze(["momentId"]),
+  voiceMomentComment: Object.freeze(["momentId", "commentId"]),
+  roomMessage: Object.freeze(["roomId", "messageId"]),
+  clubMessage: Object.freeze(["clubId", "channelId", "messageId"]),
+});
+
+const REPORT_TARGET_IDS = Object.freeze([
+  "channelId",
+  "clubId",
+  "commentId",
+  "conversationId",
+  "messageId",
+  "momentId",
+  "roomId",
+]);
+
+// The id fields the DEPLOYED function has always folded into the operation
+// ledger's inputHash. Reports already exist in production keyed on exactly
+// these; see reportIdentityInput() for why that list cannot simply grow.
+const LEGACY_REPORT_INPUT_IDS = Object.freeze([
+  "conversationId",
+  "messageId",
+  "momentId",
+  "commentId",
+]);
+
+const MAX_REPORT_NOTE = 300;
+
 const AUDIO_TYPES = new Set([
   "audio/mp4",
   "audio/m4a",
@@ -60,6 +105,83 @@ function voiceReplyStoragePath(uid, momentId, commentId) {
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/// Validates the caller's target and returns it in canonical form: the
+/// targetType plus every id field, with the ones this target does not use
+/// pinned to null.
+function reportTarget(data) {
+  if (typeof data.targetType !== "string" ||
+      !Object.prototype.hasOwnProperty.call(REPORT_TARGETS, data.targetType)) {
+    fail("invalid-argument", "targetType is invalid.");
+  }
+  const required = REPORT_TARGETS[data.targetType];
+  const target = { targetType: data.targetType };
+  for (const field of REPORT_TARGET_IDS) {
+    target[field] = data[field] ?? null;
+  }
+  for (const field of required) {
+    requireId(target[field], field);
+  }
+  for (const field of REPORT_TARGET_IDS) {
+    if (!required.includes(field) && target[field] !== null) {
+      fail("invalid-argument", "The report target fields conflict.");
+    }
+  }
+  return target;
+}
+
+/// The document being reported. Every id in `target` has already passed
+/// SAFE_ID, so no segment here can contain a slash and walk out of the
+/// collection it names.
+function reportTargetReference(db, target) {
+  switch (target.targetType) {
+    case "directMessage":
+      return db.doc(
+        `conversations/${target.conversationId}/messages/${target.messageId}`,
+      );
+    case "voiceMoment":
+      return db.doc(`voiceMoments/${target.momentId}`);
+    case "voiceMomentComment":
+      return db.doc(
+        `voiceMoments/${target.momentId}/comments/${target.commentId}`,
+      );
+    case "roomMessage":
+      return db.doc(`rooms/${target.roomId}/messages/${target.messageId}`);
+    case "clubMessage":
+      return db.doc(
+        `clubs/${target.clubId}/channels/${target.channelId}/messages/${target.messageId}`,
+      );
+    default:
+      return fail("invalid-argument", "targetType is invalid.");
+  }
+}
+
+/// The value hashed into the operation ledger's inputHash.
+///
+/// WHY THIS IS NOT JUST `{ reason, ...target }`. createContentReport is
+/// deployed and live, and the client derives its requestId from the TARGET
+/// rather than from the attempt — so a reporter tapping report twice on the
+/// same message replays an existing ledger entry and gets the original
+/// reportId back. Those entries were written with an inputHash computed over
+/// exactly `reason` plus the five legacy keys below. Folding roomId, clubId,
+/// channelId or note into the hash unconditionally would change the hash for
+/// targets that do not even use them, re-keying every report already filed:
+/// the next replay would stop replaying and start answering `already-exists`.
+/// So the new fields join the hash only when the target actually carries
+/// them, which is never for a target type that predates them.
+function reportIdentityInput(target, reason, note) {
+  const input = { reason, targetType: target.targetType };
+  for (const field of LEGACY_REPORT_INPUT_IDS) {
+    input[field] = target[field];
+  }
+  for (const field of REPORT_TARGET_IDS) {
+    if (!LEGACY_REPORT_INPUT_IDS.includes(field) && target[field] !== null) {
+      input[field] = target[field];
+    }
+  }
+  if (note !== null) input.note = note;
+  return input;
 }
 
 function validateMoment(snapshot, momentId, { published = undefined } = {}) {
@@ -1159,44 +1281,57 @@ function createMomentIntegrityService({
   }
 
   async function createContentReport(request) {
-    const auth = requireActor(request);
+    // REPORTING IS DELIBERATELY NOT EMAIL-VERIFICATION GATED, and this is
+    // the one call in this file that passes { verified: false } for a
+    // reason other than "it only touches the caller's own state".
+    //
+    // requireActor()'s default is { verified: true }, which is right for
+    // every OUTBOUND action — publishing a Moment, commenting, sending a
+    // DM — because verification is this product's anti-spam gate on
+    // things other people have to read. A report is not outbound: it is a
+    // safety action, read only by staff, and firestore.rules says so in
+    // writing on the sibling reports/{reportId} create rule ("reporting
+    // is a SAFETY action and sits with blocking, which that policy
+    // explicitly leaves available to a freshly-registered account.
+    // Someone being harassed on their first day must be able to say
+    // so."). setUserBlock in functions/friends/social_graph.js is
+    // consistent with that; this callable was not, so an unverified
+    // account could be harassed and could block, but could not report.
+    //
+    // The volume argument for verification does not apply either: this
+    // path is bounded by a transactional 10-per-10-minutes budget and by
+    // an operation ledger that makes a repeat report of the same target
+    // a replay rather than a second document. Do not "restore" the
+    // default here.
+    const auth = requireActor(request, { verified: false });
     const data = requireExactInput(
       request.data,
-      ["commentId", "conversationId", "messageId", "momentId", "reason", "requestId", "targetType"],
+      [
+        "channelId", "clubId", "commentId", "conversationId", "messageId",
+        "momentId", "note", "reason", "requestId", "roomId", "targetType",
+      ],
       ["reason", "requestId", "targetType"],
     );
-    if (!["directMessage", "voiceMoment", "voiceMomentComment"].includes(
-      data.targetType,
-    )) {
+    // Checked here rather than inside reportTarget() only to keep the
+    // deployed order of refusals: an unknown targetType has always been
+    // reported before a malformed requestId or reason.
+    if (typeof data.targetType !== "string" ||
+        !Object.prototype.hasOwnProperty.call(REPORT_TARGETS, data.targetType)) {
       fail("invalid-argument", "targetType is invalid.");
     }
     const requestId = requireRequestId(data.requestId);
     const reason = normalizeText(data.reason, 500, "reason");
-    const target = {
-      targetType: data.targetType,
-      conversationId: data.conversationId ?? null,
-      messageId: data.messageId ?? null,
-      momentId: data.momentId ?? null,
-      commentId: data.commentId ?? null,
-    };
-    if (target.targetType === "directMessage") {
-      requireId(target.conversationId, "conversationId");
-      requireId(target.messageId, "messageId");
-      if (target.momentId !== null || target.commentId !== null) {
-        fail("invalid-argument", "The report target fields conflict.");
-      }
-    } else {
-      requireId(target.momentId, "momentId");
-      if (target.targetType === "voiceMomentComment") {
-        requireId(target.commentId, "commentId");
-      } else if (target.commentId !== null) {
-        fail("invalid-argument", "The report target fields conflict.");
-      }
-      if (target.conversationId !== null || target.messageId !== null) {
-        fail("invalid-argument", "The report target fields conflict.");
-      }
-    }
-    const input = { reason, ...target };
+    // Optional reporter context, the same bounded field and 300-character
+    // cap the client-written v1 report path already uses, so one
+    // Moderation Center field renders both. An empty note normalizes to
+    // absent rather than to "", so sending `note: ""` cannot produce a
+    // different operation identity than sending no note at all.
+    const note = data.note === undefined || data.note === null
+      ? null
+      : normalizeText(data.note, MAX_REPORT_NOTE, "note", { allowEmpty: true }) ||
+        null;
+    const target = reportTarget(data);
+    const input = reportIdentityInput(target, reason, note);
     const identity = operationIdentity("content.report", auth.uid, requestId, input);
     const reportId = digest("content-report", auth.uid, requestId).slice(0, 40);
     const timing = time();
@@ -1205,11 +1340,7 @@ function createMomentIntegrityService({
       const ledgerRef = ledgerReference(identity);
       const rateRef = limitReference("report", auth.uid);
       const reportRef = db.doc(`reports/${reportId}`);
-      const targetRef = target.targetType === "directMessage"
-        ? db.doc(`conversations/${target.conversationId}/messages/${target.messageId}`)
-        : target.targetType === "voiceMoment"
-          ? db.doc(`voiceMoments/${target.momentId}`)
-          : db.doc(`voiceMoments/${target.momentId}/comments/${target.commentId}`);
+      const targetRef = reportTargetReference(db, target);
       const [ledger, rate, existing, profile, targetSnapshot] =
         await transactionGetAll(
           transaction,
@@ -1226,13 +1357,19 @@ function createMomentIntegrityService({
       });
       if (replay) return replay;
       activeProfile(profile, "Your");
+      // ACCESS BEFORE EXISTENCE, deliberately.
+      //
+      // The target is the one input a caller fully controls, so the order
+      // of these two checks decides whether the endpoint doubles as an
+      // existence oracle for private spaces. Answering "not-found" first
+      // would let anyone probe whether a given room, Club, channel or
+      // message id exists simply by watching which refusal comes back.
+      // A caller who cannot read the container is told exactly one thing
+      // — permission-denied — whether or not the thing they named is
+      // real. Existence is only reported to somebody already entitled to
+      // see it.
+      await assertReportTargetVisible(transaction, target, auth.uid);
       if (!targetSnapshot.exists) fail("not-found", "The reported content is missing.");
-      if (target.targetType === "directMessage") {
-        const conversation = await transaction.get(
-          db.doc(`conversations/${target.conversationId}`),
-        );
-        validateConversationForReport(conversation, auth.uid);
-      }
       if (existing.exists) fail("data-loss", "A report exists without its ledger.");
       consume(transaction, rate, rateRef, "report", auth.uid, timing);
       transaction.create(reportRef, {
@@ -1243,6 +1380,10 @@ function createMomentIntegrityService({
         messageId: target.messageId,
         momentId: target.momentId,
         commentId: target.commentId,
+        roomId: target.roomId,
+        clubId: target.clubId,
+        channelId: target.channelId,
+        note: note ?? "",
         reason,
         status: "open",
         createdAt: timing.now,
@@ -1266,6 +1407,103 @@ function createMomentIntegrityService({
     if (!Array.isArray(participants) || participants.length !== 2 ||
         !participants.includes(uid)) {
       fail("permission-denied", "Only a conversation participant may report it.");
+    }
+  }
+
+  /// The reporter must be somebody who can actually see the reported
+  /// content. Without this a report is a read primitive: a caller could
+  /// name any room or Club id and learn from the answer whether it exists
+  /// and whether a given message is in it.
+  ///
+  /// Each branch re-reads the container server-side and mirrors the
+  /// Firestore rule that governs reading that container's messages. It
+  /// deliberately does not consult a client-supplied membership claim of
+  /// any kind, and it does not consult blocks either — being blocked by
+  /// the person you are reporting must not stop you reporting them.
+  async function assertReportTargetVisible(transaction, target, uid) {
+    switch (target.targetType) {
+      case "directMessage":
+        validateConversationForReport(
+          await transaction.get(db.doc(`conversations/${target.conversationId}`)),
+          uid,
+        );
+        return;
+      case "roomMessage":
+        await assertRoomMessageVisible(transaction, target.roomId, uid);
+        return;
+      case "clubMessage":
+        await assertClubMembership(
+          transaction,
+          target.clubId,
+          uid,
+          "You cannot report this Club message.",
+        );
+        return;
+      default:
+        // voiceMoment and voiceMomentComment are public content: a
+        // published Moment and its comments are readable by every active
+        // account, so activeProfile() above is already the whole test.
+        // Adding a narrower one here would make public content
+        // unreportable by the people most likely to see it.
+    }
+  }
+
+  /// Mirrors the read rule on rooms/{roomId}/messages/{messageId}: a
+  /// public room's chat is previewable without joining, and a private
+  /// room's needs a host, roomMembers, canonical Club, or host-admitted
+  /// participant relationship. Read that rule and this together — if one
+  /// moves, the other has to.
+  async function assertRoomMessageVisible(transaction, roomId, uid) {
+    const message = "You cannot report this room message.";
+    const [room, member, participant] = await transactionGetAll(
+      transaction,
+      db.doc(`rooms/${roomId}`),
+      db.doc(`rooms/${roomId}/roomMembers/${uid}`),
+      db.doc(`rooms/${roomId}/participants/${uid}`),
+    );
+    if (!room.exists) fail("permission-denied", message);
+    const data = room.data() ?? {};
+    // A roomMembers row is authority on its own, matching the rules'
+    // separate `|| isRoomMember(roomId)` branch: membership is joined
+    // while a room is public and survives the host flipping it private.
+    if (data.visibility === "public" || data.hostId === uid || member.exists) {
+      return;
+    }
+    const clubId = typeof data.clubId === "string" ? data.clubId : "";
+    if (clubId) {
+      // A Club lounge derives admission from canonical Club membership
+      // and from nothing else. The id comes out of a document rather than
+      // out of the request, so it still has to prove it is a single safe
+      // path segment before it is used to build one.
+      if (!SAFE_ID.test(clubId)) fail("permission-denied", message);
+      await assertClubMembership(transaction, clubId, uid, message);
+      return;
+    }
+    // A participant row only counts when the CURRENT host admitted it,
+    // which is what refuses legacy and self-forged rows.
+    if (participant.exists && typeof data.hostId === "string" && data.hostId &&
+        (participant.data() ?? {}).admittedBy === data.hostId) {
+      return;
+    }
+    fail("permission-denied", message);
+  }
+
+  /// Mirrors isClubMember(): an existing, active, non-deleting Club, plus
+  /// a membership row that names this caller and is not Club-banned.
+  async function assertClubMembership(transaction, clubId, uid, message) {
+    const [club, member] = await transactionGetAll(
+      transaction,
+      db.doc(`clubs/${clubId}`),
+      db.doc(`clubs/${clubId}/members/${uid}`),
+    );
+    const clubData = club.exists ? club.data() ?? {} : null;
+    const memberData = member.exists ? member.data() ?? {} : null;
+    if (!clubData || !memberData ||
+        clubData.status !== "active" ||
+        clubData.deletionInProgress === true ||
+        memberData.userId !== uid ||
+        memberData.banned === true) {
+      fail("permission-denied", message);
     }
   }
 
