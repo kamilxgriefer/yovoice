@@ -610,7 +610,7 @@ curl -s https://app.yovoice.app/main.dart.js | wc -c   # fingerprint the client
 | `firestore.rules` | **Deployed twice on 2026-08-16** — 20:40 by the operator, 21:06 covering `952d8e4` | Console → Firestore → Rules version history. *(This row said "still no read-only CLI command; the Console remains the only way to check" until 2026-08-17. The Firebase Rules API returns the full deployed source — see [Reading the deployed ruleset](#reading-the-deployed-ruleset-the-verification-standard).)* |
 | `storage.rules` | **Deployed** | includes `validClubImageUpload()` accepting the timestamped `{kind}_{millis}.{ext}` names the shipped client actually writes |
 | Hosting (Flutter web) | **Deployed and fingerprinted** | `https://app.yovoice.app/main.dart.js` is 5,139,256 bytes and contains `publicProfiles`, `searchPublicProfiles`, `selectMyAchievementTitle`. Production previously served commit `9fdd8a9` |
-| `publishPublicStatsSchedule` | **Committed (`cb4651a`), deliberately NOT deployed** | absent from `functions:list`; three preconditions in that commit message |
+| `publishPublicStatsSchedule` | **Deployed 2026-08-20** | present in `functions:list` as a v2 scheduled function in `europe-west1`; `publicStats/live` verified against independent `count()` aggregates |
 | `receiveLiveKitAchievementWebhook` | **Not deployed, and not deployable** | exists in `functions/achievements/livekit_http.js`, never exported from `functions/index.js` |
 
 **The index deploy fixed a live defect.** `entitlements(isPremium,
@@ -668,11 +668,32 @@ Two rules that survive both directions:
 Full decision:
 [ADR-055](Decisions.md#adr-055-the-2026-08-16-production-cutover--order-the-deploy-by-what-fails-closed-and-verify-by-fingerprinting-served-bytes).
 
-### Deliberately held back: `publishPublicStatsSchedule`
+### RELEASED 2026-08-20: `publishPublicStatsSchedule`
 
-Committed in `cb4651a`, **not deployed**, and it should stay that way
-until three things are true. Do not sweep it into the next
-`--only functions` deploy without reading this:
+**This section is superseded. It described `cb4651a`; the function was
+rewritten afterwards and all three preconditions below were designed out
+rather than waited on.** It deployed on 2026-08-20 and is running.
+
+Verified in production one minute after deploy — `publicStats/live` holds
+`{schemaVersion: 2, activeAccounts: 18, existingRooms: 45}`, and independent
+`count()` aggregates returned exactly 18 and 45. The numbers are real.
+
+How each precondition was retired:
+
+1. **Public read rule** — `publicStats/live` is now one of two pinned publicly
+   readable documents, alongside `publicShowcase/live`.
+2. **`COLLECTION_GROUP` index on `activeVoiceSessions`** — no longer needed.
+   The function aggregates `publicProfiles` and `rooms`, and touches
+   `activeVoiceSessions` not at all.
+3. **The wrong data source** — removed rather than published. There is still no
+   honest live-presence figure, so the document carries **no** `peopleTalkingNow`
+   field at all. `activeAccounts` counts `publicProfiles` (not `users`, which
+   retains banned, disabled and Auth-orphan rows and would overstate by roughly
+   two to one), and `existingRooms` counts every room rather than filtering on
+   `isLive`, because nothing reliably clears `isLive` after a crash.
+
+Retained below for the reasoning, which still explains why a live-presence
+number is not published:
 
 1. `publicStats/live` needs `allow read: if true; allow write: if false`.
    That would be the project's **first publicly readable document** —
