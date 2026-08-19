@@ -33,6 +33,14 @@ class PresenceService {
     }, SetOptions(merge: true));
   }
 
+  /// Marks [userId] offline.
+  ///
+  /// This is an owner-authenticated write: `firestore.rules` gates
+  /// `users/{userId}` updates on `isSignedIn() && isOwner(userId)`. It
+  /// therefore only succeeds while [userId]'s own session is still live —
+  /// which is why the sign-out path calls it from inside
+  /// `AuthService.signOut()`, *before* `FirebaseAuth.signOut()`, rather than
+  /// from an auth-state listener that fires after the session is gone.
   Future<void> setOfflineForUser(String userId) async {
     await _firestore.collection('users').doc(userId).set({
       'isOnline': false,
@@ -75,22 +83,20 @@ class _PresenceLifecycleState extends State<PresenceLifecycle>
   Future<void> _handleAuthStateChanged(User? user) async {
     _offlineTimer?.cancel();
 
-    final previousUserId = _activeUserId;
-
     if (user == null) {
+      // Deliberately no offline write here, and none in the account-switch
+      // case below either. Both used to attempt one and both were denied
+      // 100% of the time: `firestore.rules` gates users/{uid} updates on
+      // `isSignedIn() && isOwner(uid)`, and by the time authStateChanges
+      // reports null the session is already cleared (isSignedIn() false),
+      // while a switch writes a *previous* uid under a new identity
+      // (isOwner() false). The failures were swallowed to a debugPrint, so
+      // signed-out accounts kept showing as "Online" to their friends
+      // indefinitely. AuthService.signOut() now performs that write while
+      // the session is still live — see the comment on signOut().
       _activeUserId = null;
       _stopHeartbeat();
-
-      // FirebaseAuth.currentUser is already null here, so the previous uid
-      // must be used explicitly. This fixes users remaining online after logout.
-      if (previousUserId != null) {
-        await _safeSetOffline(previousUserId);
-      }
       return;
-    }
-
-    if (previousUserId != null && previousUserId != user.uid) {
-      await _safeSetOffline(previousUserId);
     }
 
     _activeUserId = user.uid;

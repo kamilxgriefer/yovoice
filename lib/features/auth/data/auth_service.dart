@@ -6,8 +6,10 @@ import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 
+import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/features/auth/data/action_code_settings.dart';
 import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
+import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/shared/models/app_user.dart';
@@ -21,6 +23,10 @@ enum AppleSignInAvailability {
 
 typedef AppleProviderProbe = Future<AppleSignInAvailability> Function();
 
+/// Removes this device's FCM token registration. Injectable so the
+/// sign-out ordering can be asserted without a live Firebase Messaging.
+typedef DeviceTokenUnregister = Future<void> Function();
+
 class AuthService {
   AuthService({
     FirebaseAuth? firebaseAuth,
@@ -28,8 +34,12 @@ class AuthService {
     @visibleForTesting bool? appleSignInFeatureEnabled,
     @visibleForTesting bool? appleUseWebPopup,
     @visibleForTesting AppleProviderProbe? appleProviderProbe,
+    @visibleForTesting PresenceService? presenceService,
+    @visibleForTesting DeviceTokenUnregister? unregisterDeviceToken,
   }) : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance,
        _firestoreService = firestoreService ?? FirestoreService(),
+       _injectedPresenceService = presenceService,
+       _injectedUnregisterDeviceToken = unregisterDeviceToken,
        _appleSignInFeatureEnabled =
            appleSignInFeatureEnabled ??
            const bool.fromEnvironment(
@@ -44,6 +54,14 @@ class AuthService {
   final bool _appleSignInFeatureEnabled;
   final bool? _appleUseWebPopup;
   final AppleProviderProbe? _appleProviderProbe;
+
+  // Resolved lazily, inside signOut() only. Building the production
+  // PresenceService or touching PushNotificationService.instance eagerly in
+  // the constructor would reach FirebaseAuth/Firestore/Messaging singletons
+  // every time an AuthService is constructed — including in widget tests
+  // that never sign out.
+  final PresenceService? _injectedPresenceService;
+  final DeviceTokenUnregister? _injectedUnregisterDeviceToken;
 
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
 
@@ -308,7 +326,39 @@ class AuthService {
     }
   }
 
+  /// The single sign-out choke point for the whole app.
+  ///
+  /// Settings, Profile, the device-sessions screen, the 2FA
+  /// expired-session path and [AuthController] all route through here, on
+  /// purpose: signing out has to mean the same thing everywhere. Two pieces
+  /// of cleanup are only *permitted* while the session is still live, so
+  /// they run before [FirebaseAuth.signOut] rather than in reaction to it:
+  ///
+  ///  * **Presence.** `firestore.rules` gates `users/{uid}` updates on
+  ///    `isSignedIn() && isOwner(uid)`. An offline write issued after the
+  ///    session is cleared is denied, `socialPresence/{uid}` keeps
+  ///    mirroring `isOnline: true`, and the account shows as Online to its
+  ///    friends in DMs indefinitely.
+  ///  * **This device's FCM token.** Deleting `fcmTokens/{token}` needs
+  ///    `isOwner(uid)` for the same reason. A token left behind means the
+  ///    previous account keeps receiving push on a shared device.
+  ///
+  /// Both are best-effort. A cleanup failure is reported and swallowed — it
+  /// must never trap someone in a session they asked to leave.
+  ///
+  /// This covers sign-out, not process death: an app that is force-quit or
+  /// whose refresh token is revoked server-side never reaches this code, and
+  /// nothing on the client can write for a session that no longer exists.
+  /// Expiring stale presence in that case needs a server-side sweeper over
+  /// `presenceUpdatedAt`, which does not exist yet.
   Future<void> signOut() async {
+    final userId = _firebaseAuth.currentUser?.uid;
+
+    if (userId != null) {
+      await _unregisterDeviceTokenBestEffort();
+      await _setOfflineBestEffort(userId);
+    }
+
     try {
       if (!kIsWeb) {
         try {
@@ -324,6 +374,39 @@ class AuthService {
       // account never inherits the previous user's replayed snapshots.
       ProfileService.resetCurrentProfileCache();
       EntitlementService.resetCache();
+    }
+  }
+
+  Future<void> _unregisterDeviceTokenBestEffort() async {
+    try {
+      // Resolved inside the guard on purpose: reaching
+      // PushNotificationService.instance builds the singleton, which touches
+      // the FirebaseAuth and Messaging singletons.
+      final unregister =
+          _injectedUnregisterDeviceToken ??
+          PushNotificationService.instance.unregisterCurrentDevice;
+      await unregister();
+    } catch (error) {
+      debugPrint(
+        'AuthService.signOut: could not unregister this device for push '
+        '(${error.runtimeType}). The previous account may keep receiving '
+        'push notifications here until the token is refreshed or '
+        'invalidated.',
+      );
+    }
+  }
+
+  Future<void> _setOfflineBestEffort(String userId) async {
+    try {
+      await (_injectedPresenceService ?? PresenceService()).setOfflineForUser(
+        userId,
+      );
+    } catch (error) {
+      debugPrint(
+        'AuthService.signOut: could not mark the account offline '
+        '(${error.runtimeType}). Friends may still see it as Online until '
+        'the next sign-in sets presence again.',
+      );
     }
   }
 

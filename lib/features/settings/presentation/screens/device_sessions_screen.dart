@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
-import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/settings/data/services/session_management_service.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -95,7 +94,10 @@ class _DeviceSessionsScreenState extends State<DeviceSessionsScreen> {
   }
 
   Future<void> _defaultSignOut() async {
-    await PushNotificationService.instance.unregisterCurrentDevice();
+    // AuthService.signOut() owns the FCM-token and presence cleanup for
+    // every sign-out path, so this one no longer repeats it. Revoking
+    // refresh tokens does not invalidate the ID token already on this
+    // device, so that cleanup still runs against a live session here.
     await AuthService().signOut();
   }
 

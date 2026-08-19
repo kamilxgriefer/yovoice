@@ -2,7 +2,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
-import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 
 final authServiceProvider = Provider<AuthService>((ref) {
   return AuthService();
@@ -98,7 +97,9 @@ class AuthController {
     ref.read(authErrorProvider.notifier).state = null;
 
     try {
-      await PushNotificationService.instance.unregisterCurrentDevice();
+      // Presence and FCM-token cleanup live inside AuthService.signOut(),
+      // which every sign-out entry point routes through — doing either one
+      // here as well would only re-run it for this single call site.
       await _service.signOut();
     } catch (error) {
       ref.read(authErrorProvider.notifier).state = _service.getErrorMessage(
