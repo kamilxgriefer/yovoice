@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
+import 'package:yovoice/features/rooms/presentation/room_mic_affordance.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_bottom_controls.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_stage.dart';
 import 'package:yovoice/features/rooms/presentation/voice_room_identity.dart';
@@ -332,10 +333,13 @@ void main() {
                     connected: true,
                     micMuted: false,
                     micBusy: false,
+                    affordance: RoomMicAffordance.live,
                     canSpeak: true,
                     handRaised: false,
                     canRaiseHand: false,
                     onMic: () {},
+                    onStartVoice: () {},
+                    onNotLive: () {},
                     onRaiseHand: () {},
                     onShare: () {},
                     onParticipants: () {},

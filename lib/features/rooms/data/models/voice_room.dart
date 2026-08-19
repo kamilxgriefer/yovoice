@@ -132,6 +132,48 @@ class VoiceRoom {
   bool get isClosed => status == RoomStatus.closed;
   bool get isArchived => status == RoomStatus.archived;
 
+  /// A copy whose liveness has moved.
+  ///
+  /// Used between the voice-start write committing and the document being
+  /// re-read, so a failure further along the entry path still describes the
+  /// room as it now actually is on the server rather than as it was when the
+  /// caller navigated.
+  VoiceRoom withLiveness(bool value) {
+    return VoiceRoom(
+      id: id,
+      hostId: hostId,
+      hostName: hostName,
+      hostPhotoUrl: hostPhotoUrl,
+      name: name,
+      description: description,
+      category: category,
+      visibility: visibility,
+      language: language,
+      maxParticipants: maxParticipants,
+      participantCount: participantCount,
+      memberCount: memberCount,
+      isLive: value,
+      roomType: roomType,
+      status: status,
+      imageUrl: imageUrl,
+      approvalRequired: approvalRequired,
+      slowModeSeconds: slowModeSeconds,
+      autoMuteNewUsers: autoMuteNewUsers,
+      membersCanStartVoice: membersCanStartVoice,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      experience: experience,
+      clubId: clubId,
+      targetAudience: targetAudience,
+      topicTags: topicTags,
+      roomGuidelines: roomGuidelines,
+      conversationStyle: conversationStyle,
+      newcomerFriendly: newcomerFriendly,
+      showFormat: showFormat,
+      deletionInProgress: deletionInProgress,
+    );
+  }
+
   factory VoiceRoom.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> document,
   ) {

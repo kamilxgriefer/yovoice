@@ -1,0 +1,606 @@
+// Developer-only visual QA harness for the room VOICE LIFECYCLE states.
+//
+// The filename deliberately has no `_test` suffix, so the ordinary suite
+// skips it. Run explicitly:
+//
+//   flutter test test/room_voice_states_screenshot.dart
+//
+// PNGs land in test/.screenshots/ (git-ignored).
+//
+// Covers every state this change introduced or altered, at narrow, medium and
+// wide widths: dormant-with-authority ("Start voice"), dormant-without
+// ("Not live"), live-and-muted ("Unmute"), the Family Room lounge variants,
+// the broadcast equivalents, and the entry screen's loading and ended states.
+
+import 'dart:io';
+import 'dart:ui' as ui;
+
+import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
+import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/clubs/data/services/club_service.dart';
+import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
+import 'package:yovoice/features/rooms/data/models/voice_room.dart';
+import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/rooms/presentation/screens/broadcast_room_screen.dart';
+import 'package:yovoice/features/rooms/presentation/screens/community_voice_room_screen.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
+import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
+
+final _capture = GlobalKey();
+
+String get _fontRoot {
+  const candidates = [
+    '/opt/homebrew/Caskroom/flutter/3.44.6/flutter/bin/cache/artifacts/material_fonts',
+    '/opt/homebrew/share/flutter/bin/cache/artifacts/material_fonts',
+    '/usr/local/share/flutter/bin/cache/artifacts/material_fonts',
+  ];
+  return candidates.firstWhere(
+    (path) => File('$path/Roboto-Regular.ttf').existsSync(),
+  );
+}
+
+Future<void> _loadFonts() async {
+  Future<ByteData> read(String name) async {
+    final bytes = File('$_fontRoot/$name').readAsBytesSync();
+    return ByteData.view(Uint8List.fromList(bytes).buffer);
+  }
+
+  final roboto = FontLoader('Roboto');
+  for (final face in const [
+    'Roboto-Regular.ttf',
+    'Roboto-Medium.ttf',
+    'Roboto-Bold.ttf',
+    'Roboto-Black.ttf',
+  ]) {
+    roboto.addFont(read(face));
+  }
+  await roboto.load();
+  await (FontLoader(
+    'MaterialIcons',
+  )..addFont(read('MaterialIcons-Regular.otf'))).load();
+
+  // The app's real typeface. Without it, anything styled through
+  // AppTypography (the entry screen's loading message, for one) renders as
+  // missing-glyph boxes and the screenshot proves nothing about the copy.
+  final inter = FontLoader('Inter');
+  inter.addFont(
+    Future.value(
+      ByteData.view(
+        Uint8List.fromList(
+          File('assets/fonts/InterVariable.ttf').readAsBytesSync(),
+        ).buffer,
+      ),
+    ),
+  );
+  await inter.load();
+}
+
+/// A stand-in for the audio session. Nothing here contacts LiveKit: the
+/// screenshots are of the ROOM's states, and the audio service only supplies
+/// the mic state each one should render.
+class _StubVoice extends VoiceCallService {
+  _StubVoice({this.state = MicState.unavailable, this.connected = false})
+    : super.forTesting();
+
+  final MicState state;
+  final bool connected;
+
+  @override
+  Future<void> join({
+    required String roomId,
+    required String roomName,
+    required String participantName,
+    bool playSound = true,
+  }) async {}
+
+  @override
+  Future<void> disconnect({bool playSound = true}) async {}
+
+  @override
+  bool get isConnected => connected;
+
+  @override
+  bool get isMuted => state == MicState.muted;
+
+  @override
+  MicState get micState => state;
+
+  @override
+  VoiceCallStatus get status =>
+      connected ? VoiceCallStatus.connected : VoiceCallStatus.disconnected;
+
+  @override
+  List<VoiceParticipantViewData> get participants =>
+      const <VoiceParticipantViewData>[];
+}
+
+Widget _host(Widget child) => MaterialApp(
+  debugShowCheckedModeBanner: false,
+  theme: ThemeData.dark(useMaterial3: true),
+  home: RepaintBoundary(key: _capture, child: child),
+);
+
+Future<void> _settle(WidgetTester tester) async {
+  for (var i = 0; i < 6; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
+Future<void> _shoot(WidgetTester tester, String name) async {
+  await tester.runAsync(() async {
+    final boundary =
+        _capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    final image = await boundary.toImage(pixelRatio: 1);
+    try {
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      final file = File('test/.screenshots/$name.png');
+      file.parent.createSync(recursive: true);
+      file.writeAsBytesSync(data!.buffer.asUint8List());
+      // ignore: avoid_print
+      print('wrote ${file.path}');
+    } finally {
+      image.dispose();
+    }
+  });
+}
+
+void main() {
+  late FakeFirebaseFirestore db;
+
+  MockFirebaseAuth authFor(String uid) => MockFirebaseAuth(
+    signedIn: true,
+    mockUser: MockUser(
+      uid: uid,
+      email: '$uid@yovoice.app',
+      displayName: 'Kamil',
+    ),
+  );
+
+  RoomService roomsFor(String uid) =>
+      RoomService(firestore: db, auth: authFor(uid));
+
+  VoiceRoom room({
+    required String id,
+    required bool isLive,
+    String? clubId,
+    String name = 'Sunday Morning Talk',
+    String description = 'A calm place to talk about anything.',
+    String experience = 'community',
+  }) => VoiceRoom(
+    id: id,
+    hostId: 'host',
+    hostName: 'Host',
+    hostPhotoUrl: null,
+    name: name,
+    description: description,
+    category: 'talk',
+    visibility: clubId == null ? 'public' : 'private',
+    language: 'English',
+    maxParticipants: null,
+    participantCount: 0,
+    memberCount: 0,
+    isLive: isLive,
+    roomType: RoomType.community,
+    status: RoomStatus.active,
+    imageUrl: null,
+    approvalRequired: false,
+    slowModeSeconds: 0,
+    autoMuteNewUsers: true,
+    membersCanStartVoice: true,
+    createdAt: null,
+    updatedAt: null,
+    experience: experience,
+    clubId: clubId,
+  );
+
+  Future<void> seed(VoiceRoom model, {int participantCount = 0}) async {
+    await db.collection('rooms').doc(model.id).set({
+      'hostId': model.hostId,
+      'hostName': model.hostName,
+      'name': model.name,
+      'description': model.description,
+      'category': model.category,
+      'visibility': model.visibility,
+      'language': model.language,
+      'participantCount': participantCount,
+      'memberCount': 0,
+      'isLive': model.isLive,
+      'status': 'active',
+      'experience': model.experience,
+      if (model.clubId != null) 'clubId': model.clubId,
+    });
+  }
+
+  Future<void> seedFamily() async {
+    await db.collection('clubs').doc('family_host').set({
+      'name': 'The Jaguszewski Family',
+      'description': 'Our private place',
+      'ownerId': 'host',
+      'ownerName': 'Host',
+      'avatarUrl': null,
+      'bannerUrl': null,
+      'privacy': 'inviteOnly',
+      'type': 'family',
+      'defaultLanguage': 'English',
+      'memberCount': 4,
+      'onlineCount': 2,
+    });
+  }
+
+  ClubService clubs(String uid) => ClubService(
+    firestore: db,
+    auth: authFor(uid),
+    storage: MockFirebaseStorage(),
+  );
+
+  setUpAll(_loadFonts);
+
+  setUp(() async {
+    db = FakeFirebaseFirestore();
+    await db.collection('users').doc('relative').set({
+      'displayName': 'Kamil',
+      'photoUrl': null,
+    });
+    await db.collection('users').doc('host').set({
+      'displayName': 'Host',
+      'photoUrl': null,
+    });
+  });
+
+  Future<void> shootCommunity(
+    WidgetTester tester, {
+    required String name,
+    required VoiceRoom model,
+    required RoomVoiceEntry entry,
+    required Size viewport,
+    MicState micState = MicState.unavailable,
+    bool connected = false,
+    String uid = 'relative',
+    bool withClub = false,
+    double textScale = 1,
+  }) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = viewport;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData.dark(useMaterial3: true),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: RepaintBoundary(key: _capture, child: child!),
+        ),
+        home: CommunityVoiceRoomScreen(
+          room: model,
+          voiceEntry: entry,
+          roomService: roomsFor(uid),
+          voiceService: _StubVoice(state: micState, connected: connected),
+          clubService: withClub ? clubs(uid) : null,
+        ),
+      ),
+    );
+    await _settle(tester);
+    expect(tester.takeException(), isNull);
+    await _shoot(tester, name);
+  }
+
+  Future<void> shootBroadcast(
+    WidgetTester tester, {
+    required String name,
+    required VoiceRoom model,
+    required RoomVoiceEntry entry,
+    required Size viewport,
+    MicState micState = MicState.unavailable,
+    bool connected = false,
+    String uid = 'relative',
+  }) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = viewport;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      _host(
+        BroadcastRoomScreen(
+          room: model,
+          voiceEntry: entry,
+          roomService: roomsFor(uid),
+          voiceService: _StubVoice(state: micState, connected: connected),
+        ),
+      ),
+    );
+    await _settle(tester);
+    expect(tester.takeException(), isNull);
+    await _shoot(tester, name);
+  }
+
+  const viewports = <String, Size>{
+    '320': Size(320, 844),
+    '390': Size(390, 844),
+    '768': Size(768, 1024),
+    '1100': Size(1100, 800),
+    '1440': Size(1440, 900),
+  };
+
+  for (final entry in viewports.entries) {
+    final label = entry.key;
+    final size = entry.value;
+
+    testWidgets('community dormant, no authority @$label', (tester) async {
+      final model = room(id: 'room-1', isLive: false);
+      await seed(model);
+      await shootCommunity(
+        tester,
+        name: 'voice-community-dormant-waiting-$label',
+        model: model,
+        viewport: size,
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.dormant,
+          room: model,
+          authority: RoomVoiceStartAuthority.none,
+        ),
+      );
+    });
+
+    testWidgets('community dormant, may start @$label', (tester) async {
+      final model = room(id: 'room-1', isLive: false);
+      await seed(model);
+      await shootCommunity(
+        tester,
+        name: 'voice-community-dormant-startable-$label',
+        model: model,
+        viewport: size,
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.dormant,
+          room: model,
+          authority: RoomVoiceStartAuthority.roomMember,
+        ),
+      );
+    });
+
+    testWidgets('community live and muted @$label', (tester) async {
+      final model = room(id: 'room-1', isLive: true);
+      await seed(model, participantCount: 1);
+      await db
+          .collection('rooms')
+          .doc('room-1')
+          .collection('participants')
+          .doc('relative')
+          .set({
+            'userId': 'relative',
+            'displayName': 'Kamil',
+            'role': 'listener',
+            'isMuted': true,
+            'isSpeaker': true,
+            'isHandRaised': false,
+          });
+      await shootCommunity(
+        tester,
+        name: 'voice-community-live-muted-$label',
+        model: model,
+        viewport: size,
+        micState: MicState.muted,
+        connected: true,
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.live,
+          room: model,
+          authority: RoomVoiceStartAuthority.none,
+        ),
+      );
+    });
+
+    testWidgets('family lounge dormant, member may start @$label', (
+      tester,
+    ) async {
+      final model = room(
+        id: 'club_lounge_family_host',
+        isLive: false,
+        clubId: 'family_host',
+        name: 'The Jaguszewski Family Lounge',
+      );
+      await seed(model);
+      await seedFamily();
+      await shootCommunity(
+        tester,
+        name: 'voice-family-dormant-startable-$label',
+        model: model,
+        viewport: size,
+        withClub: true,
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.dormant,
+          room: model,
+          authority: RoomVoiceStartAuthority.clubMember,
+        ),
+      );
+    });
+
+    testWidgets('family lounge live, unmuted @$label', (tester) async {
+      final model = room(
+        id: 'club_lounge_family_host',
+        isLive: true,
+        clubId: 'family_host',
+        name: 'The Jaguszewski Family Lounge',
+      );
+      await seed(model, participantCount: 1);
+      await seedFamily();
+      await db
+          .collection('rooms')
+          .doc('club_lounge_family_host')
+          .collection('participants')
+          .doc('relative')
+          .set({
+            'userId': 'relative',
+            'displayName': 'Kamil',
+            'role': 'listener',
+            'isMuted': false,
+            'isSpeaker': true,
+            'isHandRaised': false,
+          });
+      await shootCommunity(
+        tester,
+        name: 'voice-family-live-$label',
+        model: model,
+        viewport: size,
+        withClub: true,
+        micState: MicState.on,
+        connected: true,
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.started,
+          room: model,
+          authority: RoomVoiceStartAuthority.clubMember,
+        ),
+      );
+    });
+
+    testWidgets('broadcast dormant, no authority @$label', (tester) async {
+      final model = room(
+        id: 'room-1',
+        isLive: false,
+        experience: 'broadcast',
+        name: 'The Sunday Broadcast',
+      );
+      await seed(model);
+      await shootBroadcast(
+        tester,
+        name: 'voice-broadcast-dormant-waiting-$label',
+        model: model,
+        viewport: size,
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.dormant,
+          room: model,
+          authority: RoomVoiceStartAuthority.none,
+        ),
+      );
+    });
+
+    testWidgets('broadcast dormant, host may start @$label', (tester) async {
+      final model = room(
+        id: 'room-1',
+        isLive: false,
+        experience: 'broadcast',
+        name: 'The Sunday Broadcast',
+      );
+      await seed(model);
+      await shootBroadcast(
+        tester,
+        name: 'voice-broadcast-dormant-startable-$label',
+        model: model,
+        viewport: size,
+        uid: 'host',
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.dormant,
+          room: model,
+          authority: RoomVoiceStartAuthority.host,
+        ),
+      );
+    });
+
+    testWidgets('broadcast live @$label', (tester) async {
+      final model = room(
+        id: 'room-1',
+        isLive: true,
+        experience: 'broadcast',
+        name: 'The Sunday Broadcast',
+      );
+      await seed(model, participantCount: 1);
+      await db
+          .collection('rooms')
+          .doc('room-1')
+          .collection('participants')
+          .doc('host')
+          .set({
+            'userId': 'host',
+            'displayName': 'Host',
+            'role': 'host',
+            'isMuted': false,
+            'isSpeaker': true,
+            'isHandRaised': false,
+          });
+      await shootBroadcast(
+        tester,
+        name: 'voice-broadcast-live-$label',
+        model: model,
+        viewport: size,
+        uid: 'host',
+        micState: MicState.on,
+        connected: true,
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.live,
+          room: model,
+          authority: RoomVoiceStartAuthority.host,
+        ),
+      );
+    });
+  }
+
+  testWidgets('long content: dormant lounge, 320px, 200% text', (tester) async {
+    final model = room(
+      id: 'club_lounge_family_host',
+      isLive: false,
+      clubId: 'family_host',
+      name:
+          'The Extended Jaguszewski Family Sunday Evening Lounge and Storytime',
+      description:
+          'A very long description that has to wrap gracefully at the '
+          'narrowest supported width, at double text scale, without pushing '
+          'the control dock off the screen.',
+    );
+    await seed(model);
+    await seedFamily();
+    await shootCommunity(
+      tester,
+      name: 'voice-family-dormant-longcontent-320-x2',
+      model: model,
+      viewport: const Size(320, 844),
+      withClub: true,
+      textScale: 2,
+      entry: RoomVoiceEntry(
+        outcome: RoomVoiceEntryOutcome.dormant,
+        room: model,
+        authority: RoomVoiceStartAuthority.clubMember,
+      ),
+    );
+  });
+
+  testWidgets('entry screen: loading and ended', (tester) async {
+    for (final size in const [Size(390, 844), Size(1100, 800)]) {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = size;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        _host(
+          const Scaffold(
+            backgroundColor: AppColors.background,
+            body: YoLoadingIndicator.fullscreen(message: 'Joining room…'),
+          ),
+        ),
+      );
+      await _settle(tester);
+      await _shoot(tester, 'voice-entry-loading-${size.width.toInt()}');
+
+      await tester.pumpWidget(
+        _host(
+          const Scaffold(
+            backgroundColor: AppColors.background,
+            body: SafeArea(
+              child: RoomEndedState(roomName: 'Sunday Morning Talk'),
+            ),
+          ),
+        ),
+      );
+      await _settle(tester);
+      await _shoot(tester, 'voice-entry-unavailable-${size.width.toInt()}');
+    }
+  });
+}

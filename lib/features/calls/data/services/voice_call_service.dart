@@ -43,6 +43,15 @@ enum MicState {
 class VoiceCallService extends ChangeNotifier {
   VoiceCallService._();
 
+  /// Test seam. The production service is a singleton behind a private
+  /// constructor, which left no way for a widget test to observe whether a
+  /// screen asked for a LiveKit token — the single most important assertion
+  /// about the room entry path, since requesting one against a dormant room
+  /// is the failure this whole path exists to prevent. A subclass may now
+  /// stand in for it and record the calls.
+  @visibleForTesting
+  VoiceCallService.forTesting();
+
   static final VoiceCallService instance = VoiceCallService._();
 
   // Lazy: VoiceTokenService touches FirebaseFunctions at construction,

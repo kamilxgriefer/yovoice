@@ -8,6 +8,7 @@ import 'package:yovoice/features/rooms/data/models/room_message.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
+import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 
 class RoomService {
@@ -39,6 +40,29 @@ class RoomService {
     final user = _auth.currentUser;
     if (user == null) throw StateError('You must be signed in to use rooms.');
     return user;
+  }
+
+  /// The signed-in account id, or '' when signed out.
+  ///
+  /// The room screens used to read `FirebaseAuth.instance` directly, which
+  /// tied every one of their render paths to a live Firebase app and left the
+  /// voice lifecycle untestable at the widget level. Routing identity through
+  /// the same injected service the rest of the screen already uses is what
+  /// makes "did this screen ask for a token?" an answerable question.
+  String get currentUserId => _auth.currentUser?.uid ?? '';
+
+  /// A display label for the live-audio session. The LiveKit participant name
+  /// is re-derived server-side from the canonical profile
+  /// (`buildParticipantName` in functions/livekit/token.js), so this is a
+  /// presentation fallback, never an identity claim.
+  String get currentUserLabel {
+    final user = _auth.currentUser;
+    if (user == null) return 'YO Voice user';
+    final name = user.displayName?.trim();
+    if (name != null && name.isNotEmpty) return name;
+    final email = user.email?.split('@').first.trim();
+    if (email != null && email.isNotEmpty) return email;
+    return 'YO Voice user';
   }
 
   /// Canonical identity for everything this service writes (rosters,
@@ -475,23 +499,112 @@ class RoomService {
     });
   }
 
-  Future<void> startCommunityVoice(String roomId) async {
-    final room = await _rooms.doc(roomId).get();
-    final data = room.data();
-    if (!room.exists || data == null) throw StateError('Room not found.');
-    final canStart =
-        data['hostId'] == _user.uid ||
-        (data['membersCanStartVoice'] == true &&
-            await _isMember(roomId, _user.uid));
-    if (!canStart) throw StateError('You cannot start voice in this room.');
-    if (RoomStatus.fromValue(data['status']) != RoomStatus.active) {
-      throw StateError('Open the room before starting voice.');
+  /// Resolves whether THIS account may flip [room]'s `isLive` false -> true,
+  /// mirroring the deployed `firestore.rules` branch for branch.
+  ///
+  /// The client asks this BEFORE offering a start control, because the app
+  /// must never present an affordance the server will refuse. It is a mirror,
+  /// not the authority: the rules and `createLiveKitToken` still decide.
+  ///
+  /// Legacy tolerance is deliberate and matches the rules' own
+  /// `.get(field, default)` reads. Production holds rooms with no
+  /// `membersCanStartVoice`, no `roomType` and no `experience`; every one of
+  /// them resolves here exactly as the server would resolve it, which for a
+  /// bare document means "the host, and nobody else".
+  Future<RoomVoiceStartAuthority> resolveVoiceStartAuthority(
+    VoiceRoom room,
+  ) async {
+    // A closed, archived, suspended or half-deleted room has no voice
+    // session to start. `hostRoomUpdateAllowed()`'s start branch does not
+    // read `deletionInProgress`, so this refusal is stricter than the rules
+    // on purpose: a room whose teardown has begun must never be restarted
+    // from the client while the server is still dismantling it.
+    if (!room.isActive || room.deletionInProgress) {
+      return RoomVoiceStartAuthority.none;
     }
+
+    final uid = _user.uid;
+    if (room.hostId.isNotEmpty && room.hostId == uid) {
+      return RoomVoiceStartAuthority.host;
+    }
+
+    // Club lounges (including Family Rooms) derive start authority from
+    // canonical Club membership, never from a roomMembers row — lounge
+    // members never get one. Mirrors isActiveClubRoomMember().
+    //
+    // This branch RETURNS rather than falling through, which is marginally
+    // stricter than `roomVoiceStartAllowed()`: that rule is a disjunction, so
+    // a Club room that also set `membersCanStartVoice` would additionally
+    // accept a roomMembers holder. No such document can exist — a lounge is
+    // written `visibility: 'private'` and the self-join roomMembers rule
+    // requires a public room, while `ensureClubLounge` writes no membership
+    // rows at all — and erring toward the Club's own membership on a private
+    // Club room is the safe direction. Anything that starts minting lounge
+    // roomMembers rows must revisit this.
+    final clubId = room.clubId;
+    if (clubId != null && clubId.isNotEmpty) {
+      return await _isActiveClubMember(clubId, uid)
+          ? RoomVoiceStartAuthority.clubMember
+          : RoomVoiceStartAuthority.none;
+    }
+
+    if (room.membersCanStartVoice && await _isMember(room.id, uid)) {
+      return RoomVoiceStartAuthority.roomMember;
+    }
+    return RoomVoiceStartAuthority.none;
+  }
+
+  /// Performs the liveness transition and nothing else.
+  ///
+  /// The write shape is load-bearing: both `roomVoiceStartAllowed()` and
+  /// `hostRoomUpdateAllowed()`'s start branch require
+  /// `affectedKeys().hasOnly(['isLive', 'endedAt', 'updatedAt'])` and
+  /// `updatedAt == request.time`. Anything else riding along — a counter, a
+  /// visibility flip, a denormalized name — turns an authorized start into a
+  /// permission-denied.
+  ///
+  /// Both rules also require `resource.data.isLive == false`, so a room that
+  /// is ALREADY live must not be written at all; re-asserting `isLive: true`
+  /// is refused by the server. Callers must check first, which
+  /// [RoomVoiceEntryCoordinator] does.
+  Future<void> startRoomVoice(String roomId) async {
     await _rooms.doc(roomId).update({
       'isLive': true,
       'updatedAt': FieldValue.serverTimestamp(),
+      // Clearing the closing marker is part of the same permitted key set.
+      // On a room that never ended this is a no-op and contributes no key.
       'endedAt': FieldValue.delete(),
     });
+  }
+
+  /// Turns a dormant room live and puts the caller on its roster.
+  ///
+  /// This is the ONE path that makes a room joinable by voice, shared by
+  /// every room type — Community, Broadcast, Club Lounge and Family Room.
+  /// It is ordered on purpose: liveness first, roster second, and only then
+  /// may a LiveKit token be requested. `joinRoom` itself refuses a room whose
+  /// `isLive` is not true, and `createLiveKitToken` refuses both a dormant
+  /// room and a caller with no participant row, so any other order is a
+  /// guaranteed failure.
+  ///
+  /// Kept under its original name because it is public API; it now serves
+  /// every experience rather than only non-club community rooms, and it
+  /// resolves authority through [resolveVoiceStartAuthority] instead of the
+  /// partial host/`membersCanStartVoice` test it used to carry (which had no
+  /// Club branch at all, so a Club Lounge member — including a Family Room
+  /// member — was always refused).
+  Future<void> startCommunityVoice(String roomId) async {
+    final room = await getRoom(roomId);
+    if (!room.isActive || room.deletionInProgress) {
+      throw StateError('Open the room before starting voice.');
+    }
+    if (!room.isLive) {
+      final authority = await resolveVoiceStartAuthority(room);
+      if (!authority.canStart) {
+        throw StateError('You cannot start voice in this room.');
+      }
+      await startRoomVoice(roomId);
+    }
     await joinRoom(roomId);
   }
 
@@ -591,12 +704,14 @@ class RoomService {
       imageUrl: imageUrl,
     );
 
+    if (!room.isActive || room.deletionInProgress) {
+      throw StateError('This lounge is not available right now.');
+    }
+
     if (!room.isLive) {
-      await clubLoungeReference(clubId).update({
-        'isLive': true,
-        'updatedAt': FieldValue.serverTimestamp(),
-        'endedAt': FieldValue.delete(),
-      });
+      // Same single-purpose write every other room type uses, so the shape
+      // the rules accept lives in exactly one place.
+      await startRoomVoice(room.id);
     }
 
     return joinRoom(room.id);
@@ -779,8 +894,60 @@ class RoomService {
       await endCommunityVoice(roomId);
       return;
     }
+    if (currentData != null && await shouldEndVoiceOnLeaving(roomId)) {
+      // The last person out of a PERSISTENT room they host closes the voice
+      // session behind them. Without this the room stays `isLive: true` with
+      // nobody in it and keeps advertising itself on the live feeds
+      // (watchLivePublicRooms), which is the empty-live-room state the
+      // server only cleans up for Club lounges — `executeLeaveRoom` drops
+      // `isLive` at zero participants when `roomKind == 'clubLounge'` and
+      // for no other room. `endRoomVoiceSelf` is host-only, so this is the
+      // only room the client can close, and the room itself survives:
+      // status stays `active`, members keep it, and it can be started again.
+      await endCommunityVoice(roomId);
+      return;
+    }
     final callable = _functions.httpsCallable('leaveRoomSelf');
     await callable.call<Map<Object?, Object?>>({'roomId': roomId});
+  }
+
+  /// True only when the caller hosts a live, non-lounge, persistent room and
+  /// is the last participant in it.
+  ///
+  /// The participant count is re-read from the SERVER: the decision closes
+  /// the session for everyone, and a cache-served snapshot taken while
+  /// someone else was joining would close a room that is not actually empty.
+  /// A failed read answers false — a leave must never become an eviction
+  /// because a count could not be confirmed. Club lounges are excluded
+  /// deliberately: `leaveRoomSelf` already performs their teardown
+  /// atomically with the participant delete, and duplicating it here would
+  /// race the server for the same transition.
+  Future<bool> shouldEndVoiceOnLeaving(String roomId) async {
+    try {
+      final snapshot = await _rooms
+          .doc(roomId)
+          .get(const GetOptions(source: Source.server));
+      final data = snapshot.data();
+      if (data == null) return false;
+      if (data['hostId'] != _user.uid) return false;
+      if (data['isLive'] != true) return false;
+      if (data['deletionInProgress'] == true) return false;
+      if (RoomStatus.fromValue(data['status']) != RoomStatus.active) {
+        return false;
+      }
+      if (RoomType.fromValue(data['roomType']) != RoomType.community) {
+        return false;
+      }
+      final clubId = data['clubId'];
+      if (data['roomKind'] == 'clubLounge' ||
+          (clubId is String && clubId.isNotEmpty) ||
+          roomId.startsWith('club_lounge_')) {
+        return false;
+      }
+      return ((data['participantCount'] as num?)?.toInt() ?? 0) <= 1;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> deleteRoom(String roomId) async {
@@ -812,6 +979,25 @@ class RoomService {
             .doc(userId)
             .get())
         .exists;
+  }
+
+  /// Mirrors `isActiveClubRoomMember()` in firestore.rules: the membership
+  /// row must exist, be canonical, be unbanned, and belong to a Club that is
+  /// itself active and not being deleted. A banned lounge member keeps the
+  /// row; what they lose is the ability to use it.
+  Future<bool> _isActiveClubMember(String clubId, String userId) async {
+    final club = _firestore.collection('clubs').doc(clubId);
+    final results = await Future.wait([
+      club.get(),
+      club.collection('members').doc(userId).get(),
+    ]);
+    final clubData = results[0].data();
+    final memberData = results[1].data();
+    if (clubData == null || memberData == null) return false;
+    if (clubData['status'] != 'active') return false;
+    if (clubData['deletionInProgress'] == true) return false;
+    if (memberData['userId'] != userId) return false;
+    return memberData['banned'] != true;
   }
 
   Future<void> _requireHost(String roomId) async {

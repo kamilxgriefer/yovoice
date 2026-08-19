@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/space_identity.dart';
@@ -9,10 +8,13 @@ import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
+import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_leave_coordinator.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_mute_coordinator.dart';
+import 'package:yovoice/features/rooms/data/services/room_voice_entry_coordinator.dart';
+import 'package:yovoice/features/rooms/presentation/room_mic_affordance.dart';
 import 'package:yovoice/features/rooms/presentation/voice_room_identity.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
@@ -22,9 +24,30 @@ import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class CommunityVoiceRoomScreen extends StatefulWidget {
-  const CommunityVoiceRoomScreen({required this.room, super.key});
+  const CommunityVoiceRoomScreen({
+    required this.room,
+    this.voiceEntry,
+    this.roomService,
+    this.voiceService,
+    this.entryCoordinator,
+    this.clubService,
+    super.key,
+  });
 
   final VoiceRoom room;
+
+  /// What [RoomEntryScreen] already resolved about this room's voice
+  /// session: whether it is live, and whether THIS account holds the
+  /// authority the deployed rules require to start it. Null means nothing
+  /// was resolved, which is treated as "no authority" — the screen never
+  /// invents a start control it cannot back up.
+  final RoomVoiceEntry? voiceEntry;
+
+  /// Test seams. All four default to the production wiring.
+  final RoomService? roomService;
+  final VoiceCallService? voiceService;
+  final RoomVoiceEntryCoordinator? entryCoordinator;
+  final ClubService? clubService;
 
   @override
   State<CommunityVoiceRoomScreen> createState() =>
@@ -34,10 +57,27 @@ class CommunityVoiceRoomScreen extends StatefulWidget {
 class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   static const _background = Color(0xFF05030A);
 
-  final _voice = VoiceCallService.instance;
-  final _rooms = RoomService();
+  late final VoiceCallService _voice =
+      widget.voiceService ?? VoiceCallService.instance;
+  late final RoomService _rooms = widget.roomService ?? RoomService();
+  late final RoomVoiceEntryCoordinator _entryCoordinator =
+      widget.entryCoordinator ??
+      RoomVoiceEntryCoordinator.production(rooms: _rooms);
   final _leaveCoordinator = RoomLeaveCoordinator();
   final _muteCoordinator = RoomMuteCoordinator.production;
+
+  /// The resolved voice state. Seeded from what the entry screen decided and
+  /// then kept current by the room document stream below, so a host starting
+  /// or ending voice elsewhere is reflected here without a rejoin.
+  late RoomVoiceEntry _entry =
+      widget.voiceEntry ?? RoomVoiceEntry.unresolved(widget.room);
+
+  /// Whether a LiveKit token may legitimately be requested right now.
+  /// `createLiveKitToken` refuses one unless the room document says
+  /// `status == 'active' && isLive == true`, so this gates every connect.
+  late bool _live = _entry.voiceIsLive;
+  StreamSubscription<VoiceRoom>? _roomSubscription;
+  bool _startingVoice = false;
   // Single shared stream instance -- both the manual subscription below and
   // the StreamBuilder in build() listen to this same Stream, instead of
   // each calling watchParticipants() independently. Firestore's snapshots()
@@ -52,7 +92,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   /// drives the club identity banner and top-bar title (board screen 6).
   late final Stream<Club>? _club = widget.room.clubId == null
       ? null
-      : ClubService().watchClub(widget.room.clubId!);
+      : (widget.clubService ?? ClubService()).watchClub(widget.room.clubId!);
   StreamSubscription<List<RoomParticipant>>? _participantSubscription;
   bool _joinedDocumentSeen = false;
   bool _leaving = false;
@@ -63,7 +103,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   /// in-flight check is pending (the roster stream keeps emitting).
   bool _confirmingRemoval = false;
 
-  String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
+  String get _uid => _rooms.currentUserId;
   bool get _isHost => _uid == widget.room.hostId;
   bool get _isClubRoom => widget.room.isClubRoom;
 
@@ -74,12 +114,39 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     _voice.addListener(_refresh);
     _participants = _rooms.watchParticipants(widget.room.id);
     _participantSubscription = _participants.listen(_handleParticipantState);
-    unawaited(_connect());
+    _roomSubscription = _rooms
+        .watchRoom(widget.room.id)
+        .listen(_handleRoomState, onError: (Object _) {});
+    // Only a live room may be connected. Entering a dormant one and asking
+    // for a token anyway is exactly the "This room is not currently live."
+    // failure this screen used to produce.
+    if (_live) unawaited(_connect());
+    _announceEntryFailure();
+  }
+
+  /// A refused entry must not be silent. The affordance already explains
+  /// itself on tap, but arriving in a room that could not be opened deserves
+  /// to say so once, up front, in the server's own product copy.
+  void _announceEntryFailure() {
+    final message = _entry.message;
+    if (_entry.outcome != RoomVoiceEntryOutcome.failed || message == null) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(message)));
+    });
   }
 
   @override
   void dispose() {
     _participantSubscription?.cancel();
+    _roomSubscription?.cancel();
+    // The mute coordinator is a process-wide singleton; a listener left
+    // registered here outlives the screen and rebuilds a disposed State.
+    _muteCoordinator.removeListener(_refresh);
     _voice.removeListener(_refresh);
     super.dispose();
   }
@@ -88,12 +155,76 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     if (mounted) setState(() {});
   }
 
+  /// The room document is the authority on liveness, and it moves while
+  /// people are on this screen: a host can end voice, and a member with
+  /// start authority can begin it. Following it means someone waiting in a
+  /// dormant room is connected the moment it opens, instead of having to
+  /// leave and come back.
+  void _handleRoomState(VoiceRoom room) {
+    final live = room.isLive && room.isActive && !room.deletionInProgress;
+    final wasLive = _live;
+    _live = live;
+    if (mounted) {
+      setState(() {
+        _entry = _entry.copyWith(
+          room: room,
+          outcome: live
+              ? _entry.outcome == RoomVoiceEntryOutcome.started
+                    ? RoomVoiceEntryOutcome.started
+                    : RoomVoiceEntryOutcome.live
+              : RoomVoiceEntryOutcome.dormant,
+        );
+      });
+    }
+    if (live == wasLive) return;
+    if (live) {
+      // Someone else opened the mics. Re-run the shared entry path rather
+      // than connecting directly: this account may still have no participant
+      // row, and the token function refuses a caller who has not joined.
+      unawaited(_enterVoice());
+    } else {
+      unawaited(_voice.disconnect(playSound: false));
+    }
+  }
+
+  /// The ONE path that turns voice on from this screen, used both by the
+  /// "Start voice" control and by the room going live underneath us. It
+  /// performs the liveness transition and the roster join in the order the
+  /// server requires, and only then connects audio.
+  Future<void> _enterVoice() async {
+    // A room-document emission can still be in flight when the screen is
+    // torn down; setState on a disposed State would throw from a listener
+    // nobody is left to catch.
+    if (_startingVoice || !mounted) return;
+    setState(() => _startingVoice = true);
+    try {
+      final entry = await _entryCoordinator.enter(_entry.room);
+      if (!mounted) return;
+      setState(() {
+        _entry = entry;
+        _live = entry.voiceIsLive;
+      });
+      if (entry.voiceIsLive) {
+        await _connect();
+        return;
+      }
+      final message = entry.message;
+      if (message != null && mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(message)));
+      }
+    } finally {
+      if (mounted) setState(() => _startingVoice = false);
+    }
+  }
+
   Future<void> _connect() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-    final name = user.displayName?.trim().isNotEmpty == true
-        ? user.displayName!.trim()
-        : user.email?.split('@').first ?? 'YO Voice user';
+    // Structural guard: no token request may leave this screen while the
+    // room document says the session does not exist.
+    if (!_live) return;
+    final name = _rooms.currentUserLabel;
+    if (_uid.isEmpty) return;
     try {
       if (_voice.roomId != widget.room.id || !_voice.isConnected) {
         await _voice.join(
@@ -180,6 +311,10 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   }
 
   Future<void> _toggleMute() async {
+    // A mute toggle persists through `setOwnRoomParticipantMute`, which the
+    // server refuses on a room that is not live. The affordance already
+    // prevents this call; the guard keeps it true if a future caller forgets.
+    if (!_live) return;
     final outcome = await _muteCoordinator.toggle(roomId: widget.room.id);
     if (!mounted) return;
     switch (outcome) {
@@ -205,15 +340,21 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
   }
 
   /// The mic can't publish right now — say why instead of a dead tap.
-  void _explainMicState() {
-    final message = switch (_voice.micState) {
-      MicState.connecting => 'Connecting to live audio…',
-      MicState.listenOnly =>
+  void _explainMicState(RoomMicAffordance affordance) {
+    final message = switch (affordance) {
+      RoomMicAffordance.connecting => 'Connecting to live audio…',
+      RoomMicAffordance.listenOnly =>
         "You're listening — the host controls who can speak here.",
-      MicState.unavailable =>
+      // Honest, and never a permission code: this account genuinely cannot
+      // open the mics here, and saying so is the whole point.
+      RoomMicAffordance.waitingForHost =>
+        _entry.message ?? _entry.authority.waitingExplanation,
+      RoomMicAffordance.unavailable =>
         _voice.errorMessage ??
             'Live audio is not connected. Leave and rejoin to retry.',
-      MicState.on || MicState.muted => '',
+      RoomMicAffordance.live ||
+      RoomMicAffordance.muted ||
+      RoomMicAffordance.startVoice => '',
     };
     if (message.isEmpty || !mounted) return;
     ScaffoldMessenger.of(context)
@@ -372,6 +513,13 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
             .where((participant) => participant.isSpeaker)
             .length;
         final listeners = roomParticipants.length - speaking;
+        // Liveness leads: in a dormant room there is no audio session at
+        // all, so no MicState value could describe the control honestly.
+        final affordance = roomMicAffordance(
+          roomIsLive: _live,
+          canStartVoice: _entry.canStartVoice,
+          micState: _voice.micState,
+        );
 
         if (_roomOver) {
           return Scaffold(
@@ -416,6 +564,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
                           avatarName: club?.name,
                           identity: identity,
                           status: _voice.status,
+                          roomIsLive: _live,
                           speaking: speaking,
                           listeners: listeners,
                           onBack: () => Navigator.of(context).pop(),
@@ -434,6 +583,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
                           roomId: widget.room.id,
                           isHost: _isHost,
                           accent: identity.primary,
+                          service: _rooms,
                           currentUserId: _uid,
                           onClose: desktop
                               ? null
@@ -443,13 +593,15 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
                     ),
                     _BottomControls(
                       identity: identity,
-                      micState: _voice.micState,
+                      affordance: affordance,
                       busy:
                           _voice.muteChangeInProgress ||
-                          _muteCoordinator.isBusy,
+                          _muteCoordinator.isBusy ||
+                          _startingVoice,
                       onMute: _toggleMute,
+                      onStartVoice: _enterVoice,
                       onLeave: _leave,
-                      onMicBlocked: _explainMicState,
+                      onMicBlocked: () => _explainMicState(affordance),
                       onChat: _openChat,
                       onPeople: () => _openParticipants(_latestParticipants),
                       showChat: !desktop,
@@ -469,6 +621,7 @@ class _TopBar extends StatelessWidget {
   const _TopBar({
     required this.roomName,
     required this.status,
+    required this.roomIsLive,
     required this.speaking,
     required this.listeners,
     required this.onBack,
@@ -482,6 +635,12 @@ class _TopBar extends StatelessWidget {
 
   final String roomName;
   final VoiceCallStatus status;
+
+  /// Whether the ROOM has a voice session, which is not the same question as
+  /// whether this device's audio transport is connected. A dormant room must
+  /// never read "OFFLINE" — that describes a broken connection, not a room
+  /// nobody has opened the mics in yet.
+  final bool roomIsLive;
   final int speaking;
   final int listeners;
   final VoidCallback onBack;
@@ -530,7 +689,9 @@ class _TopBar extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    subtitle ?? _statusText(status),
+                    _subtitleText(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: identity.accent,
                       fontSize: 11,
@@ -592,6 +753,15 @@ class _TopBar extends StatelessWidget {
         );
       },
     );
+  }
+
+  /// A club room keeps its identity line ("FAMILY ROOM", "CLUB ROOM") and
+  /// gains the dormant marker rather than losing the identity to it.
+  String _subtitleText() {
+    if (!roomIsLive) {
+      return subtitle == null ? 'NOT LIVE YET' : '$subtitle · NOT LIVE YET';
+    }
+    return subtitle ?? _statusText(status);
   }
 
   static String _statusText(VoiceCallStatus status) => switch (status) {
@@ -656,9 +826,10 @@ class _CounterPill extends StatelessWidget {
 
 class _BottomControls extends StatelessWidget {
   const _BottomControls({
-    required this.micState,
+    required this.affordance,
     required this.busy,
     required this.onMute,
+    required this.onStartVoice,
     required this.onLeave,
     required this.onMicBlocked,
     required this.onChat,
@@ -667,9 +838,13 @@ class _BottomControls extends StatelessWidget {
     this.showChat = true,
   });
 
-  final MicState micState;
+  final RoomMicAffordance affordance;
   final bool busy;
   final Future<void> Function() onMute;
+
+  /// Offered on exactly one condition: the room is dormant AND the deployed
+  /// rules would accept a voice start from this account.
+  final Future<void> Function() onStartVoice;
   final Future<void> Function() onLeave;
   final VoidCallback onChat;
   final VoidCallback onPeople;
@@ -682,29 +857,47 @@ class _BottomControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Every MicState is a visually distinct button — the mic must never
-    // look "permanently pressed" or dead while it actually works.
-    final (icon, label, style, tappable) = switch (micState) {
-      MicState.on => (Icons.mic_rounded, 'Mute', _MicStyle.live, true),
-      MicState.muted => (
+    // Every affordance is a visually distinct button — the mic must never
+    // look "permanently pressed" or dead while it actually works, and a
+    // room with no voice session must never show a mute control at all.
+    final (icon, label, style, tappable) = switch (affordance) {
+      RoomMicAffordance.live => (
+        Icons.mic_rounded,
+        'Mute',
+        _MicStyle.live,
+        true,
+      ),
+      RoomMicAffordance.muted => (
         Icons.mic_off_rounded,
         'Unmute',
         _MicStyle.muted,
         true,
       ),
-      MicState.connecting => (
+      RoomMicAffordance.connecting => (
         Icons.mic_rounded,
         'Connecting…',
         _MicStyle.waiting,
         false,
       ),
-      MicState.listenOnly => (
+      RoomMicAffordance.listenOnly => (
         Icons.headphones_rounded,
         'Listening',
         _MicStyle.info,
         true,
       ),
-      MicState.unavailable => (
+      RoomMicAffordance.startVoice => (
+        Icons.graphic_eq_rounded,
+        'Start voice',
+        _MicStyle.live,
+        true,
+      ),
+      RoomMicAffordance.waitingForHost => (
+        Icons.mic_off_rounded,
+        'Not live',
+        _MicStyle.waiting,
+        true,
+      ),
+      RoomMicAffordance.unavailable => (
         Icons.mic_off_rounded,
         'Audio off',
         _MicStyle.error,
@@ -735,9 +928,13 @@ class _BottomControls extends StatelessWidget {
                   enabled: tappable && !busy,
                   micStyle: style,
                   identity: identity,
-                  showSpinner: micState == MicState.connecting,
-                  onTap: micState == MicState.on || micState == MicState.muted
+                  showSpinner:
+                      affordance == RoomMicAffordance.connecting ||
+                      (busy && affordance == RoomMicAffordance.startVoice),
+                  onTap: affordance.isMuteControl
                       ? onMute
+                      : affordance.isStartControl
+                      ? onStartVoice
                       : () async => onMicBlocked(),
                 ),
               ),

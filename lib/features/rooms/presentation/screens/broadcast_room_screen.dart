@@ -1,17 +1,19 @@
 import 'dart:async';
 
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
+import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_leave_coordinator.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_mute_coordinator.dart';
+import 'package:yovoice/features/rooms/data/services/room_voice_entry_coordinator.dart';
+import 'package:yovoice/features/rooms/presentation/room_mic_affordance.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_background.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_bottom_controls.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
@@ -28,24 +30,55 @@ import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 
 class BroadcastRoomScreen extends StatefulWidget {
-  const BroadcastRoomScreen({required this.room, super.key});
+  const BroadcastRoomScreen({
+    required this.room,
+    this.voiceEntry,
+    this.roomService,
+    this.voiceService,
+    this.entryCoordinator,
+    super.key,
+  });
 
   final VoiceRoom room;
+
+  /// What [RoomEntryScreen] resolved about this broadcast's voice session.
+  /// Null means nothing was resolved, which is treated as "no authority".
+  final RoomVoiceEntry? voiceEntry;
+
+  /// Test seams. All three default to the production wiring.
+  final RoomService? roomService;
+  final VoiceCallService? voiceService;
+  final RoomVoiceEntryCoordinator? entryCoordinator;
 
   @override
   State<BroadcastRoomScreen> createState() => _BroadcastRoomScreenState();
 }
 
 class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
-  final RoomService _rooms = RoomService();
+  late final RoomService _rooms = widget.roomService ?? RoomService();
   // Live audio is part of the room, not a second screen: entering the
   // broadcast connects you (listen-only until promoted — publish rights
   // come from the server-minted LiveKit token, never the client). The
   // old flow pushed a separate PodcastVoiceCallScreen with its own
   // duplicate stage; that screen is gone.
-  final VoiceCallService _voice = VoiceCallService.instance;
+  late final VoiceCallService _voice =
+      widget.voiceService ?? VoiceCallService.instance;
+  late final RoomVoiceEntryCoordinator _entryCoordinator =
+      widget.entryCoordinator ??
+      RoomVoiceEntryCoordinator.production(rooms: _rooms);
   final RoomLeaveCoordinator _leaveCoordinator = RoomLeaveCoordinator();
   final RoomMuteCoordinator _muteCoordinator = RoomMuteCoordinator.production;
+
+  /// The resolved voice state, kept current by the room document stream.
+  late RoomVoiceEntry _entry =
+      widget.voiceEntry ?? RoomVoiceEntry.unresolved(widget.room);
+
+  /// Whether a LiveKit token may legitimately be requested. A persistent
+  /// broadcast room is created dormant (`isLive: false`), exactly like a
+  /// persistent community room, so this is not a temporary-room-only concern.
+  late bool _live = _entry.voiceIsLive;
+  StreamSubscription<VoiceRoom>? _roomWatch;
+  bool _startingVoice = false;
 
   // Created once instead of inline in build() -- StreamBuilder resubscribes
   // whenever its `stream` argument is a new instance, and every setState()
@@ -64,7 +97,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   bool _confirmingRemoval = false;
   bool _roomOver = false;
 
-  String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
+  String get _uid => _rooms.currentUserId;
   bool get _isHost => widget.room.hostId == _uid;
   String get _shareLink => 'https://yovoice.app/rooms/${widget.room.id}';
 
@@ -75,13 +108,33 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     _voice.addListener(_refreshVoice);
     _participants = _rooms.watchParticipants(widget.room.id);
     _participantsWatch = _participants.listen(_handleParticipantsUpdate);
-    unawaited(_connectVoice());
+    _roomWatch = _rooms
+        .watchRoom(widget.room.id)
+        .listen(_handleRoomState, onError: (Object _) {});
+    // A dormant room has no session to connect to. Asking for a token
+    // anyway is the "This room is not currently live." failure.
+    if (_live) unawaited(_connectVoice());
+    _announceEntryFailure();
+  }
+
+  /// A refused entry must not be silent — say so once, in the server's own
+  /// product copy, instead of leaving it to a tap on the control.
+  void _announceEntryFailure() {
+    final message = _entry.message;
+    if (_entry.outcome != RoomVoiceEntryOutcome.failed || message == null) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _showMessage(message, isError: true);
+    });
   }
 
   @override
   void dispose() {
     _muteCoordinator.removeListener(_refreshVoice);
     _voice.removeListener(_refreshVoice);
+    unawaited(_roomWatch?.cancel());
     unawaited(_participantsWatch?.cancel());
     // Deliberately NOT disconnecting here: backing out minimizes the
     // room (the shell's mini bar keeps it live). Only an explicit Leave
@@ -100,12 +153,61 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     await _connectVoice(playSound: false);
   }
 
+  /// The broadcast's liveness authority, followed live so a host opening the
+  /// show reaches everyone already waiting on the stage screen.
+  void _handleRoomState(VoiceRoom room) {
+    final live = room.isLive && room.isActive && !room.deletionInProgress;
+    final wasLive = _live;
+    _live = live;
+    if (mounted) {
+      setState(() {
+        _entry = _entry.copyWith(
+          room: room,
+          outcome: live
+              ? RoomVoiceEntryOutcome.live
+              : RoomVoiceEntryOutcome.dormant,
+        );
+      });
+    }
+    if (live == wasLive) return;
+    if (live) {
+      unawaited(_enterVoice());
+    } else {
+      unawaited(_voice.disconnect(playSound: false));
+    }
+  }
+
+  /// The one path that turns this broadcast's voice on: liveness first,
+  /// roster second, token third — the order the server requires.
+  Future<void> _enterVoice() async {
+    // A room-document emission can still be in flight when the screen is
+    // torn down; setState on a disposed State would throw from a listener
+    // nobody is left to catch.
+    if (_startingVoice || !mounted) return;
+    setState(() => _startingVoice = true);
+    try {
+      final entry = await _entryCoordinator.enter(_entry.room);
+      if (!mounted) return;
+      setState(() {
+        _entry = entry;
+        _live = entry.voiceIsLive;
+      });
+      if (entry.voiceIsLive) {
+        await _connectVoice();
+        return;
+      }
+      final message = entry.message;
+      if (message != null && mounted) _showMessage(message, isError: true);
+    } finally {
+      if (mounted) setState(() => _startingVoice = false);
+    }
+  }
+
   Future<void> _connectVoice({bool playSound = true}) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-    final name = user.displayName?.trim().isNotEmpty == true
-        ? user.displayName!.trim()
-        : user.email?.split('@').first ?? 'YO Voice user';
+    // Structural guard: no token request while the room says it is dormant.
+    if (!_live) return;
+    final name = _rooms.currentUserLabel;
+    if (_uid.isEmpty) return;
     try {
       if (_voice.roomId != widget.room.id || !_voice.isConnected) {
         await _voice.join(
@@ -125,6 +227,9 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   }
 
   Future<void> _toggleMic() async {
+    // `setOwnRoomParticipantMute` is refused on a room that is not live; the
+    // affordance already prevents this call, and the guard keeps it true.
+    if (!_live) return;
     final outcome = await _muteCoordinator.toggle(roomId: widget.room.id);
     if (!mounted) return;
     switch (outcome) {
@@ -638,6 +743,13 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
             final anyoneSpeaking = stageSpeakers.any(
               (speaker) => speaker.isSpeaking,
             );
+            // Liveness leads the audio session: a dormant broadcast has no
+            // session, so no MicState value could describe the control.
+            final affordance = roomMicAffordance(
+              roomIsLive: _live,
+              canStartVoice: _entry.canStartVoice,
+              micState: _voice.micState,
+            );
 
             return Stack(
               children: [
@@ -672,9 +784,10 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                               identity: SpaceIdentity.podcast,
                               imageUrl: widget.room.imageUrl,
                               quiet: !anyoneSpeaking,
-                              trailing: BroadcastLiveBadge(
-                                isLive: widget.room.isLive,
-                              ),
+                              // The live badge follows the room document,
+                              // not the possibly-stale document this screen
+                              // was pushed with.
+                              trailing: BroadcastLiveBadge(isLive: _live),
                             ),
                             if (_isHost) ...[
                               const SizedBox(height: 16),
@@ -728,6 +841,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                           roomId: widget.room.id,
                           isHost: _isHost,
                           accent: BroadcastRoomColors.accent,
+                          service: _rooms,
                           currentUserId: _uid,
                           onClose: desktop
                               ? null
@@ -742,11 +856,17 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                       micMuted: _voice.isMuted,
                       micBusy:
                           _voice.muteChangeInProgress ||
-                          _muteCoordinator.isBusy,
+                          _muteCoordinator.isBusy ||
+                          _startingVoice,
+                      affordance: affordance,
                       canSpeak: me != null && (me.isSpeaker || me.isHost),
                       handRaised: me?.isHandRaised ?? false,
                       canRaiseHand: me != null && !me.isSpeaker && !me.isHost,
                       onMic: _toggleMic,
+                      onStartVoice: () => unawaited(_enterVoice()),
+                      onNotLive: () => _showMessage(
+                        _entry.message ?? _entry.authority.waitingExplanation,
+                      ),
                       onRaiseHand: () => _toggleHand(me),
                       onShare: _openShareSheet,
                       onParticipants: () => _openParticipants(participants),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/rooms/presentation/room_mic_affordance.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
 
 /// The broadcast room's one stable control bar. Live audio is connected
@@ -15,10 +16,13 @@ class BroadcastBottomControls extends StatelessWidget {
     required this.connected,
     required this.micMuted,
     required this.micBusy,
+    required this.affordance,
     required this.canSpeak,
     required this.handRaised,
     required this.canRaiseHand,
     required this.onMic,
+    required this.onStartVoice,
+    required this.onNotLive,
     required this.onRaiseHand,
     required this.onShare,
     required this.onParticipants,
@@ -34,6 +38,12 @@ class BroadcastBottomControls extends StatelessWidget {
   final bool micMuted;
   final bool micBusy;
 
+  /// What the primary control is allowed to be. A dormant broadcast offers
+  /// "Start voice" to whoever the deployed rules would accept and an honest
+  /// "Not live" to everyone else — never a mute button that the server would
+  /// refuse, and never a raise-hand into a show that has not begun.
+  final RoomMicAffordance affordance;
+
   /// Host or promoted speaker — the only people whose mic button works.
   /// The server-minted LiveKit token enforces the same rule; this just
   /// keeps the UI honest about it.
@@ -41,6 +51,13 @@ class BroadcastBottomControls extends StatelessWidget {
   final bool handRaised;
   final bool canRaiseHand;
   final VoidCallback onMic;
+
+  /// Offered on exactly one condition: the room is dormant AND the deployed
+  /// rules would accept a voice start from this account.
+  final VoidCallback onStartVoice;
+
+  /// Explains a dormant room instead of leaving a dead control.
+  final VoidCallback onNotLive;
   final VoidCallback onRaiseHand;
   final VoidCallback onShare;
   final VoidCallback onParticipants;
@@ -65,13 +82,35 @@ class BroadcastBottomControls extends StatelessWidget {
         ),
         child: Row(
           children: [
-            if (canSpeak)
+            // The primary slot is decided by the affordance first. A show
+            // that has not started has neither a mic to mute nor a stage to
+            // raise a hand for, so neither control is offered into it.
+            if (affordance == RoomMicAffordance.startVoice)
+              Expanded(
+                child: BroadcastHostBottomAction(
+                  icon: Icons.graphic_eq_rounded,
+                  label: 'Start voice',
+                  highlighted: true,
+                  onTap: ending || micBusy ? null : onStartVoice,
+                ),
+              )
+            else if (affordance == RoomMicAffordance.waitingForHost)
+              Expanded(
+                child: BroadcastHostBottomAction(
+                  icon: Icons.mic_off_rounded,
+                  label: 'Not live',
+                  onTap: ending ? null : onNotLive,
+                ),
+              )
+            else if (canSpeak)
               Expanded(
                 child: BroadcastHostBottomAction(
                   icon: micMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
                   label: micMuted ? 'Unmute' : 'Mute',
                   highlighted: !micMuted,
-                  onTap: ending || micBusy || !connected ? null : onMic,
+                  onTap: ending || micBusy || !connected || !affordance.isMuteControl
+                      ? null
+                      : onMic,
                 ),
               )
             else
