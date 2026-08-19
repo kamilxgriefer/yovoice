@@ -369,6 +369,20 @@ someone decide what to pick up next.
   web foreground banner uses the in-app player. See
   [ADR-076](Decisions.md#adr-076-product-sounds-are-original-bounded-and-reserved-for-meaningful-events).
 
+- Achievement ledger incident repair (2026-08-19): ended three infinite
+  trigger retry loops (`activeDay` dedup entries fingerprinted the exact
+  event time under a per-day identity, so a user's second action of a UTC
+  day was an unresolvable collision the engine answered by throwing
+  forever) and unwedged `reconcileAchievementsV1`, stalled on its very
+  first user since 2026-08-16 by a malformed partial failure record.
+  Fingerprint mismatches are now terminal (quiet replay for
+  same-content-different-time recurrences, logged collision otherwise),
+  activeDay content derives from (uid, day) alone, and the migration
+  recovers per-user instead of stalling globally. All 12 achievement
+  functions redeployed and the four pre-fix ledger entries plus the poison
+  record repaired in production, commit `138085a`. See
+  [ADR-081](Decisions.md#adr-081-ledger-fingerprint-mismatches-are-terminal-and-canonical-content-is-a-pure-function-of-the-events-identity).
+
 - Achievements end-to-end repair (2026-08-15): fixed the Firestore self-write
   allowlist that rejected every atomic achievement update because
   `unlockedTitleTimestamps` was missing, added an emulator regression for the

@@ -469,6 +469,53 @@ permission flags).
 
 ## Achievements
 
+- **FIXED LIVE 2026-08-19 — three infinite trigger retry loops: the second
+  qualifying action of a user-day was an unresolvable ledger collision.**
+  `activeDay` events key their dedup identity on (uid, UTC day) but carried
+  the triggering event's exact time inside the content fingerprint, so the
+  first action of a day wrote the ledger entry and every later action that
+  same day derived the same eventId with a different fingerprint. The engine
+  threw `AchievementEventIntegrityError` (fail closed) and, with `retry:
+  true`, Eventarc redelivered forever — the primary event's transaction had
+  already committed, so each loop burned invocations every 1–3 minutes.
+  Latent since the 2026-08-16 launch; first tripped 2026-08-18 17:34Z.
+  Production had three loops across `onAchievementRoomMessageCreated` and
+  `onAchievementDirectMessageCreated` (ledger ids `v1_29153e…`, `v1_96d81c…`
+  — hit by both a room message and a DM — and the unreported `v1_3c2af0…`).
+  Fixed by ADR-081: mismatches are terminal (quiet replay for
+  same-content-different-time recurrences, logged collision otherwise),
+  `activeDay` content is now a pure function of (uid, day), and the four
+  pre-fix ledger entries were rewritten canonically by
+  `functions/scripts/repair_achievement_canonical_ledger.js`. Regression
+  tests fail 10/10 against the pre-fix code.
+
+- **FIXED LIVE 2026-08-19 — `reconcileAchievementsV1` was wedged on the
+  first user in the collection since its first run (2026-08-16 18:40Z).**
+  That user's document is a legacy presence-only skeleton;
+  `legacyProgressFromUser` returned `undefined` for two fields, Firestore
+  rejected the bootstrap write, and `failUser` then merge-created a partial
+  record ({status, failureCode, updatedAt} only) that `beginUser` rejected
+  as "Stored user migration state is malformed" on every 15-minute run —
+  ~96 failures/day for three days, with the global cursor never advancing
+  past user one. Distinct root cause from the retry loops, same
+  fail-closed-forever pattern, surfaced in the same incident review. Fixed:
+  the bootstrap shape is undefined-safe, `failUser` always writes a
+  self-describing record with an attempt counter, `beginUser`
+  re-initializes pre-bootstrap failures (terminal after 5 attempts) and
+  marks contradictory records failed while the run advances. The production
+  poison record was rewritten by the ADR-081 repair script.
+
+- **FIXED IN SOURCE 2026-08-19 (preventive) — the reconciler bootstrap
+  would have erased live verified progress.** `beginUser` unconditionally
+  overwrote `achievementProgress/{uid}` with a legacy bootstrap. Three
+  production users already hold live trigger-accrued verified progress the
+  dedup ledger can never replay; once the unwedged reconciler reached them,
+  their verified counters would have been reset and the legacy floors
+  re-derived from user-document counters the projection had already
+  replaced with verified values. `beginUser` now adopts existing progress
+  untouched and derives audit floors from it. Caught by review during the
+  ADR-081 incident work, before the reconciler ever reached those users.
+
 - **FIXED — every achievement progress transaction was denied by Firestore.**
   `AchievementService` atomically writes the metric counter, unlocked ids,
   unlock timestamps, selected title and reconciliation timestamp, but the

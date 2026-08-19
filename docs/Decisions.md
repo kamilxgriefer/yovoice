@@ -4945,3 +4945,69 @@ of the real ADR-067 go-live, after live Stripe configuration exists.
 **Consequences.** The codebase deploys without fake secrets and without
 half-configured billing endpoints appearing in production. The go-live
 checklist gains one explicit step.
+
+## ADR-081: Ledger fingerprint mismatches are terminal, and canonical content is a pure function of the event's identity
+
+**Status:** accepted, deployed (2026-08-19), production data repaired.
+
+**Context.** The achievement dedup ledger keys entries by
+`sha256(sourceType|sourceKey|metric)` and stores a fingerprint of the full
+canonical content, occurredAt included. `activeDay` events collapse a whole
+UTC day into one identity but fingerprinted the triggering event's exact
+time, so the second qualifying action of any user-day derived the same
+eventId with a different fingerprint. `engine.js` threw
+`AchievementEventIntegrityError` — permanently, since redelivery re-derives
+the same mismatch — and `retry: true` turned that into infinite Eventarc
+redelivery. Three loops ran from 2026-08-18 17:34Z (ledger ids
+`v1_29153e…`, `v1_96d81c…`, `v1_3c2af0…`, the last unreported), burning
+invocations every 1–3 minutes; the primary events had already committed, so
+nothing was pending except the poison. The same latent class covered every
+identity that deliberately collapses recurrences: community re-joins and
+re-added reactions would have collided the same way. Separately,
+`reconcileAchievementsV1` had been wedged on the collection's first user
+since 2026-08-16 18:40Z: a presence-only legacy profile made the bootstrap
+write `undefined` (rejected by Firestore), `failUser` merge-created a
+partial record, and `beginUser` treated it as unrecoverable corruption on
+every run while the cursor never advanced.
+
+**Decision.** Three rules. (1) A fingerprint mismatch on an existing ledger
+entry is *terminal*, never a retry: if the derived event re-fingerprinted
+at the stored entry's own observation time matches the stored fingerprint —
+the recurrence-of-a-collapsing-identity case — it resolves as a quiet
+`replayed`; anything else returns a `collision` outcome with a forensic
+error log. Neither branch applies the event or touches the stored entry;
+dedup always keeps the first write. (2) Every field of an event's canonical
+content must be a pure function of its identity: `activeDay` now stamps the
+UTC day start, not the triggering event's time. (3) The migration treats
+per-user state failures as per-user outcomes: `failUser` always writes a
+self-describing record with an attempt counter, `beginUser` re-initializes
+pre-bootstrap failure records (terminal after `MAX_BOOTSTRAP_ATTEMPTS`),
+marks contradictory records failed and lets the run advance — and adopts
+already-existing live progress instead of overwriting it. The four pre-fix
+`activeDay` entries and the poisoned migration record were rewritten in
+production by `functions/scripts/repair_achievement_canonical_ledger.js`
+(dry-run default, identity re-derived through the engine's own modules,
+apply refuses on any anomaly, idempotent; rehearsed against the emulator
+including the refusal gate).
+
+**Reasoning.** Fail-closed is right for *transient* uncertainty but wrong
+for *permanent* divergence: at-least-once delivery makes an unresolvable
+throw an infinite loop, which is a worse integrity posture than a logged,
+inert outcome — the ledger still wins, nothing is double-counted, and the
+forensic record survives in Cloud Logging instead of a retry storm. The
+quiet-replay tier exists because collapsing identities *by design* receive
+recurrences whose only honest difference is observation time; logging those
+as errors would page on routine re-joins and re-likes. Comparing at the
+stored time is sound: equal eventIds already pin sourceType, sourceKey and
+metric, so the substituted fingerprint proves every other content field
+equal.
+
+**Consequences.** All 12 achievement functions redeployed 2026-08-19
+~05:30Z; the three loops went silent and the reconciler advanced past its
+wedge on the next scheduled run. Regression tests (10 of them failing
+against the pre-fix code) pin the terminal outcomes, the day-start
+canonicalization, the quiet-replay tier and every migration recovery path.
+Any future source adapter whose identity collapses recurrences must derive
+*all* canonical content from the identity alone — the sources test now
+asserts fingerprint equality, not just id equality, for same-day activeDay
+events.
