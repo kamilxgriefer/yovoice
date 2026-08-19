@@ -11,11 +11,11 @@ figure is a suite run, not an estimate; file counts are `find`.
 
 | Suite | Command | Count |
 |---|---|---|
-| Firestore rules | `npm --prefix firestore-tests test` | **363** checks |
+| Firestore rules | `npm --prefix firestore-tests test` | **446** checks |
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **52** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
 | Cloud Functions | `npm --prefix functions test` | **593** tests across **98** suites (49 `*.test.js` files) |
-| Flutter | `flutter test` | **622** tests across **65** files |
+| Flutter | `flutter test` | **881** tests across **95** files |
 
 > **Correction, 2026-08-16.** These numbers were wrong in several docs for
 > most of a week — TESTING.md claimed 268 rules checks and 43 Storage
@@ -103,11 +103,40 @@ figure is a suite run, not an estimate; file counts are `find`.
 > review; the website separately passed its exact-schema parser tests, lint and
 > a 42-route production build.
 
+> **Movement, 2026-08-19 (ADR-082, direct messages are server-only).** Both
+> changed rows were re-measured by running the suites, and both were stale
+> by far more than this change accounts for — the drift the 2026-08-16
+> correction was written to stop, for the fourth round running.
+>
+> - Rules **363 → 446**, of which **0** are from this change: it replaced
+>   six DM-privacy checks with six server-only denial checks and rewrote one
+>   regression case in place, so the count is unchanged by it. The measured
+>   baseline at `b3c27fd` was already **446**; the table had missed 363 →
+>   446 across several commits, the last of them the club chat moderation
+>   pass.
+> - Flutter **622/65 → 881/95**, of which **19** tests and 1 file are from
+>   this change: the new `test/message_outbox_test.dart` (16 cases) plus a
+>   net +3 in `test/direct_message_send_test.dart`, where the six
+>   client-fallback cases became nine outbox cases. The measured baseline at
+>   `b3c27fd` was **862/95**, so 622/65 had been stale for several rounds.
+>
+> Both baselines were re-measured twice, because `main` moved underneath
+> this work mid-review (`b123aec` → `3d54bc3` → `b3c27fd`) and the club chat
+> commit touched `firestore.rules` and `firestore-tests/rules.test.js` — the
+> same two files. The figures above are from the rebased tree, not from the
+> first measurement.
+> - Storage **52**, family-media **11** and Cloud Functions **593/98** are
+>   untouched — this change edits no `storage.rules` and no `functions/`
+>   file.
+>
+> Re-measure before editing this table. Do not add your delta to the number
+> already written here; four consecutive rounds have now found it wrong.
+
 ## Firestore rules — the most mature coverage in the project
 
 `firestore-tests/` — a standalone Node project running regression and
 attack-scenario checks against `firestore.rules` via
-`@firebase/rules-unit-testing` and the Firestore emulator — **363 checks
+`@firebase/rules-unit-testing` and the Firestore emulator — **446 checks
 passing** — plus `storage.test.js`, the same treatment for `storage.rules`
 against the Storage emulator (52 checks: path ownership, size caps,
 content-type allowlists, read gating, default deny), plus 11 combined
@@ -232,6 +261,51 @@ right.
 can accumulate state between runs that makes a check pass or fail for the
 wrong reason.
 
+### What ADR-082 changed here — direct messages became server-only
+
+Six DM-privacy checks that asserted a client-direct send SUCCEEDS in the
+permitted privacy modes now assert it is denied, and one older
+`a verified user can still send a message` regression became a denial too.
+The count did not move; what each check proves did.
+
+The finding behind it: `conversations/{id}/messages/{id}` create checked
+`isVerified()` — a token claim that says an email was confirmed once and
+nothing about whether the account may still speak — but not the sender's
+standing. `activeProfile()` and `assertNotRestricted()` run *inside*
+`sendDirectMessage`, and `message_service.dart`'s `_sendTextMessageDirectly`
+wrote the message document straight from the client whenever the callable
+was unreachable. A banned or communication-muted account kept full direct
+messaging by taking that path.
+
+**The fix could not be "add the missing check", and that is the part worth
+remembering.** Adding `canCommunicate()` to the rule was measured against
+the emulator and exceeded Firestore's per-request document access-call
+budget: the friends-privacy path had exactly one access call of headroom
+(verified by adding synthetic `exists()` probes — +1 passed, +2 failed),
+and a complete sender-status check costs more than one. An exhausted rule
+does not skip the check; it errors, and an error denies — so the "fix"
+broke legitimate friends-mode sends, failing
+`SECURITY DM PRIVACY: friends requires both canonical guard halves` with
+`Service call error. Function: [exists]`. Consolidating the rule's five
+redundant re-reads of the conversation document, collapsing
+`accountIsActive()` to one `get`, and collapsing `canonicalFriendshipGuard`'s
+seven access calls were each tried; none freed enough.
+
+Two lessons generalize:
+
+1. **A server-side check inside a callable is not a control if a client
+   fallback writes the same document.** Ask of every callable, "what happens
+   when this is unavailable?" If the answer is a direct client write, the
+   rule must repeat every check the callable makes — because the rule is the
+   one that will actually run.
+2. **A rule has a budget, and authorization that does not fit in it belongs
+   somewhere else.** When a rule cannot afford all of its checks, the answer
+   is not to ship the subset it can afford; it is to move the write behind
+   something that can afford all of them.
+
+Losing the fallback must not mean losing the message, so the client keeps a
+bounded local outbox instead — see the Flutter section below.
+
 ## Cloud Functions — real coverage, unevenly distributed
 
 `functions/test/` — **593 tests across 98 suites in 49 files**, run with
@@ -260,12 +334,35 @@ absolute count over a collection your file does not exclusively own.
 
 ## Dart tests — real, but narrow
 
-`test/` — **622 tests across 65 files**, green in local verification,
+`test/` — **881 tests across 95 files**, green in local verification,
 grown mostly
 out of real bugs rather than an even coverage discipline. The
 pattern throughout: fake the Firebase backends
 (`firebase_auth_mocks` / `fake_cloud_firestore` /
 `firebase_storage_mocks`), drive the real production code. Highlights:
+
+- **`message_outbox_test.dart`**, **`direct_message_send_test.dart`**
+  (2026-08-19, ADR-082) — the client no longer writes a direct message to
+  Firestore under any circumstance, so "the callable is unavailable" had to
+  stop meaning "write it yourself" without starting to mean "lose it". The
+  outbox suite covers the three states (Pending / Retrying / Failed), the
+  bound (it refuses past capacity, and evicts a FAILED entry rather than an
+  unsent one to make room), persistence across a restart, a corrupt queue
+  being dropped rather than thrown, and one unreadable entry not stranding
+  the rest. The send suite covers the seam: nothing is written to Firestore,
+  the message is queued, and a later flush delivers it exactly once.
+
+  Two cases are the ones worth keeping if the rest were ever trimmed. The
+  first is that a retry reuses the ORIGINAL `requestId` — the callable keys
+  its idempotency ledger on it, so a regenerated id would turn every
+  ambiguous failure into a duplicate message. The second is
+  `_LosesTheResponse`, which commits the server write and *then* throws:
+  the client cannot distinguish "never arrived" from "arrived and the
+  acknowledgement was dropped", so it retries, and the test proves the
+  replay leaves one message rather than two. A backoff case is included
+  precisely because the others zero the backoff to make a same-tick flush
+  due — without it, "no delay" would be untestable and a real regression in
+  the delay could hide behind the convenience.
 
 - **`profile_save_e2e_test.dart`** — drives the REAL EditProfileScreen
   through pick → crop editor → Save → Storage → Firestore → stream

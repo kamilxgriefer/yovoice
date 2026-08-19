@@ -3407,8 +3407,15 @@ async function main() {
   );
 
   await check(
-    "regression: a verified user can still send a message",
+    "SECURITY: even a verified participant cannot send a message — the " +
+      "client-direct send is gone (ADR-082)",
     async () => {
+      // This case asserted the opposite until ADR-082, and the change is
+      // the point: `_sendTextMessageDirectly` used to write this document
+      // whenever the callable was unreachable, which skipped every
+      // server-side moderation check at once. The send now queues in the
+      // local outbox and retries through `sendDirectMessage` instead, so
+      // nothing is lost by this denial.
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         await setDoc(doc(ctx.firestore(), "conversations/convo-verified"), {
           participantIds: ["host-uid", "invitee-uid"],
@@ -3416,7 +3423,7 @@ async function main() {
       });
       const db = host.firestore();
       const ref = doc(db, "conversations/convo-verified/messages/msg-1");
-      await assertSucceeds(
+      await assertFails(
         setDoc(ref, {
           senderId: "host-uid",
           content: "hello",
@@ -3429,7 +3436,26 @@ async function main() {
     },
   );
 
-  // --- Direct-message privacy (recipient authority) ---
+  // --- Direct messages are SERVER-ONLY (ADR-082) -----------------------
+  //
+  // `conversations/{id}/messages/{id}` create is `allow create: if false`.
+  // `sendDirectMessage` is the sole writer, because the three things that
+  // make a direct message legitimate are things this rule cannot both
+  // afford and be trusted to check: the SENDER's standing (banned,
+  // disabled, staff communicationMute), the RECIPIENT's messagePrivacy and
+  // the follow/friendship edges behind it, and the rate limit plus the
+  // idempotency ledger that makes a retry safe.
+  //
+  // The old rule checked isVerified() and the recipient's privacy but NOT
+  // the sender's standing, so a banned or communication-muted account kept
+  // full direct messaging through the client fallback. Adding the sender
+  // check was measured against this emulator and exceeded Firestore's
+  // per-request access-call budget — an exhausted rule errors, and an error
+  // denies, which broke legitimate friends-mode sends. Hence server-only.
+  //
+  // These cases pin the DENIAL. What each privacy mode MEANS is proven
+  // server-side in functions/test/direct_integrity.test.js, which is now
+  // the only place it can be exercised.
 
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     await setDoc(doc(ctx.firestore(), "conversations/privacy-convo"), {
@@ -3466,7 +3492,52 @@ async function main() {
   );
 
   await check(
-    "SECURITY DM PRIVACY: nobody denies a client-direct legacy send",
+    "SECURITY: no client may create a direct message, whatever the " +
+      "recipient's privacy mode says",
+    async () => {
+      // Every one of these was ALLOWED by the previous rule: the recipient
+      // accepts messages, the pair is unblocked, the sender is verified and
+      // is a genuine participant. They are refused because no client
+      // authors a message document any more — not because of who this
+      // sender is or what the recipient prefers.
+      for (const mode of ["everyone", "peopleYouFollow", "friends"]) {
+        await testEnv.withSecurityRulesDisabled(async (ctx) => {
+          const db = ctx.firestore();
+          await updateDoc(doc(db, "users/invitee-uid"), {
+            messagePrivacy: mode,
+          });
+          // The full permissive graph: following edge AND both canonical
+          // friendship guard halves, so nothing but the server-only rule
+          // is doing the denying.
+          await setDoc(
+            doc(db, "users/invitee-uid/following/host-uid"),
+            { uid: "host-uid", followedAt: new Date() },
+          );
+          for (const [owner, friend] of [
+            ["host-uid", "invitee-uid"],
+            ["invitee-uid", "host-uid"],
+          ]) {
+            await setDoc(
+              doc(db, `friendshipGuards/${owner}/friends/${friend}`),
+              {
+                ownerId: owner,
+                friendId: friend,
+                schemaVersion: 1,
+                establishedAt: new Date(),
+              },
+            );
+          }
+        });
+        await assertFails(
+          sendPrivacyProbe(host.firestore(), `server-only-${mode}`),
+        );
+      }
+    },
+  );
+
+  await check(
+    "SECURITY: a restrictive privacy mode is still denied — server-only " +
+      "is not a loophole that reopens what privacy closed",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         await updateDoc(doc(ctx.firestore(), "users/invitee-uid"), {
@@ -3478,88 +3549,129 @@ async function main() {
   );
 
   await check(
-    "DM PRIVACY: missing/everyone preserves backwards-compatible messaging",
+    "SECURITY: the canonical server-shaped message is refused too — the " +
+      "shape was never what made it legitimate",
     async () => {
+      // Writing exactly what the callable writes, including schemaVersion
+      // and sequence, still fails. There is no shape a client can produce
+      // that this rule accepts.
+      await assertFails(
+        setDoc(
+          doc(host.firestore(), "conversations/privacy-convo/messages/canonical"),
+          {
+            schemaVersion: 2,
+            sequence: 1,
+            conversationId: "privacy-convo",
+            senderId: "host-uid",
+            type: "text",
+            content: "hello",
+            mediaUrl: null,
+            durationSeconds: null,
+            sentAt: new Date(),
+            readBy: ["host-uid"],
+            reactions: {},
+            isDeleted: false,
+            editedAt: null,
+            replyToMessageId: null,
+            replyToSenderId: null,
+            replyToContent: null,
+          },
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a sanctioned sender is denied — the gap that motivated " +
+      "ADR-082, now closed by the rule refusing every client",
+    async () => {
+      // The original finding: a banned or communication-muted account could
+      // still write here through the client fallback, because the server's
+      // activeProfile()/assertNotRestricted() checks run only inside the
+      // callable. Both are denied now, and so is the unsanctioned control —
+      // which is the point. The rule no longer depends on getting the
+      // sender's standing right, because it admits no client at all.
+      const sanctioned = testEnv.authenticatedContext("sanctioned-uid", {
+        email_verified: true,
+      });
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
-        await updateDoc(doc(ctx.firestore(), "users/invitee-uid"), {
-          messagePrivacy: deleteField(),
+        const db = ctx.firestore();
+        await setDoc(doc(db, "users/sanctioned-uid"), {
+          displayName: "Sanctioned",
+          banned: false,
+        });
+        await setDoc(doc(db, "conversations/convo-sanction-gate"), {
+          participantIds: ["sanctioned-uid", "host-uid"],
         });
       });
-      await assertSucceeds(sendPrivacyProbe(host.firestore(), "privacy-missing"));
-      await updateDoc(doc(invitee.firestore(), "users/invitee-uid"), {
-        messagePrivacy: "everyone",
+
+      const send = (id) => setDoc(
+        doc(
+          sanctioned.firestore(),
+          `conversations/convo-sanction-gate/messages/${id}`,
+        ),
+        {
+          senderId: "sanctioned-uid",
+          content: "hello",
+          sentAt: new Date(),
+          readBy: ["sanctioned-uid"],
+          reactions: {},
+          isDeleted: false,
+        },
+      );
+
+      // Unsanctioned: denied, because no client may write.
+      await assertFails(send("unsanctioned"));
+
+      // Communication-muted: denied.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "restrictions/sanctioned-uid"), {
+          type: "communicationMute",
+          expiresAt: null,
+        });
       });
-      await assertSucceeds(sendPrivacyProbe(host.firestore(), "privacy-everyone"));
+      await assertFails(send("muted"));
+
+      // Banned: denied.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await deleteDoc(doc(db, "restrictions/sanctioned-uid"));
+        await setDoc(doc(db, "users/sanctioned-uid"), {
+          displayName: "Sanctioned",
+          banned: true,
+        });
+      });
+      await assertFails(send("banned"));
     },
   );
 
   await check(
-    "SECURITY DM PRIVACY: people you follow is directional and server-owned",
+    "regression: server-only create did not break reading or the " +
+      "participant update paths",
     async () => {
-      await updateDoc(doc(invitee.firestore(), "users/invitee-uid"), {
-        messagePrivacy: "peopleYouFollow",
-      });
-      await assertFails(sendPrivacyProbe(host.firestore(), "privacy-no-follow"));
-      await testEnv.withSecurityRulesDisabled(async (ctx) => {
-        // Wrong direction: sender follows recipient.
-        await setDoc(
-          doc(ctx.firestore(), "users/host-uid/following/invitee-uid"),
-          { uid: "invitee-uid", followedAt: new Date() },
-        );
-      });
-      await assertFails(sendPrivacyProbe(host.firestore(), "privacy-wrong-follow"));
+      // `allow create: if false` must not become `allow nothing`. Seed a
+      // message the way the server would and prove a participant can still
+      // read it and mark it read — editMessage/toggleReaction/
+      // markConversationRead all depend on this.
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         await setDoc(
-          doc(ctx.firestore(), "users/invitee-uid/following/host-uid"),
-          { uid: "host-uid", followedAt: new Date() },
-        );
-      });
-      await assertSucceeds(sendPrivacyProbe(host.firestore(), "privacy-followed"));
-    },
-  );
-
-  await check(
-    "SECURITY DM PRIVACY: friends requires both canonical guard halves",
-    async () => {
-      await updateDoc(doc(invitee.firestore(), "users/invitee-uid"), {
-        messagePrivacy: "friends",
-      });
-      await testEnv.withSecurityRulesDisabled(async (ctx) => {
-        await setDoc(
-          doc(ctx.firestore(), "friendshipGuards/host-uid/friends/invitee-uid"),
+          doc(ctx.firestore(), "conversations/privacy-convo/messages/seeded"),
           {
-            ownerId: "host-uid",
-            friendId: "invitee-uid",
-            schemaVersion: 1,
-            establishedAt: new Date(),
+            senderId: "invitee-uid",
+            content: "from the server",
+            readBy: ["invitee-uid"],
+            reactions: {},
+            isDeleted: false,
+            editedAt: null,
           },
         );
       });
-      await assertFails(sendPrivacyProbe(host.firestore(), "privacy-one-guard"));
-      await testEnv.withSecurityRulesDisabled(async (ctx) => {
-        await setDoc(
-          doc(ctx.firestore(), "friendshipGuards/invitee-uid/friends/host-uid"),
-          {
-            ownerId: "invitee-uid",
-            friendId: "host-uid",
-            schemaVersion: 1,
-            establishedAt: new Date(),
-          },
-        );
-      });
-      await assertSucceeds(sendPrivacyProbe(host.firestore(), "privacy-friends"));
-    },
-  );
-
-  await check(
-    "SECURITY DM PRIVACY: malformed stored values fail closed",
-    async () => {
-      await testEnv.withSecurityRulesDisabled(async (ctx) => {
-        await updateDoc(doc(ctx.firestore(), "users/invitee-uid"), {
-          messagePrivacy: "unknown-future-mode",
-        });
-      });
-      await assertFails(sendPrivacyProbe(host.firestore(), "privacy-malformed"));
+      const db = host.firestore();
+      const ref = doc(db, "conversations/privacy-convo/messages/seeded");
+      await assertSucceeds(getDoc(ref));
+      await assertSucceeds(
+        updateDoc(ref, { readBy: ["invitee-uid", "host-uid"] }),
+      );
     },
   );
 

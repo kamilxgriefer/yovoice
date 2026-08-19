@@ -207,6 +207,17 @@ service cloud.firestore {
     // present, unknown value fails closed because none of the branches below
     // match. Social edges are server-owned, so a modified client cannot forge
     // the follow/friend relationship needed by a narrower mode.
+    // NOT REFERENCED BY ANY RULE as of ADR-082, and deliberately kept.
+    //
+    // Direct-message privacy is enforced server-side, in
+    // `functions/messaging/direct_integrity.js` (`resolveMessagePrivacy`,
+    // and the cases in `functions/test/direct_integrity.test.js`), because
+    // the only writer of a message document is now the callable. This
+    // helper and `canonicalFollowingEdge` below stay as the executable
+    // statement of what the privacy modes mean at the data layer — but do
+    // not read them as proof that anything is being enforced HERE. If a
+    // client-writable path ever needs them again, they are correct; until
+    // then the server is the enforcement point.
     function canDirectMessage(senderId, recipientId) {
       let privacy = get(
         /databases/$(database)/documents/users/$(recipientId)
@@ -1967,22 +1978,44 @@ service cloud.firestore {
 
       match /messages/{messageId} {
         allow read: if isConversationParticipant(conversationId);
-        allow create: if isVerified() &&
-            isConversationParticipant(conversationId) &&
-            request.resource.data.senderId == request.auth.uid &&
-            !conversationBlocked(conversationId) &&
-            canDirectMessage(
-              request.auth.uid,
-              get(
-                /databases/$(database)/documents/conversations/$(conversationId)
-              ).data.participantIds[0] == request.auth.uid
-                ? get(
-                    /databases/$(database)/documents/conversations/$(conversationId)
-                  ).data.participantIds[1]
-                : get(
-                    /databases/$(database)/documents/conversations/$(conversationId)
-                  ).data.participantIds[0]
-            );
+
+        // Server-only, permanently — `sendDirectMessage` is the sole writer.
+        // See ADR-082.
+        //
+        // WHY NOT A CLIENT RULE. Every check that makes a direct message
+        // legitimate is a check the client cannot be trusted to perform and
+        // this rule could not afford to express:
+        //   1. the SENDER's standing — `users/{uid}.banned|disabled` and a
+        //      staff `restrictions/{uid}` communicationMute. This rule
+        //      checked `isVerified()` only, which reads a token claim: it
+        //      says an email was confirmed once and nothing about whether
+        //      the account may still speak. A banned or muted account kept
+        //      full direct messaging through the old client fallback,
+        //      because `activeProfile()`/`assertNotRestricted()` run inside
+        //      the callable and the fallback never called it.
+        //   2. the RECIPIENT's `messagePrivacy`, and the follow/friendship
+        //      edges it resolves against.
+        //   3. the per-sender rate limit, and the idempotency ledger that
+        //      makes a retry safe.
+        //
+        // Adding (1) to the rule that already did (2) was measured against
+        // the emulator and DOES NOT FIT: the evaluation exceeds Firestore's
+        // per-request document access-call budget, and an exhausted rule
+        // does not skip the check — it errors, and an error denies. The
+        // friends-privacy path had exactly one access call of headroom, and
+        // a complete sender-status check needs more than one. Consolidating
+        // the redundant re-reads and collapsing the guard helpers were both
+        // tried and neither freed enough. A rule that can only afford some
+        // of its authorization is not the right place for any of it.
+        //
+        // Losing the fallback must not mean losing the message, so
+        // `MessageOutbox` (lib/features/messages/data/services/message_outbox.dart)
+        // holds unsent messages in a bounded local queue with Pending /
+        // Retry / Failed states, and retries each one under its ORIGINAL
+        // requestId when connectivity returns — which the callable's
+        // idempotency ledger deduplicates. Nothing is dropped and nothing
+        // is written here.
+        allow create: if false;
 
         // message_service.dart's editMessage/deleteMessage/toggleReaction/
         // markConversationRead all call update() on this path — this was

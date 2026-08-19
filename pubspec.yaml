@@ -35,6 +35,11 @@ dependencies:
   audioplayers: ^6.8.1
   record: ^7.1.1
   path_provider: ^2.1.5
+  # Direct, because the message outbox drains the moment the network comes
+  # back rather than on the next thing someone types. Already present as a
+  # transitive dependency and pinned in dependency_overrides below, so this
+  # names what the code already imports and adds no new resolution.
+  connectivity_plus: 7.0.0
   # Direct, because the web half of Voice Moment recording reads the
   # MediaRecorder blob itself. Already resolved transitively via record_web
   # at the version pubspec.lock pins, so this adds no new resolution.
