@@ -763,6 +763,23 @@ Functions tests, 471 rules cases and 61 inspected screenshots — not on a real
 LiveKit session. **The first person to sign in should enter a dormant room
 they host and press Start voice.**
 
+**Post-deploy production read (read-only, Admin SDK, 2026-08-20).** 45 rooms:
+
+| Measure | Count | What it settles |
+|---|---:|---|
+| missing `status` | 25 / 45 | The `.get(field, default)` form in `roomVoiceStartAllowed()` is **required**, not stylistic. A bare `resource.data.status` read would deny the majority of live production rooms |
+| missing `roomType` | 24 / 45 | same |
+| missing `experience` | 27 / 45 | same |
+| missing `hostId` | 0 / 45 | Every room has an owner who can start and end it |
+| `isLive: true` | 3 | |
+| `isLive: true` with `participantCount: 0` | **0** | No stuck-live rooms exist right now, so the generalised teardown ships with a clean slate rather than a backlog to sweep |
+| `deletionInProgress: true` | 1 | The new guard is not hypothetical — there is a real room it now refuses to reanimate |
+| `membersCanStartVoice: true` | 3 | The member-start branch is genuinely reachable, which is what made the missing teardown a real defect rather than a theoretical one |
+| lounges with the `club_lounge_` prefix but no `clubId` FIELD | **0** | All 3 club lounges carry the field, so resolving Club start authority from `storedClubId` costs nothing in production while removing the mismatch class |
+
+This is the evidence the emulator could not supply: the fixtures were designed
+around a legacy shape, and the legacy shape is in fact the majority.
+
 **The two Moments indexes were still building when this was written.** Until
 both report `READY`, the Moments discovery feed throws `FAILED_PRECONDITION`
 exactly the way club invites did. Check with:
