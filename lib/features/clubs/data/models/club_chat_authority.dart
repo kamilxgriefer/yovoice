@@ -21,13 +21,17 @@ class ClubChatAuthority {
     required this.viewerId,
     this.role,
     this.clubOwnerId,
+    this.viewerEmailVerified = false,
+    this.viewerIsCommunicationMuted = false,
   });
 
   /// Nobody is signed in, so no message can be removed.
   const ClubChatAuthority.signedOut()
     : viewerId = '',
       role = null,
-      clubOwnerId = null;
+      clubOwnerId = null,
+      viewerEmailVerified = false,
+      viewerIsCommunicationMuted = false;
 
   /// The signed-in account acting on the chat. Empty when signed out.
   final String viewerId;
@@ -44,6 +48,21 @@ class ClubChatAuthority {
   /// when it could not be read — again withholding moderator removal
   /// rather than offering an action whose legality is unknown.
   final String? clubOwnerId;
+
+  /// `request.auth.token.email_verified`, which the rules' moderator
+  /// branch requires and the author branch deliberately does not. The
+  /// cached Firebase [User] only refreshes this on `reload()`, so a
+  /// member who verified moments ago may keep waiting for the affordance
+  /// — withholding is the safe direction, and offering a removal that
+  /// the rules would refuse is not.
+  final bool viewerEmailVerified;
+
+  /// A live `restrictions/{uid}` communication mute. Also moderator-only:
+  /// a mute is a sanction on speech, and the rules deliberately still let
+  /// a muted member retract their OWN words, because leaving a sanctioned
+  /// member unable to take back what they said would make the sanction
+  /// increase the harm on screen.
+  final bool viewerIsCommunicationMuted;
 
   bool get canModerate => (role?.power ?? 0) >= ClubRole.moderator.power;
 
@@ -67,6 +86,16 @@ class ClubChatAuthority {
     if (!canModerate) {
       return 'Your role cannot remove this message.';
     }
+    // Everything from here down is required by the rules' MODERATOR
+    // branch alone. The author branch above is intentionally lighter —
+    // retracting your own words is a corrective act, not an outbound one.
+    if (!viewerEmailVerified) {
+      return 'Verify your email address to moderate club chat.';
+    }
+    if (viewerIsCommunicationMuted) {
+      return 'You cannot moderate club chat while your account is muted. '
+          'You can still delete your own messages.';
+    }
     if (clubOwnerId == null) {
       return 'We could not confirm who owns this club. Please try again in '
           'a moment.';
@@ -79,6 +108,24 @@ class ClubChatAuthority {
   }
 
   bool canRemove(ClubMessage message) => removalRefusal(message) == null;
+
+  /// Whether a refusal deserves to be SAID rather than silently withheld.
+  ///
+  /// Hiding the action is right for a member who never had it. But a
+  /// moderator who can remove the message beside this one, long-presses
+  /// the club owner's, and gets no dialog, no notice and no movement will
+  /// read a working boundary as a broken gesture. So a viewer who already
+  /// holds the power gets told why this particular message is out of
+  /// reach — the refusal copy exists precisely for that, and until now
+  /// nothing ever showed it.
+  ///
+  /// Deliberately false for a message the viewer could never act on:
+  /// every tile in the channel is not an invitation to be lectured.
+  bool shouldExplainRefusal(ClubMessage message) =>
+      canModerate &&
+      !message.isDeleted &&
+      !isAuthorOf(message) &&
+      !canRemove(message);
 
   /// True when removing [message] is an act of moderation rather than the
   /// author retracting their own words. Drives the confirmation copy, so

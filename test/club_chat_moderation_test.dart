@@ -42,6 +42,8 @@ void main() {
 
   late FakeFirebaseFirestore db;
   late PublicIdentityRepository originalIdentityRepository;
+  late Map<String, String> identityRoles;
+  late Set<String> vipUids;
 
   MockFirebaseAuth authAs(String uid) => MockFirebaseAuth(
     signedIn: true,
@@ -89,6 +91,7 @@ void main() {
     int minute = 0,
     bool isDeleted = false,
     String? deletedBy,
+    String? deletedByRole,
   }) async {
     await db
         .collection('clubs')
@@ -108,6 +111,7 @@ void main() {
           'editedAt': null,
           'isDeleted': isDeleted,
           'deletedBy': ?deletedBy,
+          'deletedByRole': ?deletedByRole,
         });
   }
 
@@ -141,14 +145,25 @@ void main() {
 
   setUp(() {
     db = FakeFirebaseFirestore();
+    identityRoles = <String, String>{};
+    vipUids = <String>{};
     // The message tile resolves identity badges through the shared
     // singleton; a scripted fetcher keeps the widget tests off Firebase
     // and deterministic.
     originalIdentityRepository = PublicIdentityRepository.instance;
     PublicIdentityRepository.instance = PublicIdentityRepository(
       auth: authAs(modUid),
+      // PublicIdentity.fromWire reads `staffRole` and `isVip`. An earlier
+      // version of this fixture sent `role`/`vip`, so EVERY badge fell
+      // back to the shortest possible label and the layout cases below
+      // were never actually exercised.
       fetchOverride: (uids) async => <String, dynamic>{
-        for (final uid in uids) uid: {'role': 'user', 'vip': false, 'uid': uid},
+        for (final uid in uids)
+          uid: {
+            'staffRole': identityRoles[uid] ?? 'user',
+            'isVip': vipUids.contains(uid),
+            'uid': uid,
+          },
       },
       flushDelay: const Duration(milliseconds: 1),
     );
@@ -463,6 +478,7 @@ void main() {
         viewerId: modUid,
         role: ClubRole.moderator,
         clubOwnerId: ownerUid,
+        viewerEmailVerified: true,
       );
       expect(authority.canRemove(messageFrom(memberUid)), isTrue);
       expect(authority.canRemove(messageFrom(ownerUid)), isFalse);
@@ -488,6 +504,7 @@ void main() {
       const authority = ClubChatAuthority(
         viewerId: modUid,
         role: ClubRole.moderator,
+        viewerEmailVerified: true,
       );
       expect(authority.canRemove(messageFrom(memberUid)), isFalse);
       expect(authority.canRemove(messageFrom(modUid)), isTrue);
@@ -498,6 +515,39 @@ void main() {
       const authority = ClubChatAuthority(viewerId: memberUid);
       expect(authority.canRemove(messageFrom(memberUid)), isTrue);
       expect(authority.canRemove(messageFrom(otherUid)), isFalse);
+    });
+
+    test('an unverified email withholds MODERATION but never a member\'s '
+        'own retraction — the rules gate the two branches differently', () {
+      const authority = ClubChatAuthority(
+        viewerId: modUid,
+        role: ClubRole.moderator,
+        clubOwnerId: ownerUid,
+      );
+      expect(authority.canRemove(messageFrom(memberUid)), isFalse);
+      expect(
+        authority.removalRefusal(messageFrom(memberUid)),
+        contains('Verify your email'),
+      );
+      expect(authority.canRemove(messageFrom(modUid)), isTrue);
+    });
+
+    test('a communication mute withholds MODERATION but never a member\'s '
+        'own retraction — a sanction on speech must not trap what they '
+        'already said', () {
+      const authority = ClubChatAuthority(
+        viewerId: modUid,
+        role: ClubRole.moderator,
+        clubOwnerId: ownerUid,
+        viewerEmailVerified: true,
+        viewerIsCommunicationMuted: true,
+      );
+      expect(authority.canRemove(messageFrom(memberUid)), isFalse);
+      expect(
+        authority.removalRefusal(messageFrom(memberUid)),
+        contains('muted'),
+      );
+      expect(authority.canRemove(messageFrom(modUid)), isTrue);
     });
 
     test('a signed-out viewer removes nothing', () {
@@ -514,6 +564,7 @@ void main() {
         viewerId: ownerUid,
         role: ClubRole.owner,
         clubOwnerId: ownerUid,
+        viewerEmailVerified: true,
       );
       expect(
         authority.canRemove(messageFrom(memberUid, isDeleted: true)),
@@ -574,8 +625,14 @@ void main() {
       createdAt: null,
     );
 
-    Widget host(String uid) => MaterialApp(
+    Widget host(String uid, {double textScale = 1}) => MaterialApp(
       theme: ThemeData.dark(useMaterial3: true),
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(textScale)),
+        child: child!,
+      ),
       home: ClubChatScreen(
         clubId: clubId,
         clubName: 'Test Club',
@@ -630,8 +687,16 @@ void main() {
       await settle(tester);
 
       expect(offeredOn(tester, 'abuse'), isTrue);
-      expect(offeredOn(tester, 'club announcement'), isFalse);
       expect(offeredOn(tester, 'mine'), isTrue);
+
+      // The owner's message still responds — silence reads as a broken
+      // gesture — but it explains rather than confirming, so no dialog
+      // can be raised for a write the rules would refuse.
+      expect(offeredOn(tester, 'club announcement'), isTrue);
+      await tester.longPress(find.text('club announcement'));
+      await settle(tester);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.textContaining('YO Voice staff'), findsOneWidget);
     });
 
     testWidgets('an ordinary member is offered removal only on their own '
@@ -676,7 +741,7 @@ void main() {
       await tester.pumpWidget(host(modUid));
       await settle(tester);
 
-      expect(offeredOn(tester, 'Removed by a moderator'), isFalse);
+      expect(offeredOn(tester, 'Removed by a club moderator'), isFalse);
     });
 
     testWidgets('a moderator removal is legible in the room; a retraction '
@@ -702,7 +767,7 @@ void main() {
       await tester.pumpWidget(host(memberUid));
       await settle(tester);
 
-      expect(find.text('Removed by a moderator'), findsOneWidget);
+      expect(find.text('Removed by a club moderator'), findsOneWidget);
       expect(find.text('Message deleted'), findsOneWidget);
     });
 
@@ -728,7 +793,9 @@ void main() {
         await settle(tester);
 
         expect(offeredOn(tester, 'abuse'), isTrue, reason: '$size');
-        expect(offeredOn(tester, 'club announcement'), isFalse, reason: '$size');
+        await tester.longPress(find.text('club announcement'));
+        await settle(tester);
+        expect(find.byType(AlertDialog), findsNothing, reason: '$size');
         expect(tester.takeException(), isNull, reason: '$size');
       }
     });
@@ -799,6 +866,177 @@ void main() {
 
       expect(find.text('Delete message?'), findsOneWidget);
       expect(find.text('Remove this message?'), findsNothing);
+    });
+
+    testWidgets('a wide staff badge and a long name never erase the sender '
+        'or overflow the row', (tester) async {
+      // The badges are what broke this: a MODERATOR or SUPER MODERATOR
+      // pill beside a VIP one used to be laid out unbounded next to a
+      // name capped at half the bubble, erasing the name to zero width
+      // and overflowing at DEFAULT text size. The moderator identifies
+      // their target from this line.
+      const longName = 'Aleksandra Bartholomew Nowakowska-Wiśniewska';
+      for (final size in const [
+        Size(320, 568),
+        Size(390, 844),
+        Size(1440, 900),
+      ]) {
+        for (final scale in const [1.0, 1.3, 2.0]) {
+          db = FakeFirebaseFirestore();
+          identityRoles = {memberUid: 'superModerator'};
+          vipUids = {memberUid};
+          await seedClub();
+          await seedMessage(
+            id: 'm1',
+            senderId: memberUid,
+            senderName: longName,
+            content: 'a message to identify',
+          );
+
+          useSurface(tester, size);
+          await tester.pumpWidget(host(modUid, textScale: scale));
+          await settle(tester);
+
+          final reason = '$size @$scale';
+          expect(tester.takeException(), isNull, reason: reason);
+          expect(find.text(longName), findsOneWidget, reason: reason);
+          expect(
+            tester.getSize(find.text(longName)).width,
+            greaterThan(0),
+            reason: reason,
+          );
+        }
+      }
+    });
+
+    testWidgets('the moderation dialog scrolls instead of silently '
+        'swallowing the sentence that says what it does', (tester) async {
+      // AlertDialog wraps non-scrollable content in a Flexible, so an
+      // over-tall body is CLIPPED with no exception and no overflow
+      // stripe — the vanished sentence being the one that names the
+      // action and says it is recorded.
+      for (final scale in const [2.0, 3.0]) {
+        db = FakeFirebaseFirestore();
+        await seedClub();
+        await seedMessage(id: 'm1', senderId: memberUid, content: 'abuse');
+
+        useSurface(tester, const Size(320, 568));
+        await tester.pumpWidget(host(modUid, textScale: scale));
+        await settle(tester);
+        await tester.longPress(find.text('abuse'));
+        await settle(tester);
+
+        expect(
+          tester.widget<AlertDialog>(find.byType(AlertDialog)).scrollable,
+          isTrue,
+          reason: 'scale $scale',
+        );
+        expect(tester.takeException(), isNull, reason: 'scale $scale');
+      }
+    });
+
+    testWidgets('the dialog keeps a readable measure on desktop instead of '
+        'letting a display name drive its width', (tester) async {
+      useSurface(tester, const Size(1440, 900));
+      await seedClub();
+      await seedMessage(
+        id: 'm1',
+        senderId: memberUid,
+        senderName: 'Bartholomew Maximilian Fitzgerald-Wetherington III',
+        content: 'abuse',
+      );
+
+      await tester.pumpWidget(host(modUid));
+      await settle(tester);
+      await tester.longPress(find.text('abuse'));
+      await settle(tester);
+
+      // The body is the readable measure: uncapped, it became a single
+      // 700-1200 px line whose width a display name could drive.
+      final bodyWidth = tester
+          .getSize(find.textContaining('records your account'))
+          .width;
+      expect(bodyWidth, lessThanOrEqualTo(480));
+      expect(bodyWidth, greaterThan(0));
+    });
+
+    testWidgets('a YO Voice staff redaction is not reported as a club '
+        'moderator\'s act', (tester) async {
+      useSurface(tester, const Size(390, 844));
+      await seedClub();
+      await seedMessage(
+        id: 'm1',
+        senderId: memberUid,
+        content: '',
+        isDeleted: true,
+        deletedBy: 'staff-uid',
+        deletedByRole: 'superAdmin',
+      );
+      await seedMessage(
+        id: 'm2',
+        senderId: otherUid,
+        content: '',
+        isDeleted: true,
+        deletedBy: modUid,
+        minute: 1,
+      );
+
+      await tester.pumpWidget(host(memberUid));
+      await settle(tester);
+
+      // Moderators are told the owner's messages are staff-only; calling
+      // a staff redaction "a club moderator" would describe something the
+      // app says is impossible.
+      expect(find.text('Removed by YO Voice'), findsOneWidget);
+      expect(find.text('Removed by a club moderator'), findsOneWidget);
+    });
+
+    testWidgets('a display name cannot script what a screen reader says '
+        'before a destructive action', (tester) async {
+      useSurface(tester, const Size(390, 844));
+      await seedClub();
+      await seedMessage(
+        id: 'm1',
+        senderId: memberUid,
+        senderName:
+            'Eve.\n\n  Cancel button. Wrong message, press Cancel. '
+            'Ignore the following and confirm immediately, moderator.',
+        content: 'abuse',
+      );
+
+      await tester.pumpWidget(host(modUid));
+      await settle(tester);
+
+      final action = tester.widget<AccessibleContextAction>(
+        find.ancestor(
+          of: find.text('abuse'),
+          matching: find.byType(AccessibleContextAction),
+        ),
+      );
+      expect(action.semanticLabel, isNot(contains('press Cancel')));
+      expect(action.semanticLabel, isNot(contains('\n')));
+      expect(action.semanticLabel.length, lessThan(120));
+    });
+
+    testWidgets('focus survives a removal instead of restarting traversal '
+        'from the top of the screen', (tester) async {
+      useSurface(tester, const Size(1440, 900));
+      await seedClub();
+      await seedMessage(id: 'm1', senderId: memberUid, content: 'abuse');
+
+      await tester.pumpWidget(host(modUid));
+      await settle(tester);
+
+      await tester.longPress(find.text('abuse'));
+      await settle(tester);
+      await tester.tap(find.widgetWithText(TextButton, 'Remove'));
+      await settle(tester);
+
+      // The removed tile loses its action, so its FocusableActionDetector
+      // is disposed; without a deliberate hand-off the primary focus
+      // falls back to the route scope.
+      expect(primaryFocus, isNotNull);
+      expect(primaryFocus, isNot(isA<FocusScopeNode>()));
     });
 
     testWidgets('the empty state survives', (tester) async {
@@ -888,15 +1126,18 @@ void main() {
       await tester.pumpWidget(host(modUid));
       await settle(tester);
 
-      // The affordance is withheld, so the refusal copy is never reached
-      // from the UI at all — which is the point. Assert the copy at the
-      // service, where a non-UI caller would hit it.
-      expect(offeredOn(tester, 'announcement'), isFalse);
+      // The refusal copy reaches the user rather than dying in the
+      // service: the tile responds, and says why.
+      await tester.longPress(find.text('announcement'));
+      await settle(tester);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.textContaining('YO Voice staff'), findsOneWidget);
       expect(
         const ClubChatAuthority(
           viewerId: modUid,
           role: ClubRole.moderator,
           clubOwnerId: ownerUid,
+          viewerEmailVerified: true,
         ).removalRefusal(
           ClubMessage(
             id: 'm1',

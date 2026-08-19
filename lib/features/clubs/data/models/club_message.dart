@@ -13,6 +13,7 @@ class ClubMessage {
     required this.editedAt,
     required this.isDeleted,
     this.deletedBy,
+    this.deletedByRole,
   });
 
   final String id;
@@ -31,12 +32,29 @@ class ClubMessage {
   /// value means "unknown", never "the author did it".
   final String? deletedBy;
 
-  /// True only when a removal is known to have been performed by someone
-  /// other than the author, which is the one case worth telling the room
-  /// about. An unattributed removal reads as an ordinary retraction,
-  /// because that is all we can honestly claim about it.
+  /// The staff role recorded against a removal, written only by
+  /// `adminDeleteMessage` through the Admin SDK. Clients cannot write it:
+  /// it is absent from the update allowlist in `firestore.rules`, and the
+  /// create allowlist's `hasOnly` keeps it from being forged at birth.
+  final String? deletedByRole;
+
+  /// A YO Voice staff redaction, which is NOT the same act as a club
+  /// moderator's and must not be reported as one — moderators are told in
+  /// product copy that the club owner's messages are staff-only, so
+  /// labelling a staff removal "by a moderator" would describe something
+  /// the app says is impossible and pin a platform decision on the club's
+  /// volunteers.
+  bool get wasRemovedByStaff =>
+      isDeleted && (deletedByRole?.isNotEmpty ?? false);
+
+  /// A club moderator reaching into somebody else's message. An
+  /// unattributed removal is deliberately excluded: a null `deletedBy`
+  /// means "unknown", never "the author did it".
   bool get wasRemovedByModerator =>
-      isDeleted && deletedBy != null && deletedBy != senderId;
+      isDeleted &&
+      !wasRemovedByStaff &&
+      deletedBy != null &&
+      deletedBy != senderId;
 
   factory ClubMessage.fromFirestore({
     required String clubId,
@@ -59,6 +77,7 @@ class ClubMessage {
       editedAt: _readDate(data['editedAt']),
       isDeleted: data['isDeleted'] as bool? ?? false,
       deletedBy: _nullableString(data['deletedBy']),
+      deletedByRole: _nullableString(data['deletedByRole']),
     );
   }
 

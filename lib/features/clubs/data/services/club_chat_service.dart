@@ -59,11 +59,20 @@ class ClubChatService {
   /// The single newest message in a channel, or null when the channel has
   /// never been used.
   ///
-  /// Club chat has no denormalised "last message" on the club document —
-  /// previews have to come from the messages themselves. [watchMessages]
-  /// would pull 250 documents per club to render one preview line, so
-  /// conversation-list surfaces (the desktop Conversations hub) use this
-  /// instead: the same collection and the same ordering, limited to one.
+  /// **Currently unused — no caller in `lib/` or `test/`.** It was written
+  /// for `DesktopConversations`, the desktop Conversations hub decided in
+  /// ADR-036. That module was dropped from desktop Home by the ADR-043
+  /// board rebuild (`98f477d`) and its file deleted in `409c7ee`. Home now
+  /// previews DM-only `RecentChats` per ADR-048, reading
+  /// `MessageService.watchConversations`, which never touches club chat.
+  ///
+  /// Kept, rather than deleted, because the constraint that motivated it is
+  /// unchanged: club chat has no denormalised "last message" on the club
+  /// document, so a club preview line has to come from the messages
+  /// themselves, and [watchMessages] would pull up to 250 documents per
+  /// club to render one. This is the same collection and the same ordering,
+  /// limited to one. Delete it if club previews are ruled out for good,
+  /// rather than merely unbuilt.
   Stream<ClubMessage?> watchLatestMessage({
     required String clubId,
     required String channelId,
@@ -152,17 +161,28 @@ class ClubChatService {
 
     ClubRole? role;
     String? ownerId;
+    var muted = false;
     StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? memberSub;
     StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? clubSub;
+    StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? restrictionSub;
     late final StreamController<ClubChatAuthority> controller;
 
     void emit() {
-      // `onCancel` awaits two subscription cancellations, so an event
+      // `onCancel` awaits the subscription cancellations, so an event
       // already in flight can land after the screen is gone. Dropping it
       // is correct; adding it would not be.
       if (controller.isClosed || !controller.hasListener) return;
       controller.add(
-        ClubChatAuthority(viewerId: uid, role: role, clubOwnerId: ownerId),
+        ClubChatAuthority(
+          viewerId: uid,
+          role: role,
+          clubOwnerId: ownerId,
+          // Read from the cached User rather than a token refresh. A
+          // stale `false` only withholds the affordance; a stale `true`
+          // is not reachable, because the flag never goes back.
+          viewerEmailVerified: _auth.currentUser?.emailVerified ?? false,
+          viewerIsCommunicationMuted: muted,
+        ),
       );
     }
 
@@ -200,10 +220,29 @@ class ClubChatService {
                 emit();
               },
             );
+        restrictionSub = _firestore
+            .collection('restrictions')
+            .doc(uid)
+            .snapshots()
+            .listen(
+              (snapshot) {
+                muted = _readCommunicationMute(snapshot.data());
+                emit();
+              },
+              onError: (_) {
+                // Unreadable restrictions must not silently grant
+                // moderation, but they must not take away a member's
+                // ability to retract their own words either — which is
+                // why this flag is consulted on the moderator path only.
+                muted = true;
+                emit();
+              },
+            );
       },
       onCancel: () async {
         await memberSub?.cancel();
         await clubSub?.cancel();
+        await restrictionSub?.cancel();
       },
     );
 
@@ -276,6 +315,10 @@ class ClubChatService {
       viewerId: user.uid,
       role: role,
       clubOwnerId: isAuthor ? null : await _clubOwnerId(clubId),
+      viewerEmailVerified: user.emailVerified,
+      viewerIsCommunicationMuted: isAuthor
+          ? false
+          : await _isCommunicationMuted(user.uid),
     );
     final refusal = authority.removalRefusal(live);
     if (refusal != null) throw StateError(refusal);
@@ -287,6 +330,26 @@ class ClubChatService {
       'deletedBy': user.uid,
       'deletedAt': FieldValue.serverTimestamp(),
     });
+  }
+
+  /// Mirrors the rules' `isCommunicationMuted()`: a live restriction of
+  /// the right type with no expiry, or one that has not passed yet.
+  Future<bool> _isCommunicationMuted(String uid) async {
+    final snapshot = await _firestore.collection('restrictions').doc(uid).get();
+    return _readCommunicationMute(snapshot.data());
+  }
+
+  static bool _readCommunicationMute(Map<String, dynamic>? data) {
+    if (data == null) return false;
+    if (data['type'] != 'communicationMute') return false;
+    final expiresAt = data['expiresAt'];
+    if (expiresAt == null) return true;
+    if (expiresAt is! Timestamp) return true;
+    // Evaluated against the device clock where the rules use
+    // `request.time`. A mute that lapses mid-session therefore keeps the
+    // affordance withheld until something re-emits, which is the
+    // harmless direction of the discrepancy.
+    return DateTime.now().isBefore(expiresAt.toDate());
   }
 
   Future<String?> _clubOwnerId(String clubId) async {
