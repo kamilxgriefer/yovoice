@@ -436,6 +436,7 @@ class _PreviewApp extends StatelessWidget {
           profileService: ProfileService(firestore: db, auth: auth),
           onOpenRoom: (_) {},
           onSeeAll: () {},
+          onSeeAllRooms: () {},
         ),
         const SizedBox(height: 16),
         PremiumDesktopCard(onCheckPlans: () {}),

@@ -391,6 +391,7 @@ void main() {
                             roomService: RoomService(firestore: db, auth: auth),
                             onOpenRoom: (_) {},
                             onSeeAll: () {},
+                            onSeeAllRooms: () {},
                           ),
                           const SizedBox(height: 14),
                           PremiumDesktopCard(onCheckPlans: () {}),

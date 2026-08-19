@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
+import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -10,31 +13,47 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.
 import 'package:yovoice/features/home/presentation/widgets/shared/home_room_board.dart'
     show compactCount;
 
-/// The desktop right column's top card: "Voice Trending" — two curated
-/// sections over REAL data.
+/// The desktop right column's top card: "Voice Trending" — two sections
+/// over REAL data, each labelled with what it actually contains.
 ///
-///  - Trending Moments: the live public rooms already powering Home's
-///    LIVE NOW hero ([RoomService.watchLivePublicRooms]).
-///  - People to Follow: real suggestions from the server-side social
-///    graph ([SocialGraphService.getFriendSuggestions]).
+///  - **Live rooms**: the live public rooms already powering Home's LIVE
+///    NOW hero ([RoomService.watchLivePublicRooms]). This section was
+///    previously headed "Trending Moments" while listing rooms — a
+///    mislabel, and a bad one in a codebase where rooms and Moments are
+///    separate products. Its "See all rooms" link goes to Discover.
+///  - **Most liked Moments**: real published Voice Moments ordered by
+///    `likeCount` ([MomentDiscoveryService.topLikedMoments]). Ordered on
+///    likes alone, so it says "Most liked" and not "Trending".
 ///
-/// Both sections hide themselves when their real source is empty rather
-/// than showing placeholder people or invented activity.
+/// The card's "View all" goes to Moments.
+///
+/// Every section states its own empty and error case rather than
+/// vanishing — a card that shrinks to a title and a link reads as
+/// breakage, and a slow stream is otherwise indistinguishable from an
+/// empty one.
 class VoiceTrendingCard extends StatefulWidget {
   const VoiceTrendingCard({
     required this.onOpenRoom,
     required this.onSeeAll,
+    required this.onSeeAllRooms,
     this.roomService,
     this.socialGraphService,
     this.profileService,
+    this.discoveryService,
     super.key,
   });
 
   final ValueChanged<VoiceRoom> onOpenRoom;
+
+  /// The card's "View all" — the Moments destination.
   final VoidCallback onSeeAll;
+
+  /// The live-rooms section's own link — Discover.
+  final VoidCallback onSeeAllRooms;
   final RoomService? roomService;
   final SocialGraphService? socialGraphService;
   final ProfileService? profileService;
+  final MomentDiscoveryService? discoveryService;
 
   @override
   State<VoiceTrendingCard> createState() => _VoiceTrendingCardState();
@@ -42,6 +61,7 @@ class VoiceTrendingCard extends StatefulWidget {
 
 class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
   RoomService? _rooms;
+  Future<List<VoiceMoment>>? _topMoments;
 
   @override
   void initState() {
@@ -53,6 +73,15 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
       _rooms = widget.roomService ?? RoomService();
     } catch (_) {
       _rooms = null;
+    }
+    try {
+      // One-shot, not a listener: a globally ordered popularity query
+      // re-delivers documents on any like anywhere near the boundary,
+      // and a supporting card must not pay for that.
+      _topMoments = (widget.discoveryService ?? MomentDiscoveryService())
+          .topLikedMoments();
+    } catch (_) {
+      _topMoments = null;
     }
   }
 
@@ -99,7 +128,11 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const _SectionLabel('Trending Moments'),
+                  _SectionHeader(
+                    label: 'Live rooms',
+                    actionLabel: 'See all rooms',
+                    onAction: widget.onSeeAllRooms,
+                  ),
                   const SizedBox(height: 8),
                   if (waiting)
                     const _RowPlaceholder(count: 2)
@@ -109,7 +142,7 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
                     const _SectionNote('No one is live right now.')
                   else
                     for (final room in live)
-                      _MomentRow(
+                      _RoomRow(
                         room: room,
                         onTap: () => widget.onOpenRoom(room),
                       ),
@@ -118,6 +151,41 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
               );
             },
           ),
+          // A REAL Moments section. Without it, "View all → Moments"
+          // would sit under a list of rooms, which is the mislabel this
+          // change exists to remove, only inverted.
+          const _SectionLabel('Most liked Moments'),
+          const SizedBox(height: 8),
+          FutureBuilder<List<VoiceMoment>>(
+            future: _topMoments,
+            builder: (context, snapshot) {
+              if (_topMoments == null) {
+                return const _SectionNote('Voice Moments are unavailable.');
+              }
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const _RowPlaceholder(count: 2);
+              }
+              // Explicit, and BEFORE any read of `data`. A missing
+              // composite index surfaces here as failed-precondition; if
+              // it were folded into the empty case it would read as
+              // "nobody has posted" forever.
+              if (snapshot.hasError) {
+                return const _SectionNote('Moments could not be loaded.');
+              }
+              final moments = snapshot.data ?? const <VoiceMoment>[];
+              if (moments.isEmpty) {
+                return const _SectionNote('No Voice Moments published yet.');
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final moment in moments)
+                    _MomentRow(moment: moment, onTap: widget.onSeeAll),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 14),
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton(
@@ -161,8 +229,130 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
+/// A section heading with its own link, so each section points at the
+/// destination that actually holds more of ITS content.
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({
+    required this.label,
+    required this.actionLabel,
+    required this.onAction,
+  });
+
+  final String label;
+  final String actionLabel;
+  final VoidCallback onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(child: _SectionLabel(label)),
+        TextButton(
+          onPressed: onAction,
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: Text(
+            actionLabel,
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// One real published Voice Moment: its author, its caption, its real
+/// like count. No invented counts and no placeholder authors — the
+/// section renders nothing at all when the query comes back empty.
 class _MomentRow extends StatelessWidget {
-  const _MomentRow({required this.room, required this.onTap});
+  const _MomentRow({required this.moment, required this.onTap});
+
+  final VoiceMoment moment;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final caption = moment.caption.trim();
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        child: Row(
+          children: [
+            UserAvatar(
+              radius: 20,
+              photoUrl: moment.authorPhotoUrl,
+              displayName: moment.authorName,
+            ),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    moment.authorName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    caption.isNotEmpty
+                        ? caption
+                        : (moment.durationSeconds > 0
+                              ? 'Voice Moment · ${moment.durationLabel}'
+                              : 'Voice Moment'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 11.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.favorite_rounded,
+                  size: 12,
+                  color: AppColors.textSecondary,
+                ),
+                const SizedBox(width: 3),
+                Text(
+                  compactCount(moment.likeCount),
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RoomRow extends StatelessWidget {
+  const _RoomRow({required this.room, required this.onTap});
 
   final VoiceRoom room;
   final VoidCallback onTap;

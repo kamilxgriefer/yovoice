@@ -66,9 +66,15 @@ bool moreDestinationIsLocked(
 /// deliberately untouched.
 ///
 /// Everything NOT listed here is reachable from the desktop More
-/// popover (Moments, Clubs, Creator Studio, Awards, Alerts, Settings) or
-/// from the rail's profile card (Profile, and its gear → Settings).
+/// popover (Clubs, Creator Studio, Awards, Alerts, Settings) or from the
+/// rail's profile card (Profile, and its gear → Settings).
+///
+/// Moments joined this set when it was promoted to primary navigation.
+/// Note that `showDesktopMoreMenu`'s item list below is hand-written
+/// rather than filtered through this set, so anything added here must
+/// also be removed from there or it appears twice.
 const Set<MoreDestination> desktopRailDestinations = {
+  MoreDestination.moments,
   MoreDestination.discover,
   MoreDestination.findCreators,
   MoreDestination.friends,
@@ -104,7 +110,7 @@ Widget moreDestinationScreen(
     MoreDestination.discover => DiscoverScreen(isRootTab: isRootTab),
     MoreDestination.findCreators => FindCreatorsScreen(isRootTab: isRootTab),
     MoreDestination.clubs => ClubsScreen(isRootTab: isRootTab),
-    MoreDestination.moments => const MomentsScreen(),
+    MoreDestination.moments => MomentsScreen(isRootTab: isRootTab),
     MoreDestination.notifications => NotificationPreferencesScreen(
       isRootTab: isRootTab,
     ),
@@ -141,13 +147,9 @@ Future<MoreDestination?> showDesktopMoreMenu(
   bool isOwner = false,
   SubscriptionEntitlements entitlements = SubscriptionEntitlements.free,
 }) {
+  // Moments is deliberately absent: it is a rail item now, and listing
+  // it here as well would show the same destination twice.
   final items = <(MoreDestination, IconData, String, String)>[
-    (
-      MoreDestination.moments,
-      Icons.graphic_eq_rounded,
-      'Moments',
-      'Your voice posts and feed',
-    ),
     (
       MoreDestination.clubs,
       Icons.groups_2_rounded,
@@ -468,9 +470,18 @@ class _MoreSheetState extends State<MoreSheet> {
                         crossAxisSpacing: 11,
                         mainAxisExtent: tileExtent,
                         children: [
-                          // Friends graduated to the primary bottom navigation;
-                          // Profile moved here in its place (still one tap away via
-                          // any of your own avatars too).
+                          // Moments took the dock slot Friends held, so
+                          // Friends takes the grid slot Moments held — a
+                          // 1:1 swap, still eight tiles, no layout churn.
+                          // Friends also remains primary tab index 2 with
+                          // its state alive, and one tap from Home's
+                          // "Your circle".
+                          const _MoreTile(
+                            destination: MoreDestination.friends,
+                            icon: Icons.people_rounded,
+                            label: 'Friends',
+                            subtitle: 'Your circle',
+                          ),
                           const _MoreTile(
                             destination: MoreDestination.profile,
                             icon: Icons.person_rounded,
@@ -498,12 +509,6 @@ class _MoreSheetState extends State<MoreSheet> {
                               MoreDestination.clubs,
                               widget.entitlements,
                             ),
-                          ),
-                          const _MoreTile(
-                            destination: MoreDestination.moments,
-                            icon: Icons.graphic_eq_rounded,
-                            label: 'Moments',
-                            subtitle: 'Voice feed',
                           ),
                           const _MoreTile(
                             destination: MoreDestination.notifications,

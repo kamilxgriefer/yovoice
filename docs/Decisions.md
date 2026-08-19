@@ -1958,7 +1958,27 @@ pages filled the same moment with a bare `<p>Loading…</p>`.
 
 ## ADR-036: Desktop Home is composed of real-source modules; each one states the state it cannot prove
 
-**Status**: Accepted
+**Status**: Partially superseded. The Moments strip
+(`DesktopMomentsStrip`) and the followed-creators list
+(`FollowedCreatorsCard`) are still in effect, as is the lazy
+`FirebaseFunctions` in `ClubService`. Two parts are retired, both by
+[ADR-043](#adr-043-home-is-one-room-board-of-full-bleed-banners-presence-vip-and-follow-on-the-rail-come-from-existing-server-written-sources):
+
+- **The Conversations hub is gone.** `DesktopConversations` was dropped
+  from `desktop_home.dart` in `98f477d` (the ADR-043 board rebuild, which
+  did not say so at the time) and the widget file was deleted in
+  `409c7ee`. Home's conversation surface is now DM-only `RecentChats`,
+  decided in
+  [ADR-048](#adr-048-global-chat-is-retired-from-the-app-ui-and-home-previews-three-real-private-conversations);
+  it reads `MessageService.watchConversations` and shows no club rows, so
+  the per-club unread and club/private/friends bucketing reasoned about
+  below no longer describe a shipped surface.
+  `ClubChatService.watchLatestMessage`, added by this ADR for that hub,
+  survives with no callers — see its doc comment for why it was kept.
+- **The dark-glass "For you" editorial cards are gone.** ADR-043 collapsed
+  `Live around you`, `Featured Live` and `For you` into the single
+  `HomeRoomBanner` board and deleted all three compositions.
+
 **Date**: 2026-08-10
 
 ### Context

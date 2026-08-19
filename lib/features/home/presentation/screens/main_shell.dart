@@ -34,6 +34,7 @@ import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
+import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
@@ -129,6 +130,13 @@ class _MainShellState extends State<MainShell>
     FriendsScreen(isRootTab: true),
   ];
 
+  /// Moments is now a PRIMARY destination on both form factors, but it
+  /// keeps the desktop slot it always had. Promoting it by inserting a
+  /// new entry into `_screens` would renumber ten constants across four
+  /// switch statements and break the ADR-047 contract test's contiguity
+  /// assertion — to buy nothing. The dock maps its fourth slot onto this
+  /// index instead, and `MainShell.desktopSlots` is untouched.
+  static const int _momentsSlot = 5;
   static const int _discoverSlot = 3;
   static const int _notificationsSlot = 4;
   static const int _findCreatorsSlot = 12;
@@ -149,9 +157,19 @@ class _MainShellState extends State<MainShell>
   /// ten screens (and their Firestore listeners) at startup.
   final Map<int, Widget> _builtSlots = <int, Widget>{};
 
+  /// The Moments slot plays audio, and `IndexedStack` keeps hidden
+  /// children fully built without notifying them — so leaving the tab
+  /// would otherwise keep playing from an invisible screen. The slot is
+  /// built once and cached, so the flag has to be a listenable the
+  /// screen subscribes to rather than a constructor argument.
+  final ValueNotifier<bool> _momentsVisible = ValueNotifier<bool>(false);
+
   Widget _buildSlot(int index) {
     if (index == _notificationsSlot) {
       return const NotificationsScreen(isRootTab: true);
+    }
+    if (index == _momentsSlot) {
+      return MomentsScreen(isRootTab: true, isVisible: _momentsVisible);
     }
     final destination = _slotDestinations[index];
     if (destination == null) return const SizedBox.shrink();
@@ -278,10 +296,19 @@ class _MainShellState extends State<MainShell>
     return null;
   }
 
-  /// Mobile only ever shows the three dock tabs; if the window is
-  /// resized down while a desktop-only slot is selected, fall back to
+  /// Mobile shows the three shared tabs PLUS the Moments slot, which the
+  /// dock now selects directly. Any other desktop-only slot falls back to
   /// Home rather than showing a tab the dock cannot represent.
-  int get _mobileIndex => _selectedIndex > 2 ? 0 : _selectedIndex;
+  ///
+  /// Friends (tab 2) is deliberately still reachable here even though it
+  /// no longer owns a dock slot — mobile Home's "Your circle" selects it,
+  /// and its state, scroll position and listeners stay alive in the
+  /// IndexedStack. The dock renders no capsule while it is showing,
+  /// rather than lighting a slot that is not where you are.
+  int get _mobileIndex =>
+      (_selectedIndex <= 2 || _selectedIndex == _momentsSlot)
+      ? _selectedIndex
+      : 0;
 
   String get _currentUserId => FirebaseAuth.instance.currentUser?.uid ?? '';
 
@@ -397,6 +424,7 @@ class _MainShellState extends State<MainShell>
 
   @override
   void dispose() {
+    _momentsVisible.dispose();
     _tabTransition.dispose();
     _conversationSubscription?.cancel();
     _notificationCountSubscription?.cancel();
@@ -555,6 +583,7 @@ class _MainShellState extends State<MainShell>
     setState(() {
       _selectedIndex = index;
     });
+    _momentsVisible.value = index == _momentsSlot;
     _tabTransition.forward(from: 0);
   }
 
@@ -647,6 +676,14 @@ class _MainShellState extends State<MainShell>
     }
     if (!mounted) return;
 
+    // Friends owns primary tab index 2 on BOTH form factors. Selecting
+    // it keeps the one live FriendsScreen — its scroll position and its
+    // listeners — instead of pushing a second copy over the shell.
+    if (destination == MoreDestination.friends) {
+      _onDestinationSelected(2);
+      return;
+    }
+
     // DESKTOP: every destination that owns a content slot swaps the
     // centre of the existing shell — same mechanism as Chats/Friends —
     // so the rail, the profile card and the layout never move. Only
@@ -690,8 +727,8 @@ class _MainShellState extends State<MainShell>
       MoreDestination.discover => DesktopNavItem.discover,
       MoreDestination.findCreators => DesktopNavItem.findCreators,
       MoreDestination.friends => DesktopNavItem.friends,
+      MoreDestination.moments => DesktopNavItem.moments,
       // Everything reached THROUGH the More popover keeps More lit.
-      MoreDestination.moments ||
       MoreDestination.clubs ||
       MoreDestination.creatorStudio ||
       MoreDestination.achievements ||
@@ -717,6 +754,9 @@ class _MainShellState extends State<MainShell>
     _discoverSlot => DesktopNavItem.discover,
     _findCreatorsSlot => DesktopNavItem.findCreators,
     _notificationsSlot => DesktopNavItem.notifications,
+    // Before the `>= 5` arm: switch-expression arms are ordered, and
+    // `>= 5` would otherwise swallow the Moments slot.
+    _momentsSlot => DesktopNavItem.moments,
     // Slots reached through the popover keep More lit.
     >= 5 => DesktopNavItem.more,
     _ => DesktopNavItem.home,
@@ -730,6 +770,8 @@ class _MainShellState extends State<MainShell>
         _onDestinationSelected(1);
       case DesktopNavItem.friends:
         _onDestinationSelected(2);
+      case DesktopNavItem.moments:
+        _onDestinationSelected(_momentsSlot);
       case DesktopNavItem.discover:
         _onDestinationSelected(_discoverSlot);
       case DesktopNavItem.findCreators:
@@ -808,7 +850,15 @@ class _MainShellState extends State<MainShell>
           MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
         ),
       ),
-      onSeeAll: () => unawaited(_openMoreDestination(MoreDestination.discover)),
+      // "View all" on the Voice Trending card goes to Moments. It used to
+      // go to Discover, under a section heading that said "Trending
+      // Moments" while listing live ROOMS — the label was renamed to
+      // "Live rooms" (which keeps its own link to Discover) and the card
+      // gained a real Moments section, so this button now matches what it
+      // sits under.
+      onSeeAll: () => _onDestinationSelected(_momentsSlot),
+      onSeeAllRooms: () =>
+          unawaited(_openMoreDestination(MoreDestination.discover)),
       onCheckPlans: () => unawaited(
         Navigator.of(context).push<void>(
           MaterialPageRoute<void>(builder: (_) => const PremiumScreen()),
@@ -952,6 +1002,7 @@ class _DesktopHomeExtras extends StatelessWidget {
     required this.currentUserId,
     required this.onOpenRoom,
     required this.onSeeAll,
+    required this.onSeeAllRooms,
     required this.onCheckPlans,
     required this.onOpenCreator,
     required this.onViewAllCreators,
@@ -959,7 +1010,12 @@ class _DesktopHomeExtras extends StatelessWidget {
 
   final String currentUserId;
   final ValueChanged<VoiceRoom> onOpenRoom;
+  /// The card's "View all" — Moments.
   final VoidCallback onSeeAll;
+
+  /// The live-rooms section's own link — Discover. Rooms and Moments are
+  /// separate products and the card must not blur them.
+  final VoidCallback onSeeAllRooms;
   final VoidCallback onCheckPlans;
   final ValueChanged<FollowUser> onOpenCreator;
   final VoidCallback onViewAllCreators;
@@ -977,7 +1033,11 @@ class _DesktopHomeExtras extends StatelessWidget {
           onViewAll: onViewAllCreators,
         ),
         const SizedBox(height: 16),
-        VoiceTrendingCard(onOpenRoom: onOpenRoom, onSeeAll: onSeeAll),
+        VoiceTrendingCard(
+          onOpenRoom: onOpenRoom,
+          onSeeAll: onSeeAll,
+          onSeeAllRooms: onSeeAllRooms,
+        ),
         const SizedBox(height: 16),
         const SponsoredCard(),
         const SizedBox(height: 16),
@@ -1342,9 +1402,21 @@ class _BottomNavigation extends StatelessWidget {
   final VoidCallback onVoicePressed;
   final VoidCallback onMorePressed;
 
-  /// Maps a selected TAB index (0 Home, 1 Chats, 2 Friends) onto its
-  /// SLOT in the five-slot dock row (voice occupies slot 2).
-  static int _slotFor(int tabIndex) => tabIndex < 2 ? tabIndex : 3;
+  /// Maps a selected index onto its SLOT in the five-slot dock row
+  /// (voice occupies slot 2), or null when the current destination has
+  /// no dock slot at all.
+  ///
+  /// Null is a real state, not a gap to paper over: Friends is still
+  /// primary tab 2 and mobile Home's "Your circle" selects it, but it no
+  /// longer owns a dock slot. Lighting the nearest slot would make the
+  /// bar lie about where you are, so the capsule is simply not drawn —
+  /// the same "nothing lit" the More item has always modelled.
+  static int? _slotFor(int tabIndex) => switch (tabIndex) {
+    0 => 0,
+    1 => 1,
+    _MainShellState._momentsSlot => 3,
+    _ => null,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -1382,24 +1454,25 @@ class _BottomNavigation extends StatelessWidget {
           children: [
             // The selection capsule TRAVELS between slots instead of
             // blinking out and reappearing.
-            AnimatedAlign(
-              duration: const Duration(milliseconds: 260),
-              curve: Curves.easeOutCubic,
-              alignment: Alignment(_slotFor(selectedIndex) / 2 - 1, 0),
-              child: FractionallySizedBox(
-                widthFactor: 1 / 5,
-                heightFactor: 1,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: _MainShellState._primary.withValues(alpha: .16),
-                    borderRadius: BorderRadius.circular(22),
-                    border: Border.all(
-                      color: _MainShellState._primary.withValues(alpha: .35),
+            if (_slotFor(selectedIndex) case final int slot)
+              AnimatedAlign(
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment(slot / 2 - 1, 0),
+                child: FractionallySizedBox(
+                  widthFactor: 1 / 5,
+                  heightFactor: 1,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: _MainShellState._primary.withValues(alpha: .16),
+                      borderRadius: BorderRadius.circular(22),
+                      border: Border.all(
+                        color: _MainShellState._primary.withValues(alpha: .35),
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
             Row(
               children: [
                 Expanded(
@@ -1422,13 +1495,28 @@ class _BottomNavigation extends StatelessWidget {
                   ),
                 ),
                 Expanded(child: _VoiceActionButton(onPressed: onVoicePressed)),
+                // Moments, not Friends. The dock stays at five slots
+                // (Material 3 caps a navigation bar at five, and 316 pt
+                // of usable row on a 360 pt phone cannot carry six), so
+                // promoting Moments to primary navigation meant one item
+                // giving up its slot. Friends lost it because it is a
+                // MANAGEMENT surface — accept a request, browse a list —
+                // visited deliberately and rarely, while Moments is a
+                // CONSUMPTION surface. Friends keeps its tab, its state,
+                // its rail item, its Home entry point, and moves to the
+                // first tile of the More sheet.
+                //
+                // Placed immediately after the create action: record,
+                // then hear what everyone else recorded.
                 Expanded(
                   child: _NavigationItem(
-                    icon: Icons.people_outline_rounded,
-                    selectedIcon: Icons.people_rounded,
-                    label: copy.friends,
-                    isSelected: selectedIndex == 2,
-                    onPressed: () => onDestinationSelected(2),
+                    icon: Icons.graphic_eq_outlined,
+                    selectedIcon: Icons.graphic_eq_rounded,
+                    label: copy.moments,
+                    isSelected:
+                        selectedIndex == _MainShellState._momentsSlot,
+                    onPressed: () =>
+                        onDestinationSelected(_MainShellState._momentsSlot),
                   ),
                 ),
                 Expanded(

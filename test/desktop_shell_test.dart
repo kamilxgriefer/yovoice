@@ -60,6 +60,7 @@ void main() {
 
       for (final label in [
         'Home',
+        'Moments',
         'Discover',
         'Chats',
         'Notifications',
@@ -68,8 +69,15 @@ void main() {
       ]) {
         expect(find.text(label), findsOneWidget, reason: '$label missing');
       }
-      // Profile is the bottom card; these three live in the More popover.
-      for (final absent in ['Profile', 'Moments', 'Clubs', 'Creator Studio']) {
+      // Moments sits DIRECTLY above Discover — the operator's ordering,
+      // and the rail is the only place the two coexist in one list.
+      expect(
+        tester.getCenter(find.text('Moments')).dy,
+        lessThan(tester.getCenter(find.text('Discover')).dy),
+        reason: 'Moments must sit directly above Discover on the rail',
+      );
+      // Profile is the bottom card; these live in the More popover.
+      for (final absent in ['Profile', 'Clubs', 'Creator Studio']) {
         expect(
           find.text(absent),
           findsNothing,
@@ -199,6 +207,7 @@ void main() {
       await tester.pump();
 
       for (final label in [
+        'Moments',
         'Discover',
         'Find creators',
         'Chats',
@@ -211,6 +220,7 @@ void main() {
       }
 
       expect(tapped, [
+        DesktopNavItem.moments,
         DesktopNavItem.discover,
         DesktopNavItem.findCreators,
         DesktopNavItem.chats,
@@ -276,6 +286,10 @@ void main() {
         // IndexedStack; Notifications pushes the bell feed).
         const railOwned = desktopRailDestinations;
         expect(railOwned, {
+          // Moments was promoted to a primary rail item, directly above
+          // Discover. It must therefore be OUT of the More popover, or it
+          // would be listed twice.
+          MoreDestination.moments,
           MoreDestination.discover,
           MoreDestination.findCreators,
           MoreDestination.friends,
@@ -290,7 +304,6 @@ void main() {
         // Anything else MUST be listed in the desktop More popover, or it
         // would become unreachable at desktop width.
         const inMorePopover = {
-          MoreDestination.moments,
           MoreDestination.clubs,
           MoreDestination.creatorStudio,
           MoreDestination.achievements,
@@ -342,6 +355,7 @@ void main() {
       // shell would be re-created and the rail would slide/reopen.
       const slotBacked = {
         DesktopNavItem.home,
+        DesktopNavItem.moments,
         DesktopNavItem.discover,
         DesktopNavItem.findCreators,
         DesktopNavItem.chats,
@@ -370,6 +384,7 @@ void main() {
       await tester.pump();
 
       for (final label in [
+        'Moments',
         'Discover',
         'Find creators',
         'Notifications',
@@ -397,7 +412,10 @@ void main() {
   group('More destinations on desktop', () {
     test('every popover destination renders a ROOT-TAB screen (no back '
         'button with nothing to pop)', () {
-      // The six items the desktop More popover lists.
+      // Moments left the popover when it became a rail item; it is kept
+      // in this list because the assertion below is about the screen a
+      // destination resolves to, which must be identical whether it is
+      // reached from the rail or pushed.
       const popoverItems = [
         MoreDestination.moments,
         MoreDestination.clubs,
@@ -508,7 +526,7 @@ void main() {
   });
 
   group('VoiceTrendingCard', () {
-    testWidgets('Trending Moments renders REAL live rooms with a Live pill; '
+    testWidgets('the live rooms section renders REAL live rooms with a Live pill; '
         'and no longer carries a second people-discovery list', (tester) async {
       final db = FakeFirebaseFirestore();
       for (final entry in [
@@ -550,6 +568,7 @@ void main() {
               roomService: rooms,
               onOpenRoom: (room) => opened = room,
               onSeeAll: () {},
+              onSeeAllRooms: () {},
             ),
           ),
         ),
@@ -557,7 +576,13 @@ void main() {
       await tester.pump(const Duration(milliseconds: 60));
 
       expect(find.text('Voice Trending'), findsOneWidget);
-      expect(find.text('Trending Moments'), findsOneWidget);
+      // The section listing live ROOMS is labelled as live rooms. It was
+      // headed "Trending Moments" while containing no Moments at all —
+      // the mislabel that made "View all → Discover" look like a routing
+      // bug when the routing matched the content and the heading did not.
+      expect(find.text('Live rooms'), findsOneWidget);
+      expect(find.text('Trending Moments'), findsNothing);
+      expect(find.text('Most liked Moments'), findsOneWidget);
       expect(find.text('Late Night Confessions'), findsOneWidget);
       expect(find.text('Real stories, live now'), findsOneWidget);
       expect(find.text('Live'), findsNWidgets(2));
@@ -599,6 +624,7 @@ void main() {
               child: VoiceTrendingCard(
                 onOpenRoom: (_) {},
                 onSeeAll: () {},
+                onSeeAllRooms: () {},
                 roomService: RoomService(firestore: db, auth: auth),
               ),
             ),
@@ -608,7 +634,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 80));
 
       expect(find.text('Voice Trending'), findsOneWidget);
-      expect(find.text('Trending Moments'), findsOneWidget);
+      expect(find.text('Live rooms'), findsOneWidget);
+      expect(find.text('Trending Moments'), findsNothing);
       expect(find.text('No one is live right now.'), findsOneWidget);
       expect(find.text('People to Follow'), findsNothing);
       expect(find.text('View all'), findsOneWidget);
@@ -639,6 +666,7 @@ void main() {
               child: VoiceTrendingCard(
                 onOpenRoom: (_) {},
                 onSeeAll: () => seeAll++,
+                onSeeAllRooms: () {},
                 roomService: RoomService(firestore: db, auth: auth),
               ),
             ),
@@ -714,7 +742,6 @@ void main() {
       expect(find.text('Moderation'), findsNothing);
       // Every existing entry is still there.
       for (final label in [
-        'Moments',
         'Clubs',
         'Creator Studio',
         'Awards',
@@ -723,6 +750,15 @@ void main() {
       ]) {
         expect(find.text(label), findsOneWidget, reason: '$label went missing');
       }
+      // Moments was promoted to a rail item and must therefore NOT be
+      // listed here as well. The popover's item list is hand-written
+      // rather than filtered through desktopRailDestinations, so this is
+      // the assertion that catches it appearing twice.
+      expect(
+        find.text('Moments'),
+        findsNothing,
+        reason: 'Moments is a rail item; listing it here duplicates it',
+      );
       expect(
         find.byKey(const ValueKey('desktop-premium-lock-clubs')),
         findsOneWidget,
@@ -766,7 +802,6 @@ void main() {
       expect(find.text('Moderation'), findsOneWidget);
       expect(find.text('Review reported content'), findsOneWidget);
       for (final label in [
-        'Moments',
         'Clubs',
         'Creator Studio',
         'Awards',
@@ -775,6 +810,15 @@ void main() {
       ]) {
         expect(find.text(label), findsOneWidget, reason: '$label went missing');
       }
+      // Moments was promoted to a rail item and must therefore NOT be
+      // listed here as well. The popover's item list is hand-written
+      // rather than filtered through desktopRailDestinations, so this is
+      // the assertion that catches it appearing twice.
+      expect(
+        find.text('Moments'),
+        findsNothing,
+        reason: 'Moments is a rail item; listing it here duplicates it',
+      );
     });
   });
 
@@ -955,6 +999,7 @@ class _FakeDesktopShellState extends State<_FakeDesktopShell> {
     'discover',
     'find-creators',
     'alerts',
+    'moments',
   ];
 
   DesktopNavItem get _active => switch (_index) {
@@ -963,6 +1008,7 @@ class _FakeDesktopShellState extends State<_FakeDesktopShell> {
     3 => DesktopNavItem.discover,
     4 => DesktopNavItem.findCreators,
     5 => DesktopNavItem.notifications,
+    6 => DesktopNavItem.moments,
     _ => DesktopNavItem.home,
   };
 
@@ -975,6 +1021,7 @@ class _FakeDesktopShellState extends State<_FakeDesktopShell> {
         DesktopNavItem.discover => 3,
         DesktopNavItem.findCreators => 4,
         DesktopNavItem.notifications => 5,
+        DesktopNavItem.moments => 6,
         DesktopNavItem.more => _index,
       };
     });

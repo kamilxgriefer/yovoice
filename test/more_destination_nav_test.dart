@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
+import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 
 /// Regression suite for the P0 "bottom navigation randomly disappears"
 /// bug: main destinations opened from "More" are hosted in the
@@ -51,7 +52,11 @@ void main() {
     // The full shell bar is present on the pushed destination route.
     expect(find.text('Home'), findsOneWidget);
     expect(find.text('Chats'), findsOneWidget);
-    expect(find.text('Friends'), findsOneWidget);
+    // Moments replaced Friends in the dock when it was promoted to
+    // primary navigation. Friends kept its tab, its state and its rail
+    // item, and moved to the first tile of the More sheet.
+    expect(find.text('Moments'), findsOneWidget);
+    expect(find.text('Friends'), findsNothing);
     expect(find.text('More'), findsOneWidget);
     // Including live shell state — the unread badge is the same widget,
     // not a per-screen reimplementation.
@@ -69,10 +74,19 @@ void main() {
       onDestinationSelected: (index) => selected = index,
     );
 
-    await tester.tap(find.text('Friends'));
+    await tester.tap(find.text('Moments'));
     await tester.pumpAndSettle();
 
-    expect(selected, 2, reason: 'Friends tab index must reach the shell');
+    // Derived from the shell's own slot map rather than hard-coded, so
+    // this stays true if the slot is ever renumbered.
+    final momentsSlot = MainShell.desktopSlots.entries
+        .firstWhere((entry) => entry.value == MoreDestination.moments)
+        .key;
+    expect(
+      selected,
+      momentsSlot,
+      reason: 'the Moments dock slot must reach the shell',
+    );
     expect(
       find.text('SHELL'),
       findsOneWidget,

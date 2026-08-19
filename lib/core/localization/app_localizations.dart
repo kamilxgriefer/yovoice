@@ -46,6 +46,7 @@ class AppLocalizations {
   );
 
   String get home => text('Home', 'Główna');
+  String get moments => text('Moments', 'Momenty');
   String get discover => text('Discover', 'Odkrywaj');
   String get findCreators => text('Find creators', 'Znajdź twórców');
   String get chats => text('Chats', 'Czaty');

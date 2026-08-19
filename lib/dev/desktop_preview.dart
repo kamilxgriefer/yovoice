@@ -80,7 +80,11 @@ class _DesktopPreviewHomeState extends State<_DesktopPreviewHome> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(6, 20, 20, 20),
               children: [
-                VoiceTrendingCard(onOpenRoom: (_) {}, onSeeAll: () {}),
+                VoiceTrendingCard(
+                  onOpenRoom: (_) {},
+                  onSeeAll: () {},
+                  onSeeAllRooms: () {},
+                ),
                 const SizedBox(height: 16),
                 PremiumDesktopCard(onCheckPlans: () {}),
               ],

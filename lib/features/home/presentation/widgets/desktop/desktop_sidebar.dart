@@ -19,6 +19,7 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 /// (tap = profile, gear = profile & account settings).
 enum DesktopNavItem {
   home,
+  moments,
   discover,
   findCreators,
   chats,
@@ -99,6 +100,16 @@ class DesktopSidebar extends StatelessWidget {
                     icon: Icons.home_rounded,
                     label: copy.home,
                     active: active == DesktopNavItem.home,
+                    onTap: onSelect,
+                  ),
+                  // Moments sits directly above Discover: the rail is
+                  // where the two coexist, and a discovery surface for
+                  // voice belongs ahead of a discovery surface for rooms.
+                  _NavTile(
+                    item: DesktopNavItem.moments,
+                    icon: Icons.graphic_eq_rounded,
+                    label: copy.moments,
+                    active: active == DesktopNavItem.moments,
                     onTap: onSelect,
                   ),
                   _NavTile(

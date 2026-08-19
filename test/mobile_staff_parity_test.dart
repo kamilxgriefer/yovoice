@@ -307,11 +307,13 @@ void main() {
       await settle(tester);
 
       for (final label in [
+        // Friends took the grid slot Moments vacated when Moments was
+        // promoted into the dock — a 1:1 swap, still eight tiles.
+        'Friends',
         'Profile',
         'Discover',
         'Find creators',
         'Clubs',
-        'Moments',
         'Alerts',
         'Awards',
         'Creator',
@@ -319,6 +321,11 @@ void main() {
       ]) {
         expect(find.text(label), findsOneWidget, reason: label);
       }
+      expect(
+        find.text('Moments'),
+        findsNothing,
+        reason: 'Moments is a dock destination now, not a More sheet tile',
+      );
       expect(find.text('Staff'), findsNothing);
       expect(find.text('Staff Center'), findsNothing);
       expect(find.text('Moderation Center'), findsNothing);

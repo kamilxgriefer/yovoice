@@ -98,12 +98,18 @@ void main() {
 
   group('desktop navigation placement', () {
     test('Moderation is a More destination, never a primary rail item', () {
-      // The accepted six-item contract is unchanged.
+      // Moderation stays out of the rail. Moments joined it when it was
+      // promoted to primary navigation; that is the only change here.
       expect(desktopRailDestinations, {
+        MoreDestination.moments,
         MoreDestination.discover,
         MoreDestination.findCreators,
         MoreDestination.friends,
       });
+      expect(
+        desktopRailDestinations.contains(MoreDestination.moderation),
+        isFalse,
+      );
       expect(
         MoreDestination.values.contains(MoreDestination.moderation),
         isTrue,
