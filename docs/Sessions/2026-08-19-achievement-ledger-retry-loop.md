@@ -60,8 +60,9 @@ production repair. Full decision record in ADR-081.
   rewritten well-formed; post-apply dry run reports 4/4 canonical, 0
   poisoned.
 - Loops: last `AchievementEventIntegrityError` at 05:36:54Z (rollout
-  tail); silent thereafter — confirmed by Cloud Logging reads 20+ minutes
-  past the former 1–3-minute cadence.
+  tail); silent thereafter — Cloud Logging reads at 05:42Z and 05:49Z show
+  a ~13-minute gap and counting against the former 1–3-minute cadence,
+  spanning several retry intervals of each of the three loops.
 - Reconciler: the 05:40:07Z run bootstrapped the formerly wedged user
   (`status: verified`), processed 5 users, advanced `afterUid` off `null`
   for the first time, and logged no malformed-state error. User `1ghm…`'s
