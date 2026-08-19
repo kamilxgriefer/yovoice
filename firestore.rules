@@ -645,6 +645,120 @@ service cloud.firestore {
           data.joinedAt == request.time;
     }
 
+    // ROOM CHAT: the shape half of `match /rooms/{roomId}/messages`'s create
+    // rule. Until this existed, that rule checked WHO was writing
+    // (senderId == uid, plus the participant/member/host disjunction) and
+    // NOTHING WHATEVER about the document, which made room chat the largest
+    // unguarded client write surface in the product. All four of these were
+    // reproduced from an ordinary member account on the emulator and allowed:
+    // another member's senderName/senderPhotoUrl (impersonation inside a
+    // private conversation), a 60,000-character body, a createdAt in 2099
+    // (which pins the message to the top of watchRoomMessages()'s
+    // `orderBy('createdAt', descending: true)` for every member, permanently),
+    // and arbitrary extra fields such as `senderIsStaff: true`.
+    //
+    // This function deliberately mirrors clubMessageCreateShapeAllowed()
+    // rather than inventing a second dialect for the same job. The one place
+    // it goes further is that room chat CAN pin both identity and time, and
+    // club chat could not — see below.
+    //
+    // The keyset is not invented here either. functions/achievements/
+    // sources.js already treats exactly
+    // ['createdAt','reactions','senderId','senderName','senderPhotoUrl','text']
+    // as the canonical room message (ROOM_MESSAGE_KEYS, matched with
+    // hasExactKeys), so today's extra-field freedom does not merely bloat
+    // documents — it silently drops the sender's achievement credit, because
+    // that adapter refuses anything that is not an exact key match. Rules and
+    // that adapter now agree on one shape.
+    //
+    // WHY THE TWO PINS ARE SAFE HERE, HAVING BROKEN CLUB CHAT.
+    // Pinning senderName to the canonical profile broke sending on the club
+    // side because ClubChatService reads the name from a club member row that
+    // nothing re-syncs on rename, and pinning the timestamp broke sending
+    // because that client writes Timestamp.now(). Room chat is the opposite
+    // case on both counts, and this was read out of the client rather than
+    // assumed:
+    //  - RoomService._identity() (room_service.dart) reads
+    //    users/{uid}.displayName — the SAME private canonical document
+    //    displayNameMatchesCanonical() compares against — and deliberately
+    //    preserves its exact stored bytes, with a comment naming this
+    //    byte-for-byte Rules binding as the reason. There is no member-row
+    //    hop to go stale, and it refuses to fall back to the Firebase Auth
+    //    mirror.
+    //  - sendRoomMessage() writes createdAt as FieldValue.serverTimestamp(),
+    //    which IS request.time, never a client clock.
+    // So both pins refuse nothing the app sends. Verified on the emulator,
+    // not reasoned about: the legitimate send is a passing case in
+    // firestore-tests/rules.test.js alongside every attack above.
+    //
+    // WHAT IS BOUNDED BUT NOT PINNED, AND WHY.
+    // senderPhotoUrl is NOT pinned to users/{uid}.photoUrl, because
+    // _identity() falls back to the Firebase Auth photoURL when the profile
+    // field is empty, so a pin would refuse a legitimate send from any
+    // account in that state. It gets the type and length bound the server
+    // already applies (validOptionalText(..., 2048) in the achievements
+    // adapter) and nothing more. An avatar can therefore still be pointed at
+    // another member's image — a much weaker impersonation than a name, since
+    // senderName no longer moves with it, but a real remaining gap. Closing
+    // it needs a client change first: drop the Auth fallback in _identity()
+    // so the field is canonical-or-null, THEN pin it. Doing the rule half
+    // alone would break live sending, which is worse than the gap.
+    // initialRoomOwnerMemberShape() above makes the same trade for the same
+    // reason.
+    //
+    // reactions is pinned EMPTY at create, matching what sendRoomMessage()
+    // writes and what the achievements adapter requires. Without it a member
+    // could mint a message already carrying thousands of reaction entries
+    // attributed to other people, which is both a storage-growth surface and
+    // a forgery. The update rule's own bound is discussed there.
+    function roomMessageCreateShapeAllowed() {
+      return request.resource.data.keys().hasOnly([
+            'senderId', 'senderName', 'senderPhotoUrl', 'text',
+            'createdAt', 'reactions'
+          ]) &&
+          request.resource.data.keys().hasAll([
+            'senderId', 'senderName', 'text', 'createdAt', 'reactions'
+          ]) &&
+          // Identity is the caller's canonical display name, byte for byte.
+          displayNameMatchesCanonical(
+            request.auth.uid,
+            request.resource.data.senderName
+          ) &&
+          (
+            request.resource.data.get('senderPhotoUrl', null) == null ||
+            (
+              request.resource.data.senderPhotoUrl is string &&
+              request.resource.data.senderPhotoUrl.size() <= 2048
+            )
+          ) &&
+          // Bounds match what RoomService.sendRoomMessage() already enforces
+          // (trimmed, non-empty, <= 500), so this refuses nothing the app
+          // sends — and that equivalence is exact rather than approximate,
+          // which was measured rather than assumed from the operator's name.
+          // Rules String.size() counts UTF-16 CODE UNITS, the same unit Dart's
+          // String.length counts: on the emulator an all-emoji body of 250
+          // astral characters (500 UTF-16 units, 250 code points, 1000 UTF-8
+          // bytes) is accepted and 300 is refused. Had size() counted bytes,
+          // this cap would have rejected a message the app itself allows;
+          // had it counted code points, it would have been slacker than the
+          // client. It is neither. The same reading applies to the identical
+          // caps on globalChat and club chat.
+          request.resource.data.text is string &&
+          request.resource.data.text.size() <= 500 &&
+          request.resource.data.text.trim().size() > 0 &&
+          // Ordering authority is the server clock, never the sender's.
+          request.resource.data.createdAt == request.time &&
+          // Nothing arrives pre-reacted, and — since adminDeleteMessage
+          // writes exactly this tombstone onto room messages too — nothing
+          // arrives pre-removed or pre-attributed either. hasOnly() above is
+          // what keeps isDeleted/deletedBy/deletedByRole/moderationRemoved
+          // out of the collection entirely, so a forged, staff-signed,
+          // permanent tombstone of the kind clubMessageCreateShapeAllowed()
+          // was written to stop is not expressible here.
+          request.resource.data.reactions is map &&
+          request.resource.data.reactions.size() == 0;
+    }
+
     function roomParticipantJoinTransitionAllowed(roomId) {
       let participantPath = /databases/$(database)/documents/rooms/$(roomId)/participants/$(request.auth.uid);
       return !exists(participantPath) &&
@@ -2497,14 +2611,65 @@ service cloud.firestore {
       // `clubs` and read a family room's name straight out of it.
       // Verified against the emulator, not assumed.
       //
-      // Nothing may list this collection. The one query that used to —
-      // countOwnedClubs()'s owner-scoped count for the premium gate — now
-      // counts `users/{uid}/clubs` where role == 'owner' instead, a
-      // collection the caller already owns. With that gone there is no
-      // legitimate listing left, so the honest rule is `false`: a family
-      // room is undiscoverable because the query cannot run, not because
-      // no screen happens to call it today.
-      allow list: if false;
+      // THE PARAGRAPH THAT USED TO FOLLOW WAS WRONG, AND WRONG IN THE WAY
+      // THAT MATTERS MOST: it said countOwnedClubs() was the last listing
+      // and that "with that gone there is no legitimate listing left, so
+      // the honest rule is `false`". It missed a caller.
+      // HomeFeedService.watchSuggestedClubs() has been issuing
+      // clubs.where('privacy','==','public').limit(8).snapshots() the whole
+      // time, and `false` denied it for everyone — including a club owner
+      // listing their own public club. Home's "Discover clubs" rail has
+      // therefore never worked, for anybody, ever. Nobody noticed because
+      // the rail's StreamBuilder reads `snapshot.data ?? []` with no
+      // hasError branch, so the permission denial, the heading and the rail
+      // all disappear together and leave an empty-looking Home instead of an
+      // error. A comment asserting there is nothing left to list is exactly
+      // what stops the next reader from checking, which is why it is
+      // corrected here rather than quietly deleted.
+      //
+      // WHAT THE MEASUREMENT ACTUALLY SHOWED, because the design depends on
+      // it (emulator, 2026-08-19, six rule variants against real queries):
+      // a list rule is evaluated against the QUERY'S CONSTRAINTS, never
+      // against the documents that come back. A clause on `resource.data.X`
+      // is satisfied only when the query itself carries an equality filter
+      // on X; if the query does not constrain X the whole query is denied.
+      // The corollary is the trap the paragraph above already describes and
+      // is worth restating as a rule of thumb: `resource.data.get(X, dflt)`
+      // is satisfied BY ITS DEFAULT when the query does not constrain X, so
+      // `get('type','community') == 'community'` reads like a family-room
+      // guard and is not one — it admitted a family club outright in the
+      // variant that tried it. Every clause below is therefore written as a
+      // BARE field access, which has no default to be satisfied by.
+      //
+      // So this rule does not filter documents; it dictates which query is
+      // allowed to run, and the query's own index does the filtering. Only
+      // an exact three-equality query can pass, and what it returns is
+      // exactly the public, active, community clubs — a family room is
+      // excluded because `type == 'community'` is in the query, not because
+      // a rule inspected it, and no authorized query can be constructed that
+      // omits that filter. Documents missing `type` or `status` are absent
+      // from the index for those filters and so are excluded too, which is
+      // the correct direction for a discovery rail to fail.
+      //
+      // WHAT A PUBLIC LISTING EXPOSES, judged rather than assumed: a
+      // community club document holds name, description, ownerId, ownerName,
+      // avatar/banner urls, counts, language, channel ids and timestamps.
+      // Firestore authorizes whole documents, so all of it is exposed. For a
+      // club whose owner explicitly chose "Public" that is the point of the
+      // setting; ownerName is already public via publicProfiles, and the
+      // channel and lounge ids are opaque handles that grant nothing on
+      // their own — reading a channel still requires isClubMember(), and the
+      // lounge room still requires canAccessRoom(). Private, invite-only and
+      // family clubs are not readable through this rule at all.
+      //
+      // isActiveAccount(), not isSignedIn(): status is re-stated here rather
+      // than inherited from the `get` rule above (SECURITY.md principle 9).
+      // It is a caller-scoped lookup, so it constrains no field and cannot
+      // affect which query is provable.
+      allow list: if isActiveAccount() &&
+          resource.data.privacy == 'public' &&
+          resource.data.type == 'community' &&
+          resource.data.status == 'active';
 
       // Community Clubs are created only by createCommunityClub through the
       // Admin SDK. The callable verifies capability + expiry and serializes a
@@ -3068,9 +3233,14 @@ service cloud.firestore {
                 isRoomHost(roomId)
               )
             );
+        // WHO may post is unchanged, and the disjunction below stays a
+        // character-for-character copy of roomActivityTouchAllowed()'s, which
+        // depends on that. roomMessageCreateShapeAllowed() constrains the
+        // DOCUMENT, not the caller, so the two have not drifted.
         allow create: if isVerified() &&
             canCommunicate() &&
             request.resource.data.senderId == request.auth.uid &&
+            roomMessageCreateShapeAllowed() &&
             (
               (isRoomParticipant(roomId) && canAccessRoom(roomId)) ||
               isRoomMember(roomId) ||
@@ -3087,6 +3257,27 @@ service cloud.firestore {
         // branch — a participant row plus a public room, which is exactly
         // what a host who was banned mid-session still holds. Reacting is
         // not an exit, so gating it traps nobody.
+        //
+        // WHAT THE KEY CAP DOES AND, MORE IMPORTANTLY, DOES NOT DO.
+        // hasOnly(['reactions']) restricts WHICH field moves, never whether
+        // the new value is true (SECURITY.md principle 2), and the create
+        // rule's `reactions == {}` pin would be worth little if the update
+        // rule left the same map unbounded — the 60,000-character body would
+        // simply move house. room_chat_sheet.dart offers exactly five quick
+        // reactions, so a 32-key ceiling leaves six times the headroom the
+        // client can use and refuses nothing it sends. The `|| not growing`
+        // arm exists so a document that is already over the cap can still be
+        // shrunk: a cap with no exit would trap toggleRoomMessageReaction()
+        // on exactly the messages that most need clearing.
+        //
+        // STATED PLAINLY: this bounds the number of EMOJI KEYS and nothing
+        // else. The uid list under each key is still caller-authored,
+        // unbounded, and can name people who never reacted — Firestore rules
+        // cannot iterate a map's values, so no rule can validate it. The
+        // document's real ceiling remains Firestore's own 1 MiB. Fixing it
+        // properly means moving reactions to a `reactions/{uid}` subcollection
+        // where each row is self-attributed and self-sized, which is a schema
+        // change with a migration, not a rules edit.
         allow update: if isActiveAccount() &&
             (
               (isRoomParticipant(roomId) && canAccessRoom(roomId)) ||
@@ -3094,7 +3285,13 @@ service cloud.firestore {
               isRoomHost(roomId)
             ) &&
             request.resource.data.diff(resource.data).affectedKeys()
-                .hasOnly(['reactions']);
+                .hasOnly(['reactions']) &&
+            request.resource.data.reactions is map &&
+            (
+              request.resource.data.reactions.size() <= 32 ||
+              request.resource.data.reactions.size() <=
+                  resource.data.get('reactions', {}).size()
+            );
         allow delete: if isRoomHost(roomId);
       }
 

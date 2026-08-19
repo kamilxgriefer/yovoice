@@ -4523,6 +4523,613 @@ async function main() {
   );
 
   // ------------------------------------------------------------------
+  // ROOM CHAT DOCUMENT SHAPE.
+  //
+  // Until roomMessageCreateShapeAllowed() existed, the create rule checked
+  // WHO was writing and nothing at all about the document. Every attack
+  // below was reproduced from an ordinary member account against the
+  // deployed-shaped ruleset and ALLOWED; every regression above it is the
+  // literal payload room_service.dart writes.
+  //
+  // The regressions matter more than the attacks here. Pinning senderName
+  // and the timestamp broke sending on the club side, so each pin is paired
+  // with the exact legitimate write it must not refuse — including the two
+  // shapes that made the club-side pins unsafe, an identity read from the
+  // canonical profile and a server timestamp.
+  // ------------------------------------------------------------------
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, "users/shape-sender"), {
+      uid: "shape-sender",
+      // RoomService._identity() preserves the exact stored bytes of this
+      // field, including surrounding whitespace, and calls that out as a
+      // byte-for-byte Rules binding. Seeding a name that is NOT a tidy
+      // identifier is what proves the pin compares bytes rather than a
+      // normalized form.
+      displayName: "  Shape Sender  ",
+      photoUrl: "https://cdn.example/shape-sender.png",
+      banned: false,
+    });
+    await setDoc(doc(db, "users/shape-victim"), {
+      uid: "shape-victim",
+      displayName: "Shape Victim",
+      photoUrl: "https://cdn.example/shape-victim.png",
+      banned: false,
+    });
+    // An account with NO photoUrl on its profile, so RoomService._identity()
+    // falls back to the Firebase Auth photoURL — the reason senderPhotoUrl
+    // is bounded rather than pinned.
+    await setDoc(doc(db, "users/shape-nophoto"), {
+      uid: "shape-nophoto",
+      displayName: "Shape NoPhoto",
+      banned: false,
+    });
+    await setDoc(doc(db, "rooms/shape-room"), {
+      hostId: "shape-host",
+      hostName: "Shape Host",
+      name: "Shape Room",
+      visibility: "public",
+      status: "active",
+      isLive: true,
+      roomType: "temporary",
+      updatedAt: Timestamp.fromMillis(1_700_000_000_000),
+    });
+    for (const uid of ["shape-sender", "shape-victim", "shape-nophoto"]) {
+      await setDoc(doc(db, `rooms/shape-room/participants/${uid}`), {
+        userId: uid,
+        displayName: uid,
+        role: "listener",
+        isMuted: true,
+        isSpeaker: false,
+        isHandRaised: false,
+      });
+    }
+  });
+
+  const shapeSender = testEnv.authenticatedContext("shape-sender", {
+    email_verified: true,
+  });
+  const shapeNoPhoto = testEnv.authenticatedContext("shape-nophoto", {
+    email_verified: true,
+  });
+
+  // The canonical payload, byte for byte, as room_service.dart builds it.
+  const roomMessage = (overrides = {}) => ({
+    senderId: "shape-sender",
+    senderName: "  Shape Sender  ",
+    senderPhotoUrl: "https://cdn.example/shape-sender.png",
+    text: "hello room",
+    createdAt: serverTimestamp(),
+    reactions: {},
+    ...overrides,
+  });
+
+  await check(
+    "regression ROOM CHAT: the exact sendRoomMessage() payload still lands, and the _touchRoomActivity() bump after it still passes",
+    async () => {
+      const db = shapeSender.firestore();
+      await assertSucceeds(
+        addDoc(collection(db, "rooms/shape-room/messages"), roomMessage()),
+      );
+      // Not batched in the client and deliberately not batched here: the
+      // message has already committed by the time this runs, so a rule that
+      // broke the pair would break it in exactly this order.
+      await assertSucceeds(
+        updateDoc(doc(db, "rooms/shape-room"), {
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "regression ROOM CHAT: senderPhotoUrl may be the Firebase Auth fallback URL, which is why it is bounded and not pinned to users/{uid}.photoUrl",
+    async () => {
+      const db = shapeNoPhoto.firestore();
+      await assertSucceeds(
+        addDoc(collection(db, "rooms/shape-room/messages"), {
+          senderId: "shape-nophoto",
+          senderName: "Shape NoPhoto",
+          // The account's profile carries no photoUrl at all; this value
+          // comes from the Auth mirror. A canonical pin would refuse it.
+          senderPhotoUrl: "https://lh3.googleusercontent.com/auth-mirror",
+          text: "sent with an Auth avatar",
+          createdAt: serverTimestamp(),
+          reactions: {},
+        }),
+      );
+    },
+  );
+
+  await check(
+    "regression ROOM CHAT: a null senderPhotoUrl is accepted (accounts with no avatar anywhere)",
+    async () => {
+      await assertSucceeds(
+        addDoc(
+          collection(shapeSender.firestore(), "rooms/shape-room/messages"),
+          roomMessage({ senderPhotoUrl: null }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "regression ROOM CHAT: the length cap is measured in the SAME unit as the client's — 500 UTF-16 units of astral emoji lands, 501 ASCII does not",
+    async () => {
+      const db = shapeSender.firestore();
+      // RoomService rejects `normalized.length > 500`, and Dart's
+      // String.length counts UTF-16 units, so 250 astral emoji (500 units,
+      // 250 code points, 1000 UTF-8 bytes) is the longest all-emoji message
+      // the app can send. A rules cap counting BYTES would refuse it; one
+      // counting CODE POINTS would be slacker than the client. It counts
+      // UTF-16 units, so the two boundaries coincide exactly.
+      await assertSucceeds(
+        addDoc(
+          collection(db, "rooms/shape-room/messages"),
+          roomMessage({ text: "\u{1F600}".repeat(250) }),
+        ),
+      );
+      await assertSucceeds(
+        addDoc(
+          collection(db, "rooms/shape-room/messages"),
+          roomMessage({ text: "a".repeat(500) }),
+        ),
+      );
+      await assertFails(
+        addDoc(
+          collection(db, "rooms/shape-room/messages"),
+          roomMessage({ text: "a".repeat(501) }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY ROOM CHAT: a member cannot post under another member's senderName — impersonation inside a private conversation",
+    async () => {
+      await assertFails(
+        addDoc(
+          collection(shapeSender.firestore(), "rooms/shape-room/messages"),
+          roomMessage({
+            senderName: "Shape Victim",
+            senderPhotoUrl: "https://cdn.example/shape-victim.png",
+            text: "I am the victim speaking",
+          }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY ROOM CHAT: senderName must be the canonical profile name, not a plausible variant of the caller's own",
+    async () => {
+      // Trimmed — the tidy-looking value — is still not what the profile
+      // stores, and a rule comparing anything but bytes would accept it.
+      await assertFails(
+        addDoc(
+          collection(shapeSender.firestore(), "rooms/shape-room/messages"),
+          roomMessage({ senderName: "Shape Sender" }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY ROOM CHAT: a 60,000-character body is refused (unbounded storage growth)",
+    async () => {
+      await assertFails(
+        addDoc(
+          collection(shapeSender.firestore(), "rooms/shape-room/messages"),
+          roomMessage({ text: "A".repeat(60000) }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY ROOM CHAT: createdAt cannot be set to 2099, which would pin the message to the top of every member's chat permanently",
+    async () => {
+      const db = shapeSender.firestore();
+      await assertFails(
+        addDoc(
+          collection(db, "rooms/shape-room/messages"),
+          roomMessage({
+            createdAt: Timestamp.fromDate(new Date("2099-01-01T00:00:00Z")),
+          }),
+        ),
+      );
+      // A client CLOCK value rather than a server timestamp is refused too,
+      // even when it is roughly now — this is the pin that broke club chat,
+      // and it is safe here only because sendRoomMessage() writes
+      // FieldValue.serverTimestamp().
+      await assertFails(
+        addDoc(
+          collection(db, "rooms/shape-room/messages"),
+          roomMessage({ createdAt: Timestamp.fromDate(new Date()) }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY ROOM CHAT: arbitrary extra fields are refused — senderIsStaff, isPinnedForever, a second sentAt ordering key",
+    async () => {
+      const db = shapeSender.firestore();
+      await assertFails(
+        addDoc(
+          collection(db, "rooms/shape-room/messages"),
+          roomMessage({ senderIsStaff: true }),
+        ),
+      );
+      await assertFails(
+        addDoc(
+          collection(db, "rooms/shape-room/messages"),
+          roomMessage({ isPinnedForever: true }),
+        ),
+      );
+      await assertFails(
+        addDoc(
+          collection(db, "rooms/shape-room/messages"),
+          roomMessage({
+            sentAt: Timestamp.fromDate(new Date("2099-01-01T00:00:00Z")),
+          }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY ROOM CHAT: a message cannot be BORN removed — the forged staff tombstone clubMessageCreateShapeAllowed() was written to stop",
+    async () => {
+      // adminDeleteMessage writes exactly these fields onto room messages
+      // too, and short-circuits on isDeleted === true without redacting, so
+      // a forged tombstone would be permanent and unreachable by every
+      // client path. hasOnly() keeps the fields out of the collection.
+      await assertFails(
+        addDoc(
+          collection(shapeSender.firestore(), "rooms/shape-room/messages"),
+          roomMessage({
+            text: "",
+            isDeleted: true,
+            deletedBy: "shape-host",
+            deletedByRole: "superAdmin",
+            moderationRemoved: true,
+          }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY ROOM CHAT: a message cannot be created pre-loaded with reactions attributed to other people",
+    async () => {
+      await assertFails(
+        addDoc(
+          collection(shapeSender.firestore(), "rooms/shape-room/messages"),
+          roomMessage({
+            reactions: Object.fromEntries(
+              Array.from({ length: 200 }, (_, i) => [
+                `e${i}`,
+                Array.from({ length: 25 }, (_, j) => `victim-${j}`),
+              ]),
+            ),
+          }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY ROOM CHAT: a blank-after-trim body, and a message missing createdAt or reactions, are all refused",
+    async () => {
+      const db = shapeSender.firestore();
+      await assertFails(
+        addDoc(
+          collection(db, "rooms/shape-room/messages"),
+          roomMessage({ text: "      " }),
+        ),
+      );
+      const { createdAt, ...noCreatedAt } = roomMessage();
+      await assertFails(
+        addDoc(collection(db, "rooms/shape-room/messages"), noCreatedAt),
+      );
+      const { reactions, ...noReactions } = roomMessage();
+      await assertFails(
+        addDoc(collection(db, "rooms/shape-room/messages"), noReactions),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY ROOM CHAT: the reactions map cannot be grown without limit on update, but an already-oversized one can still be shrunk",
+    async () => {
+      const db = shapeSender.firestore();
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), "rooms/shape-room/messages/reaction-target"),
+          {
+            senderId: "shape-victim",
+            senderName: "Shape Victim",
+            senderPhotoUrl: null,
+            text: "a real message",
+            createdAt: serverTimestamp(),
+            reactions: {},
+          },
+        );
+      });
+      const target = doc(db, "rooms/shape-room/messages/reaction-target");
+      // What toggleRoomMessageReaction() writes: the whole map, recomputed.
+      // room_chat_sheet.dart offers five quick reactions, so this is the
+      // realistic ceiling for the client.
+      await assertSucceeds(
+        updateDoc(target, {
+          reactions: {
+            "❤️": ["shape-sender"],
+            "\u{1F602}": ["shape-sender"],
+            "\u{1F44F}": ["shape-sender"],
+            "\u{1F525}": ["shape-sender"],
+            "\u{1F4AF}": ["shape-sender"],
+          },
+        }),
+      );
+      // 200 emoji keys is not a reaction, it is storage.
+      await assertFails(
+        updateDoc(target, {
+          reactions: Object.fromEntries(
+            Array.from({ length: 200 }, (_, i) => [`e${i}`, ["shape-sender"]]),
+          ),
+        }),
+      );
+      // A document that is ALREADY over the cap must stay clearable, or the
+      // cap would trap the toggle on exactly the messages that need it most.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), "rooms/shape-room/messages/reaction-target"),
+          {
+            senderId: "shape-victim",
+            senderName: "Shape Victim",
+            senderPhotoUrl: null,
+            text: "a real message",
+            createdAt: serverTimestamp(),
+            reactions: Object.fromEntries(
+              Array.from({ length: 90 }, (_, i) => [`e${i}`, ["someone"]]),
+            ),
+          },
+        );
+      });
+      await assertSucceeds(
+        updateDoc(target, {
+          reactions: Object.fromEntries(
+            Array.from({ length: 89 }, (_, i) => [`e${i}`, ["someone"]]),
+          ),
+        }),
+      );
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // CLUB DISCOVERY (`match /clubs` LIST).
+  //
+  // `allow list: if false` denied HomeFeedService.watchSuggestedClubs() for
+  // everyone, including a club owner listing their own public club, so
+  // Home's "Discover clubs" rail has never worked for anybody.
+  //
+  // A list rule is evaluated against the QUERY'S CONSTRAINTS, not against
+  // the documents returned — measured on the emulator across six rule
+  // variants, because the design depends entirely on which it is. So these
+  // cases are about which QUERY is authorized. The document-level exclusions
+  // asserted below are performed by the query's own index, which is the only
+  // mechanism that actually works here: a rule clause on a field the query
+  // does not constrain is either unprovable (deny) or, if written as
+  // `.get(field, default)`, silently satisfied by the default.
+  // ------------------------------------------------------------------
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, "users/discover-reader"), {
+      uid: "discover-reader",
+      displayName: "Discover Reader",
+      banned: false,
+    });
+    await setDoc(doc(db, "users/discover-banned"), {
+      uid: "discover-banned",
+      displayName: "Discover Banned",
+      banned: true,
+    });
+    await setDoc(doc(db, "clubs/discover-public"), {
+      name: "Discover Public",
+      description: "an ordinary public community club",
+      ownerId: "discover-owner",
+      ownerName: "Discover Owner",
+      avatarUrl: null,
+      bannerUrl: null,
+      privacy: "public",
+      type: "community",
+      status: "active",
+      defaultLanguage: "English",
+      memberCount: 12,
+      onlineCount: 3,
+    });
+    await setDoc(doc(db, "clubs/discover-private"), {
+      name: "Discover Private",
+      ownerId: "discover-owner",
+      privacy: "private",
+      type: "community",
+      status: "active",
+      memberCount: 2,
+    });
+    // A FAMILY room whose owner set privacy to "public" — which
+    // clubMetadataUpdateAllowed() permits today, and the club settings
+    // screen offers. If discovery keyed on privacy alone, this private
+    // family space's name would land on every user's Home.
+    await setDoc(doc(db, "clubs/family_discover-rogue"), {
+      name: "Rogue Family Room",
+      ownerId: "discover-rogue",
+      privacy: "public",
+      type: "family",
+      status: "active",
+      memberCount: 3,
+    });
+    // A legacy public club carrying neither `type` nor `status`.
+    await setDoc(doc(db, "clubs/discover-legacy"), {
+      name: "Legacy Club",
+      ownerId: "discover-owner",
+      privacy: "public",
+      memberCount: 1,
+    });
+    // The private per-user projection that shares the `clubs` collection
+    // NAME — the ADR-005/007 collision that makes the collectionGroup case
+    // below worth running rather than reasoning about.
+    await setDoc(doc(db, "users/discover-owner/clubs/discover-public"), {
+      clubId: "discover-public",
+      name: "Discover Public",
+      avatarUrl: null,
+      role: "owner",
+      privacy: "public",
+    });
+  });
+
+  const discoverReader = testEnv.authenticatedContext("discover-reader", {
+    email_verified: true,
+  });
+  const discoverBanned = testEnv.authenticatedContext("discover-banned", {
+    email_verified: true,
+  });
+  // The query the rule authorizes, and the one HomeFeedService must issue.
+  const discoveryQuery = (db) =>
+    query(
+      collection(db, "clubs"),
+      where("privacy", "==", "public"),
+      where("type", "==", "community"),
+      where("status", "==", "active"),
+      limit(8),
+    );
+
+  await check(
+    "regression CLUB DISCOVERY: the discovery query succeeds and returns the public community club — the rail that `allow list: if false` denied to everyone",
+    async () => {
+      const snapshot = await assertSucceeds(
+        getDocs(discoveryQuery(discoverReader.firestore())),
+      );
+      const ids = snapshot.docs.map((d) => d.id);
+      if (!ids.includes("discover-public")) {
+        throw new Error(`expected discover-public in the rail, got ${ids}`);
+      }
+    },
+  );
+
+  await check(
+    "SECURITY CLUB DISCOVERY: the rail cannot reach a private club, a family room whose owner set privacy=public, or a legacy club with no type/status",
+    async () => {
+      const snapshot = await assertSucceeds(
+        getDocs(discoveryQuery(discoverReader.firestore())),
+      );
+      const ids = snapshot.docs.map((d) => d.id);
+      for (const forbidden of [
+        "discover-private",
+        "family_discover-rogue",
+        "discover-legacy",
+      ]) {
+        if (ids.includes(forbidden)) {
+          throw new Error(`${forbidden} leaked into the discovery rail`);
+        }
+      }
+    },
+  );
+
+  await check(
+    "SECURITY CLUB DISCOVERY: an unfiltered `collection('clubs')` listing is still denied — enumeration was the reason this rule was false",
+    async () => {
+      await assertFails(
+        getDocs(query(collection(discoverReader.firestore(), "clubs"), limit(8))),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUB DISCOVERY: a query filtering on privacy ALONE is denied, so nothing can list clubs without also proving type and status",
+    async () => {
+      const db = discoverReader.firestore();
+      // This is the query HomeFeedService.watchSuggestedClubs() issues
+      // TODAY. It is still denied, on purpose: privacy alone cannot exclude
+      // the rogue family room above. The client must add both filters — the
+      // rail does not start working until it does.
+      await assertFails(
+        getDocs(
+          query(collection(db, "clubs"), where("privacy", "==", "public"), limit(8)),
+        ),
+      );
+      await assertFails(
+        getDocs(
+          query(
+            collection(db, "clubs"),
+            where("privacy", "==", "public"),
+            where("type", "==", "community"),
+            limit(8),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUB DISCOVERY: private and invite-only clubs cannot be listed by asking for them directly",
+    async () => {
+      const db = discoverReader.firestore();
+      for (const value of ["private", "inviteOnly"]) {
+        await assertFails(
+          getDocs(
+            query(
+              collection(db, "clubs"),
+              where("privacy", "==", value),
+              where("type", "==", "community"),
+              where("status", "==", "active"),
+              limit(8),
+            ),
+          ),
+        );
+      }
+    },
+  );
+
+  await check(
+    "SECURITY CLUB DISCOVERY: a banned account cannot run the discovery query — account status is re-stated in the list rule, not inherited from `get`",
+    async () => {
+      await assertFails(getDocs(discoveryQuery(discoverBanned.firestore())));
+    },
+  );
+
+  await check(
+    "SECURITY CLUB DISCOVERY ADR-007: opening `clubs` list does NOT authorize a real collectionGroup('clubs') query, which would also span every user's private users/{uid}/clubs projection",
+    async () => {
+      const db = discoverReader.firestore();
+      // Only a top-level `match /{path=**}/clubs/{clubId}` wildcard could
+      // authorize this, and there is none. Getting that wrong fails OPEN
+      // (SECURITY.md principle 3), so it is proven with the real query
+      // rather than inferred from the nested rule's shape.
+      await assertFails(
+        getDocs(
+          query(
+            collectionGroup(db, "clubs"),
+            where("privacy", "==", "public"),
+            limit(8),
+          ),
+        ),
+      );
+      await assertFails(
+        getDocs(
+          query(
+            collectionGroup(db, "clubs"),
+            where("privacy", "==", "public"),
+            where("type", "==", "community"),
+            where("status", "==", "active"),
+            limit(8),
+          ),
+        ),
+      );
+    },
+  );
+
+  // ------------------------------------------------------------------
   // ROOM RECENCY: the room-root `updatedAt` bump that sendRoomMessage()
   // issues after every message.
   //
@@ -4617,10 +5224,15 @@ async function main() {
       const db = speaker.firestore();
 
       // Exactly what sendRoomMessage() writes, in the same order.
+      //
+      // senderName is the account's canonical users/{uid}.displayName —
+      // which the seed above sets to the uid — because the message create
+      // rule now pins it there, exactly as RoomService._identity() reads it.
+      // A name invented by the test would prove the rule is NOT pinned.
       await assertSucceeds(
         addDoc(collection(db, "rooms/recency-room/messages"), {
           senderId: "recency-speaker",
-          senderName: "Speaker",
+          senderName: "recency-speaker",
           senderPhotoUrl: null,
           text: "hello from a non-host",
           createdAt: serverTimestamp(),
@@ -4648,7 +5260,7 @@ async function main() {
       await assertSucceeds(
         addDoc(collection(db, "rooms/recency-room/messages"), {
           senderId: "recency-member",
-          senderName: "Member",
+          senderName: "recency-member",
           senderPhotoUrl: null,
           text: "member chatter",
           createdAt: serverTimestamp(),
@@ -5050,7 +5662,7 @@ async function main() {
       await assertSucceeds(
         addDoc(collection(db, "rooms/recency-room/messages"), {
           senderId: "recency-member",
-          senderName: "Member",
+          senderName: "recency-member",
           senderPhotoUrl: null,
           text: "does this room look active yet",
           createdAt: serverTimestamp(),
