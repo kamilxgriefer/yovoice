@@ -725,19 +725,53 @@ pagination/fair-sampling design before raising the current cap; never silently
 publish a partial cohort. Removing an account/Club or transferring Club
 ownership deletes its grant server-side.
 
-### Pending release: the 2026-08-19/20 reachability wave
+### RELEASED 2026-08-20: the reachability wave
 
-`3d54bc3` → `b0f1062`. **Nothing in this wave has been deployed**, and **no
-production read was performed while writing this section** — the deployed
-state below is the last recorded reading (2026-08-19 for indexes), not a
-fresh one. Confirm with the DevOps and Release Engineer before treating any
-row as current.
+`3d54bc3` → `8aabc07`. **This wave is deployed.** The section below was
+written while it was still pending; the manifest is kept because it explains
+what each artifact was for, but every "Absence today" cell describes the
+state BEFORE this release, not now.
 
-**This manifest is not final.** At the time of writing there were uncommitted
-working-tree changes to `firestore.rules` and `functions/rooms/participants.js`
-from a concurrent session (room voice teardown — Roadmap item 0p). Re-derive
-the rules check count and the Functions deploy list from `git log` at the
-moment of the release rather than from this section.
+**What was deployed, in this order, and how each was verified:**
+
+| Artifact | Command | Verification |
+|---|---|---|
+| `firestore.rules` | `firebase deploy --only firestore:rules` | Read back through `firebaserules.googleapis.com` and compared to the working tree: **byte-exact** (sha256 `7306fe2b3a9a537f`). 10 `deletionInProgress` guards present in the deployed ruleset |
+| Cloud Functions | `firebase deploy --only functions` | All updated; `leaveRoomSelf` and `endRoomVoiceSelf` re-deployed individually and confirmed as v2 callables in `europe-west1` |
+| `firestore.indexes.json` | `firebase deploy --only firestore:indexes` | The two Moments composites (`isPublished`+`createdAt` desc, `isPublished`+`likeCount` desc) accepted; **both were still `CREATING` at deploy time** — see the caveat below |
+| Flutter web | `flutter build web --release` + `firebase deploy --only hosting` | Deployed `main.dart.js` fetched from `https://yovoice-ec54a.web.app` and compared to the local build: **byte-exact** (sha256 `8cbaae85b1584a9e`, 5,969,115 bytes). App loads, login screen renders, **zero console errors** |
+
+**Rules were deployed BEFORE Functions**, deliberately: the rules change is
+tightening-only, so nothing permitted under the old ruleset became newly
+permitted, whereas the reverse order leaves a window in which a stale client
+can still flip `isLive` on a deleting room.
+
+**Before deploying rules, both message-create allowlists were checked against
+the code the deployed client actually runs** — this was the one ordering
+decision in the wave that could have turned working sends into denials.
+`RoomService.sendRoomMessage` writes exactly the six allowlisted keys and
+resolves `senderName` from `users/{uid}.displayName` byte for byte (the same
+document `displayNameMatchesCanonical` compares against), and its write shape
+last changed in `714946b`, long before this wave. `ClubChatService` writes
+nine keys, all within its allowlist, with `isDeleted: false` and
+`editedAt: null`. Neither allowlist refuses anything the shipped client sends.
+
+**UNVERIFIED, and it matters.** No production round trip was performed for
+room voice: signing in requires entering a password, which the operating
+agent does not do. Every claim about rooms rests on 1052 Flutter tests, 709
+Functions tests, 471 rules cases and 61 inspected screenshots — not on a real
+LiveKit session. **The first person to sign in should enter a dormant room
+they host and press Start voice.**
+
+**The two Moments indexes were still building when this was written.** Until
+both report `READY`, the Moments discovery feed throws `FAILED_PRECONDITION`
+exactly the way club invites did. Check with:
+
+```
+gcloud auth application-default print-access-token
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://firestore.googleapis.com/v1/projects/yovoice-ec54a/databases/(default)/collectionGroups/moments/indexes"
+```
 
 What is waiting, and what each piece is:
 
@@ -750,15 +784,25 @@ What is waiting, and what each piece is:
 
 **Release blockers — these are gates, not cautions.**
 
-1. **ADR-059 blocks the Hosting release on two of these changes.** The club
+1. **CLEARED before the Hosting release.** This gate read "the club
    moderation UI (`f817b41`) and the Moments destination and feed
-   (`cef05e6`) have **never been rendered** — both sessions' visual and
-   accessibility reviews died on a session limit. ADR-059 is explicit that a
-   UI change is reviewed before it is deployed, on the same terms as a rules
-   change, and it exists because this project shipped an unreviewed screen
-   once already. Room voice is the exception: 45 screenshots were rendered
-   with the real typeface at 320/390/768/1100/1440 and 200% text and
-   inspected.
+   (`cef05e6`) have never been rendered". Half of that was already stale
+   when written, and the other half was closed before deploying:
+
+   - **Club moderation UI — was already rendered.** 44 frames exist under
+     `test/.screenshots/clubchat/` from the visual specialist's pass, across
+     390/1440/2560 at 1.0x/1.3x/2.0x/3.0x text. The removal-confirmation
+     dialog was re-inspected at 390: long author names truncate, role badges
+     render, the destructive action is clearly separated from Cancel.
+   - **Moments — genuinely had no rendering, and now has one.**
+     `test/moments_discovery_screenshot.dart` (commit `8aabc07`) photographs
+     loading, empty, error, populated and long content at 390/768/1100/1440,
+     plus 2x text. 16 frames, inspected. The desktop composition carries a
+     real side list rather than a stretched phone layout, and the empty state
+     states plainly that nobody has published one — no fabricated activity.
+
+   Room voice was never blocked: 45 screenshots at 320/390/768/1100/1440 and
+   200% text, with the real typeface, were rendered and inspected.
 2. **Room voice has had no round trip of any kind.** Rules were read, not
    executed; `fake_cloud_firestore` evaluates no rules, so every "the client
    may start voice" test proves the client's mirror of the rule and not the
