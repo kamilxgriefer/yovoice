@@ -1,9 +1,11 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 
 import 'package:yovoice/features/clubs/data/models/club_channel.dart';
+import 'package:yovoice/features/clubs/data/models/club_chat_authority.dart';
 import 'package:yovoice/features/clubs/data/models/club_message.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
@@ -15,12 +17,22 @@ class ClubChatScreen extends StatefulWidget {
     required this.clubId,
     required this.clubName,
     required this.channel,
+    this.firestore,
+    this.auth,
+    this.chatService,
     super.key,
   });
 
   final String clubId;
   final String clubName;
   final ClubChannel channel;
+
+  /// Test seams, following the pattern already used by
+  /// `ClubInviteResponseScreen` and `CreateClubScreen`. Production always
+  /// passes nothing and gets the real instances.
+  final FirebaseFirestore? firestore;
+  final FirebaseAuth? auth;
+  final ClubChatService? chatService;
 
   @override
   State<ClubChatScreen> createState() => _ClubChatScreenState();
@@ -33,12 +45,35 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
   static const _muted = Color(0xFF9F95A6);
   static const _purple = Color(0xFF9D20FF);
 
-  final ClubChatService _service = ClubChatService();
+  late final FirebaseFirestore _firestore =
+      widget.firestore ?? FirebaseFirestore.instance;
+  late final FirebaseAuth _auth = widget.auth ?? FirebaseAuth.instance;
+  late final ClubChatService _service =
+      widget.chatService ??
+      ClubChatService(firestore: _firestore, auth: _auth);
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   bool _sending = false;
 
-  String get _currentUserId => FirebaseAuth.instance.currentUser?.uid ?? '';
+  /// Both streams are resolved ONCE, not per build. `build()` runs again
+  /// on every keystroke-driven `_sending` flip, and a freshly constructed
+  /// stream makes `StreamBuilder` resubscribe — which drops the message
+  /// list back to `ConnectionState.waiting` and flashes the spinner over
+  /// a conversation that is still on screen.
+  late final Stream<List<ClubMessage>> _messageStream = _service.watchMessages(
+    clubId: widget.clubId,
+    channelId: widget.channel.id,
+  );
+  late final Stream<ClubChatAuthority> _authorityStream = _service
+      .watchAuthority(widget.clubId);
+
+  /// What the viewer may do before either authority document has
+  /// arrived: retract their own messages, and nothing else.
+  late final ClubChatAuthority _initialAuthority = ClubChatAuthority(
+    viewerId: _currentUserId,
+  );
+
+  String get _currentUserId => _auth.currentUser?.uid ?? '';
   bool get _isAnnouncements =>
       widget.channel.type == ClubChannelType.announcement;
 
@@ -62,30 +97,37 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
       _controller.clear();
       _focusNode.requestFocus();
     } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(error.toString().replaceFirst('Bad state: ', '')),
-          ),
-        );
-      }
+      _showNotice(
+        intentionalOrFriendly(
+          error,
+          fallback: 'Could not send your message. Please try again.',
+        ),
+      );
     } finally {
       if (mounted) setState(() => _sending = false);
     }
   }
 
-  Future<void> _delete(ClubMessage message) async {
+  /// [authority] is the same value that decided whether to OFFER this
+  /// action, so the dialog can only ever be shown for a removal the rules
+  /// permit — and can name what will actually happen.
+  Future<void> _delete(ClubMessage message, ClubChatAuthority authority) async {
+    final moderating = authority.isModeratingOthers(message);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: _surface,
-        title: const Text(
-          'Delete message?',
-          style: TextStyle(color: Colors.white),
+        title: Text(
+          moderating ? 'Remove this message?' : 'Delete message?',
+          style: const TextStyle(color: Colors.white),
         ),
-        content: const Text(
-          'This message will be replaced with “Message deleted”.',
-          style: TextStyle(color: _muted),
+        content: Text(
+          moderating
+              ? 'This removes ${message.senderName}’s message for everyone in '
+                    '#${widget.channel.name}, and records your account against '
+                    'the removal.'
+              : 'This message will be replaced with “Message deleted”.',
+          style: const TextStyle(color: _muted),
         ),
         actions: [
           TextButton(
@@ -94,9 +136,9 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text(
-              'Delete',
-              style: TextStyle(color: Color(0xFFFF668B)),
+            child: Text(
+              moderating ? 'Remove' : 'Delete',
+              style: const TextStyle(color: Color(0xFFFF668B)),
             ),
           ),
         ],
@@ -110,14 +152,20 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
         message: message,
       );
     } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(error.toString().replaceFirst('Bad state: ', '')),
-          ),
-        );
-      }
+      _showNotice(
+        intentionalOrFriendly(
+          error,
+          fallback: 'Could not remove this message. Please try again.',
+        ),
+      );
     }
+  }
+
+  void _showNotice(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -150,58 +198,13 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
           child: Column(
             children: [
               Expanded(
-                child: StreamBuilder<List<ClubMessage>>(
-                  stream: _service.watchMessages(
-                    clubId: widget.clubId,
-                    channelId: widget.channel.id,
-                  ),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(
-                        child: CircularProgressIndicator(color: _purple),
-                      );
-                    }
-                    if (snapshot.hasError) {
-                      return _ChatState(
-                        icon: Icons.cloud_off_rounded,
-                        title: 'Could not load messages',
-                        subtitle: friendlyErrorMessage(
-                          snapshot.error ?? 'unknown',
-                          fallback: 'Could not load this chat.',
-                        ),
-                      );
-                    }
-                    final messages = snapshot.data ?? const <ClubMessage>[];
-                    if (messages.isEmpty) {
-                      return _ChatState(
-                        icon: _isAnnouncements
-                            ? Icons.campaign_rounded
-                            : Icons.forum_rounded,
-                        title: _isAnnouncements
-                            ? 'No announcements yet'
-                            : 'Start the club conversation',
-                        subtitle: _isAnnouncements
-                            ? 'Important club updates will appear here.'
-                            : 'Be the first member to write in #${widget.channel.name}.',
-                      );
-                    }
-                    return ListView.builder(
-                      reverse: true,
-                      padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
-                      itemCount: messages.length,
-                      itemBuilder: (context, index) {
-                        final message = messages[index];
-                        return _ClubMessageTile(
-                          message: message,
-                          isMine: message.senderId == _currentUserId,
-                          onLongPress:
-                              message.senderId == _currentUserId &&
-                                  !message.isDeleted
-                              ? () => _delete(message)
-                              : null,
-                        );
-                      },
-                    );
+                child: StreamBuilder<ClubChatAuthority>(
+                  stream: _authorityStream,
+                  initialData: _initialAuthority,
+                  builder: (context, authoritySnapshot) {
+                    final authority =
+                        authoritySnapshot.data ?? _initialAuthority;
+                    return _buildMessages(authority);
                   },
                 ),
               ),
@@ -220,18 +223,83 @@ class _ClubChatScreenState extends State<ClubChatScreen> {
       ),
     );
   }
+
+  Widget _buildMessages(ClubChatAuthority authority) {
+    return StreamBuilder<List<ClubMessage>>(
+      stream: _messageStream,
+      builder: (context, snapshot) {
+        // `hasData` guards the spinner as well as the connection state:
+        // a reconnect re-enters `waiting` while the already-delivered
+        // conversation is still on screen, and blanking it would be a
+        // regression, not a loading state.
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            !snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator(color: _purple));
+        }
+        if (snapshot.hasError) {
+          return _ChatState(
+            icon: Icons.cloud_off_rounded,
+            title: 'Could not load messages',
+            subtitle: friendlyErrorMessage(
+              snapshot.error ?? 'unknown',
+              fallback: 'Could not load this chat.',
+            ),
+          );
+        }
+        final messages = snapshot.data ?? const <ClubMessage>[];
+        if (messages.isEmpty) {
+          return _ChatState(
+            icon: _isAnnouncements
+                ? Icons.campaign_rounded
+                : Icons.forum_rounded,
+            title: _isAnnouncements
+                ? 'No announcements yet'
+                : 'Start the club conversation',
+            subtitle: _isAnnouncements
+                ? 'Important club updates will appear here.'
+                : 'Be the first member to write in #${widget.channel.name}.',
+          );
+        }
+        return ListView.builder(
+          reverse: true,
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
+          itemCount: messages.length,
+          itemBuilder: (context, index) {
+            final message = messages[index];
+            // The gate and the write consult one object, so an offered
+            // action is always an action the rules accept.
+            return _ClubMessageTile(
+              message: message,
+              isMine: message.senderId == _currentUserId,
+              isModeration: authority.isModeratingOthers(message),
+              onRemove: authority.canRemove(message)
+                  ? () => _delete(message, authority)
+                  : null,
+            );
+          },
+        );
+      },
+    );
+  }
 }
 
 class _ClubMessageTile extends StatelessWidget {
   const _ClubMessageTile({
     required this.message,
     required this.isMine,
-    required this.onLongPress,
+    required this.isModeration,
+    required this.onRemove,
   });
 
   final ClubMessage message;
   final bool isMine;
-  final VoidCallback? onLongPress;
+
+  /// Whether [onRemove] would be an act of moderation on somebody else's
+  /// message rather than the author retracting their own. Only affects
+  /// how the action is announced.
+  final bool isModeration;
+
+  final VoidCallback? onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -239,8 +307,10 @@ class _ClubMessageTile extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: AccessibleContextAction(
-        onOpen: onLongPress,
-        semanticLabel: 'Open actions for ${message.senderName} message',
+        onOpen: onRemove,
+        semanticLabel: isModeration
+            ? 'Remove ${message.senderName}’s message'
+            : 'Delete your message',
         borderRadius: 16,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -311,7 +381,11 @@ class _ClubMessageTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 5),
                     Text(
-                      message.isDeleted ? 'Message deleted' : message.content,
+                      message.wasRemovedByModerator
+                          ? 'Removed by a moderator'
+                          : message.isDeleted
+                          ? 'Message deleted'
+                          : message.content,
                       style: TextStyle(
                         color: message.isDeleted
                             ? const Color(0xFF8E8595)

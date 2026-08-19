@@ -1426,6 +1426,1257 @@ async function main() {
     },
   );
 
+  // ---------------------------------------------------------------
+  // CLUB CHAT MESSAGE REMOVAL
+  //
+  // Two defects were live in production together, and neither could be
+  // fixed alone:
+  //
+  //  1. The update rule required `resource.data.senderId == request.auth.uid`
+  //     — author only — so a club moderator, admin or OWNER could not
+  //     remove an abusive message from their own club. The client
+  //     (ClubChatService.deleteMessage) authorises exactly those roles,
+  //     so the product promised a moderation action the database refused.
+  //  2. The same rule carried NO field allowlist, so an author could
+  //     rewrite `content`, `senderName` and `sentAt` on their own message
+  //     after the fact. Admitting moderators without fixing that would
+  //     have handed them the same unrestricted write over other people's
+  //     messages — a moderation feature that doubles as a way to put
+  //     words in someone's mouth.
+  //
+  // The cases below are split accordingly: the "DEFECT 1" group is denied
+  // before the fix and allowed after; the "DEFECT 2" group SUCCEEDS
+  // before the fix (that is the bug) and is denied after.
+  // ---------------------------------------------------------------
+  const CLUB_CHAT = "clubs/chatmod-club";
+  const CLUB_CHAT_MESSAGES = `${CLUB_CHAT}/channels/general/messages`;
+  const CHAT_SENT_AT = Timestamp.fromMillis(1_700_000_000_000);
+
+  const clubChatOwner = testEnv.authenticatedContext("ccm-owner", {
+    email_verified: true,
+  });
+  const clubChatAdmin = testEnv.authenticatedContext("ccm-admin", {
+    email_verified: true,
+  });
+  const clubChatMod = testEnv.authenticatedContext("ccm-mod", {
+    email_verified: true,
+  });
+  const clubChatAuthor = testEnv.authenticatedContext("ccm-author", {
+    email_verified: true,
+  });
+  const clubChatPeer = testEnv.authenticatedContext("ccm-peer", {
+    email_verified: true,
+  });
+  const clubChatBannedMod = testEnv.authenticatedContext("ccm-banned-mod", {
+    email_verified: true,
+  });
+  const clubChatDisabledMod = testEnv.authenticatedContext("ccm-disabled-mod", {
+    email_verified: true,
+  });
+  const clubChatOutsider = testEnv.authenticatedContext("ccm-outsider", {
+    email_verified: true,
+  });
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    const accounts = {
+      "ccm-owner": {},
+      "ccm-admin": {},
+      "ccm-mod": {},
+      "ccm-author": {},
+      "ccm-peer": {},
+      "ccm-banned-mod": { banned: true },
+      "ccm-disabled-mod": { disabled: true },
+      "ccm-outsider": {},
+    };
+    await Promise.all(
+      Object.entries(accounts).map(([uid, extra]) =>
+        setDoc(doc(db, `users/${uid}`), {
+          displayName: uid,
+          banned: false,
+          ...extra,
+        }),
+      ),
+    );
+    await setDoc(doc(db, CLUB_CHAT), {
+      ownerId: "ccm-owner",
+      name: "Moderated club",
+      type: "community",
+      status: "active",
+      deletionInProgress: false,
+    });
+    const members = {
+      "ccm-owner": "owner",
+      "ccm-admin": "admin",
+      "ccm-mod": "moderator",
+      "ccm-author": "member",
+      "ccm-peer": "member",
+      "ccm-banned-mod": "moderator",
+      "ccm-disabled-mod": "moderator",
+    };
+    await Promise.all(
+      Object.entries(members).map(([uid, role]) =>
+        setDoc(doc(db, `${CLUB_CHAT}/members/${uid}`), {
+          userId: uid,
+          displayName: uid,
+          photoUrl: null,
+          role,
+          isOnline: false,
+          joinedAt: CHAT_SENT_AT,
+          invitedBy: null,
+          // A club-level ban is separate from a platform ban; only
+          // ccm-banned-mod carries the platform one.
+          banned: false,
+        }),
+      ),
+    );
+    await setDoc(doc(db, `${CLUB_CHAT}/channels/general`), {
+      name: "general",
+      type: "text",
+    });
+    // A second club, used to prove that moderating one club grants
+    // nothing in another.
+    await setDoc(doc(db, "clubs/chatmod-other"), {
+      ownerId: "ccm-peer",
+      name: "Other club",
+      type: "community",
+      status: "active",
+      deletionInProgress: false,
+    });
+    await setDoc(doc(db, "clubs/chatmod-other/members/ccm-peer"), {
+      userId: "ccm-peer",
+      role: "owner",
+      banned: false,
+    });
+    await setDoc(doc(db, "clubs/chatmod-other/channels/general"), {
+      name: "general",
+      type: "text",
+    });
+  });
+
+  // Restores one message to the exact shape ClubChatService.sendTextMessage
+  // writes, so every case starts from a live production-shaped document.
+  async function seedClubMessage(messageId, overrides = {}) {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `${CLUB_CHAT_MESSAGES}/${messageId}`), {
+        clubId: "chatmod-club",
+        channelId: "general",
+        senderId: "ccm-author",
+        senderName: "ccm-author",
+        senderPhotoUrl: null,
+        content: "something abusive",
+        sentAt: CHAT_SENT_AT,
+        editedAt: null,
+        isDeleted: false,
+        ...overrides,
+      });
+    });
+  }
+
+  // The write the CURRENT deployed client sends: content/isDeleted/editedAt
+  // and no attribution.
+  const legacyRemoval = () => ({
+    content: "",
+    isDeleted: true,
+    editedAt: serverTimestamp(),
+  });
+
+  // --- DEFECT 3: create minted the tombstone the update rule forbids ---
+  //
+  // The removal rule promises no message ends up attributed to somebody
+  // who did not remove it. That promise needed the create side too: an
+  // ordinary member could write ONE document already carrying the exact
+  // tombstone adminDeleteMessage writes, and nothing in the product
+  // could clear it afterwards. Found by adversarial review of the first
+  // version of this change, and fixed in the same commit because the
+  // state it mints is permanent the moment anyone exercises it.
+
+  await check(
+    "DEFECT 3 CLUB CHAT: a member cannot create a message that is ALREADY removed",
+    async () => {
+      const db = clubChatPeer.firestore();
+      await assertFails(
+        addDoc(collection(db, CLUB_CHAT_MESSAGES), {
+          clubId: "chatmod-club",
+          channelId: "general",
+          senderId: "ccm-peer",
+          senderName: "ccm-peer",
+          senderPhotoUrl: null,
+          content: "",
+          sentAt: Timestamp.now(),
+          editedAt: null,
+          isDeleted: true,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "DEFECT 3 CLUB CHAT: the FORGED TOMBSTONE is refused end to end — staff-signed removal fields, an impersonated sender and a 2099 sentAt in one create",
+    async () => {
+      const db = clubChatPeer.firestore();
+      await assertFails(
+        addDoc(collection(db, CLUB_CHAT_MESSAGES), {
+          clubId: "chatmod-club",
+          channelId: "general",
+          senderId: "ccm-peer",
+          senderName: "YO Voice Support",
+          senderPhotoUrl: null,
+          content: "",
+          sentAt: Timestamp.fromMillis(4_100_000_000_000),
+          editedAt: null,
+          isDeleted: true,
+          deletedBy: "ccm-owner",
+          deletedByRole: "superAdmin",
+          moderationRemoved: true,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "DEFECT 3 CLUB CHAT: a pre-attributed create is refused — deletedBy, deletedAt and editedAt must all be absent or null on a new message",
+    async () => {
+      const db = clubChatPeer.firestore();
+      for (const forged of [
+        { deletedBy: "ccm-owner" },
+        { deletedAt: Timestamp.now() },
+        { editedAt: Timestamp.now() },
+      ]) {
+        await assertFails(
+          addDoc(collection(db, CLUB_CHAT_MESSAGES), {
+            clubId: "chatmod-club",
+            channelId: "general",
+            senderId: "ccm-peer",
+            senderName: "ccm-peer",
+            senderPhotoUrl: null,
+            content: "looks ordinary",
+            sentAt: Timestamp.now(),
+            editedAt: null,
+            isDeleted: false,
+            ...forged,
+          }),
+        );
+      }
+    },
+  );
+
+  await check(
+    "DEFECT 3 CLUB CHAT: unlisted fields cannot ride along on a create — staff badges, moderation flags and media alike",
+    async () => {
+      const db = clubChatPeer.firestore();
+      for (const smuggled of [
+        { senderIsStaff: true },
+        { deletedByRole: "superAdmin" },
+        { moderationRemoved: true },
+        // Club chat is text-only. A removal cannot clear media, so media
+        // that cannot be attached is the only safe arrangement.
+        { audioUrl: "https://example.invalid/a.m4a" },
+        { imageUrl: "https://example.invalid/a.png" },
+        { mediaUrl: "https://example.invalid/a.png" },
+        { attachments: ["https://example.invalid/a.png"] },
+      ]) {
+        await assertFails(
+          addDoc(collection(db, CLUB_CHAT_MESSAGES), {
+            clubId: "chatmod-club",
+            channelId: "general",
+            senderId: "ccm-peer",
+            senderName: "ccm-peer",
+            senderPhotoUrl: null,
+            content: "looks ordinary",
+            sentAt: Timestamp.now(),
+            editedAt: null,
+            isDeleted: false,
+            ...smuggled,
+          }),
+        );
+      }
+    },
+  );
+
+  await check(
+    "DEFECT 3 CLUB CHAT: content bounds match what the client already enforces — blank and over-2000 are refused",
+    async () => {
+      const db = clubChatPeer.firestore();
+      for (const content of ["", "   ", "x".repeat(2001)]) {
+        await assertFails(
+          addDoc(collection(db, CLUB_CHAT_MESSAGES), {
+            clubId: "chatmod-club",
+            channelId: "general",
+            senderId: "ccm-peer",
+            senderName: "ccm-peer",
+            senderPhotoUrl: null,
+            content,
+            sentAt: Timestamp.now(),
+            editedAt: null,
+            isDeleted: false,
+          }),
+        );
+      }
+    },
+  );
+
+  await check(
+    "DEFECT 3 CLUB CHAT: WHY the create gate had to ship in the same deploy — a pre-deleted message is unremovable by every client path there is",
+    async () => {
+      // Seeded through the Admin SDK because the rules now refuse to
+      // create it. This asserts the state's permanence, which is the
+      // whole reason the create gate could not be deferred: the removal
+      // rule refuses an already-removed document, delete is `if false`
+      // for everyone, and adminDeleteMessage short-circuits on
+      // isDeleted === true and returns "alreadyRemoved" without
+      // redacting (functions/admin/messages.js:343).
+      await seedClubMessage("forged-tombstone", {
+        senderId: "ccm-peer",
+        senderName: "YO Voice Support",
+        content: "",
+        isDeleted: true,
+        deletedBy: "ccm-owner",
+      });
+      const path = `${CLUB_CHAT_MESSAGES}/forged-tombstone`;
+      for (const actor of [clubChatOwner, clubChatMod, clubChatPeer]) {
+        const db = actor.firestore();
+        await assertFails(
+          updateDoc(doc(db, path), {
+            content: "",
+            isDeleted: true,
+            editedAt: serverTimestamp(),
+            deletedBy: "ccm-owner",
+            deletedAt: serverTimestamp(),
+          }),
+        );
+        await assertFails(deleteDoc(doc(db, path)));
+      }
+    },
+  );
+
+  // --- DEFECT 1: moderation was impossible ---
+
+  await check(
+    "DEFECT 1 CLUB CHAT: a club MODERATOR can soft-remove another member's message",
+    async () => {
+      await seedClubMessage("mod-removes");
+      const db = clubChatMod.firestore();
+      await assertSucceeds(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/mod-removes`), {
+          content: "",
+          isDeleted: true,
+          editedAt: serverTimestamp(),
+          deletedBy: "ccm-mod",
+          deletedAt: serverTimestamp(),
+        }),
+      );
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const after = await getDoc(
+          doc(ctx.firestore(), `${CLUB_CHAT_MESSAGES}/mod-removes`),
+        );
+        const data = after.data();
+        assert.equal(data.isDeleted, true);
+        assert.equal(data.content, "");
+        assert.equal(data.deletedBy, "ccm-mod");
+        // The tombstone keeps authorship, so moderation history stays
+        // meaningful and the audit trigger can name whose message it was.
+        assert.equal(data.senderId, "ccm-author");
+        assert.equal(data.senderName, "ccm-author");
+      });
+    },
+  );
+
+  await check(
+    "DEFECT 1 CLUB CHAT: the club OWNER can soft-remove a member's message in their own club",
+    async () => {
+      await seedClubMessage("owner-removes");
+      const db = clubChatOwner.firestore();
+      await assertSucceeds(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/owner-removes`), {
+          content: "",
+          isDeleted: true,
+          editedAt: serverTimestamp(),
+          deletedBy: "ccm-owner",
+          deletedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "DEFECT 1 CLUB CHAT: a club ADMIN can soft-remove a member's message",
+    async () => {
+      await seedClubMessage("admin-removes");
+      const db = clubChatAdmin.firestore();
+      await assertSucceeds(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/admin-removes`), {
+          content: "",
+          isDeleted: true,
+          editedAt: serverTimestamp(),
+          deletedBy: "ccm-admin",
+          deletedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  // --- DEFECT 2: the same rule had no field allowlist ---
+
+  await check(
+    "DEFECT 2 CLUB CHAT: an author cannot rewrite the CONTENT of their own message after the fact",
+    async () => {
+      await seedClubMessage("edit-content");
+      const db = clubChatAuthor.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/edit-content`), {
+          content: "something entirely different",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "DEFECT 2 CLUB CHAT: an author cannot rewrite senderName on their own message",
+    async () => {
+      await seedClubMessage("edit-name");
+      const db = clubChatAuthor.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/edit-name`), {
+          senderName: "YO Voice Support",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "DEFECT 2 CLUB CHAT: an author cannot move sentAt to re-order their message in the channel",
+    async () => {
+      await seedClubMessage("edit-sentat");
+      const db = clubChatAuthor.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/edit-sentat`), {
+          sentAt: Timestamp.fromMillis(1_900_000_000_000),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "DEFECT 2 CLUB CHAT: an author cannot smuggle an unlisted field onto a message while removing it",
+    async () => {
+      await seedClubMessage("smuggle-field");
+      const db = clubChatAuthor.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/smuggle-field`), {
+          ...legacyRemoval(),
+          senderIsStaff: true,
+        }),
+      );
+    },
+  );
+
+  await check(
+    "DEFECT 2 CLUB CHAT: a removal cannot name somebody else as the remover",
+    async () => {
+      await seedClubMessage("frame-mod");
+      const db = clubChatAuthor.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/frame-mod`), {
+          ...legacyRemoval(),
+          deletedBy: "ccm-mod",
+          deletedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "DEFECT 2 CLUB CHAT: a deletedBy PLANTED at create time cannot survive a later self-removal — affectedKeys() never sees an unchanged field",
+    async () => {
+      // SECURITY.md principle 6: diff().affectedKeys() reports only
+      // fields whose VALUE changed, so a guard gated on hasAny() is
+      // skipped by resending the stored value or omitting the field.
+      // The attribution check therefore reads the POST-WRITE document.
+      await seedClubMessage("planted-attribution", { deletedBy: "ccm-mod" });
+      const db = clubChatAuthor.firestore();
+      await assertFails(
+        updateDoc(
+          doc(db, `${CLUB_CHAT_MESSAGES}/planted-attribution`),
+          legacyRemoval(),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "DEFECT 2 CLUB CHAT: a removal cannot back-date deletedAt or editedAt",
+    async () => {
+      await seedClubMessage("backdated");
+      const db = clubChatAuthor.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/backdated`), {
+          content: "",
+          isDeleted: true,
+          editedAt: Timestamp.fromMillis(1_600_000_000_000),
+          deletedBy: "ccm-author",
+          deletedAt: Timestamp.fromMillis(1_600_000_000_000),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "DEFECT 2 CLUB CHAT: an already-removed message cannot be re-attributed to a different remover",
+    async () => {
+      await seedClubMessage("reattribute", {
+        content: "",
+        isDeleted: true,
+        deletedBy: "ccm-mod",
+        deletedAt: CHAT_SENT_AT,
+      });
+      const db = clubChatAuthor.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/reattribute`), {
+          deletedBy: "ccm-author",
+          deletedAt: serverTimestamp(),
+          editedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "DEFECT 2 CLUB CHAT: a removed message cannot be un-removed and refilled with content",
+    async () => {
+      await seedClubMessage("undelete", {
+        content: "",
+        isDeleted: true,
+        deletedBy: "ccm-author",
+        deletedAt: CHAT_SENT_AT,
+      });
+      const db = clubChatAuthor.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/undelete`), {
+          content: "back again",
+          isDeleted: false,
+          editedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "DEFECT 2 CLUB CHAT: a MODERATOR cannot use the removal path to edit somebody else's words",
+    async () => {
+      await seedClubMessage("mod-rewrites");
+      const db = clubChatMod.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/mod-rewrites`), {
+          content: "I confess to everything",
+          isDeleted: true,
+          editedAt: serverTimestamp(),
+          deletedBy: "ccm-mod",
+          deletedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "DEFECT 2 CLUB CHAT: a MODERATOR cannot re-attribute authorship while removing a message",
+    async () => {
+      await seedClubMessage("mod-reassigns");
+      const db = clubChatMod.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/mod-reassigns`), {
+          content: "",
+          isDeleted: true,
+          editedAt: serverTimestamp(),
+          deletedBy: "ccm-mod",
+          deletedAt: serverTimestamp(),
+          senderId: "ccm-peer",
+          senderName: "ccm-peer",
+        }),
+      );
+    },
+  );
+
+  // --- the moderator branch's own guards ---
+
+  await check(
+    "SECURITY CLUB CHAT: a moderator removal carrying NO attribution is refused — the actor is not derivable from someone else's message",
+    async () => {
+      await seedClubMessage("mod-anonymous");
+      const db = clubChatMod.firestore();
+      await assertFails(
+        updateDoc(
+          doc(db, `${CLUB_CHAT_MESSAGES}/mod-anonymous`),
+          legacyRemoval(),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUB CHAT: a moderator cannot attribute a removal to another moderator",
+    async () => {
+      await seedClubMessage("mod-frames-admin");
+      const db = clubChatMod.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/mod-frames-admin`), {
+          content: "",
+          isDeleted: true,
+          editedAt: serverTimestamp(),
+          deletedBy: "ccm-admin",
+          deletedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUB CHAT: a plain MEMBER cannot remove another member's message",
+    async () => {
+      await seedClubMessage("peer-removes");
+      const db = clubChatPeer.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/peer-removes`), {
+          content: "",
+          isDeleted: true,
+          editedAt: serverTimestamp(),
+          deletedBy: "ccm-peer",
+          deletedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUB CHAT: a NON-MEMBER cannot remove a club message",
+    async () => {
+      await seedClubMessage("outsider-removes");
+      const db = clubChatOutsider.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/outsider-removes`), {
+          content: "",
+          isDeleted: true,
+          editedAt: serverTimestamp(),
+          deletedBy: "ccm-outsider",
+          deletedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUB CHAT: a PLATFORM-BANNED moderator cannot moderate — a branch does not inherit its helpers' status checks",
+    async () => {
+      await seedClubMessage("banned-mod-removes");
+      const db = clubChatBannedMod.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/banned-mod-removes`), {
+          content: "",
+          isDeleted: true,
+          editedAt: serverTimestamp(),
+          deletedBy: "ccm-banned-mod",
+          deletedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUB CHAT: a DISABLED moderator cannot moderate — isRestrictedAccount() reads `banned` only, so `disabled` needs its own check",
+    async () => {
+      await seedClubMessage("disabled-mod-removes");
+      const db = clubChatDisabledMod.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/disabled-mod-removes`), {
+          content: "",
+          isDeleted: true,
+          editedAt: serverTimestamp(),
+          deletedBy: "ccm-disabled-mod",
+          deletedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUB CHAT: a COMMUNICATION-MUTED moderator cannot moderate — the sanction's whole lifecycle was bypassed on this path",
+    async () => {
+      await seedClubMessage("muted-mod");
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "restrictions/ccm-mod"), {
+          type: "communicationMute",
+          expiresAt: null,
+        });
+      });
+      await assertFails(
+        updateDoc(
+          doc(clubChatMod.firestore(), `${CLUB_CHAT_MESSAGES}/muted-mod`),
+          {
+            content: "",
+            isDeleted: true,
+            editedAt: serverTimestamp(),
+            deletedBy: "ccm-mod",
+            deletedAt: serverTimestamp(),
+          },
+        ),
+      );
+      // ...and the mute does NOT cost them their own retraction. That
+      // asymmetry is deliberate: a sanction on speech that leaves a
+      // member unable to take back what they said increases the harm
+      // still on screen.
+      await seedClubMessage("muted-mod-own", {
+        senderId: "ccm-mod",
+        senderName: "ccm-mod",
+      });
+      await assertSucceeds(
+        updateDoc(
+          doc(clubChatMod.firestore(), `${CLUB_CHAT_MESSAGES}/muted-mod-own`),
+          legacyRemoval(),
+        ),
+      );
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await deleteDoc(doc(ctx.firestore(), "restrictions/ccm-mod"));
+      });
+    },
+  );
+
+  await check(
+    "SECURITY CLUB CHAT: an UNVERIFIED moderator cannot moderate, but can still retract their own message",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, "users/ccm-unverified-mod"), {
+          displayName: "ccm-unverified-mod",
+          banned: false,
+        });
+        await setDoc(doc(db, `${CLUB_CHAT}/members/ccm-unverified-mod`), {
+          userId: "ccm-unverified-mod",
+          role: "moderator",
+          banned: false,
+        });
+      });
+      const unverifiedMod = testEnv.authenticatedContext("ccm-unverified-mod", {
+        email_verified: false,
+      });
+      await seedClubMessage("unverified-mod");
+      await assertFails(
+        updateDoc(
+          doc(unverifiedMod.firestore(), `${CLUB_CHAT_MESSAGES}/unverified-mod`),
+          {
+            content: "",
+            isDeleted: true,
+            editedAt: serverTimestamp(),
+            deletedBy: "ccm-unverified-mod",
+            deletedAt: serverTimestamp(),
+          },
+        ),
+      );
+      await seedClubMessage("unverified-mod-own", {
+        senderId: "ccm-unverified-mod",
+        senderName: "ccm-unverified-mod",
+      });
+      await assertSucceeds(
+        updateDoc(
+          doc(
+            unverifiedMod.firestore(),
+            `${CLUB_CHAT_MESSAGES}/unverified-mod-own`,
+          ),
+          legacyRemoval(),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "regression CLUB CHAT: the two branches are DISJOINT — a moderator removing their OWN message goes through the author branch and still works",
+    async () => {
+      await seedClubMessage("mod-own-message", {
+        senderId: "ccm-mod",
+        senderName: "ccm-mod",
+      });
+      await assertSucceeds(
+        updateDoc(
+          doc(clubChatMod.firestore(), `${CLUB_CHAT_MESSAGES}/mod-own-message`),
+          legacyRemoval(),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUB CHAT: a CLUB-BANNED moderator cannot moderate",
+    async () => {
+      await seedClubMessage("club-banned-mod");
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(
+          doc(ctx.firestore(), `${CLUB_CHAT}/members/ccm-mod`),
+          { banned: true },
+        );
+      });
+      const db = clubChatMod.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/club-banned-mod`), {
+          content: "",
+          isDeleted: true,
+          editedAt: serverTimestamp(),
+          deletedBy: "ccm-mod",
+          deletedAt: serverTimestamp(),
+        }),
+      );
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(
+          doc(ctx.firestore(), `${CLUB_CHAT}/members/ccm-mod`),
+          { banned: false },
+        );
+      });
+    },
+  );
+
+  await check(
+    "SECURITY CLUB CHAT: moderation does not survive the club being suspended or scheduled for deletion",
+    async () => {
+      await seedClubMessage("suspended-club");
+      const db = clubChatMod.firestore();
+      for (const clubState of [
+        { status: "suspended", deletionInProgress: false },
+        { status: "active", deletionInProgress: true },
+      ]) {
+        await testEnv.withSecurityRulesDisabled(async (ctx) => {
+          await updateDoc(doc(ctx.firestore(), CLUB_CHAT), clubState);
+        });
+        await assertFails(
+          updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/suspended-club`), {
+            content: "",
+            isDeleted: true,
+            editedAt: serverTimestamp(),
+            deletedBy: "ccm-mod",
+            deletedAt: serverTimestamp(),
+          }),
+        );
+      }
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), CLUB_CHAT), {
+          status: "active",
+          deletionInProgress: false,
+        });
+      });
+    },
+  );
+
+  await check(
+    "SECURITY CLUB CHAT: moderating one club grants nothing in another",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), "clubs/chatmod-other/channels/general/messages/m1"),
+          {
+            clubId: "chatmod-other",
+            channelId: "general",
+            senderId: "ccm-peer",
+            senderName: "ccm-peer",
+            senderPhotoUrl: null,
+            content: "not your club",
+            sentAt: CHAT_SENT_AT,
+            editedAt: null,
+            isDeleted: false,
+          },
+        );
+      });
+      const db = clubChatMod.firestore();
+      await assertFails(
+        updateDoc(
+          doc(db, "clubs/chatmod-other/channels/general/messages/m1"),
+          {
+            content: "",
+            isDeleted: true,
+            editedAt: serverTimestamp(),
+            deletedBy: "ccm-mod",
+            deletedAt: serverTimestamp(),
+          },
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUB CHAT: a moderator cannot remove the club OWNER's own message",
+    async () => {
+      await seedClubMessage("owner-authored", {
+        senderId: "ccm-owner",
+        senderName: "ccm-owner",
+        content: "the owner's announcement",
+      });
+      const db = clubChatMod.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/owner-authored`), {
+          content: "",
+          isDeleted: true,
+          editedAt: serverTimestamp(),
+          deletedBy: "ccm-mod",
+          deletedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "regression CLUB CHAT: the OWNER can still remove their OWN message — the owner-message boundary is not a trap for the owner",
+    async () => {
+      await seedClubMessage("owner-self", {
+        senderId: "ccm-owner",
+        senderName: "ccm-owner",
+        content: "the owner's announcement",
+      });
+      const db = clubChatOwner.firestore();
+      await assertSucceeds(
+        updateDoc(
+          doc(db, `${CLUB_CHAT_MESSAGES}/owner-self`),
+          legacyRemoval(),
+        ),
+      );
+    },
+  );
+
+  // --- backward compatibility with what is deployed right now ---
+
+  await check(
+    "regression CLUB CHAT: the CURRENTLY DEPLOYED client's self-delete write still succeeds — content/isDeleted/editedAt with no attribution",
+    async () => {
+      // ClubChatService.deleteMessage sends exactly this today. If a
+      // rules deploy landed before the app's next release and this
+      // failed, every member would lose the ability to retract their own
+      // message: an outage, not a hardening.
+      await seedClubMessage("legacy-self-delete");
+      const db = clubChatAuthor.firestore();
+      await assertSucceeds(
+        updateDoc(
+          doc(db, `${CLUB_CHAT_MESSAGES}/legacy-self-delete`),
+          legacyRemoval(),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "regression CLUB CHAT: an author's ATTRIBUTED self-removal succeeds, so the client can start sending deletedBy/deletedAt without a second rules change",
+    async () => {
+      await seedClubMessage("attributed-self-delete");
+      const db = clubChatAuthor.firestore();
+      await assertSucceeds(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/attributed-self-delete`), {
+          content: "",
+          isDeleted: true,
+          editedAt: serverTimestamp(),
+          deletedBy: "ccm-author",
+          deletedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "regression CLUB CHAT: a LEGACY member document carrying no `role` field can still retract its own message — the moderator branch's clubRole() lookup must not take the author branch down with it",
+    async () => {
+      // `allow update` is an OR of two complete predicates. The second
+      // calls clubRole(), which reads `.data.role` directly and errors
+      // on a member document that predates the field. If that error
+      // propagated through the OR, every such member would silently lose
+      // the ability to delete their own message — a regression with no
+      // attacker, which is exactly the failure mode ADR-056 was about.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, `${CLUB_CHAT}/members/ccm-legacy`), {
+          userId: "ccm-legacy",
+        });
+        await setDoc(doc(db, "users/ccm-legacy"), {
+          displayName: "ccm-legacy",
+          banned: false,
+        });
+      });
+      await seedClubMessage("legacy-role", {
+        senderId: "ccm-legacy",
+        senderName: "ccm-legacy",
+      });
+      const legacy = testEnv.authenticatedContext("ccm-legacy", {
+        email_verified: true,
+      });
+      await assertSucceeds(
+        updateDoc(
+          doc(legacy.firestore(), `${CLUB_CHAT_MESSAGES}/legacy-role`),
+          legacyRemoval(),
+        ),
+      );
+      // ...and the same role-less document buys no moderator authority:
+      // the missing role fails CLOSED on the branch that needs it.
+      await seedClubMessage("legacy-role-mod");
+      await assertFails(
+        updateDoc(
+          doc(legacy.firestore(), `${CLUB_CHAT_MESSAGES}/legacy-role-mod`),
+          {
+            content: "",
+            isDeleted: true,
+            editedAt: serverTimestamp(),
+            deletedBy: "ccm-legacy",
+            deletedAt: serverTimestamp(),
+          },
+        ),
+      );
+    },
+  );
+
+  await check(
+    "regression CLUB CHAT: sending and reading messages still works — the production watchMessages() query, ordered and limited",
+    async () => {
+      const db = clubChatAuthor.firestore();
+      await assertSucceeds(
+        addDoc(collection(db, CLUB_CHAT_MESSAGES), {
+          clubId: "chatmod-club",
+          channelId: "general",
+          senderId: "ccm-author",
+          senderName: "ccm-author",
+          senderPhotoUrl: null,
+          content: "hello club",
+          sentAt: Timestamp.now(),
+          editedAt: null,
+          isDeleted: false,
+        }),
+      );
+      const snapshot = await assertSucceeds(
+        getDocs(
+          query(
+            collection(db, CLUB_CHAT_MESSAGES),
+            orderBy("sentAt", "desc"),
+            limit(250),
+          ),
+        ),
+      );
+      if (snapshot.size < 1) throw new Error("expected messages back");
+    },
+  );
+
+  await check(
+    "PROOF CLUB CHAT: club messages are NOT reachable through collectionGroup('messages') — this fix widened a NESTED rule and added no top-level wildcard",
+    async () => {
+      // ADR-007: a nested match cannot authorize a collectionGroup()
+      // query, and a top-level wildcard that could would fail OPEN —
+      // handing every club's private chat to any signed-in account. The
+      // app reads club chat per-channel (ClubChatService.watchMessages),
+      // so no such wildcard exists, and this asserts it still doesn't.
+      const db = clubChatMod.firestore();
+      await assertFails(
+        getDocs(
+          query(
+            collectionGroup(db, "messages"),
+            where("clubId", "==", "chatmod-club"),
+          ),
+        ),
+      );
+    },
+  );
+
+  // --- The club-chat discriminators, run rather than asserted ---
+  //
+  // Several cases above are DENIALS, and a denial proves nothing about
+  // WHICH clause caused it — the emulator refusing something unrelated
+  // looks identical, and three of them were already denied by the
+  // author-only rule this change replaces. So the alternative rule is
+  // compiled and RUN, and the behaviour the shipped clause prevents is
+  // observed directly. Each substitution asserts its snippet is present
+  // first, so a reformatted rule fails loudly instead of quietly running
+  // a control that proves nothing (ADR-056).
+  async function clubChatUnderVariantRules(projectId, edits, uid, run) {
+    const source = fs.readFileSync(RULES_PATH, "utf8");
+    let variant = source;
+    for (const [find, replaceWith] of edits) {
+      if (!variant.includes(find)) {
+        throw new Error(
+          `rule text drifted — variant snippet not found:\n${find}`,
+        );
+      }
+      variant = variant.replace(find, replaceWith);
+    }
+    if (variant === source) {
+      throw new Error(
+        "rule text drifted — the variant transform matched nothing",
+      );
+    }
+    const variantEnv = await initializeTestEnvironment({
+      projectId,
+      firestore: { rules: variant, host: EMULATOR_HOST, port: EMULATOR_PORT },
+    });
+    try {
+      await variantEnv.clearFirestore();
+      await variantEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await Promise.all([
+          setDoc(doc(db, "users/ccm-mod"), {
+            displayName: "ccm-mod",
+            banned: false,
+          }),
+          setDoc(doc(db, CLUB_CHAT), {
+            ownerId: "ccm-owner",
+            type: "community",
+            status: "active",
+            deletionInProgress: false,
+          }),
+          setDoc(doc(db, `${CLUB_CHAT}/members/ccm-mod`), {
+            userId: "ccm-mod",
+            role: "moderator",
+            banned: false,
+          }),
+          setDoc(doc(db, `${CLUB_CHAT}/channels/general`), { name: "general" }),
+          // Authored by the club OWNER, and carrying a deletedBy planted
+          // at create time — the two situations the shipped clauses stop.
+          setDoc(doc(db, `${CLUB_CHAT_MESSAGES}/variant`), {
+            clubId: "chatmod-club",
+            channelId: "general",
+            senderId: "ccm-owner",
+            senderName: "ccm-owner",
+            senderPhotoUrl: null,
+            content: "the owner's announcement",
+            sentAt: CHAT_SENT_AT,
+            editedAt: null,
+            isDeleted: false,
+            deletedBy: "ccm-admin",
+          }),
+        ]);
+      });
+      return await run(
+        variantEnv
+          .authenticatedContext(uid, { email_verified: true })
+          .firestore(),
+      );
+    } finally {
+      await variantEnv.cleanup();
+    }
+  }
+
+  const CLUB_OWNER_MESSAGE_GUARD =
+    "          resource.data.get('senderId', null) != clubOwnerId(clubId) &&\n";
+
+  const CLUB_MODERATOR_ATTRIBUTION =
+    "          clubMessageRemovalShapeAllowed() &&\n" +
+    "          request.resource.data.get('deletedBy', '') == request.auth.uid &&\n" +
+    "          request.resource.data.get('deletedAt', null) == request.time;";
+
+  const CLUB_ATTRIBUTION_POST_WRITE =
+    "          request.resource.data.get('deletedBy', request.auth.uid) ==\n" +
+    "              request.auth.uid &&\n";
+
+  await check(
+    "PROOF CLUB CHAT: without the owner-message clause a moderator CAN wipe the club owner's announcement — so that one line, not something incidental, is what holds the boundary",
+    async () => {
+      await assertSucceeds(
+        clubChatUnderVariantRules(
+          "demo-yovoice-clubchat-a",
+          [[CLUB_OWNER_MESSAGE_GUARD, ""]],
+          "ccm-mod",
+          (db) =>
+            updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/variant`), {
+              content: "",
+              isDeleted: true,
+              editedAt: serverTimestamp(),
+              deletedBy: "ccm-mod",
+              deletedAt: serverTimestamp(),
+            }),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "PROOF CLUB CHAT: without the moderator attribution clause an ANONYMOUS moderator removal lands — a removal with nobody's name on it, which is what the audit trail exists to prevent",
+    async () => {
+      await assertSucceeds(
+        clubChatUnderVariantRules(
+          "demo-yovoice-clubchat-b",
+          [
+            [CLUB_OWNER_MESSAGE_GUARD, ""],
+            [
+              CLUB_MODERATOR_ATTRIBUTION,
+              "          clubMessageRemovalShapeAllowed();",
+            ],
+            // The planted deletedBy would otherwise deny for the OTHER
+            // reason; this case is about attribution being optional.
+            [CLUB_ATTRIBUTION_POST_WRITE, ""],
+          ],
+          "ccm-mod",
+          async (db) => {
+            await updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/variant`), {
+              content: "",
+              isDeleted: true,
+              editedAt: serverTimestamp(),
+            });
+            const after = await getDoc(
+              doc(db, `${CLUB_CHAT_MESSAGES}/variant`),
+            );
+            if (after.data().deletedAt !== undefined) {
+              throw new Error("expected the removal to carry no deletedAt");
+            }
+          },
+        ),
+      );
+    },
+  );
+
+  await check(
+    "PROOF CLUB CHAT: gating attribution on affectedKeys().hasAny() instead of the post-write document lets a PLANTED deletedBy through untouched — SECURITY.md principle 6, run rather than quoted",
+    async () => {
+      await assertSucceeds(
+        clubChatUnderVariantRules(
+          "demo-yovoice-clubchat-c",
+          [
+            [CLUB_OWNER_MESSAGE_GUARD, ""],
+            [
+              CLUB_ATTRIBUTION_POST_WRITE,
+              "          (!request.resource.data.diff(resource.data)\n" +
+                "              .affectedKeys().hasAny(['deletedBy']) ||\n" +
+                "            request.resource.data.deletedBy ==" +
+                " request.auth.uid) &&\n",
+            ],
+            [
+              CLUB_MODERATOR_ATTRIBUTION,
+              "          clubMessageRemovalShapeAllowed();",
+            ],
+          ],
+          "ccm-mod",
+          // The moderator never sends deletedBy, so hasAny() never fires
+          // and the message ends up attributed to ccm-admin, who did
+          // nothing. The shipped rule reads the post-write document and
+          // refuses this.
+          async (db) => {
+            await updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/variant`), {
+              content: "",
+              isDeleted: true,
+              editedAt: serverTimestamp(),
+            });
+            const after = await getDoc(
+              doc(db, `${CLUB_CHAT_MESSAGES}/variant`),
+            );
+            // The whole point: the tombstone now names somebody who did
+            // not perform the removal.
+            assert.equal(after.data().isDeleted, true);
+            assert.equal(after.data().deletedBy, "ccm-admin");
+          },
+        ),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY CLUB CHAT: a removal that omits editedAt is refused — every field a removal may touch is pinned, so none of them is the caller's choice",
+    async () => {
+      await seedClubMessage("no-editedat");
+      const db = clubChatAuthor.firestore();
+      await assertFails(
+        updateDoc(doc(db, `${CLUB_CHAT_MESSAGES}/no-editedat`), {
+          content: "",
+          isDeleted: true,
+        }),
+      );
+    },
+  );
+
   // --- real collectionGroup() queries, not just direct doc reads ---
   //
   // A nested `match /parent/{id}/collection/{doc}` rule ONLY covers reads/

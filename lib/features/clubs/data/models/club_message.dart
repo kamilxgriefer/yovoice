@@ -12,6 +12,7 @@ class ClubMessage {
     required this.sentAt,
     required this.editedAt,
     required this.isDeleted,
+    this.deletedBy,
   });
 
   final String id;
@@ -24,6 +25,18 @@ class ClubMessage {
   final DateTime sentAt;
   final DateTime? editedAt;
   final bool isDeleted;
+
+  /// Who performed the removal. Absent on live messages, and absent on
+  /// removals written before the client started stamping it — so a null
+  /// value means "unknown", never "the author did it".
+  final String? deletedBy;
+
+  /// True only when a removal is known to have been performed by someone
+  /// other than the author, which is the one case worth telling the room
+  /// about. An unattributed removal reads as an ordinary retraction,
+  /// because that is all we can honestly claim about it.
+  bool get wasRemovedByModerator =>
+      isDeleted && deletedBy != null && deletedBy != senderId;
 
   factory ClubMessage.fromFirestore({
     required String clubId,
@@ -45,6 +58,7 @@ class ClubMessage {
           _readDate(data['sentAt']) ?? DateTime.fromMillisecondsSinceEpoch(0),
       editedAt: _readDate(data['editedAt']),
       isDeleted: data['isDeleted'] as bool? ?? false,
+      deletedBy: _nullableString(data['deletedBy']),
     );
   }
 

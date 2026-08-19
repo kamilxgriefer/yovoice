@@ -1180,6 +1180,254 @@ service cloud.firestore {
           clubRole(clubId) in ['owner', 'coOwner', 'admin'];
     }
 
+    function clubOwnerId(clubId) {
+      return get(
+        /databases/$(database)/documents/clubs/$(clubId)
+      ).data.get('ownerId', '');
+    }
+
+    // ---------------------------------------------------------------
+    // CLUB CHAT MESSAGE REMOVAL
+    //
+    // WHY THIS IS A RULE AND NOT A CALLABLE. ADR-056's test is whether
+    // the write COMPLETES the action it names. Room eviction failed that
+    // test: deleting a roster row left the evicted account connected to
+    // live audio, still writing chat through isRoomParticipant, and free
+    // to rejoin — four systems, one of which a rule could touch. Removing
+    // a chat message has no second system. The message is one document,
+    // every member reads it from that one document, and stripping its
+    // content is the entire effect.
+    //
+    // NO EXISTING PRECEDENT IS BEING FOLLOWED HERE, and an earlier
+    // version of this comment claimed otherwise. Global Chat is the
+    // surface that once removed messages this way, and it is switched
+    // OFF: every rule in its `messages` block below reads `if false`
+    // since ADR-048 retired it, so it grants clients no removal at all.
+    // functions/moderation/global_chat.js and docs/SECURITY.md both
+    // still describe that path as live; neither is reachable. This rule
+    // is therefore STRICTLY MORE PERMISSIVE than anything currently
+    // shipped in this file, and it is the product's first
+    // client-reachable moderation write. Judge it on its own terms.
+    //
+    // WHAT THIS SHIPS AS, PLAINLY:
+    //  - Removals are RECORDED NOWHERE. The only trigger bound to this
+    //    collection is onAchievementClubMessageCreated, which is an
+    //    onDocumentCreated. `deletedBy`/`deletedAt` are written so a
+    //    club-chat equivalent of onGlobalMessageModerated can be added
+    //    later with no rules change and no migration — but it does not
+    //    exist, and until it does, a club moderator reaching into
+    //    someone else's message leaves no trace outside the document.
+    //    That is the one thing a rule genuinely cannot do for itself,
+    //    and it is the follow-up this capability is incomplete without.
+    //  - There is NO RATE LIMIT. One batch may remove many messages.
+    //  - There is NO RESTORE PATH. The transition is one-way by design;
+    //    only the Admin SDK can undo it.
+    //  - There is NO RANK ORDERING beyond the club owner — see the
+    //    moderator branch, where that risk is stated and accepted.
+    //
+    // REMOVING content and EDITING it are different authorities, and the
+    // difference is structural rather than conventional: there is no
+    // shape of update that changes `content` to anything except '', so
+    // "edit" is not expressible by anyone, author or moderator.
+    //
+    // The two branches are DISJOINT: the author branch requires the
+    // caller to BE the sender, the moderator branch requires that they
+    // are not, and each tests that first, before any document read.
+    // Exactly one branch is therefore applicable to any given document.
+    // That is load-bearing, not tidiness — CEL ABSORBS errors across
+    // `||` instead of propagating them, so `<error> || true` ALLOWS. If
+    // the branches overlapped, an erroring branch could silently hand
+    // its decision to the weaker one. Disjointness is what makes it safe
+    // for the two to carry DIFFERENT guards, which they must: retracting
+    // your own words and reaching into somebody else's are not the same
+    // authority and do not deserve the same gate.
+    // ---------------------------------------------------------------
+
+    // THE CREATE-SIDE HALF OF THE SAME INVARIANT.
+    //
+    // The removal rule below promises that no message can end up
+    // attributed to somebody who did not remove it. That promise is only
+    // true if a message cannot be BORN removed, and until this function
+    // existed it could: create accepted any field set at all beyond
+    // senderId/clubId/channelId, so an ordinary member could write one
+    // document already carrying isDeleted: true, deletedBy: <the owner's
+    // uid>, deletedByRole: 'superAdmin' and moderationRemoved: true —
+    // the exact tombstone adminDeleteMessage writes, forged.
+    //
+    // Worse, that state was UNREMOVABLE. The removal rule refuses it
+    // because the message is already `isDeleted` (even for the owner),
+    // `allow delete` is false for everyone, and adminDeleteMessage
+    // short-circuits on `isDeleted === true` and returns
+    // "alreadyRemoved" without redacting. Only a raw Admin SDK script
+    // could clear it. A forged, permanent, staff-signed tombstone is a
+    // worse outcome than the moderation gap this change set out to fix,
+    // which is why the two halves ship in one deploy.
+    //
+    // hasOnly() also keeps audioUrl/imageUrl/mediaUrl/attachments out of
+    // the collection entirely. Club chat is text-only, and a removal
+    // cannot clear media it is impossible to attach — that is now a
+    // structural fact rather than a latent mismatch with
+    // adminDeleteMessage, which deletes exactly those four fields.
+    function clubMessageCreateShapeAllowed() {
+      return request.resource.data.keys().hasOnly([
+            'clubId', 'channelId', 'senderId', 'senderName',
+            'senderPhotoUrl', 'content', 'sentAt', 'editedAt', 'isDeleted',
+            'deletedBy', 'deletedAt'
+          ]) &&
+          // Nothing arrives pre-removed, pre-edited, or pre-attributed.
+          request.resource.data.get('isDeleted', false) == false &&
+          request.resource.data.get('deletedBy', null) == null &&
+          request.resource.data.get('deletedAt', null) == null &&
+          request.resource.data.get('editedAt', null) == null &&
+          // Content bounds match what ClubChatService.sendTextMessage
+          // already enforces, so this refuses nothing the app sends.
+          request.resource.data.get('content', null) is string &&
+          request.resource.data.content.size() <= 2000 &&
+          request.resource.data.content.trim().size() > 0;
+    }
+
+    // The single legal shape of a removal, whoever performs it. Every
+    // field a removal may touch is pinned to a value the caller cannot
+    // choose, so the allowlist is not merely a narrower field list (see
+    // SECURITY.md principle 2) — an allowed field can only hold one
+    // legal value.
+    function clubMessageRemovalShapeAllowed() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly([
+              'content', 'isDeleted', 'editedAt', 'deletedBy', 'deletedAt'
+            ]) &&
+          // LIVE -> REMOVED only. A removal is terminal from a client's
+          // side: it cannot be undone, re-stamped, or re-attributed by a
+          // second write, so the audited transition fires exactly once
+          // and the actor recorded against it stays the actor.
+          resource.data.get('isDeleted', false) != true &&
+          request.resource.data.get('isDeleted', false) == true &&
+          request.resource.data.get('content', null) == '' &&
+          // The existing client stamps `editedAt` on a removal, so it is
+          // required rather than merely permitted — that keeps the write
+          // the deployed app already sends legal, and leaves no accepted
+          // field whose value the caller picks.
+          request.resource.data.get('editedAt', null) == request.time &&
+          // ATTRIBUTION, checked against the post-write document and not
+          // against the diff (SECURITY.md principle 6). A `deletedBy`
+          // that is absent defaults to this caller and passes; one
+          // naming anybody else is refused whether it arrived in this
+          // write or was planted earlier and left unchanged. Together
+          // with clubMessageCreateShapeAllowed() above — which is what
+          // stops a message being BORN with a forged tombstone — no
+          // removal in this collection can end up attributed to a party
+          // who did not perform it. Neither half holds that line alone.
+          request.resource.data.get('deletedBy', request.auth.uid) ==
+              request.auth.uid &&
+          request.resource.data.get('deletedAt', request.time) ==
+              request.time &&
+          // Authorship and the moment it was said are frozen. hasOnly()
+          // above already refuses a change to any of them; these restate
+          // it at the point a reader looks for it.
+          request.resource.data.get('senderId', null) ==
+              resource.data.get('senderId', null) &&
+          request.resource.data.get('senderName', null) ==
+              resource.data.get('senderName', null) &&
+          request.resource.data.get('sentAt', null) ==
+              resource.data.get('sentAt', null);
+    }
+
+    // A member retracts their own message. Account status is restated
+    // here rather than inherited from isClubMember()'s diligence — a
+    // branch selector is an authorization condition (SECURITY.md
+    // principle 9) — and club-level ban plus club status come from
+    // isClubMember() itself.
+    //
+    // `deletedBy` is optional on this branch ALONE, and only because the
+    // branch selector already proves who the actor is: the caller is the
+    // author, so there is no second candidate to attribute the removal
+    // to. The shape function still refuses a `deletedBy` naming anyone
+    // else. This is what keeps the currently deployed app — which sends
+    // content/isDeleted/editedAt and no attribution — working through a
+    // rules deploy that precedes its next release.
+    // Authorship is tested FIRST so the branch resolves to a clean false
+    // — never an error — on somebody else's message, which is what keeps
+    // the two branches disjoint. The status checks that follow are
+    // restated rather than inherited (SECURITY.md principle 9); they are
+    // not a selector's afterthought.
+    //
+    // isVerified() and canCommunicate() are DELIBERATELY ABSENT, and
+    // that is a narrower reading than the moderator branch below, not an
+    // oversight. Retracting your own words is a corrective act, closer
+    // to blocking or reporting than to publishing, and SECURITY.md's
+    // verification policy gates outbound publishing specifically. A
+    // communication mute is a sanction on speech; leaving a sanctioned
+    // member unable to take back what they said would make the sanction
+    // increase the harm still on screen. Both were available on this
+    // path before this change, so requiring them here would remove
+    // working functionality rather than close anything.
+    function clubMessageAuthorRemovalAllowed(clubId) {
+      return resource.data.get('senderId', null) == request.auth.uid &&
+          isSignedIn() &&
+          isActiveAccount() &&
+          isClubMember(clubId) &&
+          clubMessageRemovalShapeAllowed();
+    }
+
+    // A club moderator removes somebody else's message.
+    //
+    // Attribution is MANDATORY here, because the actor is not derivable
+    // from the document the way it is on the author branch — a removal
+    // with nobody's name on it is the thing the audit trail exists to
+    // prevent.
+    //
+    // The club OWNER's own messages are out of a club moderator's reach.
+    // The owner is the club's final authority and a moderator quietly
+    // clearing the owner's announcements is grief, not moderation; an
+    // abusive owner is a platform matter and `adminDeleteMessage` already
+    // reaches every message in this collection through the Admin SDK.
+    // This is the widest protection buyable without a document read that
+    // fails the wrong way: the club document is already loaded by
+    // isClubMember(), whereas the AUTHOR's role would need their member
+    // document, which is gone the moment they leave — and a rule that
+    // denied on a missing author would make a departed member's abuse
+    // permanently unremovable, which is the opposite of the point. If
+    // rank-aware protection is ever wanted for co-owners and admins too,
+    // it needs `senderRole` denormalised onto the message at create time,
+    // not a read that can vanish.
+    // ACCEPTED RISK — NO RANK ORDERING. A moderator may remove a
+    // coOwner's, an admin's and a peer moderator's messages; only the
+    // club owner is out of reach. The role-update rule twelve lines from
+    // here enforces clubRolePower(actor) > clubRolePower(target) in both
+    // directions, so this path is deliberately weaker than its neighbour
+    // and a reader should not assume otherwise. The reason is stated
+    // above — the author's role lives in a member document that
+    // disappears when they leave, and denying on a missing author would
+    // make a departed member's abuse permanently unremovable. The fix,
+    // if the product wants one, is `senderRole` denormalised onto the
+    // message at create time, not a read that can vanish. Until then the
+    // controls are the owner's ability to demote a moderator and the
+    // audit trigger that does not yet exist.
+    //
+    // isVerified() and canCommunicate() are required HERE and not on the
+    // author branch. Acting on somebody else's message is an outbound
+    // act against the community, and before this change a muted or
+    // unverified member's reach was their own messages only; without
+    // these two, this rule would have silently extended it to every
+    // non-owner message in every club where they hold a role, with
+    // isCommunicationMuted()'s expiry never consulted on the path at
+    // all. canCommunicate() re-reads account status itself; isSignedIn()
+    // and isActiveAccount() stay explicit so no reader has to unfold a
+    // helper to see them.
+    function clubMessageModeratorRemovalAllowed(clubId) {
+      return resource.data.get('senderId', null) != request.auth.uid &&
+          isSignedIn() &&
+          isVerified() &&
+          isActiveAccount() &&
+          canCommunicate() &&
+          isClubMember(clubId) &&
+          clubRole(clubId) in ['owner', 'coOwner', 'admin', 'moderator'] &&
+          resource.data.get('senderId', null) != clubOwnerId(clubId) &&
+          clubMessageRemovalShapeAllowed() &&
+          request.resource.data.get('deletedBy', '') == request.auth.uid &&
+          request.resource.data.get('deletedAt', null) == request.time;
+    }
+
     function publicProfileSchemaIsExact(userId) {
       let data = resource.data;
       return data.keys().hasAll([
@@ -2367,10 +2615,22 @@ service cloud.firestore {
               isClubMember(clubId) &&
               request.resource.data.senderId == request.auth.uid &&
               request.resource.data.clubId == clubId &&
-              request.resource.data.channelId == channelId;
-          allow update: if isClubMember(clubId) &&
-              resource.data.senderId == request.auth.uid &&
-              request.resource.data.senderId == resource.data.senderId;
+              request.resource.data.channelId == channelId &&
+              // Without this a member can mint a forged, permanent
+              // moderation tombstone. See the block above canManageClub().
+              clubMessageCreateShapeAllowed();
+          // SOFT REMOVAL ONLY, on two complete and independent
+          // predicates — deliberately not one predicate with a role
+          // check folded into it. Neither reads as a "selector" that a
+          // later reader might assume inherits the other's guards: each
+          // states account status, club membership, whose message it may
+          // touch, the field allowlist and every pinned value for
+          // itself. See the block above canManageClub() for why this is
+          // a rule at all, and for the owner-message boundary.
+          allow update: if clubMessageAuthorRemovalAllowed(clubId) ||
+              clubMessageModeratorRemovalAllowed(clubId);
+          // Hard delete stays with the Admin SDK, so the record always
+          // shows that something was removed rather than losing it.
           allow delete: if false;
         }
       }
