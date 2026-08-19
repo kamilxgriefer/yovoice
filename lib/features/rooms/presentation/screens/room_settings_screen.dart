@@ -193,9 +193,16 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _busy = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            intentionalOrFriendly(
+              error,
+              fallback: "The room status couldn't change. Please try again.",
+            ),
+          ),
+        ),
+      );
     }
   }
 

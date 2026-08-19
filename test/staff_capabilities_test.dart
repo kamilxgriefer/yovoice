@@ -195,10 +195,12 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Delete room…'));
       await tester.pumpAndSettle();
-      expect(find.text('Delete room permanently?'), findsOneWidget);
-      await tester.enterText(find.byType(TextField), 'Evening Talks');
-      await tester.pump();
-      await tester.tap(find.text('DELETE'));
+      // Simple destructive confirm: the room's name in the title, the
+      // irreversibility statement, no typed-name hurdle.
+      expect(find.text('Delete "Evening Talks"?'), findsOneWidget);
+      expect(find.textContaining('This cannot be undone'), findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
+      await tester.tap(find.text('Delete'));
       await tester.pumpAndSettle();
       expect(deleted, 1);
 

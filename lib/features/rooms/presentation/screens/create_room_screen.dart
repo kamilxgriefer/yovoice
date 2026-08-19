@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -135,10 +136,17 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
     });
   }
 
-  String _readable(Object error) => error
-      .toString()
-      .replaceFirst('Bad state: ', '')
-      .replaceFirst('Invalid argument(s): ', '');
+  String _readable(Object error) {
+    if (error is FirebaseFunctionsException) {
+      final message = error.message?.trim();
+      if (message != null && message.isNotEmpty) return message;
+      return 'Something went wrong. Please try again.';
+    }
+    return error
+        .toString()
+        .replaceFirst('Bad state: ', '')
+        .replaceFirst('Invalid argument(s): ', '');
+  }
 
   // -------------------------------------------------------------- tags
 

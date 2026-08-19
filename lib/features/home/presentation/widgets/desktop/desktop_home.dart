@@ -280,6 +280,7 @@ class _DesktopHomeState extends State<DesktopHome> {
                     currentUserId: widget.currentUserId,
                     onEnter: widget.onOpenRoom,
                     onEdit: _openRoomSettings,
+                    onDelete: _deleteOwnedRoom,
                     onCreateRoom: widget.onStartRoom,
                   ),
                 ),

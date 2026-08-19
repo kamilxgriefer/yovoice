@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
@@ -93,9 +94,16 @@ class _BroadcastParticipantsSheetState
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            intentionalOrFriendly(
+              error,
+              fallback: "That didn't work. Please try again.",
+            ),
+          ),
+        ),
+      );
     }
   }
 

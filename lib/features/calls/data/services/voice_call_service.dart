@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -376,6 +377,14 @@ class VoiceCallService extends ChangeNotifier {
   }
 
   String _friendlyError(Object error) {
+    // A callable refusal carries product copy in .message ("This room is
+    // not currently live."); the code prefix ("[firebase_functions/…]")
+    // is developer noise and must never reach a SnackBar.
+    if (error is FirebaseFunctionsException) {
+      final message = error.message?.trim();
+      if (message != null && message.isNotEmpty) return message;
+      return 'Live audio is unavailable right now. Try again.';
+    }
     final text = error.toString();
     if (text.startsWith('Exception: ')) {
       return text.substring('Exception: '.length);

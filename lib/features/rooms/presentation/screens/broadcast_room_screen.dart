@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -545,6 +546,13 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   }
 
   String _readableError(Object error) {
+    // Server refusals carry product copy in .message; the
+    // "[firebase_functions/…]" prefix is developer noise.
+    if (error is FirebaseFunctionsException) {
+      final message = error.message?.trim();
+      if (message != null && message.isNotEmpty) return message;
+      return 'Something went wrong. Please try again.';
+    }
     return error
         .toString()
         .replaceFirst('Bad state: ', '')

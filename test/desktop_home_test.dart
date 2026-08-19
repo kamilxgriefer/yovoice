@@ -470,9 +470,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 60));
     }
 
-    // Owned rooms carry the owner-only settings button; the board's
-    // banners never do.
-    expect(find.byTooltip('Room settings'), findsOneWidget);
+    // The owned room appears twice — board banner and active-rooms tile —
+    // and BOTH carry the owner-only manage menu (settings + delete);
+    // non-owned rooms never do.
+    expect(find.byTooltip('Manage your room'), findsNWidgets(2));
     expect(find.text('Enter'), findsOneWidget);
   });
 
@@ -513,7 +514,9 @@ void main() {
     expect(find.text('Create room'), findsOneWidget);
     expect(
       tester.getTopLeft(find.text('Create room')).dx,
-      greaterThan(tester.getTopLeft(find.byTooltip('Room settings')).dx),
+      greaterThan(
+        tester.getTopLeft(find.byTooltip('Manage your room').last).dx,
+      ),
     );
 
     await tester.tap(find.text('Create room'));
@@ -532,7 +535,7 @@ void main() {
 
     expect(find.text('You have no rooms yet.'), findsOneWidget);
     expect(find.text('Create Room'), findsOneWidget);
-    expect(find.byTooltip('Room settings'), findsNothing);
+    expect(find.byTooltip('Manage your room'), findsNothing);
   });
 
   testWidgets('recent chats shows at most the three newest conversations', (

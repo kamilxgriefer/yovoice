@@ -351,20 +351,11 @@ class _DeleteOwnedRoomDialog extends StatefulWidget {
 }
 
 class _DeleteOwnedRoomDialogState extends State<_DeleteOwnedRoomDialog> {
-  final _confirmation = TextEditingController();
   bool _busy = false;
   String? _error;
 
-  bool get _valid => _confirmation.text.trim() == widget.room.name.trim();
-
-  @override
-  void dispose() {
-    _confirmation.dispose();
-    super.dispose();
-  }
-
   Future<void> _submit() async {
-    if (_busy || !_valid) return;
+    if (_busy) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -385,27 +376,18 @@ class _DeleteOwnedRoomDialogState extends State<_DeleteOwnedRoomDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: const Color(0xFF171121),
-      title: const Text(
-        'Delete room permanently?',
-        style: TextStyle(color: Colors.white),
+      title: Text(
+        'Delete "${widget.room.name}"?',
+        style: const TextStyle(color: Colors.white),
       ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Messages, members and room settings will be permanently removed. '
-            'Type “${widget.room.name}” to confirm.',
-            style: const TextStyle(color: Color(0xFFB8AFC2), height: 1.4),
-          ),
-          const SizedBox(height: 14),
-          TextField(
-            controller: _confirmation,
-            enabled: !_busy,
-            autofocus: true,
-            style: const TextStyle(color: Colors.white),
-            onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(labelText: 'Room name'),
+          const Text(
+            'Messages, members and room settings will be permanently '
+            'removed. This cannot be undone.',
+            style: TextStyle(color: Color(0xFFB8AFC2), height: 1.4),
           ),
           if (_error != null) ...[
             const SizedBox(height: 10),
@@ -422,7 +404,7 @@ class _DeleteOwnedRoomDialogState extends State<_DeleteOwnedRoomDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: _busy || !_valid ? null : _submit,
+          onPressed: _busy ? null : _submit,
           style: FilledButton.styleFrom(
             backgroundColor: const Color(0xFFFF416C),
           ),
@@ -432,7 +414,7 @@ class _DeleteOwnedRoomDialogState extends State<_DeleteOwnedRoomDialog> {
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('DELETE'),
+              : const Text('Delete'),
         ),
       ],
     );
@@ -668,6 +650,7 @@ class HomeActiveRooms extends StatelessWidget {
     required this.onEnter,
     required this.onEdit,
     required this.onCreateRoom,
+    this.onDelete,
     this.compact = false,
     super.key,
   });
@@ -676,6 +659,11 @@ class HomeActiveRooms extends StatelessWidget {
   final String currentUserId;
   final ValueChanged<VoiceRoom> onEnter;
   final ValueChanged<VoiceRoom> onEdit;
+
+  /// Direct deletion from the Home tile, same confirm and callable as the
+  /// room-board menu — the host should not have to enter the room (or its
+  /// settings) first. Null hides the menu entry.
+  final Future<void> Function(VoiceRoom room)? onDelete;
   final VoidCallback onCreateRoom;
   final bool compact;
 
@@ -749,11 +737,13 @@ class HomeActiveRooms extends StatelessWidget {
             return _CreateRoomTile(side: side, onTap: onCreateRoom);
           }
           final room = mine[index];
+          final delete = onDelete;
           return _OwnedRoomCard(
             room: room,
             side: side,
             onEnter: () => onEnter(room),
             onEdit: () => onEdit(room),
+            onDelete: delete == null ? null : () => delete(room),
           );
         },
       ),
@@ -852,12 +842,14 @@ class _OwnedRoomCard extends StatelessWidget {
     required this.side,
     required this.onEnter,
     required this.onEdit,
+    this.onDelete,
   });
 
   final VoiceRoom room;
   final double side;
   final VoidCallback onEnter;
   final VoidCallback onEdit;
+  final Future<void> Function()? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -879,20 +871,10 @@ class _OwnedRoomCard extends StatelessWidget {
                 child: Material(
                   color: Colors.black.withValues(alpha: .55),
                   shape: const CircleBorder(),
-                  child: Tooltip(
-                    message: 'Room settings',
-                    child: IconButton(
-                      onPressed: onEdit,
-                      iconSize: 17,
-                      constraints: const BoxConstraints(
-                        minWidth: 44,
-                        minHeight: 44,
-                      ),
-                      icon: const Icon(
-                        Icons.settings_rounded,
-                        color: Colors.white,
-                      ),
-                    ),
+                  child: _OwnedRoomMenu(
+                    room: room,
+                    onManage: onEdit,
+                    onDelete: onDelete,
                   ),
                 ),
               ),

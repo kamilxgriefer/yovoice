@@ -250,6 +250,7 @@ class _MobileHomeState extends State<MobileHome> {
                     currentUserId: _resolvedUserId,
                     onEnter: widget.onOpenRoom,
                     onEdit: _openRoomSettings,
+                    onDelete: _deleteOwnedRoom,
                     onCreateRoom: widget.onCreateRoom,
                     compact: true,
                   ),
