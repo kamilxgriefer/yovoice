@@ -801,15 +801,33 @@ they host and press Start voice.**
 This is the evidence the emulator could not supply: the fixtures were designed
 around a legacy shape, and the legacy shape is in fact the majority.
 
-**The two Moments indexes were still building when this was written.** Until
-both report `READY`, the Moments discovery feed throws `FAILED_PRECONDITION`
-exactly the way club invites did. Check with:
+**The two Moments indexes finished building at 01:53 and were then EXERCISED,
+not merely read as `READY`.** Both feed queries were run against production
+through the Admin SDK — `where('isPublished','==',true).orderBy('likeCount','desc')`
+and the `createdAt` variant — and both returned without `FAILED_PRECONDITION`.
+They return 0 documents because no Voice Moment has been published yet, which
+is why the app renders the "No Voice Moments yet" empty state rather than a feed.
+
+**Read the collection name carefully: it is `voiceMoments`, not `moments`.**
+The first verification attempt queried `moments`, got `FAILED_PRECONDITION` on
+both queries, and looked exactly like the club-invite defect. The probe was
+wrong, not the deployment. `MomentDiscoveryService` queries `voiceMoments`
+(`moment_discovery_service.dart:127`), the repo declares the indexes under that
+name, and the deployed resources are `collectionGroups/voiceMoments/indexes/...`.
+
+**The REST endpoint below is a trap.** `collectionGroups/{anything}/indexes`
+returns **every** index in the database regardless of the name in the path, so
+reading its output without checking each resource's own `name` attributes
+indexes to the wrong collection. Check state and identity together:
 
 ```
-gcloud auth application-default print-access-token
-curl -H "Authorization: Bearer $TOKEN" \
-  "https://firestore.googleapis.com/v1/projects/yovoice-ec54a/databases/(default)/collectionGroups/moments/indexes"
+TOKEN=$(gcloud auth application-default print-access-token)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "https://firestore.googleapis.com/v1/projects/yovoice-ec54a/databases/(default)/collectionGroups/voiceMoments/indexes" \
+  | python3 -c "import sys,json; [print(i['state'], i['name'].split('collectionGroups/')[1]) for i in json.load(sys.stdin)['indexes']]"
 ```
+
+An index reporting `READY` is still not proof the query works. Run the query.
 
 What is waiting, and what each piece is:
 
