@@ -437,7 +437,12 @@ function adaptActiveDay({ uid, occurredAt }) {
     beneficiaryId: safeUid,
     actorId: safeUid,
     metric: "activeDays",
-    occurredAt: date,
+    // The canonical identity of this event is the UTC day, so every field of
+    // its canonical content must be a function of (uid, day) alone. Carrying
+    // the triggering event's exact time here made the second qualifying
+    // action of a user-day derive a different fingerprint for the same
+    // eventId — an unresolvable ledger collision.
+    occurredAt: new Date(`${utcDay}T00:00:00.000Z`),
   });
 }
 

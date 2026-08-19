@@ -94,4 +94,36 @@ describe("achievement runtime and durable outbox", () => {
     assert.equal(progress.verifiedMetrics.messages, 1);
     assert.equal(progress.verifiedMetrics.activeDays, 1);
   });
+
+  test("a second qualifying event on the same user-day replays the active day instead of colliding", async () => {
+    // 2026-08-18 production incident: the second message of a user-day
+    // derived the same active-day eventId with a different fingerprint,
+    // failed closed, and the at-least-once trigger retried forever.
+    const errors = [];
+    const repository = new InMemoryAchievementRepository();
+    repository.seedUser("user-1", {});
+    const runtime = createAchievementRuntime({
+      repository,
+      clock: () => NOW,
+      logger: { error: (...args) => errors.push(args) },
+    });
+    const first = await runtime.processSourceEvent(messageEvent());
+    const second = await runtime.processSourceEvent(messageEvent({
+      sourceKey: "conversations/c-1/messages/m-2",
+      occurredAt: new Date(NOW.getTime() + 90_000),
+    }));
+    assert.deepEqual(
+      first.results.map((result) => result.outcome),
+      ["applied", "applied"],
+    );
+    assert.deepEqual(
+      second.results.map((result) => result.outcome),
+      ["applied", "replayed"],
+    );
+    const progress = repository.progressFor("user-1");
+    assert.equal(progress.verifiedMetrics.messages, 2);
+    assert.equal(progress.verifiedMetrics.activeDays, 1);
+    // A clean same-day replay is not a collision and reports nothing.
+    assert.equal(errors.length, 0);
+  });
 });

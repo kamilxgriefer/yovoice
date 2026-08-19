@@ -1,15 +1,23 @@
-const { FieldPath } = require("firebase-admin/firestore");
+const { FieldPath, FieldValue } = require("firebase-admin/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 
 const { isValidOpaqueUid } = require("./identity");
 const {
   buildUserAchievementProjection,
   legacyProgressFromUser,
+  normalizeProgress,
 } = require("./model");
 const { getDefaultAchievementRuntime } = require("./runtime");
 
 const REGION = "europe-west1";
 const MIGRATION_SCHEMA_VERSION = 1;
+// A user whose bootstrap keeps crashing is marked unrecoverable after this
+// many attempts instead of stalling every user queued behind them forever.
+const MAX_BOOTSTRAP_ATTEMPTS = 5;
+const TERMINAL_FAILURE_CODES = new Set([
+  "malformed-user-migration-state",
+  "bootstrap-attempts-exhausted",
+]);
 const DEFAULT_USERS_PER_RUN = 5;
 const DEFAULT_EVENTS_PER_PAGE = 100;
 const MAX_USERS_PER_RUN = 25;
@@ -174,45 +182,91 @@ class FirestoreAchievementMigrationStore {
     const progressRef = database.collection("achievementProgress").doc(uid);
     const userRef = database.collection("users").doc(uid);
     return database.runTransaction(async (transaction) => {
-      const [migrationSnapshot, canonicalUserSnapshot] =
+      const [migrationSnapshot, canonicalUserSnapshot, progressSnapshot] =
         typeof transaction.getAll === "function"
-          ? await transaction.getAll(migrationRef, userRef)
+          ? await transaction.getAll(migrationRef, userRef, progressRef)
           : await Promise.all([
               transaction.get(migrationRef),
               transaction.get(userRef),
+              transaction.get(progressRef),
             ]);
       if (!canonicalUserSnapshot.exists) {
         return { outcome: "missing", evidenceCursor: null };
       }
+      const timestamp = dateFrom(now, "Migration timestamp");
       const migration = migrationSnapshot.exists
         ? migrationSnapshot.data() ?? {}
         : null;
       if (migration) {
-        if (migration.schemaVersion !== MIGRATION_SCHEMA_VERSION ||
-            migration.uid !== uid || migration.bootstrapCompleted !== true) {
-          throw new AchievementMigrationError(
-            "Stored user migration state is malformed.",
-          );
+        if (migration.schemaVersion === MIGRATION_SCHEMA_VERSION &&
+            migration.uid === uid && migration.bootstrapCompleted === true) {
+          return {
+            outcome: "existing",
+            evidenceCursor: migration.evidenceCursor ?? null,
+            evidenceEventCount: migration.evidenceEventCount ?? 0,
+          };
         }
-        return {
-          outcome: "existing",
-          evidenceCursor: migration.evidenceCursor ?? null,
-          evidenceEventCount: migration.evidenceEventCount ?? 0,
-        };
+        // bootstrapCompleted commits atomically with the bootstrap writes, so
+        // a stored record without it only documents earlier failed attempts —
+        // there is no progress a rewrite could lose. Throwing on such a
+        // record can never recover (the state cannot change between runs) and
+        // wedged the whole pipeline on its first user for three days in the
+        // 2026-08-16..19 production incident.
+        if (TERMINAL_FAILURE_CODES.has(migration.failureCode)) {
+          return { outcome: "unrecoverable", failureCode: migration.failureCode };
+        }
+        const attemptCount = Number.isSafeInteger(migration.attemptCount)
+          ? migration.attemptCount
+          : 0;
+        const failureCode = migration.bootstrapCompleted === true ||
+            (migration.schemaVersion !== undefined &&
+              migration.schemaVersion !== MIGRATION_SCHEMA_VERSION) ||
+            (migration.uid !== undefined && migration.uid !== uid)
+          ? "malformed-user-migration-state"
+          : attemptCount >= MAX_BOOTSTRAP_ATTEMPTS
+            ? "bootstrap-attempts-exhausted"
+            : null;
+        if (failureCode) {
+          transaction.set(migrationRef, {
+            schemaVersion: MIGRATION_SCHEMA_VERSION,
+            uid,
+            status: "failed",
+            failureCode,
+            attemptCount,
+            updatedAt: timestamp,
+          });
+          return { outcome: "unrecoverable", failureCode };
+        }
       }
 
       // Existing flat counters, title arrays and any pre-cutover progress are
       // not authority. Preserve legacy claims only in the private audit fields
       // while verified state starts at zero and is rebuilt from source events.
+      // When live triggers already created verified progress before the
+      // reconciler reached this user, adopt it untouched: the projection has
+      // already replaced the user document's counters, so re-deriving floors
+      // from that document would launder verified values into legacy floors,
+      // and overwriting progress would erase verified state the dedup ledger
+      // can never replay.
       const canonicalUser = canonicalUserSnapshot.data() ?? {};
-      const progress = legacyProgressFromUser(canonicalUser);
-      const timestamp = dateFrom(now, "Migration timestamp");
-      transaction.set(progressRef, { ...progress, updatedAt: timestamp });
-      transaction.set(userRef, {
-        ...buildUserAchievementProjection(progress, timestamp),
-        achievementVerificationStatus: "reconciling",
-      }, { merge: true });
-      transaction.create(migrationRef, {
+      const existingProgress = progressSnapshot.exists
+        ? progressSnapshot.data() ?? null
+        : null;
+      const progress = existingProgress
+        ? normalizeProgress(existingProgress)
+        : legacyProgressFromUser(canonicalUser);
+      if (existingProgress) {
+        transaction.set(userRef, {
+          achievementVerificationStatus: "reconciling",
+        }, { merge: true });
+      } else {
+        transaction.set(progressRef, { ...progress, updatedAt: timestamp });
+        transaction.set(userRef, {
+          ...buildUserAchievementProjection(progress, timestamp),
+          achievementVerificationStatus: "reconciling",
+        }, { merge: true });
+      }
+      const record = {
         schemaVersion: MIGRATION_SCHEMA_VERSION,
         uid,
         status: "reconciling",
@@ -223,7 +277,14 @@ class FirestoreAchievementMigrationStore {
         legacyMetricFloors: progress.legacyMetricFloors,
         startedAt: timestamp,
         updatedAt: timestamp,
-      });
+      };
+      // A leftover failure record is overwritten in place; only a genuinely
+      // absent document keeps the create() guard against concurrent runs.
+      if (migrationSnapshot.exists) {
+        transaction.set(migrationRef, record);
+      } else {
+        transaction.create(migrationRef, record);
+      }
       return { outcome: "initialized", evidenceCursor: null, evidenceEventCount: 0 };
     });
   }
@@ -269,9 +330,18 @@ class FirestoreAchievementMigrationStore {
   }
 
   async failUser({ uid, now }) {
+    // The failure record must always be self-describing. Merge-writing only
+    // {status, failureCode} used to create, for a user whose bootstrap never
+    // committed, a document beginUser could never accept again — the
+    // "Stored user migration state is malformed" wedge of 2026-08-16..19.
+    // attemptCount lets a deterministically crashing bootstrap terminalize
+    // after MAX_BOOTSTRAP_ATTEMPTS instead of retrying forever.
     await this.database().collection("achievementMigrations").doc(uid).set({
+      schemaVersion: MIGRATION_SCHEMA_VERSION,
+      uid,
       status: "failed",
       failureCode: "canonical-reconciliation-failed",
+      attemptCount: FieldValue.increment(1),
       updatedAt: dateFrom(now, "Migration timestamp"),
     }, { merge: true });
   }
@@ -282,6 +352,7 @@ function createAchievementMigrationService({
   evidenceSource = createBoundedCanonicalEvidenceSource(),
   runtimeProvider = getDefaultAchievementRuntime,
   clock = () => new Date(),
+  logger = console,
   usersPerRun = DEFAULT_USERS_PER_RUN,
   eventsPerPage = DEFAULT_EVENTS_PER_PAGE,
 } = {}) {
@@ -296,8 +367,9 @@ function createAchievementMigrationService({
     "user",
   ].every((name) => typeof store[name] === "function") ||
       !evidenceSource || typeof evidenceSource.readPage !== "function" ||
-      typeof runtimeProvider !== "function" || typeof clock !== "function") {
-    throw new TypeError("A migration store, evidence source, runtime and clock are required.");
+      typeof runtimeProvider !== "function" || typeof clock !== "function" ||
+      typeof logger?.error !== "function") {
+    throw new TypeError("A migration store, evidence source, runtime, clock and logger are required.");
   }
   requireBound(usersPerRun, 1, MAX_USERS_PER_RUN, "Users per run");
   requireBound(eventsPerPage, 1, MAX_EVENTS_PER_PAGE, "Events per page");
@@ -309,6 +381,7 @@ function createAchievementMigrationService({
       return { outcome: "complete", usersCompleted: 0, eventsProcessed: 0 };
     }
     let usersCompleted = 0;
+    let usersUnrecoverable = 0;
     let eventsProcessed = 0;
     while (usersCompleted < usersPerRun && !state.complete) {
       const record = state.currentUid
@@ -332,7 +405,15 @@ function createAchievementMigrationService({
       await store.saveState(state, clock());
       try {
         const started = await store.beginUser({ uid, user, now: clock() });
-        if (started.outcome === "missing") {
+        if (started.outcome === "missing" || started.outcome === "unrecoverable") {
+          if (started.outcome === "unrecoverable") {
+            usersUnrecoverable += 1;
+            logger.error(
+              "Achievement migration is terminally failed for one user; " +
+                "advancing past it.",
+              { uid, failureCode: started.failureCode ?? null },
+            );
+          }
           state.afterUid = uid;
           state.currentUid = null;
           usersCompleted += 1;
@@ -389,6 +470,7 @@ function createAchievementMigrationService({
     return {
       outcome: state.complete ? "complete" : "progressed",
       usersCompleted,
+      usersUnrecoverable,
       eventsProcessed,
       startedAt,
       cursor: {
@@ -427,6 +509,7 @@ module.exports = {
   DEFAULT_USERS_PER_RUN,
   FirestoreAchievementMigrationStore,
   GLOBAL_STATE_PATH,
+  MAX_BOOTSTRAP_ATTEMPTS,
   MAX_EVENTS_PER_PAGE,
   MAX_USERS_PER_RUN,
   MIGRATION_SCHEMA_VERSION,

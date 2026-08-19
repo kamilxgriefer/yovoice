@@ -3,7 +3,6 @@ const { describe, test } = require("node:test");
 
 const {
   AchievementEngine,
-  AchievementEventIntegrityError,
   AchievementEventValidationError,
   eventIdFor,
 } = require("../achievements/engine");
@@ -119,17 +118,85 @@ describe("idempotent achievement engine", () => {
     assert.equal(repository.notificationEntries(UID).length, 4);
   });
 
-  test("canonical source collision with a changed beneficiary fails closed", async () => {
-    const { repository, engine } = setup();
+  test("canonical source collision resolves terminally without weakening dedup", async () => {
+    const errors = [];
+    const repository = new InMemoryAchievementRepository();
+    repository.seedUser(UID, { uid: UID, displayName: "Ada" });
     repository.seedUser("other-user", { uid: "other-user" });
+    const engine = new AchievementEngine({
+      repository,
+      clock: () => NOW,
+      logger: { error: (...args) => errors.push(args) },
+    });
     const first = event("conversations/c/messages/collision");
     await engine.process(first);
-    await assert.rejects(
-      engine.process({ ...first, beneficiaryId: "other-user", actorId: "other-user" }),
-      AchievementEventIntegrityError,
-    );
+
+    // A permanent content mismatch must terminate, not throw: throwing turns
+    // an at-least-once redelivery into an infinite retry loop, because the
+    // redelivered event can only ever derive the same fingerprint again.
+    const collided = await engine.process({
+      ...first,
+      beneficiaryId: "other-user",
+      actorId: "other-user",
+    });
+    assert.equal(collided.outcome, "collision");
+    assert.deepEqual(collided.newVerifiedTitleIds, []);
+    assert.deepEqual(collided.newDisplayTitleIds, []);
+    assert.deepEqual(collided.notificationIds, []);
+    // The mismatched event is never applied and the stored entry wins.
     assert.equal(repository.progressFor(UID).verifiedMetrics.messages, 1);
     assert.equal(repository.progressFor("other-user"), undefined);
+    assert.equal(repository.events.size, 1);
+    assert.equal(repository.event(collided.eventId).beneficiaryId, UID);
+    // Dedup is not weakened: the original content still replays cleanly and
+    // the collision replays terminally again.
+    assert.equal((await engine.process(first)).outcome, "replayed");
+    assert.equal((await engine.process({
+      ...first,
+      beneficiaryId: "other-user",
+      actorId: "other-user",
+    })).outcome, "collision");
+    // Terminal means logged: one forensic report per collision.
+    assert.equal(errors.length, 2);
+    assert.match(errors[0][0], /Canonical source collision/u);
+    assert.equal(errors[0][1].eventId, collided.eventId);
+    assert.equal(
+      errors[0][1].storedFingerprint,
+      repository.event(collided.eventId).eventFingerprint,
+    );
+    assert.notEqual(errors[0][1].derivedFingerprint, errors[0][1].storedFingerprint);
+  });
+
+  test("a recurrence differing only in observation time replays quietly", async () => {
+    // Some identities deliberately collapse repeatable occurrences: a
+    // community re-join or a reaction removed and re-added arrives with the
+    // same canonical content at a new snapshot time. That is a replay of the
+    // identity, not an integrity violation — terminal, silent, unapplied.
+    const errors = [];
+    const repository = new InMemoryAchievementRepository();
+    repository.seedUser(UID, { uid: UID });
+    const engine = new AchievementEngine({
+      repository,
+      clock: () => NOW,
+      logger: { error: (...args) => errors.push(args) },
+    });
+    const joined = event(`clubs/club-1/members/${UID}`, {
+      sourceType: "communityJoined",
+      metric: "communities",
+    });
+    await engine.process(joined);
+    const storedBefore = repository.event(eventIdFor(joined));
+
+    const rejoined = await engine.process({
+      ...joined,
+      occurredAt: new Date("2026-08-17T09:00:00.000Z"),
+    });
+    assert.equal(rejoined.outcome, "replayed");
+    assert.equal(repository.progressFor(UID).verifiedMetrics.communities, 1);
+    assert.equal(repository.events.size, 1);
+    // The stored entry keeps its first-write fingerprint and time.
+    assert.deepEqual(repository.event(eventIdFor(joined)), storedBefore);
+    assert.equal(errors.length, 0);
   });
 
   test("opaque UIDs are preserved byte-for-byte and never trimmed into another account", async () => {

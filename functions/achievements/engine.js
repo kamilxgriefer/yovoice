@@ -196,11 +196,33 @@ function assertRepository(repository) {
 }
 
 class AchievementEngine {
-  constructor({ repository, clock = () => new Date() }) {
+  constructor({ repository, clock = () => new Date(), logger = console }) {
     assertRepository(repository);
     if (typeof clock !== "function") throw new TypeError("clock must be a function.");
+    if (typeof logger?.error !== "function") {
+      throw new TypeError("logger must expose error().");
+    }
     this.repository = repository;
     this.clock = clock;
+    this.logger = logger;
+  }
+
+  // True when the derived event, re-fingerprinted at the stored entry's own
+  // observation time, matches the stored fingerprint exactly — i.e. the two
+  // agree on every canonical field except occurredAt. Sharing an eventId
+  // already pins sourceType, sourceKey and metric to the same values.
+  isTimeOnlyVariant(event, existingEvent) {
+    try {
+      const storedTimeFingerprint = eventFingerprint({
+        ...event,
+        occurredAt: normalizeOccurredAt(existingEvent.sourceOccurredAt ?? null),
+      });
+      return storedTimeFingerprint === existingEvent.eventFingerprint;
+    } catch (_) {
+      // An unreadable stored observation time cannot prove the benign case;
+      // report it as a real collision rather than crash into a retry loop.
+      return false;
+    }
   }
 
   async process(eventInput) {
@@ -217,13 +239,47 @@ class AchievementEngine {
       throw new TypeError("The achievement engine clock returned an invalid date.");
     }
 
-    return this.repository.runTransaction(async (transaction) => {
+    const result = await this.repository.runTransaction(async (transaction) => {
       const existingEvent = await transaction.getEvent(eventId);
       if (existingEvent) {
         if (existingEvent.eventFingerprint !== fingerprint) {
-          throw new AchievementEventIntegrityError(
-            `Canonical source collision for ${eventId}.`,
-          );
+          // The canonical slot for this identity already holds different
+          // content, and the difference is permanent: redelivery can only
+          // ever derive the same fingerprint again, so throwing here turns
+          // an at-least-once redelivery into an infinite retry loop
+          // (2026-08-18 production incident). Both branches below are
+          // therefore terminal and neither applies the event or touches the
+          // stored entry — dedup always keeps the first write.
+          //
+          // Some identities deliberately collapse repeatable occurrences
+          // (an active day, a community re-join, a reaction re-added): the
+          // recurrence arrives with identical content except for its
+          // observation time. That is a replay of the identity, not an
+          // integrity violation, so it stays quiet. Anything else diverging
+          // is a real collision and is reported loudly.
+          if (this.isTimeOnlyVariant(event, existingEvent)) {
+            return {
+              outcome: "replayed",
+              eventId,
+              newVerifiedTitleIds: [],
+              newDisplayTitleIds: [],
+              notificationIds: [],
+            };
+          }
+          return {
+            outcome: "collision",
+            eventId,
+            newVerifiedTitleIds: [],
+            newDisplayTitleIds: [],
+            notificationIds: [],
+            collision: {
+              derivedFingerprint: fingerprint,
+              storedFingerprint: existingEvent.eventFingerprint ?? null,
+              storedSourceType: existingEvent.sourceType ?? null,
+              storedOutcome: existingEvent.outcome ?? null,
+              storedProcessedAt: existingEvent.processedAt ?? null,
+            },
+          };
         }
         return {
           outcome: "replayed",
@@ -298,6 +354,23 @@ class AchievementEngine {
         notificationIds: notificationPlans.map((item) => item.id),
       };
     });
+
+    if (result.outcome === "collision") {
+      // Reported outside the transaction so an internal transaction retry
+      // cannot emit the forensic record twice.
+      this.logger.error(
+        `Canonical source collision for ${result.eventId}: the stored ledger ` +
+          "entry wins and the mismatched event is dropped without retry.",
+        {
+          eventId: result.eventId,
+          sourceType: event.sourceType,
+          metric: event.metric,
+          beneficiaryId: event.beneficiaryId,
+          ...result.collision,
+        },
+      );
+    }
+    return result;
   }
 }
 

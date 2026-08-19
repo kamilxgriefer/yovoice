@@ -76,9 +76,13 @@ function normalizeAchievementOutboxRecord(raw, expectedId = null) {
   return Object.freeze({ event, eventId, fingerprint, createdAt, expiresAt });
 }
 
-function createAchievementRuntime({ repository, clock = () => new Date() } = {}) {
+function createAchievementRuntime({
+  repository,
+  clock = () => new Date(),
+  logger,
+} = {}) {
   const resolvedRepository = repository ?? new FirestoreAchievementRepository();
-  const engine = new AchievementEngine({ repository: resolvedRepository, clock });
+  const engine = new AchievementEngine({ repository: resolvedRepository, clock, logger });
 
   async function processEvents(events) {
     if (!Array.isArray(events)) throw new TypeError("events must be an array.");

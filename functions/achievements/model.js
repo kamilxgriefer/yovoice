@@ -126,8 +126,11 @@ function legacyProgressFromUser(user) {
     verifiedUnlockedTitleIds: [],
     verifiedUnlockedTitleTimestamps: {},
     legacyUnlockedTitleIds: normalizeTitleIds(data.unlockedTitleIds),
-    legacyUnlockedTitleTimestamps: data.unlockedTitleTimestamps,
-    selectedTitleId: data.selectedTitleId,
+    // This raw shape is written verbatim to achievementProgress during the
+    // migration bootstrap, and Firestore rejects undefined values. A legacy
+    // skeleton profile without these fields must map to null, not undefined.
+    legacyUnlockedTitleTimestamps: data.unlockedTitleTimestamps ?? null,
+    selectedTitleId: data.selectedTitleId ?? null,
   };
 }
 

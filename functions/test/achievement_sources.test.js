@@ -13,7 +13,7 @@ const {
   adaptSocialMetricSnapshot,
   eventsWithActorActiveDay,
 } = require("../achievements/sources");
-const { eventIdFor } = require("../achievements/engine");
+const { eventFingerprint, eventIdFor } = require("../achievements/engine");
 
 const AT = new Date("2026-08-16T23:59:59.000Z");
 
@@ -347,6 +347,12 @@ describe("canonical achievement source adapters", () => {
     });
     assert.equal(eventIdFor(first), eventIdFor(sameDay));
     assert.notEqual(eventIdFor(first), eventIdFor(nextDay));
+    // Not only the id: the full canonical content must collapse too, or the
+    // second event of a user-day becomes an unresolvable ledger collision
+    // (2026-08-18 production incident).
+    assert.equal(eventFingerprint(first), eventFingerprint(sameDay));
+    assert.deepEqual(first.occurredAt, new Date("2026-08-16T00:00:00.000Z"));
+    assert.deepEqual(sameDay.occurredAt, new Date("2026-08-16T00:00:00.000Z"));
 
     const receivedReaction = adaptReactionReceived({
       kind: "momentLike",
