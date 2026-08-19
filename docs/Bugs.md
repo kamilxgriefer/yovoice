@@ -1136,6 +1136,52 @@ permission flags).
 
 ## Test reliability
 
+- **FIXED (2026-08-19) — `firestore-tests/storage.test.js` was green only
+  on a brand-new emulator; a second run against the same instance reported
+  five failures that were not rules regressions.** `active owner can create a
+  JPEG profile image`, `unverified active owner can upload during onboarding`,
+  `legacy exact M4A MIME remains compatible for replies`, `reserved direct
+  image uploads with exact identity` and `reserved direct voice media is
+  private and enforces the 12 MB cap` all came back `storage/unauthorized` on
+  re-run. (It was three failures when first reported; the direct-media cases
+  added two more leaking create-only paths, so this was getting worse, not
+  settling.)
+
+  Root cause: **`clearStorage()` from `@firebase/rules-unit-testing` removed
+  nothing at all here.** It deletes only the `items` a single `listAll()`
+  returns at the bucket root, and `listAll()` does not recurse — every object
+  this suite writes lives under a prefix (`users/`, `clubs/`,
+  `message_attachments/`, `voice_replies/`, …), so every leftover survived it,
+  confirmed by listing the bucket immediately after the call. The failing
+  cases are the ones whose objects the suite never deletes and whose paths are
+  create-only (`allow create: if resource == null`), so the rules correctly
+  denied the re-upload. Leftovers on the Club path did not fail, because that
+  path permits a replacement — which is why only some of them went red.
+
+  Fixed by walking the prefix tree and deleting every object, then asserting
+  the bucket is actually empty so a future unreachable path fails loudly up
+  front instead of posing as an authorization regression. No assertion was
+  weakened and `storage.rules` was not touched; proven with **three
+  consecutive 52/0 runs against one emulator**, immediately after the same
+  emulator had produced 47/5 from the unfixed suite. This mattered because red
+  lines on an ordinary re-run train people to discount failures in the one
+  suite that gates a `storage.rules` deploy.
+
+  `family-media.test.js` calls the same no-op `clearStorage()` but is not
+  affected: it seeds its objects through `withSecurityRulesDisabled`, which
+  overwrites regardless, and its rules deny all client writes.
+
+  A further failure (`Voice Moment requires exact filename, audio MIME and
+  size bounds`, reported as `storage/unknown` rather than a denial) was
+  observed once before the fix and is **not explained by leftover state** —
+  that object is deleted by the suite itself, and `assertFails` rejects any
+  non-permission error, so a transient transport/emulator error surfaces as a
+  failure. It did not reproduce in 55 targeted attempts of that exact oversize
+  upload (25 sequential, 30 at 6-way concurrency, all clean
+  `storage/unauthorized`) nor in any full run. Treat a lone `storage/unknown`
+  as transient and re-run; if it becomes frequent, suspect emulator contention
+  (e.g. another suite sharing the hub) rather than a rule.
+
 - **Open (2026-08-09): `profile_save_e2e_test.dart`'s "full save
   pipeline" case is FLAKY under full-suite parallelism.** It passes
   reliably in isolation (`flutter test test/profile_save_e2e_test.dart`)
