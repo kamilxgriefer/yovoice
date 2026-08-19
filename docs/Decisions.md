@@ -5572,6 +5572,12 @@ succeeds and the following `joinRoom` fails, nobody ever holds a participant
 row, `executeLeaveRoom` returns early, and a room nobody revisits keeps
 advertising itself. Extending the repair to callers with no participant row
 was rejected — it would let any signed-in account drop `isLive` on a live room
-during the start→join window. Closing it properly needs a scheduled sweeper,
-which would be the first scheduled function in `functions/` and adds Cloud
-Scheduler as a new deploy dependency.
+during the start→join window. Closing it properly needs a scheduled sweeper.
+CORRECTED: the implementing agent recorded this as "the first scheduled
+function in `functions/`, adding Cloud Scheduler as a new deploy dependency."
+That is wrong, and the 2026-08-20 deploy is the evidence —
+`expireAbandonedMomentDraftsSchedule`, `expireAbandonedDirectMessageAttachmentsSchedule`,
+`processPendingContentCleanupSchedule` and
+`expireAbandonedVoiceCommentDraftsSchedule` all deployed alongside it. Cloud
+Scheduler is an existing dependency, so the sweeper is a materially cheaper
+piece of work than that note implies.
