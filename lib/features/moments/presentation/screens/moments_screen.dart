@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
+import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
@@ -45,6 +47,7 @@ class MomentsScreen extends StatefulWidget {
     this.momentService,
     this.feedService,
     this.discoveryService,
+    this.contentReportService,
     this.isRootTab = false,
     this.isVisible,
     this.initialTab = MomentsTab.discover,
@@ -55,6 +58,10 @@ class MomentsScreen extends StatefulWidget {
   final MomentService? momentService;
   final HomeFeedService? feedService;
   final MomentDiscoveryService? discoveryService;
+
+  /// Injection seam for the report action on every Moment surface this
+  /// screen owns; production passes nothing.
+  final ContentReportService? contentReportService;
 
   /// True when the desktop shell renders this as a fixed content slot
   /// rather than pushing it as a route — the screen then draws no back
@@ -156,6 +163,7 @@ class _MomentsScreenState extends State<MomentsScreen> {
                   key: const ValueKey('moments-discover'),
                   discoveryService: widget.discoveryService,
                   feedService: _feedService,
+                  contentReportService: widget.contentReportService,
                   isVisible: widget.isVisible,
                   playerFactory: widget.playerFactory,
                   onOpenComments: (moment) => unawaited(_openComments(moment)),
@@ -167,6 +175,7 @@ class _MomentsScreenState extends State<MomentsScreen> {
                   feed: _feed,
                   feedService: _feedService,
                   currentUserId: _uid,
+                  contentReportService: widget.contentReportService,
                   onCreate: () => unawaited(_createMoment()),
                   onComments: (moment) => unawaited(_openComments(moment)),
                 ),
@@ -283,6 +292,7 @@ class _FollowingFeed extends StatelessWidget {
     required this.feed,
     required this.feedService,
     required this.currentUserId,
+    required this.contentReportService,
     required this.onCreate,
     required this.onComments,
     super.key,
@@ -292,6 +302,7 @@ class _FollowingFeed extends StatelessWidget {
   final Stream<List<VoiceMoment>>? feed;
   final HomeFeedService? feedService;
   final String currentUserId;
+  final ContentReportService? contentReportService;
   final VoidCallback onCreate;
   final ValueChanged<VoiceMoment> onComments;
 
@@ -318,6 +329,7 @@ class _FollowingFeed extends StatelessWidget {
               isOwnSection: true,
               feedService: feedService,
               currentUserId: currentUserId,
+              contentReportService: contentReportService,
               onComments: onComments,
             ),
             const SizedBox(height: 22),
@@ -334,6 +346,7 @@ class _FollowingFeed extends StatelessWidget {
               isOwnSection: false,
               feedService: feedService,
               currentUserId: currentUserId,
+              contentReportService: contentReportService,
               onComments: onComments,
             ),
           ],
@@ -355,6 +368,7 @@ class _MomentSection extends StatelessWidget {
     required this.isOwnSection,
     required this.feedService,
     required this.currentUserId,
+    required this.contentReportService,
     required this.onComments,
     this.emptyActionLabel,
     this.onEmptyAction,
@@ -370,6 +384,7 @@ class _MomentSection extends StatelessWidget {
   final bool isOwnSection;
   final HomeFeedService? feedService;
   final String currentUserId;
+  final ContentReportService? contentReportService;
   final ValueChanged<VoiceMoment> onComments;
   final String? emptyActionLabel;
   final VoidCallback? onEmptyAction;
@@ -413,7 +428,11 @@ class _MomentSection extends StatelessWidget {
               MomentCard(
                 moment: moment,
                 isOwn: isOwnSection && moment.authorId == currentUserId,
+                canReport:
+                    currentUserId.isNotEmpty &&
+                    moment.authorId != currentUserId,
                 feedService: feedService,
+                contentReportService: contentReportService,
                 onComments: () => onComments(moment),
               ),
           ],
@@ -567,15 +586,28 @@ class MomentCard extends StatefulWidget {
     required this.moment,
     required this.onComments,
     this.isOwn = false,
+    this.canReport = false,
     this.offlineService,
     this.feedService,
+    this.contentReportService,
     super.key,
   });
 
   final VoiceMoment moment;
   final VoidCallback onComments;
   final bool isOwn;
+
+  /// True only when the viewer is known AND is not the author. Kept
+  /// separate from [isOwn], which is false for a signed-out viewer too —
+  /// offering "report" to someone with no session is a control that can
+  /// only ever fail.
+  final bool canReport;
   final OfflineVoiceMomentService? offlineService;
+
+  /// Injection seam for the report action, matching [offlineService] and
+  /// [feedService]: production passes nothing, tests pass a fake so the
+  /// success and failure paths can be exercised without a Firebase app.
+  final ContentReportService? contentReportService;
 
   /// Backs the like control. When null the heart renders as a disabled
   /// indicator rather than a button that silently does nothing.
@@ -714,6 +746,25 @@ class _MomentCardState extends State<MomentCard> {
           ),
         );
     }
+  }
+
+  /// Reports this Voice Moment to moderation.
+  ///
+  /// `voiceMoment` is one of the three targets `createContentReport`
+  /// already accepts, and until now nothing in the app called it — the
+  /// feed rendered other people's audio with no way to say anything was
+  /// wrong with it.
+  Future<void> _report() async {
+    await reportContent(
+      context: context,
+      service: widget.contentReportService,
+      content: ReportedContent.voiceMoment(momentId: widget.moment.id),
+      title: 'Report this Voice Moment',
+      subtitle:
+          'Your report goes to the YO Voice moderation team with this '
+          'Moment attached. ${widget.moment.authorName} is not told who '
+          'reported it.',
+    );
   }
 
   String _age(DateTime? createdAt) {
@@ -869,6 +920,25 @@ class _MomentCardState extends State<MomentCard> {
                 ),
               ),
               const Spacer(),
+              // Not offered on your own Moment: reporting yourself is not
+              // a real intent, and each such report is a row a moderator
+              // opens before finding nothing to do. Deleting your own
+              // Moment is the action that belongs there instead, and it
+              // already exists elsewhere.
+              if (widget.canReport && !moment.isDeleted)
+                IconButton(
+                  key: ValueKey('report-moment-${moment.id}'),
+                  constraints: const BoxConstraints.tightFor(
+                    width: 44,
+                    height: 44,
+                  ),
+                  tooltip: 'Report this Voice Moment',
+                  onPressed: _report,
+                  icon: const Icon(
+                    Icons.flag_outlined,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
               if (playable && moment.isPublished && !moment.isDeleted)
                 IconButton(
                   key: ValueKey('download-moment-${moment.id}'),

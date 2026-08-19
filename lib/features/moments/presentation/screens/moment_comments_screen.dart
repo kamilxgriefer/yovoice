@@ -3,15 +3,34 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
+import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class MomentCommentsScreen extends StatefulWidget {
-  const MomentCommentsScreen({required this.moment, super.key});
+  const MomentCommentsScreen({
+    required this.moment,
+    this.firestore,
+    this.auth,
+    this.momentService,
+    this.contentReportService,
+    super.key,
+  });
 
   final VoiceMoment moment;
+
+  /// Injection seams, matching the pattern on ChatScreen and
+  /// MomentsScreen: production passes nothing and gets the live
+  /// singletons, tests pass fakes. Added with the report action because
+  /// a safety path that cannot be exercised in a test is a safety path
+  /// nobody can prove still works after the next change.
+  final FirebaseFirestore? firestore;
+  final FirebaseAuth? auth;
+  final MomentService? momentService;
+  final ContentReportService? contentReportService;
 
   @override
   State<MomentCommentsScreen> createState() => _MomentCommentsScreenState();
@@ -25,10 +44,34 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
   static const _primary = Color(0xFFA51FFF);
 
   final TextEditingController _controller = TextEditingController();
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final MomentService _momentService = MomentService();
+  late final FirebaseFirestore _firestore =
+      widget.firestore ?? FirebaseFirestore.instance;
+  late final FirebaseAuth? _auth = _resolveAuth();
+  late final MomentService? _momentService = _resolveMomentService();
   bool _sending = false;
+
+  /// Both guarded the way MomentsScreen guards its services: without a
+  /// Firebase app these throw, and the screen must still render its
+  /// states rather than crash.
+  FirebaseAuth? _resolveAuth() {
+    if (widget.auth != null) return widget.auth;
+    try {
+      return FirebaseAuth.instance;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  MomentService? _resolveMomentService() {
+    if (widget.momentService != null) return widget.momentService;
+    try {
+      return MomentService();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String get _currentUid => _auth?.currentUser?.uid ?? '';
 
   CollectionReference<Map<String, dynamic>> get _comments => _firestore
       .collection('voiceMoments')
@@ -43,12 +86,13 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
 
   Future<void> _sendComment() async {
     final text = _controller.text.trim();
-    final user = _auth.currentUser;
-    if (text.isEmpty || user == null || _sending) return;
+    final user = _auth?.currentUser;
+    final service = _momentService;
+    if (text.isEmpty || user == null || service == null || _sending) return;
 
     setState(() => _sending = true);
     try {
-      await _momentService.createTextComment(
+      await service.createTextComment(
         momentId: widget.moment.id,
         text: text,
       );
@@ -115,12 +159,18 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
                             data['authorName'] as String? ?? 'YO Voice user';
                         final photo = data['authorPhotoUrl'] as String?;
                         final type = data['type'] as String? ?? 'text';
+                        final authorId = data['authorId'] as String? ?? '';
                         return _CommentCard(
                           name: name,
-                          authorId: data['authorId'] as String? ?? '',
+                          authorId: authorId,
                           photo: photo,
                           data: data,
                           isVoice: type == 'voice',
+                          momentId: widget.moment.id,
+                          commentId: comments[index].id,
+                          isOwn:
+                              authorId.isNotEmpty && authorId == _currentUid,
+                          contentReportService: widget.contentReportService,
                         );
                       },
                     );
@@ -188,12 +238,20 @@ class _CommentCard extends StatefulWidget {
     required this.photo,
     required this.data,
     required this.isVoice,
+    required this.momentId,
+    required this.commentId,
+    required this.isOwn,
+    this.contentReportService,
   });
   final String name;
   final String authorId;
   final String? photo;
   final Map<String, dynamic> data;
   final bool isVoice;
+  final String momentId;
+  final String commentId;
+  final bool isOwn;
+  final ContentReportService? contentReportService;
 
   @override
   State<_CommentCard> createState() => _CommentCardState();
@@ -226,6 +284,27 @@ class _CommentCardState extends State<_CommentCard> {
       await _player.play(UrlSource(url));
     }
     if (mounted) setState(() => _playing = !_playing);
+  }
+
+  /// Reports this comment.
+  ///
+  /// A voice reply is the one place in Moments where the abuse can be in
+  /// audio nobody has transcribed, so the report has to carry the exact
+  /// comment id — "report the person" would leave a moderator hunting
+  /// through a thread for which clip was meant.
+  Future<void> _report() async {
+    await reportContent(
+      context: context,
+      service: widget.contentReportService,
+      content: ReportedContent.voiceMomentComment(
+        momentId: widget.momentId,
+        commentId: widget.commentId,
+      ),
+      title: 'Report this comment',
+      subtitle:
+          'Your report goes to the YO Voice moderation team with this '
+          'comment attached. ${widget.name} is not told who reported it.',
+    );
   }
 
   @override
@@ -330,6 +409,26 @@ class _CommentCardState extends State<_CommentCard> {
               ],
             ),
           ),
+          // Fixed width beside an Expanded body, so it cannot be pushed
+          // off the card by a long comment or a large text scale. Hidden
+          // on your own comment for the same reason as elsewhere:
+          // self-reports are queue noise, not signal.
+          if (!widget.isOwn && widget.commentId.isNotEmpty)
+            IconButton(
+              key: ValueKey('report-comment-${widget.commentId}'),
+              constraints: const BoxConstraints.tightFor(
+                width: 40,
+                height: 40,
+              ),
+              padding: EdgeInsets.zero,
+              tooltip: 'Report this comment',
+              onPressed: _report,
+              icon: const Icon(
+                Icons.flag_outlined,
+                size: 18,
+                color: _MomentCommentsScreenState._muted,
+              ),
+            ),
         ],
       ),
     );

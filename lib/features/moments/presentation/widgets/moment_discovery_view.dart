@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
+import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
@@ -35,6 +37,8 @@ class MomentDiscoveryView extends StatefulWidget {
     required this.onRecord,
     this.discoveryService,
     this.feedService,
+    this.contentReportService,
+    this.auth,
     this.isVisible,
     this.playerFactory,
     super.key,
@@ -44,6 +48,15 @@ class MomentDiscoveryView extends StatefulWidget {
   final VoidCallback onRecord;
   final MomentDiscoveryService? discoveryService;
   final HomeFeedService? feedService;
+
+  /// Injection seam for the report action; production passes nothing.
+  final ContentReportService? contentReportService;
+
+  /// Injection seam for the viewer's identity. Needed because the report
+  /// action is hidden on your own Moment and for a viewer with no
+  /// session, and a surface whose "who am I" cannot be set in a test is
+  /// a surface whose safety control cannot be proved to appear.
+  final FirebaseAuth? auth;
 
   /// False while the shell is showing another tab. The desktop shell
   /// keeps every slot mounted in an IndexedStack — hidden children stay
@@ -95,7 +108,7 @@ class _MomentDiscoveryViewState extends State<MomentDiscoveryView> {
   /// throws outright when no Firebase app exists.
   String get _uid {
     try {
-      return FirebaseAuth.instance.currentUser?.uid ?? '';
+      return (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
     } catch (_) {
       return '';
     }
@@ -373,6 +386,7 @@ class _MomentDiscoveryViewState extends State<MomentDiscoveryView> {
                 playbackError: _playingId == moment.id ? _playbackError : null,
                 feedService: _feed,
                 currentUserId: _uid,
+                contentReportService: widget.contentReportService,
                 onTogglePlay: () => _togglePlay(moment),
                 onComments: () => widget.onOpenComments(moment),
                 onSeek: (target) async {
@@ -463,6 +477,7 @@ class _MomentStagePane extends StatelessWidget {
     required this.playbackError,
     required this.feedService,
     required this.currentUserId,
+    required this.contentReportService,
     required this.onTogglePlay,
     required this.onComments,
     required this.onSeek,
@@ -479,6 +494,7 @@ class _MomentStagePane extends StatelessWidget {
   final String? playbackError;
   final HomeFeedService? feedService;
   final String currentUserId;
+  final ContentReportService? contentReportService;
   final VoidCallback onTogglePlay;
   final VoidCallback onComments;
   final ValueChanged<Duration> onSeek;
@@ -593,6 +609,9 @@ class _MomentStagePane extends StatelessWidget {
             moment: moment,
             feedService: feedService,
             onComments: onComments,
+            canReport:
+                currentUserId.isNotEmpty && currentUserId != moment.authorId,
+            contentReportService: contentReportService,
           ),
           const SizedBox(height: 6),
         ],
@@ -798,16 +817,30 @@ class _ActionsRow extends StatelessWidget {
     required this.moment,
     required this.feedService,
     required this.onComments,
+    required this.canReport,
+    required this.contentReportService,
   });
 
   final VoiceMoment moment;
   final HomeFeedService? feedService;
   final VoidCallback onComments;
 
+  /// False on your own Moment, and while the viewer's uid is unknown —
+  /// offering "report" to a signed-out viewer would be a button that can
+  /// only fail.
+  final bool canReport;
+  final ContentReportService? contentReportService;
+
   @override
   Widget build(BuildContext context) {
     final service = feedService;
-    return Row(
+    // Wrap, not Row: three chips with a 76 px floor each still fit a
+    // narrow phone at the default text size, but at a 2x text scale they
+    // do not, and a safety control that has slid off the edge of the
+    // screen is the same as one that was never built.
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
       children: [
         if (service == null)
           const _CountChip(
@@ -840,7 +873,6 @@ class _ActionsRow extends StatelessWidget {
               );
             },
           ),
-        const SizedBox(width: 8),
         _CountChip(
           icon: Icons.mode_comment_outlined,
           label: moment.commentCount == 0
@@ -850,7 +882,29 @@ class _ActionsRow extends StatelessWidget {
           semanticLabel: 'Open comments for this Moment',
           onTap: onComments,
         ),
+        if (canReport)
+          _CountChip(
+            key: ValueKey('report-discovery-${moment.id}'),
+            icon: Icons.flag_outlined,
+            label: 'Report',
+            active: false,
+            semanticLabel: 'Report this Voice Moment',
+            onTap: () => unawaited(_report(context)),
+          ),
       ],
+    );
+  }
+
+  Future<void> _report(BuildContext context) async {
+    await reportContent(
+      context: context,
+      service: contentReportService,
+      content: ReportedContent.voiceMoment(momentId: moment.id),
+      title: 'Report this Voice Moment',
+      subtitle:
+          'Your report goes to the YO Voice moderation team with this '
+          'Moment attached. ${moment.authorName} is not told who reported '
+          'it.',
     );
   }
 
@@ -886,6 +940,7 @@ class _CountChip extends StatelessWidget {
     required this.active,
     required this.onTap,
     this.semanticLabel,
+    super.key,
   });
 
   final IconData icon;

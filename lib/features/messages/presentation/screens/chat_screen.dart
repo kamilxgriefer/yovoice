@@ -9,6 +9,8 @@ import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
+import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
+import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
@@ -24,6 +26,7 @@ class ChatScreen extends StatefulWidget {
     required this.otherPhotoUrl,
     this.messageService,
     this.auth,
+    this.contentReportService,
     super.key,
   });
 
@@ -39,6 +42,7 @@ class ChatScreen extends StatefulWidget {
   /// failure paths below can be exercised without a Firebase app.
   final MessageService? messageService;
   final FirebaseAuth? auth;
+  final ContentReportService? contentReportService;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -278,8 +282,38 @@ class _ChatScreenState extends State<ChatScreen> {
             Navigator.pop(sheetContext);
             unawaited(_deleteMessage(message));
           },
+          onReport: () {
+            Navigator.pop(sheetContext);
+            unawaited(_reportMessage(message));
+          },
         );
       },
+    );
+  }
+
+  /// Reports one message to moderation.
+  ///
+  /// This is the reachability that mattered: until now the only report
+  /// action in the product was on the *person*, so someone who saw a
+  /// single abusive message could report the account and hope a moderator
+  /// found the message. `createContentReport` records the exact
+  /// conversation and message id, which is what makes the report
+  /// reviewable at all — and the server re-checks that the caller is one
+  /// of the two participants, so this cannot be used to report a
+  /// conversation the caller is not in.
+  Future<void> _reportMessage(Message message) async {
+    await reportContent(
+      context: context,
+      service: widget.contentReportService,
+      content: ReportedContent.directMessage(
+        conversationId: widget.conversationId,
+        messageId: message.id,
+      ),
+      title: 'Report this message',
+      subtitle:
+          'Your report goes to the YO Voice moderation team with this '
+          'message attached. ${widget.otherDisplayName} is not told who '
+          'reported it.',
     );
   }
 
@@ -1440,6 +1474,7 @@ class _MessageActionsSheet extends StatelessWidget {
     required this.onReply,
     required this.onEdit,
     required this.onDelete,
+    required this.onReport,
   });
 
   final bool isMine;
@@ -1447,6 +1482,9 @@ class _MessageActionsSheet extends StatelessWidget {
   final VoidCallback onReply;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+
+  /// Offered only on someone else's message — see the tile below.
+  final VoidCallback onReport;
 
   @override
   Widget build(BuildContext context) {
@@ -1524,6 +1562,22 @@ class _MessageActionsSheet extends StatelessWidget {
                 title: const Text(
                   'Delete',
                   style: TextStyle(color: Color(0xFFFF668B)),
+                ),
+              ),
+            // Not offered on your own message. Reporting yourself is not
+            // a real intent, and every such report is a row a moderator
+            // has to open before discovering there is nothing to do.
+            if (!isMine)
+              ListTile(
+                key: const ValueKey('report-message'),
+                onTap: onReport,
+                leading: const Icon(
+                  Icons.flag_outlined,
+                  color: Color(0xFFFFB547),
+                ),
+                title: const Text(
+                  'Report message',
+                  style: TextStyle(color: Color(0xFFFFB547)),
                 ),
               ),
           ],

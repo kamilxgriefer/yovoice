@@ -78,6 +78,9 @@ class ReportService {
   /// Mirrors the `note.size() <= 300` bound in firestore.rules.
   static const int maxNoteLength = 300;
 
+  /// Mirrors the `contextPath.size() <= 300` bound in firestore.rules.
+  static const int maxContextPathLength = 300;
+
   /// Mirrors `duration.value(30, 's')` in firestore.rules.
   static const Duration reportCooldown = Duration(seconds: 30);
 
@@ -145,9 +148,28 @@ class ReportService {
   /// for a message that is its author, which rules verify against the
   /// message document itself.
   ///
-  /// Throws [ReportAlreadyFiledException] when this reporter has already
-  /// reported this exact target, so the UI can say so instead of
-  /// surfacing a permission error.
+  /// FAILURE COPY IS PART OF THIS CONTRACT. Every throw below is a
+  /// `StateError` carrying a finished sentence, so a caller running it
+  /// through `intentionalOrFriendly` shows the reporter which of
+  /// "already reported", "too fast", "daily limit reached" or
+  /// "something went wrong" applies. That mattered because the previous
+  /// version could not tell them apart: it tried to distinguish a
+  /// duplicate by reading its own report back, `reports` is
+  /// `allow read: if isActiveStaff()`, and so the read was denied every
+  /// time, [ReportAlreadyFiledException] was unreachable in production,
+  /// and all three states reached the user as
+  /// `[cloud_firestore/permission-denied] The caller does not have
+  /// permission…` on a safety path.
+  ///
+  /// Throws:
+  ///  - [ReportRateLimitedException] when the cooldown or the daily cap
+  ///    is holding, decided BEFORE the write from `reportLimits/{uid}`,
+  ///    which the owner may read. This is the only place the two limits
+  ///    can be told apart at all — rules answer both with the same
+  ///    refusal.
+  ///  - [ReportAlreadyFiledException] when the write is refused after
+  ///    that pre-flight passed. See the note at the catch for exactly
+  ///    how sound that inference is.
   Future<void> report({
     required ReportTargetType targetType,
     required String targetId,
@@ -159,6 +181,22 @@ class ReportService {
     final user = _user;
     if (reportedUserId == user.uid) {
       throw StateError('You cannot report yourself.');
+    }
+    // Bounded in rules at 300; a caller passing something longer would
+    // otherwise produce a refusal indistinguishable from a duplicate.
+    if (contextPath != null && contextPath.length > maxContextPathLength) {
+      throw ArgumentError('The report context is too long to record.');
+    }
+
+    // Decided here rather than inferred from the refusal, because rules
+    // cannot tell the reporter which limit stopped them and this
+    // document can.
+    final current = await allowance();
+    if (!current.canReport) {
+      throw ReportRateLimitedException(
+        retryAfter: current.retryAfter,
+        atDailyLimit: current.atDailyLimit,
+      );
     }
 
     final reportId = reportIdFor(
@@ -213,16 +251,32 @@ class ReportService {
     try {
       await batch.commit();
     } on FirebaseException catch (error) {
-      // A duplicate is a create against an existing document, which the
-      // staff-only update rule denies — indistinguishable from any other
-      // refusal at the wire level, so it is disambiguated here.
-      if (error.code == 'permission-denied' &&
-          (await report.get().then((snapshot) => snapshot.exists).catchError(
-            (_) => false,
-          ))) {
-        throw const ReportAlreadyFiledException();
-      }
-      rethrow;
+      if (error.code != 'permission-denied') rethrow;
+
+      // A duplicate is a create against an existing document; the create
+      // rule no longer applies and `allow update: if false` refuses it.
+      // At the wire level that is the same `permission-denied` as every
+      // other refusal, and the report itself CANNOT be read back to
+      // check — `reports` is staff-read-only by design, and opening it
+      // to reporters would expose the moderation workflow fields
+      // (assignee, acting moderator, review timestamps) that
+      // `moderateReport` adds later. So this is decided by elimination
+      // instead of by a read.
+      //
+      // Every other create precondition is satisfied by construction
+      // above: the document id, the field allowlist, `reporterId`, the
+      // server timestamp, `status: 'open'`, an enum reason, the
+      // truncated note, the bounded context path, and
+      // `reportedUserId != uid`. The rate limit was just checked against
+      // the document rules re-derive it from. What remains is a
+      // duplicate, a restricted reporter, or a target that vanished
+      // between the check and the write — and of those, only the
+      // duplicate is a state the reporter can act on or would recognise.
+      // Being told "you already reported this" in the rare other two is
+      // a far smaller failure than today's raw permission error, and
+      // neither of them loses a report that would otherwise have been
+      // filed.
+      throw ReportAlreadyFiledException();
     }
   }
 }
@@ -248,9 +302,66 @@ class ReportAllowance {
 }
 
 /// This reporter has already reported this exact target.
-class ReportAlreadyFiledException implements Exception {
-  const ReportAlreadyFiledException();
+///
+/// A `StateError` so `intentionalOrFriendly` in
+/// `lib/core/helpers/error_messages.dart` shows this sentence as written
+/// instead of laundering it into "You don't have permission to do that."
+class ReportAlreadyFiledException extends StateError {
+  ReportAlreadyFiledException()
+    : super('You already reported this. Our team still has it.');
 
   @override
-  String toString() => 'You have already reported this.';
+  String toString() => message;
+}
+
+/// A report was refused by one of the two rate limits, and this says
+/// which one.
+///
+/// The distinction is not cosmetic. "Wait 12 seconds" is a pause;
+/// "you have used your 20 reports for today" means the person in front
+/// of a sustained abuse campaign has to be told to use blocking instead,
+/// and cannot be left tapping a button that will keep refusing for
+/// hours.
+class ReportRateLimitedException extends StateError {
+  ReportRateLimitedException({
+    required this.retryAfter,
+    required this.atDailyLimit,
+  }) : super(_message(retryAfter, atDailyLimit));
+
+  /// How long until the holding limit lifts.
+  final Duration retryAfter;
+
+  /// True for the [ReportService.dailyLimit] cap, false for the
+  /// [ReportService.reportCooldown] between reports.
+  final bool atDailyLimit;
+
+  static String _message(Duration retryAfter, bool atDailyLimit) {
+    if (atDailyLimit) {
+      return "You've reached the limit of ${ReportService.dailyLimit} "
+          'reports in 24 hours. You can report again in '
+          '${_humanize(retryAfter)}. If someone is still bothering you, '
+          'block them in the meantime.';
+    }
+    return 'You just sent a report. Please wait '
+        '${_humanize(retryAfter)} before sending another.';
+  }
+
+  static String _humanize(Duration remaining) {
+    // Rounded up, never down: telling someone to wait 12 seconds when it
+    // is really 12.6 produces one more refusal.
+    if (remaining <= Duration.zero) return 'a moment';
+    if (remaining.inMinutes < 1) {
+      final seconds = (remaining.inMilliseconds / 1000).ceil();
+      return '$seconds second${seconds == 1 ? '' : 's'}';
+    }
+    if (remaining.inHours < 1) {
+      final minutes = (remaining.inSeconds / 60).ceil();
+      return '$minutes minute${minutes == 1 ? '' : 's'}';
+    }
+    final hours = (remaining.inMinutes / 60).ceil();
+    return 'about $hours hour${hours == 1 ? '' : 's'}';
+  }
+
+  @override
+  String toString() => message;
 }

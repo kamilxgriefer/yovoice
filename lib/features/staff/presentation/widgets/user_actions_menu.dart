@@ -2,8 +2,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/theme/role_identity.dart';
 import 'package:yovoice/features/moderation/data/services/report_service.dart';
+import 'package:yovoice/features/moderation/presentation/widgets/report_reason_sheet.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 
@@ -272,21 +274,60 @@ class UserActionsMenu extends StatelessWidget {
     });
   }
 
+  /// Reports the account.
+  ///
+  /// This used to file every report as `harassment` with the note
+  /// "Reported from profile", because there was no picker. That is worse
+  /// than collecting nothing: a moderator opening a queue where every row
+  /// says the same thing cannot triage it, cannot route a self-harm
+  /// escalation ahead of a spam complaint, and quickly learns to ignore
+  /// the field on the reports where it WAS accurate. The reason also
+  /// carries the repeat-offender signal — several reporters independently
+  /// choosing `impersonation` about one account means something that
+  /// several unrelated reasons do not.
+  ///
+  /// The provenance moved to `contextPath`, which is the field for it.
+  /// `note` is the reporter's own words and is left empty rather than
+  /// filled with a sentence the reporter never wrote.
   Future<void> _report(BuildContext context) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
+
+    final reason = await showReportReasonSheet(
+      context: context,
+      title: 'Report $targetName',
+      subtitle:
+          'Your report goes to the YO Voice moderation team. $targetName '
+          'is not told who reported them.',
+    );
+    if (reason == null) return;
+
     try {
       await (reportService ?? ReportService()).report(
         targetType: ReportTargetType.user,
         targetId: targetUid,
         reportedUserId: targetUid,
-        reason: ReportReason.harassment,
-        note: 'Reported from profile',
+        reason: reason,
+        contextPath: 'users/$targetUid',
       );
       messenger?.showSnackBar(
         SnackBar(content: Text('Reported $targetName. Our team will review.')),
       );
     } catch (error) {
-      messenger?.showSnackBar(SnackBar(content: Text(_readable(error))));
+      // ReportService throws StateErrors carrying finished sentences —
+      // "you already reported this", "wait 12 seconds", "you have used
+      // your 20 reports" — so this shows which one applies instead of
+      // the raw `[cloud_firestore/permission-denied]` string _readable
+      // used to leave behind.
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Text(
+            intentionalOrFriendly(
+              error,
+              fallback: 'Your report could not be sent. Please try again.',
+            ),
+          ),
+        ),
+      );
     }
   }
 
