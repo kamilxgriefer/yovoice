@@ -10,6 +10,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/from_your_clubs.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/discover_clubs_rail.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
@@ -60,7 +61,11 @@ class _HomeScreenState extends State<HomeScreen> {
   late final Stream<List<VoiceMoment>> _moments;
   late final Stream<List<FriendUser>> _friends;
   late final Stream<List<VoiceRoom>> _rooms;
-  late final Stream<List<Club>> _clubs;
+
+  /// Not `final`: a Firestore snapshot subscription is terminated by its
+  /// first error, so the rail's "Try again" has to hand the StreamBuilder a
+  /// freshly subscribed stream rather than the dead one.
+  late Stream<List<Club>> _clubs;
   late final Stream<UserProfile> _profile;
 
   @override
@@ -71,6 +76,11 @@ class _HomeScreenState extends State<HomeScreen> {
     _rooms = _roomService.watchLivePublicRooms();
     _clubs = _feedService.watchSuggestedClubs();
     _profile = _profileService.watchCurrentProfile();
+  }
+
+  void _reloadSuggestedClubs() {
+    if (!mounted) return;
+    setState(() => _clubs = _feedService.watchSuggestedClubs());
   }
 
   Future<void> _openNotifications() async {
@@ -703,50 +713,22 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// "Discover clubs". Every state the stream can be in is rendered by
+  /// [DiscoverClubsRail] — including the two this section used to collapse
+  /// into an invisible `SizedBox.shrink()`, which is how a permission
+  /// denial on `clubs` stayed hidden for the whole life of the product.
   Widget _suggestedClubs() {
     return StreamBuilder<List<Club>>(
       stream: _clubs,
-      builder: (context, snapshot) {
-        final clubs = snapshot.data ?? const <Club>[];
-        if (clubs.isEmpty) return const SizedBox.shrink();
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(18, 4, 0, 22),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Discover clubs',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                height: 174,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.only(right: 18),
-                  itemCount: clubs.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 11),
-                  itemBuilder: (context, index) {
-                    final club = clubs[index];
-                    return _ClubCard(
-                      club: club,
-                      onTap: () => Navigator.of(context).push<void>(
-                        MaterialPageRoute<void>(
-                          builder: (_) => ClubOverviewScreen(clubId: club.id),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
+      builder: (context, snapshot) => DiscoverClubsRail(
+        snapshot: snapshot,
+        onOpenClub: (club) => Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => ClubOverviewScreen(clubId: club.id),
           ),
-        );
-      },
+        ),
+        onRetry: _reloadSuggestedClubs,
+      ),
     );
   }
 
@@ -1298,68 +1280,6 @@ class _Action extends StatelessWidget {
         foregroundColor: active
             ? const Color(0xFFFF5F86)
             : const Color(0xFFA79DAF),
-      ),
-    );
-  }
-}
-
-class _ClubCard extends StatelessWidget {
-  const _ClubCard({required this.club, required this.onTap});
-  final Club club;
-  final VoidCallback onTap;
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 155,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(22),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: const Color(0xFF14101D),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: const Color(0xFF352642)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              CircleAvatar(
-                radius: 28,
-                backgroundImage: club.avatarUrl?.isNotEmpty == true
-                    ? NetworkImage(club.avatarUrl!)
-                    : null,
-                child: club.avatarUrl?.isNotEmpty == true
-                    ? null
-                    : Text(club.initial),
-              ),
-              const Spacer(),
-              Text(
-                club.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${club.memberCount} members',
-                style: const TextStyle(color: Color(0xFFA79DAF), fontSize: 11),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'View club',
-                style: TextStyle(
-                  color: Color(0xFFC76DFF),
-                  fontWeight: FontWeight.w800,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

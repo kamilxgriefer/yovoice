@@ -212,6 +212,11 @@ class _DesktopHomeState extends State<DesktopHome> {
         final live = snapshot.data ?? const <VoiceRoom>[];
         // Every room Home knows about, from the two existing sources.
         final recommended = live;
+        // A failed room query is NOT an empty room list. Folding the two
+        // together printed "start one and your community will see it here"
+        // over a permission denial or a dead connection — advice that
+        // cannot help, on a page whose real state is unknown.
+        final roomsUnavailable = snapshot.hasError || _liveRooms == null;
 
         return Builder(
           builder: (context) {
@@ -251,7 +256,12 @@ class _DesktopHomeState extends State<DesktopHome> {
                   'Rooms for you',
                   onViewAll: widget.onSeeAllRooms,
                 ),
-                if (board.isEmpty)
+                if (roomsUnavailable)
+                  const _HomeSectionNote(
+                    'Live rooms could not be loaded. Check your connection '
+                    'and try again.',
+                  )
+                else if (board.isEmpty)
                   const _HomeSectionNote(
                     'No rooms to show yet — start one and your community '
                     'will see it here.',

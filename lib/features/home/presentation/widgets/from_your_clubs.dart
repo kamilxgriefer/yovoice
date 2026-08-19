@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
@@ -33,6 +35,63 @@ class _FromYourClubsState extends State<FromYourClubs> {
     return StreamBuilder<List<Club>>(
       stream: _myClubs,
       builder: (context, snapshot) {
+        // Checked BEFORE `data`, and given its own visible state. Hiding
+        // the section on failure is what makes a broken read look like
+        // "you are in no clubs" — the same collapse that kept Home's
+        // Discover rail invisible for the life of the product. Genuinely
+        // having no clubs still hides the section, which is the documented
+        // behaviour above and unchanged.
+        if (snapshot.hasError) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(18, 10, 18, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'From your Clubs',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF14101D),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: const Color(0xFF352642)),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        Icons.cloud_off_rounded,
+                        size: 18,
+                        color: AppColors.error,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Your clubs could not be loaded. '
+                          '${friendlyErrorMessage(snapshot.error!, fallback: 'Check your connection and try again.')}',
+                          style: const TextStyle(
+                            color: Color(0xFF9E92A8),
+                            fontSize: 12.5,
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
         final clubs = snapshot.data ?? const <Club>[];
         if (clubs.isEmpty) return const SizedBox.shrink();
 

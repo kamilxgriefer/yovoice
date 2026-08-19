@@ -175,6 +175,11 @@ class _MobileHomeState extends State<MobileHome> {
       stream: _liveRooms,
       builder: (context, snapshot) {
         final live = snapshot.data ?? const <VoiceRoom>[];
+        // A failed room query is NOT an empty room list — see the same
+        // split in DesktopHome. Without it, "start one and your community
+        // will see it here" was printed over a denial or a dead
+        // connection, which is advice the reader cannot act on.
+        final roomsUnavailable = snapshot.hasError || _liveRooms == null;
 
         return StreamBuilder<List<FriendUser>>(
           stream: _friends,
@@ -219,7 +224,15 @@ class _MobileHomeState extends State<MobileHome> {
                   title: 'Rooms for you',
                   onSeeAll: widget.onOpenDiscover,
                 ),
-                if (rankRoomsForHome(live: live, recommended: live).isEmpty)
+                if (roomsUnavailable)
+                  const _MobileNote(
+                    'Live rooms could not be loaded. Check your connection '
+                    'and try again.',
+                  )
+                else if (rankRoomsForHome(
+                  live: live,
+                  recommended: live,
+                ).isEmpty)
                   const _MobileNote(
                     'No rooms to show yet — start one and your community '
                     'will see it here.',

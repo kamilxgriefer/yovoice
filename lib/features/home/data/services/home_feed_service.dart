@@ -124,10 +124,43 @@ class HomeFeedService {
     return controller.stream;
   }
 
+  /// Home's "Discover clubs" rail.
+  ///
+  /// ALL THREE EQUALITIES ARE LOAD-BEARING; dropping any one of them
+  /// makes the whole query permission-denied rather than merely broader.
+  /// `match /clubs/{clubId}`'s list rule reads
+  ///
+  ///     allow list: if isActiveAccount() &&
+  ///         resource.data.privacy == 'public' &&
+  ///         resource.data.type == 'community' &&
+  ///         resource.data.status == 'active';
+  ///
+  /// and a Firestore `list` rule is evaluated against the QUERY'S
+  /// CONSTRAINTS, never against the documents it would return: a clause on
+  /// a bare `resource.data.X` is provable only when the query itself
+  /// carries a matching equality filter on X. So this is not defence in
+  /// depth over a server-side filter — the filters below ARE how the query
+  /// is authorized, and the index is what excludes family rooms, suspended
+  /// clubs and private clubs from the result.
+  ///
+  /// This shape needs no composite index (a zigzag merge join serves three
+  /// equalities plus a limit), verified against production with the Admin
+  /// SDK. Documents missing `type` or `status` are absent from those
+  /// indexes and so never surface here, which is the correct direction for
+  /// a discovery rail to fail.
+  ///
+  /// Until 2026-08-19 this sent only `privacy == 'public'` while the rule
+  /// said `allow list: if false`, so the rail was denied for every account
+  /// — including a club owner listing their own public club — for the
+  /// entire life of the product. The denial was invisible because the rail
+  /// read `snapshot.data ?? []` with no `hasError` branch; the error state
+  /// added alongside this change is what keeps a future denial audible.
   Stream<List<Club>> watchSuggestedClubs({int limit = 8}) {
     return _firestore
         .collection('clubs')
         .where('privacy', isEqualTo: 'public')
+        .where('type', isEqualTo: 'community')
+        .where('status', isEqualTo: 'active')
         .limit(limit)
         .snapshots()
         .map((snapshot) {
