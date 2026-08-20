@@ -5792,3 +5792,45 @@ loaded counts — real numbers, just not live. `MomentCard` moved to its own
 file with a re-export from `moments_screen.dart`, so importers are untouched.
 Playback, like, comment, report and offline download all survive behind the
 new tile/sheet presentation.
+
+## ADR-096: firestore.indexes.json mirrors the deployed index state exactly — a console-created exemption is backported to the repo the day it is found
+
+**Context.** `adminDeleteClub` sweeps the `users/{uid}/clubs` projections
+with `db.collectionGroup("clubs").where("clubId", "==", clubId)`
+(`functions/admin/clubs.js:1005`) — the only `collectionGroup("clubs")`
+query in the codebase. Firestore refuses a collection-group query unless a
+COLLECTION_GROUP-scope single-field exemption exists for that field, and
+the emulator does not enforce this (ADR-007), so the suite proves nothing
+about it. A background review flagged that `firestore.indexes.json` has
+overrides for `rooms.roomId`, `participants.userId`, `roomMembers.userId`
+and `invites.inviteeId` — but none for `clubs.clubId`. Checking production
+(`firebase firestore:indexes --project yovoice-ec54a`, 2026-08-20) showed
+the OPPOSITE failure mode: the live project already has the `clubs.clubId`
+exemption (COLLECTION ASC, COLLECTION DESC, COLLECTION_GROUP ASC) —
+evidently created in the console and never backported — so club deletion
+works today, but the checked-in file had drifted BEHIND production.
+
+**Decision.** The exemption is backported to `firestore.indexes.json`
+verbatim, and the standing rule is: the repo file mirrors the deployed
+index state exactly. Anything created in the console gets backported the
+day it is discovered, because `firebase deploy --only firestore:indexes`
+treats the file as the source of truth and offers to DELETE live indexes
+and exemptions the file does not list (`--force` deletes them without
+asking).
+
+**Reasoning.** Drift in this direction is a delayed-action break: nothing
+is wrong until the next index deploy, at which point a working production
+query loses its index and `adminDeleteClub` dies at the projection-sweep
+`.get()` — after `deletionInProgress: true` is already set, leaving the
+club stuck in a retryable state no retry can complete. The full live
+config was diffed against the repo file (composite indexes and overrides,
+modulo the implicit `__name__` suffix the CLI export appends): this
+exemption was the only difference, and after the backport the two match
+exactly.
+
+**Consequences.** No deploy is needed — production already has the
+exemption; the change only removes the trap from the next index deploy.
+Index deploys remain a deliberate manual step (`docs/DEPLOYMENT.md`).
+The emulator cannot catch a missing single-field exemption any more than
+a missing composite index, so "the suite is green" remains non-evidence
+for any `collectionGroup()` query — same family as ADR-007 and ADR-082.
