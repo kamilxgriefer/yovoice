@@ -5581,3 +5581,146 @@ That is wrong, and the 2026-08-20 deploy is the evidence —
 `expireAbandonedVoiceCommentDraftsSchedule` all deployed alongside it. Cloud
 Scheduler is an existing dependency, so the sweeper is a materially cheaper
 piece of work than that note implies.
+
+## ADR-092: A scheduled sweep closes the room no client can close, and the roster is still the only thing that proves it empty
+
+**Context.** [ADR-091](#adr-091-the-roster-not-participantcount-decides-that-a-room-is-empty--and-the-leave-path-asks-the-server-to-prove-it)
+named one residual gap and left it open.
+`RoomVoiceEntryCoordinator.enter()` writes liveness first and calls
+`joinRoom` second — it has to, because `joinRoom` refuses a dormant room and
+`createLiveKitToken` refuses both a dormant room and a caller with no
+participant row. When that join fails the coordinator returns
+`RoomVoiceEntryOutcome.failed` and does **not** call `leaveRoomSelf`: there is
+nothing to leave, the roster row was never written. The room is left
+`isLive: true, participantCount: 0` with an empty `participants`
+subcollection, and `watchLivePublicRooms` keeps advertising it on Home and
+Discover. A process death between the two calls produces the identical
+document and no client can repair it at all.
+
+`executeLeaveRoom` deliberately does not fix this: it returns early when the
+caller holds no participant row, and extending the repair there would let any
+signed-in account drop `isLive` on a live room during somebody else's
+start→join window — a denial-of-service lever on a public room.
+
+**Decision.** A scheduled `sweepStrandedLiveRoomsSchedule`
+(`functions/rooms/liveness_sweeper.js`, `europe-west1`, every 5 minutes)
+closes rooms that have been `isLive: true` with an **empty roster** for longer
+than a 5-minute grace period, setting `isLive: false`, `participantCount: 0`
+and `endedAt`, then calling LiveKit `endRoom` and clearing the
+`activeVoiceSessions` mirrors exactly as `executeEndRoomVoice` does.
+
+Four properties carry the safety:
+
+1. **The roster decides, never `participantCount`.** The counter is only ever
+   written (repaired to 0), never read to decide anything — a stale-low value
+   would turn the sweep into an eviction, because `endRoom()` disconnects
+   everyone.
+2. **Every decision is re-made inside a transaction** against a fresh read of
+   the room and the roster. The scan is a hint; the transaction is the
+   verdict. This is the same defence `onlyIfEmpty` uses, and without it the
+   sweep would be the very bug that flag exists to prevent.
+3. **`updatedAt` is the age anchor, and it is provably sound.** No server path
+   writes `isLive: true` — every server write of that field is `false` — so
+   the client is its only writer, and both client branches that may write it
+   (`roomVoiceStartAllowed()` and `hostRoomUpdateAllowed()`'s start branch)
+   require `request.resource.data.updatedAt == request.time`. Every later
+   write moves it forward, so the anchor can only ever be too conservative,
+   never too eager.
+4. **A deleting or explicitly moderated room is skipped**, because
+   `executeDeleteRoom` and `executeSetRoomStatus` own those teardowns.
+
+`status` is read through `roomIsActive()` in memory rather than filtered in
+the query, so the 25 production rooms with no `status` field are covered.
+
+**Reasoning.** The repair belongs on a schedule precisely because a schedule
+has no caller to impersonate — that is what buys the fix without the
+denial-of-service lever. Five minutes is set by the window it must not
+interrupt: the start→join gap is one Firestore round trip, so the grace period
+carries two orders of magnitude of headroom while still clearing a ghost
+inside one sweep of the same Home screen. The query is a **bare equality on
+`isLive`**, served by Firestore's automatic single-field index, so this
+function cannot fail its first production run on a missing composite — the
+failure mode that left Premium never expiring for any account
+([DEPLOYMENT.md](DEPLOYMENT.md)). Per-room failures are isolated and re-raised
+in aggregate so one unreachable SFU room cannot cost the others their sweep,
+nor turn a broken run green.
+
+**Consequences.** No Firestore field, collection or document shape moved, and
+**no index change is required**: `getAdminDashboard` and `getStaffOverview`
+already run a strictly harder version of the same query in production, and
+`deleteActiveVoiceSessionsForRoom`'s collection-group lookup is backed by the
+existing `rooms.roomId` `COLLECTION_GROUP` override. Cloud Scheduler is an
+**existing** deploy dependency — seven `onSchedule` functions already ship —
+so this adds a schedule, not a dependency.
+
+**What this does not fix, stated rather than implied.** A client that crashes
+**while in a room** leaves its participant row behind. That roster is not
+empty, so this sweep skips it and the room stays live with a ghost on stage.
+Repairing that needs per-participant liveness only the SFU can honestly
+report — the unexported `receiveLiveKitAchievementWebhook`, which is Roadmap
+item 0h and which DEPLOYMENT.md already names as the real fix for the
+`voiceMinutes` and live-presence gaps. This sweep is scoped to the
+empty-roster case on purpose and is not a substitute for that work.
+
+## ADR-092: An absent `status` means active — one reading of the field, shared by the rules and every callable
+
+**Context.** ADR-088 made entering a room perform the `isLive: true`
+transition. Hours after that shipped, an audit of the deployed code found that
+five callables gated on a bare `room.status !== "active"` while
+`firestore.rules` reads the same field as `.get('status', 'active')`
+everywhere. **25 of the 45 rooms in production carry no `status` field at all**
+— they predate it.
+
+The two readings therefore disagreed on the majority production shape, and the
+disagreement was the defect rather than a cosmetic inconsistency:
+
+1. The deployed ruleset **authorised** the client's `isLive: true` write on a
+   legacy room.
+2. `authorizeRoomVoiceAccess` (functions/livekit/token.js) then **refused** the
+   LiveKit token for that same room with *"This room is not currently live."* —
+   the exact sentence the whole wave existed to remove.
+3. `executeEndRoomVoice` read the field the same bare way, so the room could not
+   be switched off either. It was left flipped live with nobody able to connect.
+
+**Decision.** One helper, `roomIsActive(room)` in `functions/utils/firestore.js`,
+returning `String(room?.status ?? "active") === "active"`. It is the only
+reading of the field, used by the LiveKit token gate, participant removal, host
+moderation, own-mute and end-voice. `executeLeaveRoom` had already defaulted the
+field correctly and converges on the helper rather than keeping a second copy.
+
+**Reasoning.** A legacy document is not a suspended one. Moderation writes an
+EXPLICIT `"suspended"` / `"closed"` / `"archived"` value, so every genuinely
+inactive room carries the field — which is precisely why defaulting the absent
+case to active loosens nothing moderation depends on. The alternative,
+backfilling `status: "active"` onto 25 documents, was rejected: it fixes the
+data once and leaves the next legacy field to produce the same class of bug,
+whereas agreeing with the ruleset fixes the reading. Two regression cases pin
+the boundary — a legacy room that is `deletionInProgress` is still refused, and
+an explicitly suspended room is still refused — and both pass on either side of
+the change, which is what proves the default did not widen the gate.
+
+**Consequences.** Client and server now answer "is this room active?"
+identically, so a room the rules let you start is a room the token endpoint will
+serve. **The achievements webhook gate was deliberately left alone**: it rejects
+these rooms through a separate `roomType` allowlist regardless, so changing its
+status read would alter no behaviour, and it is not currently delivering.
+
+**The same root cause had a client-side twin, fixed with it.**
+`RoomService.leaveRoom` classified rooms with `RoomType.fromValue`, which
+answers `temporary` for anything that is not the string `'community'` —
+including the 24 production rooms with no `roomType` field. Routed through the
+temporary branch, a host merely backing out of such a room would end the voice
+session for everyone still talking: that call is unconditional, passes no
+`onlyIfEmpty`, and never reaches `leaveRoomSelf`, so the caller's own
+participant row is left behind too. The branch now requires the literal field.
+Production carries exactly three values — `community` (6), `temporary` (15),
+absent (24) — so a room that genuinely opted into temporary still ends when its
+host leaves, unchanged.
+
+**The lesson worth keeping is about defaults, not about `status`.** Any field
+added after launch splits production into documents that have it and documents
+that do not, and every reader must then agree on what absence means. The rules
+made that choice explicitly with `.get(field, default)`; the callables made it
+implicitly and differently. **When a rule uses `.get` with a default, the
+server code reading the same field must use the same default, and the cheapest
+way to guarantee that is one shared predicate rather than a convention.**

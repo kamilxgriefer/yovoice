@@ -1005,17 +1005,26 @@ Ordered by rough priority — re-prioritize freely, this isn't a queue.
 
 ### 0p. A member-started room can stay live with nobody in it
 
-- **Status**: **In flight and NOT landed.** As of 2026-08-20, with `HEAD` at
-  `b0f1062`, a concurrent session has **uncommitted working-tree changes** to
-  `functions/rooms/participants.js` and `firestore.rules` that address both
-  halves: `executeLeaveRoom` now ends the voice session when the last
-  participant leaves **any** room rather than only a lounge (proving emptiness
-  from the roster inside the transaction rather than from the denormalised
-  `participantCount`, so a stale-low counter cannot evict people who are still
-  talking), and `executeEndRoomVoice` gains an `onlyIfEmpty` roster re-check.
-  Read from the working tree, not from a commit — **confirm against `git log`
-  before picking this up or citing it as fixed.** The third sub-item below
-  (Start voice offered on an ended room) was not observed in that diff.
+- **Status**: **LANDED IN SOURCE, NOT DEPLOYED (2026-08-20).** Both halves are
+  committed. `3ff80e6` made `executeLeaveRoom` end the voice session when the
+  last participant leaves **any** room rather than only a lounge — proving
+  emptiness from the roster inside the transaction rather than from the
+  denormalised `participantCount`, so a stale-low counter cannot evict people
+  who are still talking — and gave `executeEndRoomVoice` an `onlyIfEmpty`
+  roster re-check ([ADR-091](Decisions.md#adr-091-the-roster-not-participantcount-decides-that-a-room-is-empty--and-the-leave-path-asks-the-server-to-prove-it)).
+  The residual gap that fix named — the `RoomVoiceEntryCoordinator` start→join
+  window, where the liveness write lands and the join fails, leaving a room
+  live with **no participant row for anyone to leave** — is closed by the
+  scheduled `sweepStrandedLiveRoomsSchedule`
+  ([ADR-092](Decisions.md#adr-092-a-scheduled-sweep-closes-the-room-no-client-can-close-and-the-roster-is-still-the-only-thing-that-proves-it-empty),
+  `functions/rooms/liveness_sweeper.js`, 14 emulator-backed tests). **Deploy
+  is pending** — see
+  [DEPLOYMENT.md](DEPLOYMENT.md#pending-release-sweepstrandedliveroomsschedule).
+  The third sub-item below (Start voice offered on an ended room) remains
+  unaddressed.
+- **Still open after this**: a client that crashes **while in a room** leaves
+  its participant row behind, so the roster is not empty and the sweeper
+  correctly skips it. That case needs item 0h.
 - **Description**: The server drops `isLive` at zero participants **only for
   lounges**, so an ordinary room started by a member under
   `membersCanStartVoice` can remain live and empty. Separately,

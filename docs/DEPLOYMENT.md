@@ -717,6 +717,86 @@ The real fix is the same unexported webhook that would repair
 LiveKit's own `participant_left` / `participant_connection_aborted`
 events, which the SFU emits on a crash.
 
+### Pending release: `sweepStrandedLiveRoomsSchedule`
+
+The scheduled repair for a room left `isLive: true` with an empty
+`participants` subcollection — the `RoomVoiceEntryCoordinator` start→join
+window, and any process death inside it. Full reasoning in
+[ADR-092](Decisions.md#adr-092-a-scheduled-sweep-closes-the-room-no-client-can-close-and-the-roster-is-still-the-only-thing-that-proves-it-empty).
+
+**Cloud Scheduler is NOT a new deploy dependency, and the note that said it
+would be is wrong.** ADR-091 recorded this sweeper as "the first scheduled
+function in `functions/`". It would not have been. Seven `onSchedule`
+functions already exist and ship from this codebase:
+
+| Function | Source |
+|---|---|
+| `publishPublicStatsSchedule` | `stats/public_stats.js` |
+| `publishPublicShowcaseSchedule` | `marketing/public_showcase.js` |
+| `expirePremiumIdentity` | `premium/entitlements.js` |
+| `reconcileAchievementsV1` | `achievements/migration.js` |
+| `processPendingContentCleanupSchedule` | `integrity/stage_b_functions.js` |
+| `expireAbandonedMomentDraftsSchedule` | `integrity/stage_b_functions.js` |
+| `expireAbandonedVoiceCommentDraftsSchedule` | `integrity/stage_b_functions.js` |
+
+`publishPublicStatsSchedule` is confirmed ACTIVE in production in
+`europe-west1` (see the 2026-08-20 table above), so the Cloud Scheduler API,
+its service account and its region are all already provisioned on
+`yovoice-ec54a`. This release adds an eighth schedule to an existing
+mechanism. ADR-091's note is corrected in place.
+
+**No index deploy is required, and that was checked rather than assumed.**
+
+- The discovery query is a **bare equality** — `rooms.where("isLive","==",true)`
+  — served by Firestore's automatic single-field index. `rooms.isLive` has no
+  `fieldOverrides` entry, so the [indexing
+  trap](Firebase.md#a-fieldoverrides-entry-replaces-automatic-single-field-indexing)
+  does not apply to it; only `rooms.roomId` is overridden.
+- Two already-deployed functions run a **strictly harder** version of the same
+  query today — `getAdminDashboard` and `getStaffOverview` both filter
+  `status == "active"` **and** `isLive == true`. If those work in production,
+  this one does.
+- `deleteActiveVoiceSessionsForRoom()` is reused unchanged and its
+  `collectionGroup("rooms").where("roomId","==",…)` lookup is backed by the
+  **existing** `rooms.roomId` `COLLECTION_GROUP` override.
+
+This matters because the comparable mistake is on the record: the
+`entitlements(isPremium, currentPeriodEnd)` composite had never been deployed,
+so the scheduled `expirePremiumIdentity` failed every run and **Premium never
+expired for any account** — invisibly, because the emulator does not enforce
+composite indexes. A schedule that throws `FAILED_PRECONDITION` on its first
+production run looks identical in `functions:list` to one that works.
+
+**The query deliberately does not filter on `status`.** 25 of the 45
+production rooms carry no `status` field, and a `where("status","==","active")`
+clause would drop every one of them — the same defect `roomIsActive()` was
+written to fix in `b7c6d99`. The filter is applied in memory instead. Note in
+passing that the two dashboard queries above **do** carry that clause, so both
+undercount live rooms on the legacy shape; that is pre-existing and untouched
+by this release.
+
+Safe release order:
+
+1. Deploy Cloud Functions and confirm `sweepStrandedLiveRoomsSchedule` appears
+   in `firebase functions:list` as a v2 scheduled function in `europe-west1`.
+2. Confirm the Cloud Scheduler job exists and is ENABLED, then watch **one**
+   run complete. A first run that throws is the failure this section exists to
+   catch, so read the log rather than trusting the deploy output.
+3. Nothing else. There is no client, rules, index or Storage change in this
+   release, and no ordering constraint against the app — the function only
+   ever *narrows* what Home and Discover show, so an older client cannot break
+   on it.
+
+**Rollback is deleting the Cloud Scheduler job**, not redeploying: the
+function is idempotent and stateless, and pausing the job stops all writes
+immediately. Nothing it writes needs undoing — `isLive: false` with a stamped
+`endedAt` is the same state a normal leave produces.
+
+**Verify the grace period before widening it.** `GRACE_PERIOD_SECONDS` is 300
+and the floor is 60. Lowering it toward the start→join window is the one
+change to this file that could make it evict a real user; raising it only
+makes ghosts linger longer.
+
 ### Pending release: consent-backed public showcase
 
 `publicShowcase/live` is a separate pinned, server-owned projection for the
@@ -776,6 +856,21 @@ document `displayNameMatchesCanonical` compares against), and its write shape
 last changed in `714946b`, long before this wave. `ClubChatService` writes
 nine keys, all within its allowlist, with `isDeleted: false` and
 `editedAt: null`. Neither allowlist refuses anything the shipped client sends.
+
+**A POST-RELEASE AUDIT FOUND A DEFECT IN THIS WAVE, fixed and redeployed in
+`b7c6d99`.** Five callables gated on a bare `room.status !== "active"` while
+the ruleset reads `.get('status','active')`, and 25 of 45 production rooms have
+no `status` field. The rules authorised the `isLive: true` write and the token
+endpoint then refused the same room with *"This room is not currently live."* —
+so for those 25 rooms the wave did not fix the reported bug, it relocated it,
+and left the room flipped live with no way to switch it off. See
+[ADR-092](Decisions.md#adr-092-an-absent-status-means-active--one-reading-of-the-field-shared-by-the-rules-and-every-callable).
+
+Two things this says about the release above: the byte-exact read-backs proved
+the right BYTES shipped and proved nothing about whether they WORK, and the
+production shape census — run for the rules and not for the callables — would
+have caught it had it been applied to both sides. New rooms were never
+affected: `createRoom` writes `status`, `roomType` and `experience`.
 
 **UNVERIFIED, and it matters.** No production round trip was performed for
 room voice: signing in requires entering a password, which the operating
