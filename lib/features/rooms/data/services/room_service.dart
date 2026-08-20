@@ -437,7 +437,30 @@ class RoomService {
       }
 
       final existing = await transaction.get(participant);
-      if (existing.exists) return;
+      if (existing.exists) {
+        // RE-ENTRY, NOT A FRESH JOIN. The row survives a tab close, a crash
+        // and any leave that did not complete, so this is the ordinary path
+        // back into a room — not an edge case.
+        //
+        // The stored self-mute must not outlive the session it belonged to.
+        // `VoiceCallService.join()` opens the microphone on connect, so a row
+        // still carrying `isMuted: true` from a previous visit would describe
+        // a person as muted while they are audibly speaking, and every other
+        // participant would render a mute badge on their avatar that nothing
+        // could clear.
+        //
+        // Only the caller's OWN flag is touched. `hostMuted` and `serverMuted`
+        // are left exactly as they are — the rules pin both on this update,
+        // and the token honours them independently, so a moderator mute
+        // survives re-entry the way it must.
+        if ((existing.data() ?? const <String, dynamic>{})['isMuted'] == true) {
+          transaction.update(participant, {
+            'isMuted': false,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+        return;
+      }
 
       final count = (data['participantCount'] as num?)?.toInt() ?? 0;
       final max = (data['maxParticipants'] as num?)?.toInt();

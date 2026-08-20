@@ -189,14 +189,44 @@ async function authorizeRoomVoiceAccess(
   };
 }
 
+
+/**
+ * True when every participant of this room may publish, without being promoted.
+ *
+ * Mirrors `RoomExperience.fromValue` in
+ * lib/features/rooms/data/models/room_experience.dart: the enum has two values,
+ * the legacy string 'podcast' maps onto `broadcast`, and ANYTHING ELSE —
+ * including a room with no `experience` field, which is 27 of the 45 rooms in
+ * production — is a community room. The default is therefore "everyone speaks",
+ * matching the client's own reading of the same field.
+ */
+function everyoneMaySpeak(room) {
+  const experience = String(room?.experience ?? "community");
+  return experience !== "broadcast" && experience !== "podcast";
+}
+
 function deriveVoiceGrant(access, authenticatedUser) {
   const { room, participant, profile, communicationMuted } = access;
   const isHost = room.hostId === authenticatedUser.uid;
-  const isSpeaker = SPEAKING_ROLES.has(participant.role);
+  // A COMMUNITY ROOM IS A CONVERSATION, NOT A STAGE. Self-service joins are
+  // pinned to `role: 'listener'` by firestore.rules, so gating publish on the
+  // role alone made every non-host in a Family or Community room a permanent
+  // audience member who could never speak. Only a BROADCAST room has an
+  // audience that must be promoted; everywhere else everyone present may talk,
+  // which is what the product means by a community room.
+  const isSpeaker = SPEAKING_ROLES.has(participant.role) || everyoneMaySpeak(room);
   const canPublish =
     !communicationMuted &&
     (isHost || isSpeaker) &&
-    participant.isMuted !== true &&
+    // `participant.isMuted` — the person's OWN mute — is DELIBERATELY not
+    // consulted here. It is a track state, not a permission. Folding it in
+    // meant muting yourself revoked your right to publish: the client read the
+    // missing permission as "you are audience", replaced the mute toggle with
+    // a Listening label, and left no control to unmute with. The flag then
+    // persisted in Firestore, so the next token arrived without publish rights
+    // too and re-entering the room reproduced it. Only a moderator mute
+    // (`hostMuted`), a server mute (`serverMuted`) or a sanction
+    // (`communicationMuted`) may take publishing away.
     participant.hostMuted !== true &&
     participant.serverMuted !== true;
   const participantName = buildParticipantName(

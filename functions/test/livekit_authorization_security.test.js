@@ -346,3 +346,123 @@ describe("authorizeRoomVoiceAccess", () => {
     );
   });
 });
+
+// THE MICROPHONE PERMISSION ITSELF. Until 2026-08-20 nothing here exercised
+// `deriveVoiceGrant`'s publish decision, which is how a defect this visible
+// reached production: muting yourself revoked `canPublish`, the client read
+// the missing permission as "you are audience", replaced the mute toggle with
+// a Listening label — and left no control to unmute with. The flag persisted
+// in Firestore, so re-entering the room reproduced it from the fresh token.
+describe("publish permission", () => {
+  const actor = { uid: `${P}speaker-uid` };
+
+  function grantFor({
+    role = "listener",
+    experience = "community",
+    hostId = `${P}someone-else`,
+    isMuted = false,
+    hostMuted = false,
+    serverMuted = false,
+    communicationMuted = false,
+  } = {}) {
+    return deriveVoiceGrant(
+      {
+        room: { hostId, experience },
+        participant: {
+          userId: actor.uid,
+          displayName: "Speaker",
+          role,
+          isMuted,
+          hostMuted,
+          serverMuted,
+        },
+        profile: { displayName: "Speaker" },
+        communicationMuted,
+      },
+      actor,
+    );
+  }
+
+  test("muting YOURSELF never costs you the right to speak again", () => {
+    assert.equal(grantFor({ isMuted: true }).permissions.canPublish, true);
+    assert.equal(
+      grantFor({ role: "host", hostId: actor.uid, isMuted: true })
+        .permissions.canPublish,
+      true,
+      "a host who muted themselves must still be able to unmute",
+    );
+  });
+
+  test("a moderator mute, a server mute and a sanction all DO revoke it", () => {
+    assert.equal(grantFor({ hostMuted: true }).permissions.canPublish, false);
+    assert.equal(grantFor({ serverMuted: true }).permissions.canPublish, false);
+    assert.equal(
+      grantFor({ communicationMuted: true }).permissions.canPublish,
+      false,
+    );
+  });
+
+  test("a moderator mute outranks the participant's own unmuted state", () => {
+    assert.equal(
+      grantFor({ isMuted: false, hostMuted: true }).permissions.canPublish,
+      false,
+    );
+  });
+
+  // Self-service joins are pinned to `role: 'listener'` by firestore.rules,
+  // so gating publish on the role alone made every non-host in a Family or
+  // Community room a permanent audience member.
+  test("in a community room a plain listener may speak", () => {
+    assert.equal(grantFor({ role: "listener" }).permissions.canPublish, true);
+  });
+
+  test("a room with NO experience field is a community room", () => {
+    const grant = deriveVoiceGrant(
+      {
+        room: { hostId: `${P}other` },
+        participant: { userId: actor.uid, displayName: "S", role: "listener" },
+        profile: { displayName: "S" },
+        communicationMuted: false,
+      },
+      actor,
+    );
+    assert.equal(
+      grant.permissions.canPublish,
+      true,
+      "27 of 45 production rooms carry no experience field",
+    );
+  });
+
+  test("a BROADCAST room still has an audience that must be promoted", () => {
+    assert.equal(
+      grantFor({ role: "listener", experience: "broadcast" })
+        .permissions.canPublish,
+      false,
+    );
+    assert.equal(
+      grantFor({ role: "listener", experience: "podcast" })
+        .permissions.canPublish,
+      false,
+      "the legacy 'podcast' value is a broadcast room",
+    );
+    assert.equal(
+      grantFor({ role: "speaker", experience: "broadcast" })
+        .permissions.canPublish,
+      true,
+      "a promoted speaker publishes",
+    );
+    assert.equal(
+      grantFor({ role: "host", hostId: actor.uid, experience: "broadcast" })
+        .permissions.canPublish,
+      true,
+    );
+  });
+
+  test("canSubscribe is never taken away — a muted person still hears the room", () => {
+    assert.equal(grantFor({ hostMuted: true }).permissions.canSubscribe, true);
+    assert.equal(
+      grantFor({ communicationMuted: true }).permissions.canSubscribe,
+      true,
+    );
+  });
+});

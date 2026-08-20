@@ -188,6 +188,30 @@ const removeRoomParticipantSelf = onCall(CALLABLE_OPTIONS, (request) =>
  * lounge leave path (`roomParticipantLeaveRootExists` in firestore.rules)
  * mirrors that exact transition and the two must not drift.
  */
+
+/**
+ * The single answer to "may this participant publish audio?", shared by the
+ * moderation path and the self-mute path so the two cannot drift.
+ *
+ * Mirrors `deriveVoiceGrant` in ../livekit/token.js, which computes the same
+ * thing when the token is minted. A participant's OWN mute is not an input:
+ * only a moderator mute, a server mute or a sanction removes publishing.
+ * Outside a broadcast room every participant may speak without promotion,
+ * because self-service joins are pinned to `role: 'listener'` by the rules.
+ */
+function publishAllowed({
+  role,
+  room,
+  hostMuted,
+  serverMuted,
+  communicationMuted,
+}) {
+  const experience = String(room?.experience ?? "community");
+  const broadcast = experience === "broadcast" || experience === "podcast";
+  const maySpeak = role === "host" || role === "speaker" || !broadcast;
+  return maySpeak && !hostMuted && !serverMuted && !communicationMuted;
+}
+
 async function executeLeaveRoom(request, roomControl = null) {
   const auth = await requireActiveCaller(request);
   const roomId = normalizeText(request.data?.roomId, 128);
@@ -611,8 +635,18 @@ async function executeModerateRoomParticipant(
     const hostMuted = update.hostMuted ?? (participant.hostMuted === true);
     const serverMuted = participant.serverMuted === true;
     resulting = {
-      canPublish: (role === "host" || role === "speaker") &&
-        !isMuted && !hostMuted && !serverMuted && !communicationMuted,
+      // `isMuted` — the participant's OWN mute — is deliberately absent.
+      // See deriveVoiceGrant in ../livekit/token.js: a self-mute is a track
+      // state, and folding it into the permission is what left people unable
+      // to unmute themselves. A MODERATOR mute is `hostMuted`, and that one
+      // does revoke publishing, which is the whole point of this callable.
+      canPublish: publishAllowed({
+        role,
+        room,
+        hostMuted,
+        serverMuted,
+        communicationMuted,
+      }),
       canPublishData: !communicationMuted,
     };
   });
@@ -685,9 +719,16 @@ async function executeSetOwnParticipantMute(
        (expiresAt instanceof Timestamp && expiresAt.toMillis() > Date.now()));
     const role = String(participant.role ?? "listener");
     resulting = {
-      canPublish: (role === "host" || role === "speaker") &&
-        !isMuted && participant.hostMuted !== true &&
-        participant.serverMuted !== true && !communicationMuted,
+      // Muting yourself must NEVER cost you the right to speak again — that
+      // is the defect this whole change removes. The permission is recomputed
+      // here only so a stale grant cannot outlive a moderator action.
+      canPublish: publishAllowed({
+        role,
+        room,
+        hostMuted: participant.hostMuted === true,
+        serverMuted: participant.serverMuted === true,
+        communicationMuted,
+      }),
       canPublishData: !communicationMuted,
     };
   });
