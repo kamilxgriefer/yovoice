@@ -178,3 +178,59 @@ delta on top of it. Whatever reverted it is unidentified, and agents working
 in this repo have since been told not to run any path-reverting git command
 outside the files they own. Worth keeping in mind when several sessions share
 a tree — this documentation pass ran alongside three of them.
+
+## Addendum — the wave was released the same night (2026-08-20, ~02:00)
+
+Everything above was written while the wave was still unshipped. It shipped.
+`3ff80e6` → `12a0317`, then rules, Functions, indexes and Hosting in that
+order. The per-artifact verification lives in
+[DEPLOYMENT.md](../DEPLOYMENT.md#released-2026-08-20-the-reachability-wave);
+what follows is only what the release itself taught.
+
+**Two artifacts were read back from production and compared byte for byte** —
+the ruleset via `firebaserules.googleapis.com` (sha256 `7306fe2b3a9a537f`) and
+the deployed `main.dart.js` fetched over HTTPS (sha256 `8cbaae85b1584a9e`,
+5,969,115 bytes). Both matched the working tree exactly. This is the cheapest
+strong evidence available for a deploy and it should be the default, not a
+special measure.
+
+**The production read settled a design question the emulator could not.** Of
+45 rooms, 25 carry no `status`, 24 no `roomType`, 27 no `experience`. The
+`.get(field, default)` form in the voice-start guards is therefore load-bearing:
+a bare read would have denied the majority of production. All 3 club lounges
+carry the `clubId` field, so the `storedClubId` split costs nothing live. Zero
+rooms were stuck `isLive` with no participants, so the generalised teardown
+shipped onto a clean slate.
+
+**An index reporting `READY` is not proof the query works — run the query.**
+Both Moments feed queries were executed against production. The first attempt
+queried `moments` and failed with `FAILED_PRECONDITION` on both, looking exactly
+like the club-invite defect; the collection is `voiceMoments`. The trap that
+made the wrong reading convincing: the Firestore indexes REST endpoint returns
+**every** index in the database regardless of which collection is named in the
+path, so its output must be filtered on each resource's own `name`.
+
+**Two documented claims were stale and had to be corrected rather than obeyed.**
+`publishPublicStatsSchedule` was documented as deliberately undeployed behind
+three preconditions; the function had been rewritten since, all three no longer
+applied, and it deployed correctly — `publicStats/live` now holds
+`activeAccounts: 18` and `existingRooms: 45`, matching independent `count()`
+aggregates exactly. And the ADR-059 gate claimed the club moderation UI had
+never been rendered; 44 frames already existed and were re-inspected. Only
+Moments genuinely lacked rendering, and it now has
+`test/moments_discovery_screenshot.dart` — 16 frames, inspected.
+
+**The marketing site still carried a claim of the same species as the one this
+wave removed.** The hero read "18 people are here". `activeAccounts` counts
+accounts that exist, not people present; on a product with nobody signed in
+that was a quieter "2,481 people talking right now". It says "18 accounts" now,
+agreeing with the verified-totals section further down the page that already
+described the same figure honestly. Removing a fabricated NUMBER is not the
+same as removing a fabricated CLAIM, and the second is easier to miss.
+
+**Still unverified, and it is the important gap.** No signed-in round trip was
+performed against the live backend — signing in requires entering a password,
+which the operating agent does not do. Every room-voice claim rests on 1052
+Flutter tests, 709 Functions tests, 471 rules cases, 61 inspected screenshots
+and read-only production reads. **The first person to sign in should open a
+dormant room they host and press Start voice.**
