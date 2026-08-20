@@ -74,4 +74,13 @@ counters. It exits non-zero on any missing export or runtime failure.
   aggregate-only, while apply mode removes request email, neutralizes DM email
   snapshots and rewrites follow edges to the exact uid/time schema;
 - staff directory email is Auth-authoritative and staff display requires the
-  Auth role claim to agree with the server-owned role mirror.
+  Auth role claim to agree with the server-owned role mirror;
+- the scheduled stranded-room sweep closes a room left live with an empty
+  roster, and — the two properties that matter more than the rest — **never**
+  closes one somebody is on the roster of, nor one still inside its
+  start→join grace period. It also covers the legacy no-`status` shape, the
+  deleting/moderated skip, per-room failure isolation, and the reported scan
+  bound. This suite derives **its own Firestore project id**: its subject is a
+  query over the whole `rooms` collection, and `node --test test/*.test.js`
+  runs the files in parallel, so a room left live by a neighbouring suite
+  would otherwise land in its counters.

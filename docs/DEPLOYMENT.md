@@ -864,7 +864,37 @@ no `status` field. The rules authorised the `isLive: true` write and the token
 endpoint then refused the same room with *"This room is not currently live."* —
 so for those 25 rooms the wave did not fix the reported bug, it relocated it,
 and left the room flipped live with no way to switch it off. See
-[ADR-092](Decisions.md#adr-092-an-absent-status-means-active--one-reading-of-the-field-shared-by-the-rules-and-every-callable).
+[ADR-093](Decisions.md#adr-093-an-absent-status-means-active--one-reading-of-the-field-shared-by-the-rules-and-every-callable).
+
+**`sweepStrandedLiveRoomsSchedule` IS DEPLOYED, and it got there by accident —
+worth reading before trusting any deploy record in this file.** A concurrent
+session was writing the sweeper into the working tree while this session ran
+`git add -A` to commit the `status` fix. Its 331 lines of implementation, its
+342 lines of tests and its `index.js` export were swept into `b7c6d99`, whose
+message describes only the `status` fix, and the `firebase deploy --only
+functions` that followed put a **scheduled function that closes rooms** into
+production without its author ever verifying or releasing it.
+
+Checked after the fact rather than assumed, because the state was live either
+way:
+
+| Question | Answer |
+|---|---|
+| Is it actually deployed? | Yes — `sweepStrandedLiveRoomsSchedule`, v2 scheduled, `europe-west1`, in `functions:list` |
+| Has it closed anything wrongly? | No. **Zero** rooms carry an `endedAt` inside the last 12 hours |
+| Does it skip occupied rooms? | Yes. All 3 live production rooms have a roster of 1 and were left alone |
+| Do its tests pass? | 15 dedicated cases; 727 Functions tests overall, 0 failures |
+| Is its logic sound? | It closes only `isLive == true` with an **empty roster**, re-read inside the transaction, past a grace period, skipping `deletionInProgress` |
+
+So the outcome is fine and the function is staying. The process was not: **`git
+add -A` is unsafe in a tree another session is writing to**, and a commit
+message that does not describe everything in the commit makes the deploy record
+downstream of it wrong. Stage explicit paths when sessions share a tree.
+
+The version running in production is `b7c6d99`'s. The working tree has since
+gained a logging fix (passing the Error as an argument so `entryFromArgs` does
+not overwrite `message`) and formatting; the room-closing logic is byte-identical,
+so production behaviour is equivalent and the redeploy is for log quality.
 
 Two things this says about the release above: the byte-exact read-backs proved
 the right BYTES shipped and proved nothing about whether they WORK, and the

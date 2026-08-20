@@ -900,21 +900,48 @@ permission flags).
   path are untouched and unretested. See
   [ADR-088](Decisions.md#adr-088-entering-a-room-performs-the-liveness-transition-through-one-ordered-coordinator-that-mirrors-the-deployed-rule).
 
-- **OPEN, with an unlanded fix in the working tree — a member-started room can
-  stay live with nobody in it.** The server drops `isLive` at zero
+- **FIXED AND DEPLOYED 2026-08-20 — a member-started room could stay live
+  with nobody in it.** The server dropped `isLive` at zero
   participants **only for lounges**, which was survivable only while nothing
-  could set `isLive: true` on an ordinary room. `b0f1062` removes that
+  could set `isLive: true` on an ordinary room. `b0f1062` removed that
   protection: a Community room whose host opted into `membersCanStartVoice`,
-  started by a member who then leaves last, has no exit — `endRoomVoiceSelf`
-  is host-only and there is no scheduled sweeper — so it stays
-  `isLive: true, participantCount: 0` and keeps advertising itself on
+  started by a member who then left last, had no exit — `endRoomVoiceSelf` is
+  host-only and there was no scheduled sweeper — so it stayed
+  `isLive: true, participantCount: 0` and kept advertising itself on
   `watchLivePublicRooms` (Home, Discover) as a live room nobody is in.
-  Separately, `executeEndRoomVoice` re-checks nothing before tearing a room
-  down, and an ended room still offers Start voice to someone who never held
-  a participant row. **As of 2026-08-20 a concurrent session has uncommitted
-  changes to `functions/rooms/participants.js` and `firestore.rules`
-  addressing the first two** — confirm against `git log` before treating them
-  as landed. Tracked as Roadmap item 0p.
+  `3ff80e6` fixes it: the last participant out ends the session in **any**
+  room, and emptiness is proved from the roster inside the transaction rather
+  than from the denormalised `participantCount`
+  ([ADR-091](Decisions.md#adr-091-the-roster-not-participantcount-decides-that-a-room-is-empty--and-the-leave-path-asks-the-server-to-prove-it)).
+  `executeEndRoomVoice` gained the matching `onlyIfEmpty` re-check.
+  **Still open from this cluster**: an ended room still offers Start voice to
+  someone who never held a participant row. Tracked as Roadmap item 0p.
+
+- **FIXED AND DEPLOYED 2026-08-20 — a failed join stranded a room live with
+  an empty roster, and no client could ever close it.**
+  `RoomVoiceEntryCoordinator.enter()` writes liveness first and calls
+  `joinRoom` second (it must — `joinRoom` refuses a dormant room and
+  `createLiveKitToken` refuses both a dormant room and a caller with no
+  participant row). When the join failed the coordinator returned
+  `RoomVoiceEntryOutcome.failed` and did **not** call `leaveRoomSelf`: there
+  was nothing to leave, the roster row was never written. The room sat
+  `isLive: true, participantCount: 0` with an empty `participants`
+  subcollection, advertising itself on Home and Discover. A process death
+  between the two calls produced the identical document. The state was
+  self-healing only if somebody else happened to enter and leave; a room
+  nobody revisited stayed a ghost forever, and — because
+  `roomVoiceStartAllowed()` requires `isLive == false` — could never be
+  *started* again either, only joined. `executeLeaveRoom` deliberately does
+  **not** repair it: it returns early without a participant row, and
+  extending the repair there would let any signed-in account drop `isLive` on
+  a live room during somebody else's start→join window. Closed instead by the
+  scheduled `sweepStrandedLiveRoomsSchedule`, which has no caller to
+  impersonate
+  ([ADR-092](Decisions.md#adr-092-a-scheduled-sweep-closes-the-room-no-client-can-close-and-the-roster-is-still-the-only-thing-that-proves-it-empty)).
+  **Still open, and not the same bug**: a client that crashes *while in a
+  room* leaves its participant row behind, so the roster is not empty and the
+  sweeper correctly skips it — that needs the unexported LiveKit webhook
+  (Roadmap item 0h).
 
 - **OPEN, and it is the root cause of two other entries — `HomeScreen` is not
   mounted anywhere in the running app.** `main_shell` holds it at

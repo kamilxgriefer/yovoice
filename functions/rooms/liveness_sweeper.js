@@ -97,7 +97,10 @@ async function sweepStrandedLiveRooms({
   maxRooms = MAX_LIVE_ROOM_SCAN,
 } = {}) {
   const boundedGrace = Math.max(60, Number(gracePeriodSeconds) || 0);
-  const boundedMax = Math.max(1, Math.min(Number(maxRooms) || 0, MAX_LIVE_ROOM_SCAN));
+  const boundedMax = Math.max(
+    1,
+    Math.min(Number(maxRooms) || 0, MAX_LIVE_ROOM_SCAN),
+  );
   const startedAt = now();
   const cutoffMillis = startedAt.toMillis() - boundedGrace * 1000;
 
@@ -123,6 +126,11 @@ async function sweepStrandedLiveRooms({
   const truncated = snapshot.size > boundedMax;
   const candidates = snapshot.docs.slice(0, boundedMax);
 
+  // Resolved EAGERLY, before the loop, even on a run with nothing to close.
+  // `getProductionLiveKitControl()` throws when the LiveKit configuration is
+  // incomplete, and a misconfigured deploy should surface on the very next
+  // run rather than lying dormant until the first room actually needs
+  // closing — which is precisely when the failure costs something.
   const control = roomControl ?? getProductionLiveKitControl();
   const closed = [];
   const failures = [];
@@ -187,9 +195,13 @@ async function sweepStrandedLiveRooms({
       // The failure is re-raised in aggregate at the end so Cloud Scheduler
       // shows it instead of a green run that quietly did nothing.
       failures.push({ roomId: document.id, error });
-      logger.error("stranded room sweep failed for one room", {
+      // The error is passed as an ARGUMENT rather than folded into the
+      // payload. `entryFromArgs` in firebase-functions overwrites a
+      // `message` key on the payload object with a synthetic stack unless
+      // one of the arguments is a real Error — so `{ message: err.message }`
+      // silently loses the only detail worth logging.
+      logger.error("stranded room sweep failed for one room", error, {
         roomId: document.id,
-        message: error?.message ?? String(error),
       });
     }
   }

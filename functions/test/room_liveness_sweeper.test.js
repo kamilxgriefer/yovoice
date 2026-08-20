@@ -69,7 +69,9 @@ function fakeControl({ failOn = null } = {}) {
 // what would corrupt the global counters these tests assert on.
 async function wipeRooms() {
   const rooms = await db.collection("rooms").get();
-  await Promise.all(rooms.docs.map((document) => db.recursiveDelete(document.ref)));
+  await Promise.all(
+    rooms.docs.map((document) => db.recursiveDelete(document.ref)),
+  );
   await Promise.all([
     db.recursiveDelete(db.collection("activeVoiceSessions").doc(HOST)),
     db.recursiveDelete(db.collection("activeVoiceSessions").doc(GUEST)),
@@ -318,6 +320,38 @@ describe("stranded live room sweep", () => {
 
     assert.equal(outcome.closed, 0);
     assert.equal(outcome.skippedYoung, 1);
+  });
+
+  // A log line that says a room failed without saying WHY is the failure
+  // mode this asserts against: firebase-functions overwrites a `message` key
+  // on the payload with a synthetic stack unless a real Error is among the
+  // arguments, so the obvious `{ message: error.message }` loses the reason.
+  test("a per-room failure log carries the real reason, not a synthetic stack", async () => {
+    const roomId = `${P}log-detail`;
+    const control = fakeControl({ failOn: roomId });
+    await seedStrandedRoom(roomId);
+
+    const { logger } = require("firebase-functions");
+    const original = logger.error;
+    const entries = [];
+    logger.error = (...args) => entries.push(args);
+    try {
+      await assert.rejects(() =>
+        sweepStrandedLiveRooms({ roomControl: control, now }),
+      );
+    } finally {
+      logger.error = original;
+    }
+
+    assert.equal(entries.length, 1);
+    const [, second, payload] = entries[0];
+    assert.ok(second instanceof Error, "the Error is passed as an argument");
+    assert.equal(second.message, "LiveKit unavailable");
+    assert.deepEqual(payload, { roomId });
+    assert.ok(
+      !("message" in payload),
+      "no `message` key, which the logger would overwrite",
+    );
   });
 
   test("the caps are the documented ones", () => {

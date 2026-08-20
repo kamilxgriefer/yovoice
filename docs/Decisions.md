@@ -5662,7 +5662,12 @@ item 0h and which DEPLOYMENT.md already names as the real fix for the
 `voiceMinutes` and live-presence gaps. This sweep is scoped to the
 empty-roster case on purpose and is not a substitute for that work.
 
-## ADR-092: An absent `status` means active — one reading of the field, shared by the rules and every callable
+## ADR-093: An absent `status` means active — one reading of the field, shared by the rules and every callable
+
+*(Renumbered from ADR-092 on 2026-08-20: two concurrent sessions appended
+an ADR-092 within the same minute. The scheduled-sweep entry above kept the
+number because it appears first in this file and carried three inbound
+references to this entry's one.)*
 
 **Context.** ADR-088 made entering a room perform the `isLive: true`
 transition. Hours after that shipped, an audit of the deployed code found that
