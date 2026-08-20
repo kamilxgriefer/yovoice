@@ -872,6 +872,17 @@ permission flags).
 
 ## UI
 
+- **FIXED AND DEPLOYED 2026-08-20 — family and club rooms were permanently
+  undeletable.** The room delete dialog opened for a lounge and its Delete
+  button could only display the server refusal "A Club Lounge is deleted
+  through the Club lifecycle" — a lifecycle that did not exist anywhere.
+  Closed by ADR-096: `deleteClubSelf` plus dialog routing on both delete
+  surfaces. Review caught two ship-blockers first: the missing
+  `clubs.clubId` COLLECTION_GROUP exemption (production-verified absent;
+  emulator-invisible) and a recycled Home menu state that could delete a
+  DIFFERENT club than the tile tapped (unkeyed stateful widget in a
+  reordering list; regression test fails against the unfixed widget).
+
 - **FIXED AND DEPLOYED 2026-08-20 (`eb51e96`) — muting yourself removed the
   microphone and could never be undone.** `deriveVoiceGrant` and both
   permission-recompute callables folded the participant's OWN `isMuted` into

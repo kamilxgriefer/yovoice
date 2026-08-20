@@ -62,6 +62,15 @@ class ClubService {
     return user;
   }
 
+  /// The signed-in account id, or '' when signed out.
+  ///
+  /// Mirrors `RoomService.currentUserId`: presentation compares this against
+  /// `Club.ownerId` to decide whether to OFFER owner-only controls (the
+  /// lounge delete flow), without reaching for `FirebaseAuth.instance` and
+  /// tying its render path to a live Firebase app. Authorization itself stays
+  /// server-side — `deleteClubSelf` re-checks the same ownerId.
+  String get currentUserId => _auth.currentUser?.uid ?? '';
+
   /// Allocates the idempotency key used by community Club creation. The
   /// create screen keeps this value across submit retries, so a lost callable
   /// response can only recover the same server transaction, never create a
@@ -692,6 +701,42 @@ class ClubService {
       'clubId': clubId,
       'newOwnerId': newOwnerId,
     });
+  }
+
+  /// Permanently deletes a whole Club — the club document tree, its lounge
+  /// room tree, the LiveKit room and media — through the owner-only
+  /// `deleteClubSelf` callable ({ clubId } → { success: true, clubId }).
+  ///
+  /// This is the ONE deletion path for a Club and therefore for its lounge:
+  /// `deleteRoomSelf` deliberately refuses `club_lounge_*` rooms, so the
+  /// room delete flow routes club lounges here instead. The callable
+  /// authorizes by checking the caller IS the club's current owner and
+  /// answers `permission-denied` otherwise; the client only decides whether
+  /// to OFFER the control.
+  ///
+  /// After an ambiguous failure (timeout, unavailable) this deliberately
+  /// does NOT probe the club document and claim success: a non-owner's read
+  /// of a half-deleted tree is inconclusive under rules, and a false
+  /// "deleted" over a Club that still exists is the worse error. The caller
+  /// keeps the server's own refusal and may simply retry — the callable is
+  /// idempotent on the server side per the contract.
+  Future<void> deleteClub(String clubId) async {
+    final normalized = clubId.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError('A Club id is required to delete a Club.');
+    }
+    final callable = _functions.httpsCallable('deleteClubSelf');
+    final result = await callable.call<Map<Object?, Object?>>({
+      'clubId': normalized,
+    });
+    // The contract's success shape is { success: true, clubId }. Anything
+    // else is not proof of deletion, and this path refuses to fall back
+    // after an ambiguous answer — see _attachClubMedia for the same stance.
+    if (result.data['success'] != true) {
+      throw StateError(
+        'The Club deletion could not be confirmed. Please try again.',
+      );
+    }
   }
 
   Future<void> removeMember({

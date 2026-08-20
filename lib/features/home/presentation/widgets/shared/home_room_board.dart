@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/features/clubs/data/models/club.dart';
+import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart'
     show RoomVisual, RoomRosterList;
 import 'package:yovoice/features/rooms/data/models/room_participant.dart';
@@ -93,6 +95,7 @@ class HomeRoomBanner extends StatelessWidget {
     required this.room,
     required this.onJoin,
     this.roomService,
+    this.clubService,
     this.compact = false,
     this.currentUserId,
     this.onManageOwnedRoom,
@@ -110,6 +113,11 @@ class HomeRoomBanner extends StatelessWidget {
   /// without it the banner still renders, minus the faces — Home must
   /// degrade rather than throw when a service cannot be constructed.
   final RoomService? roomService;
+
+  /// Resolves club ownership for club-lounge rooms. Optional: when null the
+  /// menu constructs its own where Firebase allows, and where it cannot a
+  /// lounge simply gets NO delete control — the fail-closed direction.
+  final ClubService? clubService;
 
   /// Phone density: tighter type and padding. Never a different layout —
   /// the reading order is identical on both.
@@ -181,9 +189,15 @@ class HomeRoomBanner extends StatelessWidget {
                       if (hasOwnerActions || hasStaffActions) const Spacer(),
                       if (hasOwnerActions)
                         _OwnedRoomMenu(
+                          // Keyed by room id: these tiles live in lists that
+                          // reorder on every join/leave, and a recycled menu
+                          // state must never point at another tile's club.
+                          key: ValueKey('owned-room-menu-${room.id}'),
                           room: room,
                           onManage: onManageOwnedRoom,
                           onDelete: onDeleteOwnedRoom,
+                          currentUserId: currentUserId,
+                          clubService: clubService,
                         ),
                       if (hasOwnerActions && hasStaffActions)
                         const SizedBox(width: 4),
@@ -253,19 +267,129 @@ enum _OwnedRoomAction { settings, delete }
 /// account can manage only its own room; admins and super moderators use the
 /// shield and the separately audited staff callable for rooms they do not
 /// own.
-class _OwnedRoomMenu extends StatelessWidget {
+///
+/// A club lounge is the one room this menu must NEVER offer [onDelete] for:
+/// `deleteRoomSelf` refuses `club_lounge_*` rooms outright, so wiring the
+/// generic delete to a lounge produced a dialog whose Delete button could
+/// only ever show a server refusal. Instead, the lounge branch resolves the
+/// club DOCUMENT (ownership authority is `Club.ownerId`, never the room's
+/// possibly-stale `hostId`) and offers the CLUB delete — the owner-only
+/// `deleteClubSelf` teardown of the whole Club — or, for anyone who is not
+/// the club owner, no delete control at all, exactly as a non-host gets
+/// none for an ordinary room.
+class _OwnedRoomMenu extends StatefulWidget {
   const _OwnedRoomMenu({
+    super.key,
     required this.room,
     required this.onManage,
     required this.onDelete,
+    this.currentUserId,
+    this.clubService,
   });
 
   final VoiceRoom room;
   final VoidCallback? onManage;
+
+  /// The ordinary-room delete (routes to `deleteRoomSelf`). Never invoked
+  /// for a club lounge — see the class comment.
   final Future<void> Function()? onDelete;
+  final String? currentUserId;
+  final ClubService? clubService;
+
+  @override
+  State<_OwnedRoomMenu> createState() => _OwnedRoomMenuState();
+}
+
+class _OwnedRoomMenuState extends State<_OwnedRoomMenu> {
+  /// Non-null only for club lounges whose club document can be watched.
+  /// Cached here so rebuilds do not re-subscribe a fresh Firestore listener
+  /// (and flicker the menu back to its loading shape) on every Home tick.
+  ClubService? _clubService;
+  Stream<Club>? _clubStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _bindClub();
+  }
+
+  /// RE-BIND ON ROOM CHANGE, OR THE MENU DELETES THE WRONG CLUB.
+  ///
+  /// Home's room lists reorder on every join/leave (`watchOwnedRooms` sorts
+  /// by `updatedAt` desc), and Flutter reuses this State across that
+  /// reorder. Binding the club stream in `initState` alone left the state
+  /// carrying the PREVIOUS tile's club: the menu would render one club's
+  /// name and "Delete club…" would erase a different club than the one the
+  /// user tapped — a wrongful deletion, found in review before it shipped.
+  /// The construction sites also key this widget by room id, but the
+  /// re-bind must not depend on every future call site remembering that.
+  @override
+  void didUpdateWidget(_OwnedRoomMenu oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.room.id != widget.room.id ||
+        oldWidget.room.storedClubId != widget.room.storedClubId) {
+      _bindClub();
+    }
+  }
+
+  void _bindClub() {
+    // `storedClubId`, NOT the prefix-derived `clubId`: deleteClubSelf and
+    // the rules' Club branch both read the document FIELD, so the field is
+    // what decides which delete flow this room belongs to.
+    final clubId = widget.room.storedClubId;
+    if (clubId == null) {
+      _clubService = null;
+      _clubStream = null;
+      return;
+    }
+    try {
+      _clubService = widget.clubService ?? ClubService();
+      _clubStream = _clubService!.watchClub(clubId);
+    } catch (_) {
+      // No Firebase (widget tests, degraded startup): a lounge whose club
+      // cannot be read gets no delete control rather than a broken one.
+      _clubService = null;
+      _clubStream = null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (widget.room.storedClubId == null) {
+      // Ordinary room: the menu exactly as it always was.
+      return _menu(deleteRoom: widget.onDelete, deleteClub: null);
+    }
+    final stream = _clubStream;
+    if (stream == null) {
+      return _menu(deleteRoom: null, deleteClub: null);
+    }
+    return StreamBuilder<Club>(
+      stream: stream,
+      builder: (context, snapshot) {
+        final club = snapshot.data;
+        final uid = widget.currentUserId?.trim().isNotEmpty == true
+            ? widget.currentUserId!.trim()
+            : _clubService?.currentUserId ?? '';
+        final ownsClub =
+            club != null && uid.isNotEmpty && club.ownerId == uid;
+        // Loading, error, missing club or a non-owner all land here with
+        // deleteClub null: no delete control. Fail closed — the server
+        // would refuse anyway, and offering a dead control is the exact
+        // defect this branch replaces.
+        return _menu(deleteRoom: null, deleteClub: ownsClub ? club : null);
+      },
+    );
+  }
+
+  Widget _menu({
+    required Future<void> Function()? deleteRoom,
+    required Club? deleteClub,
+  }) {
+    final onManage = widget.onManage;
+    if (onManage == null && deleteRoom == null && deleteClub == null) {
+      // Nothing to offer; an empty popup would render as a blank sheet.
+      return const SizedBox.shrink();
+    }
     return PopupMenuButton<_OwnedRoomAction>(
       tooltip: 'Manage your room',
       icon: const Icon(Icons.more_horiz_rounded, color: Colors.white, size: 22),
@@ -283,7 +407,16 @@ class _OwnedRoomMenu extends StatelessWidget {
               label: 'Room settings',
             ),
           ),
-        if (onDelete != null)
+        if (deleteClub != null)
+          const PopupMenuItem(
+            value: _OwnedRoomAction.delete,
+            child: _OwnedMenuRow(
+              icon: Icons.delete_forever_rounded,
+              label: 'Delete club…',
+              danger: true,
+            ),
+          )
+        else if (deleteRoom != null)
           const PopupMenuItem(
             value: _OwnedRoomAction.delete,
             child: _OwnedMenuRow(
@@ -299,11 +432,30 @@ class _OwnedRoomMenu extends StatelessWidget {
             onManage?.call();
             return;
           case _OwnedRoomAction.delete:
+            // The two delete flows are mutually exclusive by construction:
+            // the club dialog is wired to deleteClubSelf via ClubService
+            // and can never reach deleteRoom, so a lounge can never invoke
+            // deleteRoomSelf. (deleteClub is only ever non-null when the
+            // club stream — and therefore _clubService — exists.)
             await showDialog<void>(
               context: context,
               barrierDismissible: false,
-              builder: (_) =>
-                  _DeleteOwnedRoomDialog(room: room, onDelete: onDelete!),
+              builder: (_) => deleteClub != null
+                  ? _ConfirmDeleteDialog(
+                      title: 'Delete the Club "${deleteClub.name}"?',
+                      body:
+                          'This deletes the whole Club — its lounge, chat, '
+                          'channels, members and invites. This cannot be '
+                          'undone.',
+                      onDelete: () => _clubService!.deleteClub(deleteClub.id),
+                    )
+                  : _ConfirmDeleteDialog(
+                      title: 'Delete "${widget.room.name}"?',
+                      body:
+                          'Messages, members and room settings will be '
+                          'permanently removed. This cannot be undone.',
+                      onDelete: deleteRoom!,
+                    ),
             );
             return;
         }
@@ -340,17 +492,27 @@ class _OwnedMenuRow extends StatelessWidget {
   }
 }
 
-class _DeleteOwnedRoomDialog extends StatefulWidget {
-  const _DeleteOwnedRoomDialog({required this.room, required this.onDelete});
+/// The shared destructive confirm for the owned-room menu. One structure,
+/// two sets of copy: an ordinary room names the room and calls the room
+/// delete; a club lounge names the CLUB and calls the club delete — the
+/// dialog itself has no idea which callable sits behind [onDelete], which
+/// is what keeps the two flows impossible to cross-wire.
+class _ConfirmDeleteDialog extends StatefulWidget {
+  const _ConfirmDeleteDialog({
+    required this.title,
+    required this.body,
+    required this.onDelete,
+  });
 
-  final VoiceRoom room;
+  final String title;
+  final String body;
   final Future<void> Function() onDelete;
 
   @override
-  State<_DeleteOwnedRoomDialog> createState() => _DeleteOwnedRoomDialogState();
+  State<_ConfirmDeleteDialog> createState() => _ConfirmDeleteDialogState();
 }
 
-class _DeleteOwnedRoomDialogState extends State<_DeleteOwnedRoomDialog> {
+class _ConfirmDeleteDialogState extends State<_ConfirmDeleteDialog> {
   bool _busy = false;
   String? _error;
 
@@ -376,18 +538,14 @@ class _DeleteOwnedRoomDialogState extends State<_DeleteOwnedRoomDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       backgroundColor: const Color(0xFF171121),
-      title: Text(
-        'Delete "${widget.room.name}"?',
-        style: const TextStyle(color: Colors.white),
-      ),
+      title: Text(widget.title, style: const TextStyle(color: Colors.white)),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Messages, members and room settings will be permanently '
-            'removed. This cannot be undone.',
-            style: TextStyle(color: Color(0xFFB8AFC2), height: 1.4),
+          Text(
+            widget.body,
+            style: const TextStyle(color: Color(0xFFB8AFC2), height: 1.4),
           ),
           if (_error != null) ...[
             const SizedBox(height: 10),
@@ -651,6 +809,7 @@ class HomeActiveRooms extends StatelessWidget {
     required this.onEdit,
     required this.onCreateRoom,
     this.onDelete,
+    this.clubService,
     this.compact = false,
     super.key,
   });
@@ -662,8 +821,12 @@ class HomeActiveRooms extends StatelessWidget {
 
   /// Direct deletion from the Home tile, same confirm and callable as the
   /// room-board menu — the host should not have to enter the room (or its
-  /// settings) first. Null hides the menu entry.
+  /// settings) first. Null hides the menu entry. A club-lounge tile never
+  /// invokes this — its menu routes to the club delete instead.
   final Future<void> Function(VoiceRoom room)? onDelete;
+
+  /// Resolves club ownership for club-lounge tiles; see [HomeRoomBanner].
+  final ClubService? clubService;
   final VoidCallback onCreateRoom;
   final bool compact;
 
@@ -744,6 +907,8 @@ class HomeActiveRooms extends StatelessWidget {
             onEnter: () => onEnter(room),
             onEdit: () => onEdit(room),
             onDelete: delete == null ? null : () => delete(room),
+            currentUserId: currentUserId,
+            clubService: clubService,
           );
         },
       ),
@@ -843,6 +1008,8 @@ class _OwnedRoomCard extends StatelessWidget {
     required this.onEnter,
     required this.onEdit,
     this.onDelete,
+    this.currentUserId,
+    this.clubService,
   });
 
   final VoiceRoom room;
@@ -850,6 +1017,8 @@ class _OwnedRoomCard extends StatelessWidget {
   final VoidCallback onEnter;
   final VoidCallback onEdit;
   final Future<void> Function()? onDelete;
+  final String? currentUserId;
+  final ClubService? clubService;
 
   @override
   Widget build(BuildContext context) {
@@ -872,9 +1041,13 @@ class _OwnedRoomCard extends StatelessWidget {
                   color: Colors.black.withValues(alpha: .55),
                   shape: const CircleBorder(),
                   child: _OwnedRoomMenu(
+                    // Same reorder hazard as the banner site above.
+                    key: ValueKey('owned-room-menu-${room.id}'),
                     room: room,
                     onManage: onEdit,
                     onDelete: onDelete,
+                    currentUserId: currentUserId,
+                    clubService: clubService,
                   ),
                 ),
               ),

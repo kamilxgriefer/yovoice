@@ -36,6 +36,15 @@ someone decide what to pick up next.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it)
 > for why that distinction is the whole point of this wave.
 
+- **Family and club rooms are deletable — from the same dialog as any room**
+  (2026-08-20, DEPLOYED: indexes → `deleteClubSelf` → hosting, each verified;
+  ADR-096): owner-only whole-club teardown with honest copy naming the club.
+  Functions suite → 746 (12-case deletion suite incl. banned/disabled/no-
+  profile callers), Flutter → 1096 (incl. a recycling regression that fails
+  pre-fix). Security audit SHIP; correctness review found and we fixed the
+  missing collection-group index (production-verified) and a wrong-club
+  deletion hazard in a recycled menu state.
+
 - **The microphone works like Discord's: self-mute never costs the right to
   speak, and everyone in a non-broadcast room may talk** (2026-08-20,
   `eb51e96`, DEPLOYED — functions + hosting, byte-verified): fixes the

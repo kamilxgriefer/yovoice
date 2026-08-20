@@ -5792,3 +5792,49 @@ loaded counts — real numbers, just not live. `MomentCard` moved to its own
 file with a re-export from `moments_screen.dart`, so importers are untouched.
 Playback, like, comment, report and offline download all survive behind the
 new tile/sheet presentation.
+
+## ADR-096: A club is deleted by its owner through `deleteClubSelf`, and the lounge's delete dialog is that lifecycle's front door
+
+**Context.** `executeDeleteRoom` refuses club lounges with "A Club Lounge is
+deleted through the Club lifecycle" — and that lifecycle did not exist: no
+callable, no `ClubService` method, no control anywhere in the UI. Family Rooms
+are club lounges, so the operator's family and club rooms were permanently
+undeletable, with a dialog whose Delete button could only ever display the
+server's refusal.
+
+**Decision.** A new owner-only callable `deleteClubSelf({clubId})` performs
+the whole teardown: one transaction marks the club (`deletionInProgress`,
+`deletionRequestedBy/At` — the exact fields `adminDeleteClub` already writes)
+and closes the lounge; after commit it ends LiveKit, clears session mirrors,
+recursively deletes the lounge tree and the club tree (members, invites,
+channels+messages, moments, checkIns), cleans Storage media, sweeps every
+`users/{uid}/clubs` projection via `collectionGroup('clubs')`, and writes an
+audit entry. A repeat call RESUMES an interrupted teardown (idempotent), and
+after a pending ownership transfer the RECIPIENT is the owner who may delete.
+The client routes a lounge's delete — on the Home board and in Room settings —
+to this callable with copy naming the club; a non-owner gets no control, and
+the lounge branch is structurally incapable of calling `deleteRoomSelf`.
+`executeDeleteRoom`'s refusal stays as defense in depth.
+
+**Reasoning.** The lounge IS the club's room; deleting one honestly means
+deleting the club, and the dialog says so rather than pretending it is a room
+deletion. Authorization is the server-read `club.ownerId` only — never the
+lounge's client-influenced `hostId`.
+
+**Consequences.** The mandatory reviews earned their place: the adversarial
+security audit passed the design (SHIP), and the independent correctness
+review caught two real defects before deploy. (1) The projection sweep's
+`collectionGroup('clubs')` query had NO single-field exemption in the live
+project — verified against production, invisible to the emulator (the ADR-007
+class); `firestore.indexes.json` now carries the `clubs.clubId` override in
+the full COLLECTION+COLLECTION_GROUP form the invites fix established, it was
+deployed FIRST, and the exact query was executed against production before
+the callable shipped. (2) `_OwnedRoomMenu` bound its club stream in
+`initState` alone while Home's lists reorder on every join/leave — a recycled
+element could show one club's name and delete ANOTHER; fixed with
+`didUpdateWidget` re-binding plus room-id keys at both sites, and pinned by a
+regression test that fails against the unfixed widget. Known limitation,
+accepted: if the post-commit sweep fails midway (e.g. Storage outage), the
+repeat call resumes it, but once the dialog is dismissed the UI offers no
+retry surface — the club stays consistently marked and refusable, never
+half-alive.

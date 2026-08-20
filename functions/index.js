@@ -99,6 +99,10 @@ const {
 } = require("./clubs/creation");
 const { removeClubMemberSelf } = require("./clubs/members");
 const { transferClubOwnershipSelf } = require("./clubs/ownership");
+// Owner-initiated permanent Club deletion — the "Club lifecycle" that
+// deleteRoomSelf's lounge refusal routes to. Tears down the club document
+// tree, its lounge room, LiveKit state, projections and Storage media.
+const { deleteClubSelf } = require("./clubs/deletion");
 const {
   deleteRoomSelf,
   endRoomVoiceSelf,
@@ -231,6 +235,10 @@ exports.setUserBlock = setUserBlock;
 */
 
 exports.transferClubOwnershipSelf = transferClubOwnershipSelf;
+// Owner-only permanent Club deletion ({ clubId }): deletes the club and its
+// lounge room in one lifecycle. This is the callable the room delete flow
+// invokes when the deleted "room" is a Club Lounge.
+exports.deleteClubSelf = deleteClubSelf;
 exports.createCommunityClub = createCommunityClub;
 exports.finalizeClubMedia = finalizeClubMedia;
 exports.removeClubMemberSelf = removeClubMemberSelf;

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
+import 'package:yovoice/features/clubs/data/models/club.dart';
+import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_image_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -18,12 +20,18 @@ class RoomSettingsScreen extends StatefulWidget {
     required this.room,
     this.roomService,
     this.roomImageService,
+    this.clubService,
     super.key,
   });
 
   final VoiceRoom room;
   final RoomService? roomService;
   final RoomImageService? roomImageService;
+
+  /// Resolves club ownership when [room] is a club lounge. Optional: the
+  /// screen constructs its own where Firebase allows; where it cannot, a
+  /// lounge simply shows NO delete control — the fail-closed direction.
+  final ClubService? clubService;
 
   @override
   State<RoomSettingsScreen> createState() => _RoomSettingsScreenState();
@@ -83,6 +91,13 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
   late bool _autoMuteNewUsers;
   late bool _membersCanStartVoice;
 
+  /// Non-null only when this room is a club lounge whose club document can
+  /// be watched. `deleteRoomSelf` refuses `club_lounge_*` rooms outright,
+  /// so the delete control for a lounge must be the CLUB delete (owner-only
+  /// `deleteClubSelf`) or nothing at all — never the room delete.
+  ClubService? _clubService;
+  Stream<Club>? _clubStream;
+
   bool _busy = false;
 
   @override
@@ -100,6 +115,21 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
     _slowModeSeconds = room.slowModeSeconds;
     _autoMuteNewUsers = room.autoMuteNewUsers;
     _membersCanStartVoice = room.membersCanStartVoice;
+
+    // `storedClubId`, NOT the prefix-derived `clubId`: authority (both
+    // deleteClubSelf and the rules' Club branch) reads the document FIELD.
+    final clubId = room.storedClubId;
+    if (clubId != null) {
+      try {
+        _clubService = widget.clubService ?? ClubService();
+        _clubStream = _clubService!.watchClub(clubId);
+      } catch (_) {
+        // No Firebase (widget tests, degraded startup): the lounge shows no
+        // delete control rather than a broken one.
+        _clubService = null;
+        _clubStream = null;
+      }
+    }
   }
 
   @override
@@ -207,6 +237,12 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
   }
 
   Future<void> _delete() async {
+    // Unrepresentable, not merely unreachable: a club lounge never renders
+    // the tile that leads here, and even if one did, this path must not
+    // call deleteRoomSelf — the server refuses lounges and the user would
+    // get a dialog whose Delete can only ever fail. Lounges go through
+    // _deleteClub().
+    if (widget.room.storedClubId != null) return;
     final confirmed =
         await showDialog<bool>(
           context: context,
@@ -251,6 +287,63 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
               error,
               fallback:
                   "The room couldn't be deleted. Please try again in a moment.",
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  /// The lounge counterpart of [_delete]: tears down the WHOLE Club through
+  /// the owner-only `deleteClubSelf` callable. Same confirm shape, honest
+  /// copy — the dialog names the Club and says what actually goes away.
+  Future<void> _deleteClub(Club club) async {
+    final service = _clubService;
+    if (service == null) return;
+    final confirmed =
+        await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            backgroundColor: _surface,
+            title: Text(
+              'Delete the Club "${club.name}"?',
+              style: const TextStyle(color: Colors.white),
+            ),
+            content: const Text(
+              'This deletes the whole Club — its lounge, chat, channels, '
+              'members and invites. This cannot be undone.',
+              style: TextStyle(color: _muted),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: _danger),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || _busy) return;
+    setState(() => _busy = true);
+    try {
+      await service.deleteClub(club.id);
+      if (!mounted) return;
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            intentionalOrFriendly(
+              error,
+              fallback:
+                  "The Club couldn't be deleted. Please try again in a moment.",
             ),
           ),
         ),
@@ -493,13 +586,43 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
                       subtitle: 'Hide it from Discover and keep all data.',
                       onTap: () => _setStatus(RoomStatus.archived),
                     ),
-                  _ActionTile(
-                    icon: Icons.delete_forever_rounded,
-                    title: 'Delete room',
-                    subtitle: 'Permanently delete the room and its data.',
-                    danger: true,
-                    onTap: _delete,
-                  ),
+                  if (widget.room.storedClubId == null)
+                    _ActionTile(
+                      icon: Icons.delete_forever_rounded,
+                      title: 'Delete room',
+                      subtitle: 'Permanently delete the room and its data.',
+                      danger: true,
+                      onTap: _delete,
+                    )
+                  else if (_clubStream != null)
+                    // A club lounge is deleted only by deleting its Club,
+                    // and only its owner may do that. Ownership comes from
+                    // the club DOCUMENT (Club.ownerId), never the room's
+                    // possibly-stale hostId; while it is loading, errored
+                    // or belongs to someone else there is no delete control
+                    // at all — mirroring how a non-host sees an ordinary
+                    // room.
+                    StreamBuilder<Club>(
+                      stream: _clubStream,
+                      builder: (context, snapshot) {
+                        final club = snapshot.data;
+                        final uid = _clubService?.currentUserId ?? '';
+                        if (club == null ||
+                            uid.isEmpty ||
+                            club.ownerId != uid) {
+                          return const SizedBox.shrink();
+                        }
+                        return _ActionTile(
+                          icon: Icons.delete_forever_rounded,
+                          title: 'Delete club',
+                          subtitle:
+                              'Permanently delete the whole Club — its '
+                              'lounge, chat, channels, members and invites.',
+                          danger: true,
+                          onTap: () => _deleteClub(club),
+                        );
+                      },
+                    ),
                 ],
               ),
             ],
