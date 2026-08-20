@@ -24,13 +24,22 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 const double _tabletWidth = 600;
 const double _stageWidth = 980;
 
-/// A discovery stack of published Voice Moments from every user: one
-/// Moment per viewport, swipe (or Previous/Next, or the arrow keys) to
-/// move through it.
+/// A discovery BOARD of published Voice Moments from every user: nothing
+/// but avatars, circle beside circle, filling the whole width.
 ///
-/// The gesture is never the only way through — a pager that can only be
-/// swiped is unusable with a keyboard, a screen reader, or a trackpad on
-/// desktop.
+/// It replaced a one-Moment-per-viewport pager, whose problem was not
+/// decoration: a board of forty faces makes forty choices visible at
+/// once, while a pager makes exactly one visible and hides the rest
+/// behind a gesture. The most-engaged Moments hold the top of the board
+/// (see [MomentDiscoveryService.rankByEngagement]), so position on the
+/// board is itself the ranking.
+///
+/// Tapping a circle plays that Moment and opens it in the player — a
+/// dock under the board on narrow and medium widths, a fixed pane beside
+/// it on wide ones. The gesture is never the only way through: the
+/// player keeps real Previous/Next controls and the arrow keys move the
+/// selection, because a board that can only be tapped is unusable with a
+/// keyboard or a screen reader.
 class MomentDiscoveryView extends StatefulWidget {
   const MomentDiscoveryView({
     required this.onOpenComments,
@@ -73,15 +82,37 @@ class MomentDiscoveryView extends StatefulWidget {
 
 enum _Phase { loading, error, ready }
 
+/// How the board is ordered. Both orders are real and both are kept:
+/// [topFirst] answers "who is most engaged with right now", [shuffled]
+/// keeps the popularity-weighted random walk that makes a quiet Moment
+/// reachable. Default is [topFirst], because the board's whole premise is
+/// that position IS the ranking.
+enum _BoardOrder { topFirst, shuffled }
+
 class _MomentDiscoveryViewState extends State<MomentDiscoveryView> {
   late final MomentDiscoveryService _discovery;
   HomeFeedService? _feed;
   AudioPlayer? _player;
-  final PageController _pages = PageController();
 
   _Phase _phase = _Phase.loading;
   Object? _error;
   MomentDiscoveryFeed? _result;
+  _BoardOrder _order = _BoardOrder.topFirst;
+
+  /// The board's display order, fixed for the life of one load.
+  ///
+  /// Recomputed on load and when the order control changes, and NEVER
+  /// from the live counter stream: a like landing anywhere must not make
+  /// the faces jump under the reader's finger.
+  List<VoiceMoment> _ordered = const <VoiceMoment>[];
+
+  /// Live `likeCount` / `commentCount` keyed by Moment id. Empty until
+  /// the counter stream delivers; every number rendered before then came
+  /// from the load and is equally real.
+  Map<String, MomentEngagement> _engagement =
+      const <String, MomentEngagement>{};
+  StreamSubscription<Map<String, MomentEngagement>>? _engagementSubscription;
+
   int _index = 0;
 
   /// Real, counted, local. Never displayed unless it was measured.
@@ -126,7 +157,32 @@ class _MomentDiscoveryViewState extends State<MomentDiscoveryView> {
       _feed = null;
     }
     widget.isVisible?.addListener(_handleVisibility);
+    _listenToEngagement();
     unawaited(_load());
+  }
+
+  /// The fix for "likes and comments only appear after a reload".
+  ///
+  /// The feed itself is a one-shot read on purpose, so the order cannot
+  /// churn; the counters are the one part that must stay live, and they
+  /// arrive on their own stream. Guarded twice over: a service that
+  /// cannot open the stream (no Firebase app, an injected double) must
+  /// leave the board rendering the counts it loaded rather than throwing.
+  void _listenToEngagement() {
+    try {
+      _engagementSubscription = _discovery.watchEngagement().listen(
+        (counters) {
+          if (!mounted) return;
+          setState(() => _engagement = counters);
+        },
+        onError: (Object _) {
+          // Counts already on screen are real, just no longer live. That
+          // is strictly better than taking the board down.
+        },
+      );
+    } catch (_) {
+      _engagementSubscription = null;
+    }
   }
 
   @override
@@ -134,10 +190,10 @@ class _MomentDiscoveryViewState extends State<MomentDiscoveryView> {
     widget.isVisible?.removeListener(_handleVisibility);
     _playWatchdog?.cancel();
     _loadWatchdog?.cancel();
+    unawaited(_engagementSubscription?.cancel());
     for (final subscription in _playerSubscriptions) {
       unawaited(subscription.cancel());
     }
-    _pages.dispose();
     _player?.dispose();
     super.dispose();
   }
@@ -203,10 +259,14 @@ class _MomentDiscoveryViewState extends State<MomentDiscoveryView> {
       if (!mounted) return;
       setState(() {
         _result = result;
+        _ordered = _orderedFrom(result);
+        // The top of the board is preselected so the player is loaded
+        // and reachable on arrival — but nothing plays until a tap.
+        // Audio that starts on its own is the fastest way to make a
+        // person close a tab.
         _index = 0;
         _phase = _Phase.ready;
       });
-      if (_pages.hasClients) _pages.jumpToPage(0);
     } catch (error) {
       _loadWatchdog?.cancel();
       if (!mounted) return;
@@ -288,39 +348,97 @@ class _MomentDiscoveryViewState extends State<MomentDiscoveryView> {
     }
   }
 
+  List<VoiceMoment> _orderedFrom(MomentDiscoveryFeed result) {
+    return switch (_order) {
+      // Most-engaged first, deterministically. The service owns the
+      // arithmetic; this only chooses which of its two orders to show.
+      _BoardOrder.topFirst => MomentDiscoveryService.rankByEngagement(
+        result.moments,
+      ),
+      // Exactly what the service returned: weighted-shuffled and
+      // author-spaced.
+      _BoardOrder.shuffled => result.moments,
+    };
+  }
+
+  /// The same Moment, carrying the freshest counters we have for it.
+  VoiceMoment _withLiveCounts(VoiceMoment moment) {
+    final live = _engagement[moment.id];
+    if (live == null) return moment;
+    return moment.withCounts(
+      likeCount: live.likeCount,
+      commentCount: live.commentCount,
+    );
+  }
+
+  void _setOrder(_BoardOrder order) {
+    final result = _result;
+    if (result == null) return;
+    // Re-picking the shuffle means a genuinely new shuffle, not the same
+    // arrangement again: a control that appears to do nothing is worse
+    // than no control.
+    if (order == _order) {
+      if (order == _BoardOrder.shuffled) unawaited(_load());
+      return;
+    }
+    final keepId = _index >= 0 && _index < _ordered.length
+        ? _ordered[_index].id
+        : null;
+    setState(() {
+      _order = order;
+      _ordered = _orderedFrom(result);
+      final moved = keepId == null
+          ? -1
+          : _ordered.indexWhere((moment) => moment.id == keepId);
+      // Reordering must not silently change WHAT is loaded in the player.
+      _index = moved >= 0 ? moved : 0;
+    });
+  }
+
+  /// Moves the selection without playing — the keyboard and the
+  /// Previous/Next controls.
   void _goTo(int index) {
-    final total = _result?.moments.length ?? 0;
-    // The end card is one past the last Moment.
-    if (index < 0 || index > total) return;
+    if (index < 0 || index >= _ordered.length || index == _index) return;
     unawaited(_stop());
     setState(() => _index = index);
-    if (_pages.hasClients) {
-      unawaited(
-        _pages.animateToPage(
-          index,
-          duration: const Duration(milliseconds: 320),
-          curve: Curves.easeOutCubic,
-        ),
-      );
+  }
+
+  /// A tap on a circle. Tapping the circle already loaded toggles it;
+  /// tapping a different one switches to it and starts playing, because
+  /// "tap a face, hear that person" is the whole contract of this board.
+  void _tapTile(int index) {
+    if (index < 0 || index >= _ordered.length) return;
+    final moment = _ordered[index];
+    if (index == _index) {
+      unawaited(_togglePlay(moment));
+      return;
     }
+    unawaited(_switchTo(index, moment));
+  }
+
+  Future<void> _switchTo(int index, VoiceMoment moment) async {
+    await _stop();
+    if (!mounted) return;
+    setState(() => _index = index);
+    await _togglePlay(moment);
   }
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = constraints.maxWidth;
         final body = switch (_phase) {
           _Phase.loading => _LoadingStack(isSlow: _loadIsSlow, onRetry: _load),
           _Phase.error => _ErrorStack(error: _error, onRetry: _load),
-          _Phase.ready => _buildReady(width),
+          _Phase.ready => _buildReady(constraints),
         };
         return Container(color: AppColors.background, child: body);
       },
     );
   }
 
-  Widget _buildReady(double width) {
+  Widget _buildReady(BoxConstraints constraints) {
+    final width = constraints.maxWidth;
     final result = _result!;
     if (result.corpusIsEmpty) {
       return _EmptyStack(
@@ -350,127 +468,758 @@ class _MomentDiscoveryViewState extends State<MomentDiscoveryView> {
       );
     }
 
-    final moments = result.moments;
-    final stage = Column(
+    final moments = _ordered;
+    final wide = width >= _stageWidth;
+    final index = _index.clamp(0, moments.length - 1);
+    final selected = moments.isEmpty ? null : _withLiveCounts(moments[index]);
+
+    final board = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: PageView.builder(
-            controller: _pages,
-            scrollDirection: Axis.vertical,
-            onPageChanged: (index) {
-              unawaited(_stop());
-              setState(() => _index = index);
-            },
-            itemCount: moments.length + 1,
-            itemBuilder: (context, index) {
-              if (index == moments.length) {
-                return _EndOfStack(
-                  listenedCount: _listenedTo.length,
-                  total: moments.length,
-                  moreExists: result.poolExhausted,
-                  onShuffleAgain: () => _load(),
-                  onRecord: widget.onRecord,
-                  onBackToStart: () => _goTo(0),
-                );
-              }
-              final moment = moments[index];
-              return _MomentStagePane(
-                moment: moment,
-                position: index,
-                total: moments.length,
-                compact: width < _tabletWidth,
-                isCurrent: index == _index,
-                isPlaying: _playingId == moment.id && _isPlaying,
-                elapsed: _playingId == moment.id ? _position : Duration.zero,
-                duration: _playingId == moment.id ? _duration : null,
-                playbackError: _playingId == moment.id ? _playbackError : null,
-                feedService: _feed,
-                currentUserId: _uid,
-                contentReportService: widget.contentReportService,
-                onTogglePlay: () => _togglePlay(moment),
-                onComments: () => widget.onOpenComments(moment),
-                onSeek: (target) async {
-                  final player = _player;
-                  if (player == null || _playingId != moment.id) return;
-                  try {
-                    await player.seek(target);
-                  } catch (_) {
-                    // Seeking an unloaded source is a no-op, not a fault.
-                  }
-                },
-              );
-            },
-          ),
+        _BoardHeader(
+          order: _order,
+          onOrder: _setOrder,
+          onRefresh: _load,
+          compact: width < _tabletWidth,
         ),
-        _PagerControls(
-          index: _index,
-          total: moments.length,
-          onPrevious: _index > 0 ? () => _goTo(_index - 1) : null,
-          onNext: _index < moments.length ? () => _goTo(_index + 1) : null,
-          onShuffle: () => _load(),
+        Expanded(
+          child: _AvatarWall(
+            moments: moments,
+            selectedIndex: index,
+            playingId: _isPlaying ? _playingId : null,
+            counts: _engagement,
+            onTap: _tapTile,
+            onRecord: widget.onRecord,
+            footer: _BoardFooter(
+              total: moments.length,
+              listenedCount: _listenedTo.length,
+              moreExists: result.poolExhausted,
+            ),
+          ),
         ),
       ],
     );
 
-    // Desktop: stage plus a real queue, so the shuffled order has a
-    // visible shape and any entry can be jumped to directly.
-    if (width >= _stageWidth) {
-      // A real key handler, not a `Shortcuts` map with no `Actions` to
-      // dispatch into — that compiles, reads as keyboard support, and
-      // does nothing.
-      return Focus(
-        autofocus: true,
-        onKeyEvent: (node, event) {
-          if (event is! KeyDownEvent) return KeyEventResult.ignored;
-          if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-            _goTo(_index + 1);
-            return KeyEventResult.handled;
-          }
-          if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-            _goTo(_index - 1);
-            return KeyEventResult.handled;
-          }
-          if (event.logicalKey == LogicalKeyboardKey.space &&
-              _index < moments.length) {
-            unawaited(_togglePlay(moments[_index]));
-            return KeyEventResult.handled;
-          }
-          return KeyEventResult.ignored;
-        },
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(child: stage),
-            _QueuePane(moments: moments, index: _index, onSelect: _goTo),
-          ],
-        ),
-      );
-    }
+    final player = selected == null
+        ? null
+        : _MomentPlayerPanel(
+            key: const ValueKey('moments-discovery-player'),
+            moment: selected,
+            position: index,
+            total: moments.length,
+            wide: wide,
+            isPlaying: _playingId == selected.id && _isPlaying,
+            elapsed: _playingId == selected.id ? _position : Duration.zero,
+            duration: _playingId == selected.id ? _duration : null,
+            playbackError: _playingId == selected.id ? _playbackError : null,
+            feedService: _feed,
+            currentUserId: _uid,
+            contentReportService: widget.contentReportService,
+            onTogglePlay: () => unawaited(_togglePlay(selected)),
+            onComments: () => widget.onOpenComments(selected),
+            onPrevious: index > 0 ? () => _goTo(index - 1) : null,
+            onNext: index < moments.length - 1 ? () => _goTo(index + 1) : null,
+            onSeek: (target) async {
+              final player = _player;
+              if (player == null || _playingId != selected.id) return;
+              try {
+                await player.seek(target);
+              } catch (_) {
+                // Seeking an unloaded source is a no-op, not a fault.
+              }
+            },
+          );
 
-    // Tablet: the pager is centred at a readable measure rather than a
-    // phone card stretched across 1024 pt.
-    if (width >= _tabletWidth) {
-      return Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: stage,
-        ),
-      );
-    }
-    return stage;
+    // A real key handler, not a `Shortcuts` map with no `Actions` to
+    // dispatch into — that compiles, reads as keyboard support, and does
+    // nothing. Arrows walk the board in reading order; space plays what
+    // is loaded.
+    return Focus(
+      autofocus: wide,
+      onKeyEvent: (node, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        final key = event.logicalKey;
+        if (key == LogicalKeyboardKey.arrowRight ||
+            key == LogicalKeyboardKey.arrowDown) {
+          _goTo(index + 1);
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.arrowLeft ||
+            key == LogicalKeyboardKey.arrowUp) {
+          _goTo(index - 1);
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.space && selected != null) {
+          unawaited(_togglePlay(selected));
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      // Wide: the board keeps the room and the player takes a fixed pane
+      // beside it, so nothing has to be dismissed to keep browsing.
+      // Narrow and medium: the player docks under the board, capped so
+      // the faces above it never lose more than half the height.
+      child: wide
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: board),
+                if (player != null) SizedBox(width: 344, child: player),
+              ],
+            )
+          : Column(
+              children: [
+                Expanded(child: board),
+                if (player != null)
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: constraints.maxHeight.isFinite
+                          ? constraints.maxHeight * .55
+                          : 420,
+                    ),
+                    child: player,
+                  ),
+              ],
+            ),
+    );
   }
 }
 
-/// One Moment, filling the viewport. The transport row is pinned to the
-/// bottom of the pane so the play control never scrolls out of reach
-/// behind a long caption.
-class _MomentStagePane extends StatelessWidget {
-  const _MomentStagePane({
+/// `Most engaged` / `Shuffle`, and a real refresh.
+///
+/// Two orders, both kept, neither pretending to be the other: the board
+/// is ranked by default, and the popularity-weighted shuffle that makes a
+/// quiet Moment reachable is one tap away. Tapping `Shuffle` while
+/// already shuffled reshuffles — a control that appears inert is worse
+/// than no control.
+class _BoardHeader extends StatelessWidget {
+  const _BoardHeader({
+    required this.order,
+    required this.onOrder,
+    required this.onRefresh,
+    required this.compact,
+  });
+
+  final _BoardOrder order;
+  final ValueChanged<_BoardOrder> onOrder;
+  final VoidCallback onRefresh;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(compact ? 16 : 24, 2, compact ? 8 : 16, 6),
+      child: Row(
+        children: [
+          // Wrap, not Row: at a 2x text scale two chips plus the refresh
+          // control do not fit a 360 pt phone on one line, and a control
+          // that has slid off the edge is the same as one never built.
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _OrderChip(
+                  key: const ValueKey('moments-discovery-top'),
+                  label: 'Most engaged',
+                  icon: Icons.trending_up_rounded,
+                  selected: order == _BoardOrder.topFirst,
+                  onTap: () => onOrder(_BoardOrder.topFirst),
+                ),
+                _OrderChip(
+                  key: const ValueKey('moments-discovery-shuffle'),
+                  label: 'Shuffle',
+                  icon: Icons.shuffle_rounded,
+                  selected: order == _BoardOrder.shuffled,
+                  onTap: () => onOrder(_BoardOrder.shuffled),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            key: const ValueKey('moments-discovery-refresh'),
+            onPressed: onRefresh,
+            tooltip: 'Reload Moments',
+            icon: const Icon(
+              Icons.refresh_rounded,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OrderChip extends StatelessWidget {
+  const _OrderChip({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+    super.key,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: Material(
+        color: selected
+            ? AppColors.primary.withValues(alpha: .28)
+            : AppColors.surface.withValues(alpha: .55),
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 44),
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 17,
+                  // Tint carries STATE, never meaning: the label keeps its
+                  // contrast either way.
+                  color: selected
+                      ? AppColors.secondary
+                      : AppColors.textSecondary,
+                ),
+                const SizedBox(width: 7),
+                // Flexible + ellipsis, not a bare Text: at a 2x text
+                // scale "Most engaged" is wider than a 360 pt phone can
+                // give this row, and a label that runs off the edge takes
+                // the control with it.
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: selected
+                          ? AppColors.textPrimary
+                          : AppColors.textSecondary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The board itself: circles, side by side, filling the width.
+///
+/// The cell size is a function of the width the view was given, not of
+/// how many Moments exist, so the board reads the same with one face and
+/// with fifty. A partial single row is centred rather than pinned to the
+/// left corner — with a corpus of one that is the difference between a
+/// deliberate board and a broken one.
+class _AvatarWall extends StatelessWidget {
+  const _AvatarWall({
+    required this.moments,
+    required this.selectedIndex,
+    required this.playingId,
+    required this.counts,
+    required this.onTap,
+    required this.onRecord,
+    required this.footer,
+  });
+
+  final List<VoiceMoment> moments;
+  final int selectedIndex;
+  final String? playingId;
+  final Map<String, MomentEngagement> counts;
+  final ValueChanged<int> onTap;
+  final VoidCallback onRecord;
+  final Widget footer;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final side = width < _tabletWidth ? 16.0 : 24.0;
+        const gap = 10.0;
+        final available = width - side * 2;
+
+        // One target per breakpoint, then as many whole columns as fit.
+        // The clamp at both ends is what stops a 320 pt phone rendering
+        // one column and a 1600 pt window rendering forty specks.
+        final target = width < _tabletWidth
+            ? 94.0
+            : width < _stageWidth
+            ? 106.0
+            : 118.0;
+        final columns = (available / (target + gap)).floor().clamp(2, 12);
+
+        // The record entry point is a tile of the board rather than a
+        // floating button: it belongs to the same grid, and it is the one
+        // thing that is honest to show when the corpus is small.
+        final tileCount = moments.length + 1;
+
+        var tile = (available - gap * (columns - 1)) / columns;
+        // The circle is capped so a two-column phone does not render two
+        // discs the size of a hand. A partial row gets a higher ceiling,
+        // because there the empty space is the problem, not the size.
+        var ringCap = 120.0;
+        if (tileCount < columns) {
+          // A partial row. Keeping the full-board cell size here would
+          // draw two small discs adrift in a band of empty background —
+          // the exact "huge empty middle" this board replaced. The
+          // circles grow instead, bounded so a corpus of one does not
+          // become a single dinner plate.
+          final grown = (available - gap * (tileCount - 1)) / tileCount;
+          tile = grown.clamp(tile, target * 1.6);
+          ringCap = 160.0;
+        }
+        final ring = tile.clamp(56.0, ringCap);
+
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(side, 2, side, 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Wrap(
+                spacing: gap,
+                runSpacing: 14,
+                alignment: tileCount <= columns
+                    ? WrapAlignment.center
+                    : WrapAlignment.start,
+                children: [
+                  for (var i = 0; i < moments.length; i++)
+                    _AvatarTile(
+                      key: ValueKey('moment-tile-${moments[i].id}'),
+                      moment: _merge(moments[i]),
+                      extent: tile,
+                      ring: ring,
+                      rank: i,
+                      selected: i == selectedIndex,
+                      playing: playingId == moments[i].id,
+                      onTap: () => onTap(i),
+                    ),
+                  _RecordTile(extent: tile, ring: ring, onTap: onRecord),
+                ],
+              ),
+              const SizedBox(height: 20),
+              footer,
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  VoiceMoment _merge(VoiceMoment moment) {
+    final live = counts[moment.id];
+    if (live == null) return moment;
+    return moment.withCounts(
+      likeCount: live.likeCount,
+      commentCount: live.commentCount,
+    );
+  }
+}
+
+/// One circle. The ring is the only decoration, and every ring state is
+/// something the data can prove: playing now, loaded in the player, or
+/// carrying real engagement. Nothing is ringed for looking popular.
+class _AvatarTile extends StatelessWidget {
+  const _AvatarTile({
+    required this.moment,
+    required this.extent,
+    required this.ring,
+    required this.rank,
+    required this.selected,
+    required this.playing,
+    required this.onTap,
+    super.key,
+  });
+
+  final VoiceMoment moment;
+  final double extent;
+
+  /// The circle's diameter, decided by the board so every tile in a run
+  /// lines up rather than each computing its own.
+  final double ring;
+  final int rank;
+  final bool selected;
+  final bool playing;
+  final VoidCallback onTap;
+
+  int get _engagement => moment.likeCount + moment.commentCount;
+
+  String get _semanticLabel {
+    final parts = <String>[
+      playing
+          ? 'Pause the Moment by ${moment.authorName}'
+          : 'Play the Moment by ${moment.authorName}',
+      'position ${rank + 1}',
+      if (moment.likeCount > 0)
+        '${moment.likeCount} ${moment.likeCount == 1 ? 'like' : 'likes'}',
+      if (moment.commentCount > 0)
+        '${moment.commentCount} '
+            '${moment.commentCount == 1 ? 'comment' : 'comments'}',
+      if (moment.durationSeconds > 0) '${moment.durationSeconds} seconds',
+    ];
+    return parts.join(', ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final nameHeight = scaler.scale(11.5) * 1.1 * 2 + 4;
+    final metaHeight = scaler.scale(11) * 1.35 + 2;
+
+    return SizedBox(
+      width: extent,
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: _semanticLabel,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _AvatarRing(
+                  diameter: ring,
+                  selected: selected,
+                  playing: playing,
+                  engaged: _engagement > 0,
+                  child: UserAvatar(
+                    radius: (ring - 11) / 2,
+                    photoUrl: moment.authorPhotoUrl,
+                    displayName: moment.authorName,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                SizedBox(
+                  height: nameHeight,
+                  child: Center(
+                    child: Text(
+                      moment.authorName,
+                      maxLines: 2,
+                      textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 11.5,
+                        height: 1.1,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+                SizedBox(
+                  height: metaHeight,
+                  child: _TileMeta(moment: moment),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Under the circle: the engagement that put it where it is, or — when a
+/// Moment has none — its real duration. A zero is never printed as a
+/// number; there is no fabricated social proof anywhere on this board.
+class _TileMeta extends StatelessWidget {
+  const _TileMeta({required this.moment});
+
+  final VoiceMoment moment;
+
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(
+      color: AppColors.textSecondary,
+      fontSize: 11,
+      fontWeight: FontWeight.w700,
+    );
+
+    if (moment.likeCount <= 0 && moment.commentCount <= 0) {
+      if (moment.durationSeconds <= 0) return const SizedBox.shrink();
+      return Center(
+        child: Text(
+          moment.durationLabel,
+          maxLines: 1,
+          style: const TextStyle(color: AppColors.textHint, fontSize: 11),
+        ),
+      );
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        if (moment.likeCount > 0) ...[
+          const Icon(
+            Icons.favorite_rounded,
+            size: 12,
+            color: AppColors.secondary,
+          ),
+          const SizedBox(width: 3),
+          Flexible(
+            child: Text('${moment.likeCount}', maxLines: 1, style: style),
+          ),
+        ],
+        if (moment.likeCount > 0 && moment.commentCount > 0)
+          const SizedBox(width: 8),
+        if (moment.commentCount > 0) ...[
+          const Icon(
+            Icons.mode_comment_rounded,
+            size: 11,
+            color: AppColors.textSecondary,
+          ),
+          const SizedBox(width: 3),
+          Flexible(
+            child: Text('${moment.commentCount}', maxLines: 1, style: style),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _AvatarRing extends StatelessWidget {
+  const _AvatarRing({
+    required this.diameter,
+    required this.selected,
+    required this.playing,
+    required this.engaged,
+    required this.child,
+  });
+
+  final double diameter;
+  final bool selected;
+  final bool playing;
+  final bool engaged;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final gradient = playing
+        ? const LinearGradient(colors: [AppColors.accent, AppColors.secondary])
+        : engaged
+        ? const LinearGradient(colors: [AppColors.primary, AppColors.secondary])
+        : null;
+
+    return SizedBox(
+      width: diameter,
+      height: diameter,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: diameter,
+            height: diameter,
+            padding: const EdgeInsets.all(2.5),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: gradient,
+              border: gradient != null
+                  ? null
+                  : Border.all(
+                      color: selected ? AppColors.accent : AppColors.border,
+                      width: selected ? 2.5 : 1.4,
+                    ),
+            ),
+            child: Container(
+              padding: const EdgeInsets.all(2),
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.background,
+              ),
+              child: child,
+            ),
+          ),
+          // The selection mark is drawn on top of a gradient ring rather
+          // than replacing it: "this one is loaded" and "this one has
+          // engagement" are different facts and must not overwrite each
+          // other.
+          if (selected)
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.accent, width: 2.5),
+                ),
+              ),
+            ),
+          if (playing)
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppColors.accent,
+                  border: Border.all(color: AppColors.background, width: 2),
+                ),
+                child: const Icon(
+                  Icons.graphic_eq_rounded,
+                  size: 11,
+                  color: AppColors.background,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The recorder entry point, as the last circle on the board.
+class _RecordTile extends StatelessWidget {
+  const _RecordTile({
+    required this.extent,
+    required this.ring,
+    required this.onTap,
+  });
+
+  final double extent;
+  final double ring;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final nameHeight = scaler.scale(11.5) * 1.1 * 2 + 4;
+
+    return SizedBox(
+      width: extent,
+      child: Semantics(
+        button: true,
+        label: 'Record your own Voice Moment',
+        child: InkWell(
+          key: const ValueKey('moments-discovery-record'),
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: ring,
+                  height: ring,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppColors.surface.withValues(alpha: .55),
+                    border: Border.all(
+                      color: AppColors.primary.withValues(alpha: .55),
+                      width: 1.4,
+                    ),
+                  ),
+                  child: Icon(
+                    Icons.mic_rounded,
+                    size: (ring * .34).clamp(18.0, 34.0),
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                SizedBox(
+                  height: nameHeight,
+                  child: const Center(
+                    child: Text(
+                      'Record',
+                      maxLines: 1,
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 11.5,
+                        height: 1.1,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// What the board actually holds, counted rather than estimated — and,
+/// when there is one, how much of it this session has really listened to.
+class _BoardFooter extends StatelessWidget {
+  const _BoardFooter({
+    required this.total,
+    required this.listenedCount,
+    required this.moreExists,
+  });
+
+  final int total;
+  final int listenedCount;
+  final bool moreExists;
+
+  @override
+  Widget build(BuildContext context) {
+    final noun = total == 1 ? 'Moment' : 'Moments';
+    return Column(
+      children: [
+        Text(
+          moreExists
+              ? '$total $noun on the board — more are published than fit '
+                    'one board.'
+              : (total == 1
+                    ? 'That is the only published Moment we could find.'
+                    : 'That is all $total published Moments we could find.'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: AppColors.textHint,
+            fontSize: 12,
+            height: 1.4,
+          ),
+        ),
+        if (listenedCount > 0) ...[
+          const SizedBox(height: 4),
+          Text(
+            'You listened to $listenedCount of them.',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: AppColors.textHint, fontSize: 12),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// The Moment that is loaded: who made it, what they said, the transport,
+/// and the real counts with real controls.
+///
+/// Docked under the board on narrow and medium widths and pinned beside
+/// it on wide ones — the same content either way, so nothing is reachable
+/// on one form factor and missing on another.
+class _MomentPlayerPanel extends StatelessWidget {
+  const _MomentPlayerPanel({
     required this.moment,
     required this.position,
     required this.total,
-    required this.compact,
-    required this.isCurrent,
+    required this.wide,
     required this.isPlaying,
     required this.elapsed,
     required this.duration,
@@ -480,14 +1229,16 @@ class _MomentStagePane extends StatelessWidget {
     required this.contentReportService,
     required this.onTogglePlay,
     required this.onComments,
+    required this.onPrevious,
+    required this.onNext,
     required this.onSeek,
+    super.key,
   });
 
   final VoiceMoment moment;
   final int position;
   final int total;
-  final bool compact;
-  final bool isCurrent;
+  final bool wide;
   final bool isPlaying;
   final Duration elapsed;
   final Duration? duration;
@@ -497,124 +1248,174 @@ class _MomentStagePane extends StatelessWidget {
   final ContentReportService? contentReportService;
   final VoidCallback onTogglePlay;
   final VoidCallback onComments;
+  final VoidCallback? onPrevious;
+  final VoidCallback? onNext;
   final ValueChanged<Duration> onSeek;
 
   @override
   Widget build(BuildContext context) {
-    final avatarRadius = compact ? 22.0 : 28.0;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(compact ? 20 : 28, 18, compact ? 20 : 28, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              AccessibleTapRegion(
-                onTap: () => showProfilePreview(
-                  context,
-                  userId: moment.authorId,
-                  displayName: moment.authorName,
-                  photoUrl: moment.authorPhotoUrl,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.surface.withValues(alpha: .45),
+        border: Border(
+          left: wide
+              ? const BorderSide(color: AppColors.divider)
+              : BorderSide.none,
+          top: wide
+              ? BorderSide.none
+              : const BorderSide(color: AppColors.divider),
+        ),
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                AccessibleTapRegion(
+                  onTap: () => showProfilePreview(
+                    context,
+                    userId: moment.authorId,
+                    displayName: moment.authorName,
+                    photoUrl: moment.authorPhotoUrl,
+                  ),
+                  semanticLabel: 'Open profile for ${moment.authorName}',
+                  tooltip: 'Open ${moment.authorName}\'s profile',
+                  circular: true,
+                  child: UserAvatar(
+                    radius: 22,
+                    photoUrl: moment.authorPhotoUrl,
+                    displayName: moment.authorName,
+                  ),
                 ),
-                semanticLabel: 'Open profile for ${moment.authorName}',
-                tooltip: 'Open ${moment.authorName}\'s profile',
-                circular: true,
-                child: UserAvatar(
-                  radius: avatarRadius,
-                  photoUrl: moment.authorPhotoUrl,
-                  displayName: moment.authorName,
-                ),
-              ),
-              const SizedBox(width: 12),
-              // Row, not Wrap: a long display name must truncate and
-              // leave the identity badges in place, never push them onto
-              // a second line or off the row entirely.
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            moment.authorName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: compact ? 15 : 16.5,
-                              fontWeight: FontWeight.w800,
+                const SizedBox(width: 12),
+                // Row + Flexible, not Wrap: a long display name must
+                // truncate and leave the identity badges in place, never
+                // push them onto a second line or off the row entirely.
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              moment.authorName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 15.5,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        UserIdentityBadges(uid: moment.authorId),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _relativeAge(moment.createdAt),
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 12,
+                          const SizedBox(width: 6),
+                          UserIdentityBadges(uid: moment.authorId),
+                        ],
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 2),
+                      // The age and the board position share a Wrap under
+                      // the name rather than sitting in the header row.
+                      // In the 344 pt desktop pane at a 2x text scale a
+                      // third fixed column left the name and its identity
+                      // badges 82 pt to live in, and the badges — which
+                      // cannot shrink — ran off the edge.
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          Text(
+                            _relativeAge(moment.createdAt),
+                            style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 12,
+                            ),
+                          ),
+                          Text(
+                            '${position + 1} of $total',
+                            style: const TextStyle(
+                              color: AppColors.textHint,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+              ],
+            ),
+            if (moment.caption.trim().isNotEmpty) ...[
+              const SizedBox(height: 12),
               Text(
-                '${position + 1} of $total',
+                moment.caption,
+                // Bounded rather than endless: the transport and the
+                // like/comment/report row must stay reachable in the dock
+                // no matter how long the caption is, and the panel
+                // scrolls for the rest. The bound tightens as text grows,
+                // because at a 2x scale four lines is half the dock.
+                maxLines: wide
+                    ? 8
+                    : (MediaQuery.textScalerOf(context).scale(14.5) > 20
+                          ? 2
+                          : 4),
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  color: AppColors.textHint,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                  fontSize: 14.5,
+                  height: 1.42,
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: 18),
-          if (moment.caption.trim().isNotEmpty)
-            Expanded(
-              child: SingleChildScrollView(
-                child: Text(
-                  moment.caption,
-                  style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: compact ? 16 : 18,
-                    height: 1.45,
-                  ),
-                ),
+            if (playbackError != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                playbackError!,
+                style: const TextStyle(color: AppColors.error, fontSize: 12.5),
               ),
-            )
-          else
-            const Spacer(),
-          if (playbackError != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              playbackError!,
-              style: const TextStyle(color: AppColors.error, fontSize: 12.5),
+            ],
+            const SizedBox(height: 12),
+            _Transport(
+              isPlaying: isPlaying,
+              elapsed: elapsed,
+              duration: duration,
+              declaredSeconds: moment.durationSeconds,
+              onTogglePlay: onTogglePlay,
+              onSeek: onSeek,
+            ),
+            const SizedBox(height: 10),
+            _ActionsRow(
+              moment: moment,
+              feedService: feedService,
+              onComments: onComments,
+              canReport:
+                  currentUserId.isNotEmpty && currentUserId != moment.authorId,
+              contentReportService: contentReportService,
+            ),
+            const SizedBox(height: 6),
+            // Previous / Next as visible controls: the board must never be
+            // tap-only on any form factor.
+            Row(
+              children: [
+                IconButton.filledTonal(
+                  key: const ValueKey('moments-discovery-previous'),
+                  onPressed: onPrevious,
+                  tooltip: 'Previous Moment',
+                  icon: const Icon(Icons.chevron_left_rounded),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filledTonal(
+                  key: const ValueKey('moments-discovery-next'),
+                  onPressed: onNext,
+                  tooltip: 'Next Moment',
+                  icon: const Icon(Icons.chevron_right_rounded),
+                ),
+              ],
             ),
           ],
-          const SizedBox(height: 14),
-          _Transport(
-            isPlaying: isPlaying,
-            elapsed: elapsed,
-            duration: duration,
-            declaredSeconds: moment.durationSeconds,
-            onTogglePlay: onTogglePlay,
-            onSeek: onSeek,
-          ),
-          const SizedBox(height: 10),
-          _ActionsRow(
-            moment: moment,
-            feedService: feedService,
-            onComments: onComments,
-            canReport:
-                currentUserId.isNotEmpty && currentUserId != moment.authorId,
-            contentReportService: contentReportService,
-          ),
-          const SizedBox(height: 6),
-        ],
+        ),
       ),
     );
   }
@@ -972,238 +1773,21 @@ class _CountChip extends StatelessWidget {
                   color: active ? AppColors.secondary : AppColors.textSecondary,
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  label,
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Previous / Next as visible controls. The pager must never be
-/// gesture-only on any form factor.
-class _PagerControls extends StatelessWidget {
-  const _PagerControls({
-    required this.index,
-    required this.total,
-    required this.onPrevious,
-    required this.onNext,
-    required this.onShuffle,
-  });
-
-  final int index;
-  final int total;
-  final VoidCallback? onPrevious;
-  final VoidCallback? onNext;
-  final VoidCallback onShuffle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-      child: Row(
-        children: [
-          IconButton.filledTonal(
-            key: const ValueKey('moments-discovery-previous'),
-            onPressed: onPrevious,
-            tooltip: 'Previous Moment',
-            icon: const Icon(Icons.keyboard_arrow_up_rounded),
-          ),
-          const SizedBox(width: 8),
-          IconButton.filledTonal(
-            key: const ValueKey('moments-discovery-next'),
-            onPressed: onNext,
-            tooltip: 'Next Moment',
-            icon: const Icon(Icons.keyboard_arrow_down_rounded),
-          ),
-          const Spacer(),
-          TextButton.icon(
-            key: const ValueKey('moments-discovery-shuffle'),
-            onPressed: onShuffle,
-            icon: const Icon(Icons.shuffle_rounded, size: 18),
-            label: const Text('Shuffle again'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// The desktop queue: the shuffled order made visible and jumpable.
-class _QueuePane extends StatelessWidget {
-  const _QueuePane({
-    required this.moments,
-    required this.index,
-    required this.onSelect,
-  });
-
-  final List<VoiceMoment> moments;
-  final int index;
-  final ValueChanged<int> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 320,
-      decoration: const BoxDecoration(
-        border: Border(left: BorderSide(color: AppColors.divider)),
-      ),
-      // The Material is load-bearing, not decoration: a ListTile paints
-      // its selected tile colour and its ink splash onto the nearest
-      // Material ancestor. Without one here the pane's own opaque
-      // background swallows both, and the queue would show no selection
-      // and no tap feedback at all on desktop.
-      child: Material(
-        type: MaterialType.transparency,
-        child: ListView.builder(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          itemCount: moments.length,
-          itemBuilder: (context, i) {
-            final moment = moments[i];
-            final selected = i == index;
-            return ListTile(
-              selected: selected,
-              selectedTileColor: AppColors.primary.withValues(alpha: .14),
-              onTap: () => onSelect(i),
-              leading: UserAvatar(
-                radius: 18,
-                photoUrl: moment.authorPhotoUrl,
-                displayName: moment.authorName,
-              ),
-              title: Text(
-                moment.authorName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              subtitle: Text(
-                moment.durationSeconds > 0
-                    ? '${moment.durationLabel} · ${moment.likeCount == 0 ? 'No likes yet' : '${moment.likeCount} likes'}'
-                    : (moment.likeCount == 0
-                          ? 'No likes yet'
-                          : '${moment.likeCount} likes'),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 11.5,
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
-
-/// The stack is finite by construction and never loops silently back to
-/// the top — that would fabricate the impression of an endless feed.
-class _EndOfStack extends StatelessWidget {
-  const _EndOfStack({
-    required this.listenedCount,
-    required this.total,
-    required this.moreExists,
-    required this.onShuffleAgain,
-    required this.onRecord,
-    required this.onBackToStart,
-  });
-
-  final int listenedCount;
-  final int total;
-  final bool moreExists;
-  final VoidCallback onShuffleAgain;
-  final VoidCallback onRecord;
-  final VoidCallback onBackToStart;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.done_all_rounded,
-              size: 34,
-              color: AppColors.textSecondary,
-            ),
-            const SizedBox(height: 14),
-            Text(
-              moreExists
-                  ? 'That\'s the end of this shuffle'
-                  : 'That\'s every Moment we could find',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 19,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              // Both numbers are counted, never estimated.
-              moreExists
-                  ? 'You went through $total Moments, and there are more '
-                        'published than fit in one shuffle. Shuffle again for '
-                        'a different selection.'
-                  : 'You went through all $total published '
-                        '${total == 1 ? 'Moment' : 'Moments'}.',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 13.5,
-                height: 1.45,
-              ),
-            ),
-            if (listenedCount > 0) ...[
-              const SizedBox(height: 6),
-              Text(
-                'You listened to $listenedCount of them.',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: AppColors.textHint,
-                  fontSize: 12.5,
-                ),
-              ),
-            ],
-            const SizedBox(height: 20),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              alignment: WrapAlignment.center,
-              children: [
-                FilledButton.icon(
-                  onPressed: onShuffleAgain,
-                  icon: const Icon(Icons.shuffle_rounded, size: 18),
-                  label: const Text('Shuffle again'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: onRecord,
-                  icon: const Icon(Icons.mic_rounded, size: 18),
-                  label: const Text('Record a Moment'),
-                ),
-                TextButton(
-                  onPressed: onBackToStart,
-                  child: const Text('Back to the start'),
-                ),
-              ],
-            ),
-          ],
         ),
       ),
     );

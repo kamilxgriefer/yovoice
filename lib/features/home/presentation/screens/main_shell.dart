@@ -17,6 +17,7 @@ import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/features/home/presentation/screens/home_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
+import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
@@ -35,6 +36,7 @@ import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_sheet.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
@@ -212,6 +214,7 @@ class _MainShellState extends State<MainShell>
     onOpenProfile: () => unawaited(_openProfile()),
     onCreateMoment: _openCreateMoment,
     onCreateRoom: () => unawaited(_openCreateRoom()),
+    onOpenMoment: (moment) => unawaited(_openMoment(moment)),
     onOpenComments: (moment) => unawaited(
       Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
@@ -236,13 +239,7 @@ class _MainShellState extends State<MainShell>
     onFindCreators: () => _onDestinationSelected(_findCreatorsSlot),
     onViewAllFriends: () => _onDestinationSelected(2),
     onStartRoom: () => unawaited(_openCreateRoom()),
-    onOpenMoment: (moment) => unawaited(
-      Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => MomentCommentsScreen(moment: moment),
-        ),
-      ),
-    ),
+    onOpenMoment: (moment) => unawaited(_openMoment(moment)),
     onCreateMoment: _openCreateMoment,
     onSeeAllMoments: () =>
         unawaited(_openMoreDestination(MoreDestination.moments)),
@@ -811,6 +808,23 @@ class _MainShellState extends State<MainShell>
           builder: (_) => const RecordVoiceMomentScreen(),
         ),
       ),
+    );
+  }
+
+  /// The ONE way Home opens a Voice Moment, on every form factor.
+  ///
+  /// Both Home rails used to push [MomentCommentsScreen] for this, which
+  /// lists replies and owns no player: tapping a face — including your
+  /// own "Your Moment" tile — could not play the Moment it belonged to.
+  /// The sheet carries the existing MomentCard, so playback, like,
+  /// comment, report and offline download are the same code everywhere.
+  Future<void> _openMoment(VoiceMoment moment) async {
+    final uid = _currentUserId;
+    await showMomentSheet(
+      context,
+      moment: moment,
+      isOwn: uid.isNotEmpty && moment.authorId == uid,
+      canReport: uid.isNotEmpty && moment.authorId != uid,
     );
   }
 

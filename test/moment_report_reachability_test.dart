@@ -21,8 +21,8 @@ import 'package:yovoice/shared/identity/public_identity_repository.dart';
 /// path a bigger hole here than anywhere else.
 ///
 /// Three surfaces, because Moments has three places a person meets
-/// someone else's content: the Following feed card, the Discover stage,
-/// and a comment thread.
+/// someone else's content: the Following feed card, the Discover board's
+/// player, and a comment thread.
 void main() {
   const viewerUid = 'viewer-uid';
   const authorUid = 'author-uid';
@@ -155,7 +155,7 @@ void main() {
     }
   });
 
-  group('the Discover stage', () {
+  group('the Discover board', () {
     Future<void> pumpStage(
       WidgetTester tester, {
       required _RecordingFunctions functions,
@@ -221,7 +221,7 @@ void main() {
       expect(functions.calls.single.payload['reason'], 'violence');
     });
 
-    testWidgets('your own Moment in the stack has no report chip', (
+    testWidgets('your own Moment on the board has no report chip', (
       tester,
     ) async {
       final functions = _RecordingFunctions();
@@ -282,19 +282,16 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // PRE-EXISTING, NOT MINE. _PagerControls
-      // (moment_discovery_view.dart:1013) overflows by 179 px at this
-      // text scale whether or not the report chip is rendered —
-      // reproduced with the chip absent before this test was written. It
-      // is drained here rather than fixed, because the pager is not this
-      // change's surface; it is written up as a separate defect. Drained
-      // narrowly, so a NEW overflow introduced by the report chip would
-      // still fail the assertions below.
-      final pending = tester.takeException();
+      // This used to drain a KNOWN overflow: the old _PagerControls row
+      // ran 179 px past a 360 pt phone at this text scale, with or
+      // without the report chip. The pager is gone — the board's order
+      // chips and the player's count chips both ellipsize instead — so
+      // there is nothing left to tolerate, and this now asserts the
+      // stronger thing.
       expect(
-        pending.toString(),
-        contains('overflowed'),
-        reason: 'only the known pager overflow is tolerated here',
+        tester.takeException(),
+        isNull,
+        reason: 'the Discover board must not overflow at a 2x text scale',
       );
 
       // The assertion is positional rather than "nothing threw": what

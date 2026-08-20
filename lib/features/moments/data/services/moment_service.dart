@@ -81,6 +81,25 @@ class MomentService {
         });
   }
 
+  /// ONE Moment, live.
+  ///
+  /// For a surface that was handed a Moment fetched some time ago and
+  /// then lets you act on it — the player sheet, where you can like it
+  /// and comment on it. Without this the sheet showed the counters as
+  /// they were when the tile was tapped, so your own like did not appear
+  /// until the surface was rebuilt from somewhere else.
+  ///
+  /// Emits nothing for a document that does not exist (or no longer
+  /// does); the caller keeps what it already had rather than rendering an
+  /// empty Moment.
+  Stream<VoiceMoment> watchMoment(String momentId) {
+    return _moments
+        .doc(momentId)
+        .snapshots()
+        .where((document) => document.exists)
+        .map(VoiceMoment.fromFirestore);
+  }
+
   /// The signed-in user's own Voice Moments, published and unpublished
   /// (drafts still uploading or that failed to finish publishing).
   Stream<List<VoiceMoment>> watchMyMoments() {

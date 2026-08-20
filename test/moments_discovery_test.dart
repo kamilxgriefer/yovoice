@@ -468,8 +468,9 @@ void main() {
       expect(find.textContaining('4 published Moments'), findsOneWidget);
     });
 
-    testWidgets('a populated stack shows one Moment with its real counts and '
-        'a visible Next control — never gesture-only', (tester) async {
+    testWidgets('a populated board shows every Moment as a circle, loads the '
+        'top one with its real counts, and keeps a visible Next control — '
+        'never tap-only', (tester) async {
       await tester.binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -487,10 +488,31 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(find.text('1 of 2'), findsOneWidget);
-      expect(find.text('3'), findsOneWidget);
+      // The board: one circle per Moment, all of them at once.
+      expect(find.byKey(const ValueKey('moment-tile-one')), findsOneWidget);
+      expect(find.byKey(const ValueKey('moment-tile-two')), findsOneWidget);
+      // Plus the recorder entry point, which the pager used to own.
+      expect(
+        find.byKey(const ValueKey('moments-discovery-record')),
+        findsOneWidget,
+      );
+
+      final player = find.byKey(const ValueKey('moments-discovery-player'));
+      expect(player, findsOneWidget);
+      expect(
+        find.descendant(of: player, matching: find.text('1 of 2')),
+        findsOneWidget,
+      );
+      // The real count, on the control that can change it.
+      expect(
+        find.descendant(of: player, matching: find.text('3')),
+        findsOneWidget,
+      );
       // A zero count reads as a verb, not a fabricated "0".
-      expect(find.text('Comment'), findsOneWidget);
+      expect(
+        find.descendant(of: player, matching: find.text('Comment')),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const ValueKey('moments-discovery-next')),
         findsOneWidget,
@@ -710,6 +732,13 @@ void main() {
 /// Always fails, the way a missing composite index fails in production.
 class _ThrowingDiscovery implements MomentDiscoveryService {
   @override
+  Stream<Map<String, MomentEngagement>> watchEngagement({
+    int poolSize = MomentDiscoveryService.defaultPoolSize,
+  }) => Stream<Map<String, MomentEngagement>>.error(
+    StateError('pool query failed'),
+  );
+
+  @override
   Future<MomentDiscoveryFeed> loadDiscoveryFeed({
     int poolSize = MomentDiscoveryService.defaultPoolSize,
     int? seed,
@@ -735,6 +764,14 @@ class _StaticDiscovery implements MomentDiscoveryService {
   /// Lets a test observe the loading state, which otherwise resolves
   /// inside the same microtask drain as the first pump.
   final Duration? delay;
+
+  /// No counter stream at all — what the board must survive without
+  /// losing the counts it loaded. `moments_board_test.dart` owns the
+  /// live-counter behaviour itself.
+  @override
+  Stream<Map<String, MomentEngagement>> watchEngagement({
+    int poolSize = MomentDiscoveryService.defaultPoolSize,
+  }) => const Stream<Map<String, MomentEngagement>>.empty();
 
   @override
   Future<MomentDiscoveryFeed> loadDiscoveryFeed({

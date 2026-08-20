@@ -504,6 +504,7 @@ void main() {
               onOpenProfile: () {},
               onCreateMoment: () {},
               onCreateRoom: () {},
+              onOpenMoment: (_) {},
               onOpenComments: (_) {},
               onOpenConversation: (_) {},
               onSeeAllChats: () {},

@@ -123,6 +123,7 @@ void main() {
       onOpenProfile: onProfile ?? () {},
       onCreateMoment: onCreateMoment ?? () {},
       onCreateRoom: onCreateRoom ?? () {},
+      onOpenMoment: (_) {},
       onOpenComments: (_) {},
       onOpenConversation: onOpenConversation ?? (_) {},
       onSeeAllChats: () {},

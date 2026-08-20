@@ -45,8 +45,10 @@ class DesktopMomentsStrip extends StatefulWidget {
     super.key,
   });
 
-  /// Opens the existing Moment viewer (MomentCommentsScreen), the same
-  /// one mobile Home and the Moments destination open.
+  /// Opens ONE Moment in the player, the same surface mobile Home and the
+  /// Moments destination open. It used to open the comments screen, which
+  /// has no player at all — so tapping a face on Home was the one place in
+  /// the app where you could not hear the Moment you tapped.
   final ValueChanged<VoiceMoment> onOpenMoment;
 
   /// The existing Moment creation flow (RecordVoiceMomentScreen).
@@ -717,10 +719,18 @@ class _FollowablePersonTileState extends State<_FollowablePersonTile> {
   }
 }
 
-/// The signed-in user's slot. The avatar opens their newest Moment when
-/// they have one; the small plus always opens the existing creation flow
-/// — the desktop entry point for recording, now that the rail's duplicate
+/// The signed-in user's slot. Opens their newest Moment when they have
+/// one; the small plus always opens the existing creation flow — the
+/// desktop entry point for recording, now that the rail's duplicate
 /// action is gone.
+///
+/// THE WHOLE TILE is the target, not just the 66 pt disc. Every other
+/// tile in this rail already wrapped its column in one [InkWell], while
+/// this one wrapped only the avatar: the name "Your Moment" and the
+/// "New" / duration line under it were dead pixels, so a click that
+/// landed a few pixels low did nothing at all. That asymmetry is the
+/// reported "clicking my own avatar does nothing" — reproduced in a
+/// widget test before it was changed, and pinned by one after.
 class _YourMomentTile extends StatelessWidget {
   const _YourMomentTile({
     required this.profile,
@@ -745,78 +755,92 @@ class _YourMomentTile extends StatelessWidget {
     return SizedBox(
       width: _MomentTile.widthFor(context),
       height: _MomentTile.heightFor(context),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Stack(
-            clipBehavior: Clip.none,
+      child: Semantics(
+        button: true,
+        label: mine == null
+            ? 'Record your first Voice Moment'
+            : 'Play your Voice Moment',
+        child: InkWell(
+          key: const ValueKey('home-your-moment'),
+          onTap: mine == null ? onCreate : () => onOpen(mine),
+          borderRadius: BorderRadius.circular(14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              InkWell(
-                onTap: mine == null ? onCreate : () => onOpen(mine),
-                customBorder: const CircleBorder(),
-                child: _MomentRing(
-                  highlighted: fresh,
-                  child: UserAvatar(
-                    radius: 25,
-                    photoUrl: profile?.photoUrl,
-                    displayName: profile?.displayName,
-                    fallbackIcon: Icons.person_rounded,
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  _MomentRing(
+                    highlighted: fresh,
+                    child: UserAvatar(
+                      radius: 25,
+                      photoUrl: profile?.photoUrl,
+                      displayName: profile?.displayName,
+                      fallbackIcon: Icons.person_rounded,
+                    ),
                   ),
-                ),
+                  // Nested inside the tile's own InkWell on purpose: the
+                  // innermost recognizer wins the tap, so the plus still
+                  // means "record" while every other pixel of the tile
+                  // means "play mine".
+                  Positioned(
+                    right: -1,
+                    bottom: -1,
+                    child: Tooltip(
+                      message: 'Record a Voice Moment',
+                      child: InkWell(
+                        key: const ValueKey('home-record-moment'),
+                        onTap: onCreate,
+                        customBorder: const CircleBorder(),
+                        child: Container(
+                          width: 22,
+                          height: 22,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: const LinearGradient(
+                              colors: [AppColors.primary, AppColors.secondary],
+                            ),
+                            border: Border.all(
+                              color: const Color(0xFF0C0814),
+                              width: 2,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.add_rounded,
+                            size: 13,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              Positioned(
-                right: -1,
-                bottom: -1,
-                child: Tooltip(
-                  message: 'Record a Voice Moment',
-                  child: InkWell(
-                    onTap: onCreate,
-                    customBorder: const CircleBorder(),
-                    child: Container(
-                      width: 22,
-                      height: 22,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: const LinearGradient(
-                          colors: [AppColors.primary, AppColors.secondary],
-                        ),
-                        border: Border.all(
-                          color: const Color(0xFF0C0814),
-                          width: 2,
-                        ),
-                      ),
-                      child: const Icon(
-                        Icons.add_rounded,
-                        size: 13,
-                        color: Colors.white,
-                      ),
+              const SizedBox(height: 7),
+              const _MomentNameLabel(name: 'Your Moment'),
+              const SizedBox(height: 2),
+              SizedBox(
+                height: _MomentTile.actionHeightFor(context),
+                child: Center(
+                  child: Text(
+                    mine == null
+                        ? 'Record'
+                        : (fresh ? 'New' : mine.durationLabel),
+                    maxLines: 1,
+                    style: TextStyle(
+                      color: mine == null || !fresh
+                          ? const Color(0xFF9A90AC)
+                          : const Color(0xFFE879F9),
+                      fontSize: 10.5,
+                      fontWeight: fresh ? FontWeight.w800 : FontWeight.w600,
                     ),
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 7),
-          const _MomentNameLabel(name: 'Your Moment'),
-          const SizedBox(height: 2),
-          SizedBox(
-            height: _MomentTile.actionHeightFor(context),
-            child: Center(
-              child: Text(
-                mine == null ? 'Record' : (fresh ? 'New' : mine.durationLabel),
-                maxLines: 1,
-                style: TextStyle(
-                  color: mine == null || !fresh
-                      ? const Color(0xFF9A90AC)
-                      : const Color(0xFFE879F9),
-                  fontSize: 10.5,
-                  fontWeight: fresh ? FontWeight.w800 : FontWeight.w600,
-                ),
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

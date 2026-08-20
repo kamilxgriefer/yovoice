@@ -8,23 +8,29 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
-import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
-import 'package:yovoice/features/moments/data/services/offline_voice_moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_card.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_discovery_view.dart';
-import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
-import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
-import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+
+/// [MomentCard] used to live in this file and is imported from here by the
+/// creator, profile and Home surfaces. It now has its own file — the
+/// Following tab renders compact tiles and opens the card in a sheet, so
+/// a screen importing a screen to get a card was the wrong shape — and is
+/// re-exported so no existing importer had to change.
+export 'package:yovoice/features/moments/presentation/widgets/moment_card.dart'
+    show MomentCard;
 
 /// Which half of the Moments destination is showing.
 enum MomentsTab {
-  /// Every published Voice Moment from every user, shuffled and weighted
-  /// so genuinely popular ones surface more often.
+  /// Every published Voice Moment from every user, as a board of
+  /// avatars ranked by engagement — with the popularity-weighted shuffle
+  /// still one tap away.
   discover,
 
   /// The personal feed that has always lived here: your own Moments, then
@@ -38,10 +44,11 @@ enum MomentsTab {
 ///
 /// Two surfaces behind one segmented control:
 ///
-///  * **Discover** — a shuffled, popularity-weighted stack of published
-///    Moments from ALL users ([MomentDiscoveryView]).
-///  * **Following** — the pre-existing personal feed, unchanged in
-///    substance and now with the loading and error states it never had.
+///  * **Discover** — a board of avatar circles covering every published
+///    Moment from ALL users, most-engaged first ([MomentDiscoveryView]).
+///  * **Following** — the pre-existing personal feed. Same two streams,
+///    same states, rendered as compact avatar tiles; the full card it
+///    used to list is one tap away in a sheet.
 class MomentsScreen extends StatefulWidget {
   const MomentsScreen({
     this.momentService,
@@ -142,6 +149,23 @@ class _MomentsScreenState extends State<MomentsScreen> {
     );
   }
 
+  /// Opens one Moment from a Following tile. The tile is an index entry;
+  /// the sheet carries the unchanged [MomentCard] with playback, like,
+  /// comment, report and offline download.
+  Future<void> _openMoment(VoiceMoment moment) async {
+    final uid = _uid;
+    await showMomentSheet(
+      context,
+      moment: moment,
+      isOwn: uid.isNotEmpty && moment.authorId == uid,
+      canReport: uid.isNotEmpty && moment.authorId != uid,
+      feedService: _feedService,
+      momentService: _moments,
+      contentReportService: widget.contentReportService,
+      playerFactory: widget.playerFactory,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -177,7 +201,7 @@ class _MomentsScreenState extends State<MomentsScreen> {
                   currentUserId: _uid,
                   contentReportService: widget.contentReportService,
                   onCreate: () => unawaited(_createMoment()),
-                  onComments: (moment) => unawaited(_openComments(moment)),
+                  onOpen: (moment) => unawaited(_openMoment(moment)),
                 ),
               },
             ),
@@ -294,7 +318,7 @@ class _FollowingFeed extends StatelessWidget {
     required this.currentUserId,
     required this.contentReportService,
     required this.onCreate,
-    required this.onComments,
+    required this.onOpen,
     super.key,
   });
 
@@ -304,54 +328,75 @@ class _FollowingFeed extends StatelessWidget {
   final String currentUserId;
   final ContentReportService? contentReportService;
   final VoidCallback onCreate;
-  final ValueChanged<VoiceMoment> onComments;
+
+  /// Opens one Moment in the player sheet. Tiles are an index, not a
+  /// player: the card that can actually play, like, comment, report and
+  /// download is one tap away and unchanged.
+  final ValueChanged<VoiceMoment> onOpen;
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 720),
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 4, 20, 40),
-          children: [
-            const _SectionTitle('Your Moments'),
-            _MomentSection(
-              stream: mine,
-              emptyIcon: Icons.mic_none_rounded,
-              emptyTitle: 'No Moments yet',
-              emptyBody:
-                  'Record a short voice update — it appears here '
-                  'and in your followers’ feeds.',
-              emptyActionLabel: 'Create your Moment',
-              onEmptyAction: onCreate,
-              errorTitle: 'Your Moments could not load',
-              take: 3,
-              isOwnSection: true,
-              feedService: feedService,
-              currentUserId: currentUserId,
-              contentReportService: contentReportService,
-              onComments: onComments,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final compact = width < 600;
+        // Capped rather than unbounded: a tile grid stretched across a
+        // 1600 pt window becomes a wall of specks with no reading rhythm.
+        // Wider than the old 720 pt column, because tiles want columns.
+        return Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1040),
+            child: ListView(
+              padding: EdgeInsets.fromLTRB(
+                compact ? 16 : 24,
+                4,
+                compact ? 16 : 24,
+                40,
+              ),
+              children: [
+                const _SectionTitle('Your Moments'),
+                _MomentSection(
+                  stream: mine,
+                  emptyIcon: Icons.mic_none_rounded,
+                  emptyTitle: 'No Moments yet',
+                  emptyBody:
+                      'Record a short voice update — it appears here '
+                      'and in your followers’ feeds.',
+                  emptyActionLabel: 'Create your Moment',
+                  onEmptyAction: onCreate,
+                  errorTitle: 'Your Moments could not load',
+                  // Three was a cap on tall cards. Tiles cost a fraction
+                  // of the height, so more of your own work is visible
+                  // without scrolling past someone else's.
+                  take: 12,
+                  isOwnSection: true,
+                  feedService: feedService,
+                  currentUserId: currentUserId,
+                  contentReportService: contentReportService,
+                  onOpen: onOpen,
+                ),
+                const SizedBox(height: 26),
+                const _SectionTitle('From people you follow'),
+                _MomentSection(
+                  stream: feed,
+                  excludeAuthorId: currentUserId,
+                  emptyIcon: Icons.graphic_eq_rounded,
+                  emptyTitle: 'Nothing here yet',
+                  emptyBody:
+                      'Moments from friends and people you follow '
+                      'will show up here.',
+                  errorTitle: 'This feed could not load',
+                  isOwnSection: false,
+                  feedService: feedService,
+                  currentUserId: currentUserId,
+                  contentReportService: contentReportService,
+                  onOpen: onOpen,
+                ),
+              ],
             ),
-            const SizedBox(height: 22),
-            const _SectionTitle('From people you follow'),
-            _MomentSection(
-              stream: feed,
-              excludeAuthorId: currentUserId,
-              emptyIcon: Icons.graphic_eq_rounded,
-              emptyTitle: 'Nothing here yet',
-              emptyBody:
-                  'Moments from friends and people you follow '
-                  'will show up here.',
-              errorTitle: 'This feed could not load',
-              isOwnSection: false,
-              feedService: feedService,
-              currentUserId: currentUserId,
-              contentReportService: contentReportService,
-              onComments: onComments,
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -369,7 +414,7 @@ class _MomentSection extends StatelessWidget {
     required this.feedService,
     required this.currentUserId,
     required this.contentReportService,
-    required this.onComments,
+    required this.onOpen,
     this.emptyActionLabel,
     this.onEmptyAction,
     this.excludeAuthorId,
@@ -385,7 +430,7 @@ class _MomentSection extends StatelessWidget {
   final HomeFeedService? feedService;
   final String currentUserId;
   final ContentReportService? contentReportService;
-  final ValueChanged<VoiceMoment> onComments;
+  final ValueChanged<VoiceMoment> onOpen;
   final String? emptyActionLabel;
   final VoidCallback? onEmptyAction;
   final String? excludeAuthorId;
@@ -421,23 +466,255 @@ class _MomentSection extends StatelessWidget {
             onAction: onEmptyAction,
           );
         }
-        final shown = take == null ? visible : visible.take(take!);
-        return Column(
+        final shown = (take == null ? visible : visible.take(take!)).toList(
+          growable: false,
+        );
+        return _MomentTileGrid(moments: shown, onOpen: onOpen);
+      },
+    );
+  }
+}
+
+/// The compact Following grid: mini squares, each carrying its author's
+/// avatar.
+///
+/// This replaced a column of full-width cards. Those cards are not gone —
+/// tapping a tile opens exactly one of them in a sheet — but as a FEED
+/// they spent most of a viewport on two or three entries, so a personal
+/// feed of a dozen Moments read as an endless scroll of mostly empty
+/// panels. A tile is an index entry: who, how long, and what it has
+/// actually collected.
+class _MomentTileGrid extends StatelessWidget {
+  const _MomentTileGrid({required this.moments, required this.onOpen});
+
+  final List<VoiceMoment> moments;
+  final ValueChanged<VoiceMoment> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        const gap = 10.0;
+        // A target per breakpoint, then whole columns. The floor of two
+        // keeps a 320 pt phone from rendering one card-width tile; the
+        // ceiling of eight keeps a desktop grid from turning into specks.
+        final target = width < 600
+            ? 108.0
+            : width < 980
+            ? 122.0
+            : 134.0;
+        final columns = ((width + gap) / (target + gap)).floor().clamp(2, 8);
+        final tile = (width - gap * (columns - 1)) / columns;
+
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
           children: [
-            for (final moment in shown)
-              MomentCard(
+            for (final moment in moments)
+              _MomentSquareTile(
+                key: ValueKey('moment-square-${moment.id}'),
                 moment: moment,
-                isOwn: isOwnSection && moment.authorId == currentUserId,
-                canReport:
-                    currentUserId.isNotEmpty &&
-                    moment.authorId != currentUserId,
-                feedService: feedService,
-                contentReportService: contentReportService,
-                onComments: () => onComments(moment),
+                extent: tile,
+                onTap: () => onOpen(moment),
               ),
           ],
         );
       },
+    );
+  }
+}
+
+/// One mini square. Nothing on it is invented: the avatar and name come
+/// from the Moment document, the duration is the recorded length, and a
+/// counter is printed only when it is greater than zero.
+class _MomentSquareTile extends StatelessWidget {
+  const _MomentSquareTile({
+    required this.moment,
+    required this.extent,
+    required this.onTap,
+    super.key,
+  });
+
+  final VoiceMoment moment;
+  final double extent;
+  final VoidCallback onTap;
+
+  String get _semanticLabel {
+    final parts = <String>[
+      'Open the Moment by ${moment.authorName}',
+      if (moment.durationSeconds > 0) '${moment.durationSeconds} seconds',
+      if (moment.likeCount > 0)
+        '${moment.likeCount} ${moment.likeCount == 1 ? 'like' : 'likes'}',
+      if (moment.commentCount > 0)
+        '${moment.commentCount} '
+            '${moment.commentCount == 1 ? 'comment' : 'comments'}',
+      if (!moment.isPublished) 'still uploading',
+    ];
+    return parts.join(', ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final avatarRadius = (extent * .21).clamp(16.0, 30.0);
+    // The square grows with the text scale instead of clipping its own
+    // label: an accessibility setting must not cost the name.
+    final height =
+        extent + (scaler.scale(11) - 11) * 3.2 + (scaler.scale(10.5) - 10.5) * 2;
+
+    return SizedBox(
+      width: extent,
+      height: height,
+      child: Semantics(
+        button: true,
+        label: _semanticLabel,
+        child: Material(
+          color: AppColors.surface.withValues(alpha: .5),
+          borderRadius: BorderRadius.circular(18),
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: AppColors.border.withValues(alpha: .45),
+                ),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      UserAvatar(
+                        radius: avatarRadius,
+                        photoUrl: moment.authorPhotoUrl,
+                        displayName: moment.authorName,
+                      ),
+                      Positioned(
+                        right: -2,
+                        bottom: -2,
+                        child: Container(
+                          width: 20,
+                          height: 20,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppColors.primary,
+                            border: Border.all(
+                              color: AppColors.background,
+                              width: 2,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.play_arrow_rounded,
+                            size: 12,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Flexible(
+                    child: Text(
+                      moment.authorName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 11,
+                        height: 1.15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Flexible(child: _TileFooter(moment: moment)),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The one honest line under the face: what it is still doing, or what it
+/// has collected, or how long it runs. Never a fabricated zero.
+class _TileFooter extends StatelessWidget {
+  const _TileFooter({required this.moment});
+
+  final VoiceMoment moment;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!moment.isPublished) {
+      return const Text(
+        'Uploading…',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: AppColors.textHint, fontSize: 10.5),
+      );
+    }
+
+    const style = TextStyle(
+      color: AppColors.textSecondary,
+      fontSize: 10.5,
+      fontWeight: FontWeight.w700,
+    );
+
+    if (moment.likeCount <= 0 && moment.commentCount <= 0) {
+      return Text(
+        moment.durationSeconds > 0 ? moment.durationLabel : '',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(color: AppColors.textHint, fontSize: 10.5),
+      );
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        if (moment.likeCount > 0) ...[
+          const Icon(
+            Icons.favorite_rounded,
+            size: 11,
+            color: AppColors.secondary,
+          ),
+          const SizedBox(width: 3),
+          Flexible(
+            child: Text(
+              '${moment.likeCount}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: style,
+            ),
+          ),
+        ],
+        if (moment.likeCount > 0 && moment.commentCount > 0)
+          const SizedBox(width: 7),
+        if (moment.commentCount > 0) ...[
+          const Icon(
+            Icons.mode_comment_rounded,
+            size: 10,
+            color: AppColors.textSecondary,
+          ),
+          const SizedBox(width: 3),
+          Flexible(
+            child: Text(
+              '${moment.commentCount}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: style,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -571,579 +848,6 @@ class _CreateMomentButton extends StatelessWidget {
           color: AppColors.textPrimary,
           fontWeight: FontWeight.w800,
         ),
-      ),
-    );
-  }
-}
-
-/// An audio-first Moment card: identity, caption, a compact waveform with
-/// play state and duration, and the real reaction/comment counts.
-///
-/// Shared with the creator pinned-Moment surfaces and mobile Home — its
-/// constructor is deliberately backward compatible.
-class MomentCard extends StatefulWidget {
-  const MomentCard({
-    required this.moment,
-    required this.onComments,
-    this.isOwn = false,
-    this.canReport = false,
-    this.offlineService,
-    this.feedService,
-    this.contentReportService,
-    super.key,
-  });
-
-  final VoiceMoment moment;
-  final VoidCallback onComments;
-  final bool isOwn;
-
-  /// True only when the viewer is known AND is not the author. Kept
-  /// separate from [isOwn], which is false for a signed-out viewer too —
-  /// offering "report" to someone with no session is a control that can
-  /// only ever fail.
-  final bool canReport;
-  final OfflineVoiceMomentService? offlineService;
-
-  /// Injection seam for the report action, matching [offlineService] and
-  /// [feedService]: production passes nothing, tests pass a fake so the
-  /// success and failure paths can be exercised without a Firebase app.
-  final ContentReportService? contentReportService;
-
-  /// Backs the like control. When null the heart renders as a disabled
-  /// indicator rather than a button that silently does nothing.
-  final HomeFeedService? feedService;
-
-  @override
-  State<MomentCard> createState() => _MomentCardState();
-}
-
-class _MomentCardState extends State<MomentCard> {
-  final AudioPlayer _player = AudioPlayer();
-  late final OfflineVoiceMomentService _offline =
-      widget.offlineService ?? OfflineVoiceMomentService.instance;
-  bool _playing = false;
-  bool _downloaded = false;
-  bool _downloading = false;
-  int _downloadLookupGeneration = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _refreshDownloadState();
-  }
-
-  @override
-  void didUpdateWidget(covariant MomentCard oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.moment.id != widget.moment.id) {
-      _downloaded = false;
-      _refreshDownloadState();
-    }
-  }
-
-  Future<void> _refreshDownloadState() async {
-    final generation = ++_downloadLookupGeneration;
-    final momentId = widget.moment.id;
-    try {
-      final downloaded = await _offline.isDownloaded(momentId);
-      if (mounted &&
-          generation == _downloadLookupGeneration &&
-          widget.moment.id == momentId) {
-        setState(() => _downloaded = downloaded);
-      }
-    } catch (_) {
-      // The parent screen is authenticated, but a concurrent logout can race
-      // this lightweight local lookup. It must not make the feed fail.
-    }
-  }
-
-  @override
-  void dispose() {
-    _player.dispose();
-    super.dispose();
-  }
-
-  Future<void> _toggle() async {
-    final url = widget.moment.audioUrl?.trim() ?? '';
-    if (url.isEmpty) return;
-    if (_playing) {
-      await _player.pause();
-    } else {
-      final offline = _downloaded
-          ? await _offline.readPlayback(widget.moment.id)
-          : null;
-      if (_downloaded && offline == null && mounted) {
-        setState(() => _downloaded = false);
-      }
-      final source = offline?.deviceFilePath != null
-          ? DeviceFileSource(offline!.deviceFilePath!)
-          : offline?.bytes != null
-          ? BytesSource(offline!.bytes!)
-          : UrlSource(url);
-      await _player.play(source);
-    }
-    if (mounted) setState(() => _playing = !_playing);
-  }
-
-  Future<void> _toggleDownload() async {
-    if (_downloading) return;
-    final momentId = widget.moment.id;
-    final removing = _downloaded;
-    setState(() => _downloading = true);
-    try {
-      if (removing) {
-        await _offline.delete(momentId);
-      } else {
-        await _offline.download(widget.moment);
-      }
-      if (!mounted || widget.moment.id != momentId) return;
-      setState(() => _downloaded = !removing);
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            behavior: SnackBarBehavior.floating,
-            content: Text(
-              _downloaded
-                  ? 'Voice Moment downloaded for offline listening.'
-                  : 'Offline download removed.',
-            ),
-          ),
-        );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Theme.of(context).colorScheme.errorContainer,
-            content: Text(
-              error is OfflineAudioException
-                  ? error.message
-                  : 'The Voice Moment could not be downloaded.',
-            ),
-          ),
-        );
-    } finally {
-      if (mounted) setState(() => _downloading = false);
-    }
-  }
-
-  Future<void> _toggleLike() async {
-    final service = widget.feedService;
-    if (service == null) return;
-    try {
-      await service.toggleLike(widget.moment.id);
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            behavior: SnackBarBehavior.floating,
-            content: Text('Your like could not be saved.'),
-          ),
-        );
-    }
-  }
-
-  /// Reports this Voice Moment to moderation.
-  ///
-  /// `voiceMoment` is one of the three targets `createContentReport`
-  /// already accepts, and until now nothing in the app called it — the
-  /// feed rendered other people's audio with no way to say anything was
-  /// wrong with it.
-  Future<void> _report() async {
-    await reportContent(
-      context: context,
-      service: widget.contentReportService,
-      content: ReportedContent.voiceMoment(momentId: widget.moment.id),
-      title: 'Report this Voice Moment',
-      subtitle:
-          'Your report goes to the YO Voice moderation team with this '
-          'Moment attached. ${widget.moment.authorName} is not told who '
-          'reported it.',
-    );
-  }
-
-  String _age(DateTime? createdAt) {
-    if (createdAt == null) return '';
-    final diff = DateTime.now().difference(createdAt);
-    if (diff.inMinutes < 1) return 'now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m';
-    if (diff.inHours < 24) return '${diff.inHours}h';
-    return '${diff.inDays}d';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final moment = widget.moment;
-    final playable = (moment.audioUrl?.trim().isNotEmpty ?? false);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        color: AppColors.surface.withValues(alpha: .5),
-        border: Border.all(color: AppColors.border.withValues(alpha: .45)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              AccessibleTapRegion(
-                onTap: () => showProfilePreview(
-                  context,
-                  userId: moment.authorId,
-                  displayName: moment.authorName,
-                  photoUrl: moment.authorPhotoUrl,
-                ),
-                semanticLabel: 'Open profile for ${moment.authorName}',
-                tooltip: 'Open ${moment.authorName}\'s profile',
-                circular: true,
-                child: UserAvatar(
-                  radius: 18,
-                  photoUrl: moment.authorPhotoUrl,
-                  displayName: moment.authorName,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Row + Flexible, not Wrap: a long display name
-                    // truncates and the identity badges stay on the line.
-                    // A Wrap dropped the badges onto a second row.
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            moment.authorName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        UserIdentityBadges(uid: moment.authorId),
-                      ],
-                    ),
-                    Text(
-                      _age(moment.createdAt),
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 11.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (!moment.isPublished)
-                const Padding(
-                  padding: EdgeInsets.only(left: 6),
-                  child: Text(
-                    'Uploading…',
-                    style: TextStyle(color: AppColors.textHint, fontSize: 11),
-                  ),
-                ),
-            ],
-          ),
-          if (moment.caption.trim().isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Text(
-              moment.caption,
-              style: const TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 13.5,
-                height: 1.35,
-              ),
-            ),
-          ],
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              _PlayButton(playing: _playing, enabled: playable, onTap: _toggle),
-              const SizedBox(width: 12),
-              const Expanded(child: _Waveform()),
-              const SizedBox(width: 10),
-              // Hidden rather than asserting "0:00": legacy documents
-              // carry no duration and a fabricated zero is still fabricated.
-              if (moment.durationSeconds > 0)
-                Text(
-                  moment.durationLabel,
-                  style: const TextStyle(
-                    color: AppColors.textHint,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              _LikeControl(
-                momentId: moment.id,
-                likeCount: moment.likeCount,
-                feedService: widget.feedService,
-                onToggle: _toggleLike,
-              ),
-              const SizedBox(width: 6),
-              TextButton.icon(
-                onPressed: widget.onComments,
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  minimumSize: const Size(0, 44),
-                ),
-                icon: const Icon(
-                  Icons.mode_comment_outlined,
-                  size: 17,
-                  color: AppColors.textSecondary,
-                ),
-                label: Text(
-                  moment.commentCount == 0
-                      ? 'Comment'
-                      : '${moment.commentCount}',
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const Spacer(),
-              // Not offered on your own Moment: reporting yourself is not
-              // a real intent, and each such report is a row a moderator
-              // opens before finding nothing to do. Deleting your own
-              // Moment is the action that belongs there instead, and it
-              // already exists elsewhere.
-              if (widget.canReport && !moment.isDeleted)
-                IconButton(
-                  key: ValueKey('report-moment-${moment.id}'),
-                  constraints: const BoxConstraints.tightFor(
-                    width: 44,
-                    height: 44,
-                  ),
-                  tooltip: 'Report this Voice Moment',
-                  onPressed: _report,
-                  icon: const Icon(
-                    Icons.flag_outlined,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-              if (playable && moment.isPublished && !moment.isDeleted)
-                IconButton(
-                  key: ValueKey('download-moment-${moment.id}'),
-                  constraints: const BoxConstraints.tightFor(
-                    width: 44,
-                    height: 44,
-                  ),
-                  tooltip: _downloaded
-                      ? 'Remove offline download'
-                      : 'Download for offline listening',
-                  onPressed: _downloading ? null : _toggleDownload,
-                  icon: _downloading
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Icon(
-                          _downloaded
-                              ? Icons.download_done_rounded
-                              : Icons.download_for_offline_outlined,
-                          color: _downloaded
-                              ? AppColors.secondary
-                              : AppColors.textSecondary,
-                        ),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// The heart, as a REAL control.
-///
-/// It previously rendered as an icon plus static text with no tap target:
-/// the screen displayed engagement it gave no way to create, while
-/// [HomeFeedService.toggleLike] / [HomeFeedService.watchLiked] and the
-/// `setMomentLike` callable worked and Home already used them.
-class _LikeControl extends StatelessWidget {
-  const _LikeControl({
-    required this.momentId,
-    required this.likeCount,
-    required this.feedService,
-    required this.onToggle,
-  });
-
-  final String momentId;
-  final int likeCount;
-  final HomeFeedService? feedService;
-  final VoidCallback onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    final service = feedService;
-    // Zero reads as a verb, not a number — no invented social proof, and
-    // no hiding the control either.
-    final label = likeCount == 0 ? 'Like' : '$likeCount';
-
-    if (service == null) {
-      return _LikeButton(liked: false, label: label, onTap: null);
-    }
-    return StreamBuilder<bool>(
-      stream: service.watchLiked(momentId),
-      builder: (context, snapshot) {
-        final liked = snapshot.hasError ? false : (snapshot.data ?? false);
-        return _LikeButton(liked: liked, label: label, onTap: onToggle);
-      },
-    );
-  }
-}
-
-class _LikeButton extends StatelessWidget {
-  const _LikeButton({
-    required this.liked,
-    required this.label,
-    required this.onTap,
-  });
-
-  final bool liked;
-  final String label;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: onTap != null,
-      label: liked ? 'Unlike this Moment' : 'Like this Moment',
-      child: TextButton.icon(
-        key: ValueKey('like-moment-$label-$liked'),
-        onPressed: onTap,
-        style: TextButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          minimumSize: const Size(0, 44),
-        ),
-        icon: Icon(
-          liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-          size: 17,
-          // Tint carries STATE, never meaning. The count label stays
-          // textSecondary: `secondary` on `background` is roughly 4:1,
-          // fine for a glyph and not for 12 pt text.
-          color: liked ? AppColors.secondary : AppColors.textSecondary,
-        ),
-        label: Text(
-          label,
-          style: const TextStyle(
-            color: AppColors.textSecondary,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _PlayButton extends StatelessWidget {
-  const _PlayButton({
-    required this.playing,
-    required this.enabled,
-    required this.onTap,
-  });
-
-  final bool playing;
-  final bool enabled;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: enabled,
-      label: playing ? 'Pause this Moment' : 'Play this Moment',
-      child: Material(
-        color: enabled
-            ? AppColors.primary
-            : AppColors.primary.withValues(alpha: .25),
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: enabled ? onTap : null,
-          child: SizedBox(
-            width: 44,
-            height: 44,
-            child: Icon(
-              playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-              color: AppColors.textPrimary,
-              size: 22,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A static waveform silhouette — deliberately decorative: the real
-/// per-moment amplitude data is not recorded, and inventing a fake
-/// waveform shape per moment would be fabricated data.
-class _Waveform extends StatelessWidget {
-  const _Waveform();
-
-  static const _bars = <double>[
-    .35,
-    .6,
-    .45,
-    .8,
-    .55,
-    .3,
-    .7,
-    .5,
-    .85,
-    .4,
-    .65,
-    .3,
-    .55,
-    .75,
-    .45,
-    .6,
-    .35,
-    .5,
-    .7,
-    .4,
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 26,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          for (final bar in _bars)
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 1.2),
-                child: Container(
-                  height: 26 * bar,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: .45),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-            ),
-        ],
       ),
     );
   }

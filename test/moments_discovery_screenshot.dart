@@ -12,7 +12,13 @@
 // proves any of it renders. ADR-059 requires a UI change to be looked at
 // before it ships, and the Moments tab reached `main` without that. This
 // covers the four states a person can land in (loading, empty, error,
-// populated) plus long content, at narrow, medium and wide.
+// populated) plus long content, at narrow, medium and wide — for BOTH
+// halves of the destination: the Discover avatar board and the compact
+// Following grid.
+//
+// `solo` is not a nicety. Production holds exactly one published Moment,
+// so a board that only looks composed when it is full would be broken on
+// the only data that actually exists.
 //
 // The widths are measured on the space the VIEW receives, not the window:
 // MomentDiscoveryView's own breakpoints are 600 and 980, and on desktop the
@@ -23,7 +29,10 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:audioplayers/audioplayers.dart' as audio;
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
+import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -31,6 +40,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
@@ -133,6 +143,34 @@ final _populated = <VoiceMoment>[
   ),
 ];
 
+/// Production, as measured: one published Moment, 1 like, 1 comment.
+final _solo = <VoiceMoment>[
+  _moment(
+    'solo',
+    author: 'kamil',
+    authorName: 'Kamil',
+    caption: 'Testing the very first Voice Moment.',
+    likes: 1,
+    comments: 1,
+  ),
+];
+
+/// A board with enough faces that the columns, the ranking and the
+/// wrapping all have something to prove.
+final _crowd = <VoiceMoment>[
+  for (var i = 0; i < 23; i++)
+    _moment(
+      'c$i',
+      author: 'a$i',
+      authorName: i.isEven
+          ? 'Person $i'
+          : 'Aleksandra-Konstantina Wielkopolska $i',
+      caption: 'A Moment from person $i.',
+      likes: (23 - i) * 3,
+      comments: 23 - i,
+    ),
+];
+
 final _longContent = <VoiceMoment>[
   _moment(
     'long',
@@ -178,6 +216,11 @@ class _StaticDiscovery implements MomentDiscoveryService {
   }
 
   @override
+  Stream<Map<String, MomentEngagement>> watchEngagement({
+    int poolSize = MomentDiscoveryService.defaultPoolSize,
+  }) => const Stream<Map<String, MomentEngagement>>.empty();
+
+  @override
   Future<List<VoiceMoment>> topLikedMoments({int limit = 3}) async =>
       moments.take(limit).toList();
 
@@ -186,6 +229,11 @@ class _StaticDiscovery implements MomentDiscoveryService {
 }
 
 class _ThrowingDiscovery implements MomentDiscoveryService {
+  @override
+  Stream<Map<String, MomentEngagement>> watchEngagement({
+    int poolSize = MomentDiscoveryService.defaultPoolSize,
+  }) => const Stream<Map<String, MomentEngagement>>.empty();
+
   @override
   Future<MomentDiscoveryFeed> loadDiscoveryFeed({
     int poolSize = MomentDiscoveryService.defaultPoolSize,
@@ -200,8 +248,55 @@ class _ThrowingDiscovery implements MomentDiscoveryService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+/// An [audio.AudioPlayer] that never touches a platform channel.
+class _SilentPlayer implements audio.AudioPlayer {
+  @override
+  Stream<Duration> get onPositionChanged => const Stream<Duration>.empty();
+
+  @override
+  Stream<Duration> get onDurationChanged => const Stream<Duration>.empty();
+
+  @override
+  Stream<void> get onPlayerComplete => const Stream<void>.empty();
+
+  @override
+  Future<void> play(
+    audio.Source source, {
+    double? volume,
+    double? balance,
+    audio.AudioContext? ctx,
+    Duration? position,
+    audio.PlayerMode? mode,
+  }) async {}
+
+  @override
+  Future<void> pause() async {}
+
+  @override
+  Future<void> resume() async {}
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> seek(Duration position) async {}
+
+  @override
+  Future<void> dispose() async {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 class _QuietFeed extends HomeFeedService {
-  _QuietFeed({super.firestore, super.auth});
+  _QuietFeed({super.firestore, super.auth, this.social = const []});
+
+  /// What the Following tab's "From people you follow" section shows.
+  final List<VoiceMoment> social;
+
+  @override
+  Stream<List<VoiceMoment>> watchSocialMoments({int limit = 40}) =>
+      Stream<List<VoiceMoment>>.value(social);
 
   @override
   Stream<bool> watchLiked(String momentId) => Stream<bool>.value(false);
@@ -210,10 +305,48 @@ class _QuietFeed extends HomeFeedService {
   Future<void> toggleLike(String momentId) async {}
 }
 
-Widget _host(Widget child) => MaterialApp(
-  debugShowCheckedModeBanner: false,
-  theme: ThemeData.dark(useMaterial3: true),
-  home: RepaintBoundary(key: _capture, child: child),
+Map<String, dynamic> _document(VoiceMoment moment) => <String, dynamic>{
+  'authorId': moment.authorId,
+  'authorName': moment.authorName,
+  'authorPhotoUrl': null,
+  'caption': moment.caption,
+  'audioUrl': moment.audioUrl,
+  'durationSeconds': moment.durationSeconds,
+  'likeCount': moment.likeCount,
+  'commentCount': moment.commentCount,
+  'isPublished': moment.isPublished,
+  'createdAt': Timestamp.fromDate(moment.createdAt!),
+  'schemaVersion': 2,
+  'status': 'published',
+  'isDeleted': false,
+};
+
+/// A MomentService whose `watchMyMoments` really reads the seeded fake,
+/// so the Following tab's own-Moments section is rendered by the same
+/// code path production uses.
+Future<MomentService> _seededMomentService(List<VoiceMoment> mine) async {
+  final db = FakeFirebaseFirestore();
+  for (final moment in mine) {
+    await db.collection('voiceMoments').doc(moment.id).set(_document(moment));
+  }
+  return MomentService(
+    firestore: db,
+    auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me')),
+    storage: MockFirebaseStorage(),
+  );
+}
+
+/// The capture boundary sits ABOVE the MaterialApp, not inside `home`.
+/// A modal bottom sheet is a route in the Navigator's overlay, which is a
+/// sibling of `home` — with the boundary inside it, the sheet frames
+/// photographed the page underneath and nothing else.
+Widget _host(Widget child) => RepaintBoundary(
+  key: _capture,
+  child: MaterialApp(
+    debugShowCheckedModeBanner: false,
+    theme: ThemeData.dark(useMaterial3: true),
+    home: child,
+  ),
 );
 
 Future<void> _shoot(WidgetTester tester, String name) async {
@@ -310,6 +443,61 @@ void main() {
     '1440': (1440, 900),
   };
 
+  Future<void> shootFollowing(
+    WidgetTester tester, {
+    required String name,
+    required double width,
+    required double height,
+    required List<VoiceMoment> mine,
+    required List<VoiceMoment> social,
+    double textScale = 1.0,
+    String? openTile,
+  }) async {
+    tester.view.physicalSize = Size(width, height);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final moments = await _seededMomentService(mine);
+    await tester.pumpWidget(
+      _host(
+        MediaQuery(
+          data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
+          child: MomentsScreen(
+            initialTab: MomentsTab.following,
+            momentService: moments,
+            feedService: _QuietFeed(
+              firestore: FakeFirebaseFirestore(),
+              auth: MockFirebaseAuth(
+                signedIn: true,
+                mockUser: MockUser(uid: 'me'),
+              ),
+              social: social,
+            ),
+            discoveryService: _StaticDiscovery(const <VoiceMoment>[]),
+            // A silent player: constructing a real one reaches for a
+            // platform channel that does not exist off-device and
+            // reports the failure asynchronously, after the frame has
+            // been photographed.
+            playerFactory: _SilentPlayer.new,
+            isRootTab: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 120));
+    }
+    if (openTile != null) {
+      await tester.tap(find.byKey(ValueKey('moment-square-$openTile')));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 120));
+      }
+    }
+    await _shoot(tester, name);
+  }
+
   group('moments discovery', () {
     for (final entry in widths.entries) {
       final label = entry.key;
@@ -372,6 +560,150 @@ void main() {
       );
       gate.complete();
       await tester.pump();
+    });
+
+    // The board with a real crowd on it: this is what proves the columns,
+    // the ranking order and the name wrapping at every width.
+    for (final entry in widths.entries) {
+      final label = entry.key;
+      final (width, height) = entry.value;
+
+      testWidgets('crowd $label', (tester) async {
+        await shootAt(
+          tester,
+          name: 'moments-crowd-$label',
+          discovery: _StaticDiscovery(_crowd),
+          width: width,
+          height: height,
+        );
+      });
+
+      // Production's actual corpus: ONE Moment. A board that only looks
+      // composed when full is broken on the data that exists today.
+      testWidgets('solo $label', (tester) async {
+        await shootAt(
+          tester,
+          name: 'moments-solo-$label',
+          discovery: _StaticDiscovery(_solo),
+          width: width,
+          height: height,
+        );
+      });
+
+      testWidgets('following $label', (tester) async {
+        await shootFollowing(
+          tester,
+          name: 'moments-following-$label',
+          width: width,
+          height: height,
+          mine: [
+            for (var i = 0; i < 3; i++)
+              _moment(
+                'mine$i',
+                author: 'me',
+                authorName: 'Kamil',
+                caption: 'my moment $i',
+                likes: i,
+                comments: i * 2,
+              ),
+          ],
+          social: [
+            for (var i = 0; i < 9; i++)
+              _moment(
+                'theirs$i',
+                author: 'friend$i',
+                authorName: i.isEven
+                    ? 'Friend $i'
+                    : 'Aleksandra-Konstantina Wielkopolska $i',
+                caption: 'their moment $i',
+                likes: i * 4,
+                comments: i,
+              ),
+          ],
+        );
+      });
+
+      // The Following tab with nothing in it: both sections honest, and
+      // the recorder still offered.
+      testWidgets('following empty $label', (tester) async {
+        await shootFollowing(
+          tester,
+          name: 'moments-following-empty-$label',
+          width: width,
+          height: height,
+          mine: const <VoiceMoment>[],
+          social: const <VoiceMoment>[],
+        );
+      });
+    }
+
+    // The sheet a tile opens: the full card, unchanged, with playback,
+    // like, comment and the offline download still on it. Shot at both
+    // ends of the range because a bottom sheet stretched across 1440 pt
+    // is a phone layout that grew.
+    for (final label in <String>['390', '1440']) {
+      final (width, height) = widths[label]!;
+      testWidgets('following sheet $label', (tester) async {
+        await shootFollowing(
+          tester,
+          name: 'moments-following-sheet-$label',
+          width: width,
+          height: height,
+          openTile: 'mine0',
+          mine: [
+            _moment(
+              'mine0',
+              author: 'me',
+              authorName: 'Kamil',
+              caption: 'Testing the very first Voice Moment.',
+              likes: 1,
+              comments: 1,
+            ),
+          ],
+          social: const <VoiceMoment>[],
+        );
+      });
+    }
+
+    testWidgets('crowd 390 at 2x text', (tester) async {
+      await shootAt(
+        tester,
+        name: 'moments-crowd-390-x2',
+        discovery: _StaticDiscovery(_crowd),
+        width: 390,
+        height: 844,
+        textScale: 2.0,
+      );
+    });
+
+    testWidgets('following 390 at 2x text', (tester) async {
+      await shootFollowing(
+        tester,
+        name: 'moments-following-390-x2',
+        width: 390,
+        height: 844,
+        textScale: 2.0,
+        mine: [
+          _moment(
+            'mine0',
+            author: 'me',
+            authorName: 'Kamil',
+            caption: 'my moment',
+            likes: 2,
+            comments: 1,
+          ),
+        ],
+        social: [
+          for (var i = 0; i < 4; i++)
+            _moment(
+              'theirs$i',
+              author: 'friend$i',
+              authorName: 'Aleksandra-Konstantina Wielkopolska $i',
+              caption: 'their moment $i',
+              likes: i * 4,
+            ),
+        ],
+      );
     });
 
     // The two frames most likely to overflow: a very long caption and a very

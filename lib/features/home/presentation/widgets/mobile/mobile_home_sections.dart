@@ -122,6 +122,29 @@ class MobileMomentsStrip extends StatelessWidget {
     final others = moments
         .where((m) => m.authorId != currentUserId)
         .toList(growable: false);
+    // Your own newest Moment, if the feed carries one. The bubble used to
+    // open the recorder unconditionally, so on a phone there was no way
+    // to play back what you had already posted from Home at all — and
+    // when nobody else had posted, your tile was not even rendered.
+    final mine = currentUserId.isEmpty
+        ? null
+        : moments
+              .where((m) => m.authorId == currentUserId)
+              .cast<VoiceMoment?>()
+              .firstWhere((m) => true, orElse: () => null);
+
+    final yours = _MomentBubble(
+      key: const ValueKey('home-your-moment'),
+      label: 'Your Moment',
+      photoUrl: mine?.authorPhotoUrl ?? profile?.photoUrl,
+      displayName: profile?.displayName,
+      showAdd: true,
+      semanticLabel: mine == null
+          ? 'Record your first Voice Moment'
+          : 'Play your Voice Moment',
+      onTap: mine == null ? onCreateMoment : () => onOpenMoment(mine),
+      onAddTap: onCreateMoment,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -129,20 +152,29 @@ class MobileMomentsStrip extends StatelessWidget {
       children: [
         const MobileSectionHeader(title: 'Moments from your circle'),
         if (others.isEmpty)
-          _EmptyMoments(onDiscover: onDiscover, onCreate: onCreateMoment)
+          // Your tile stays even when the circle is quiet: it is the one
+          // real thing on the row, and hiding it was why a phone had no
+          // entry point to your own Moment.
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              yours,
+              const SizedBox(width: 12),
+              Expanded(
+                child: _EmptyMoments(
+                  onDiscover: onDiscover,
+                  onCreate: onCreateMoment,
+                ),
+              ),
+            ],
+          )
         else
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             clipBehavior: Clip.none,
             child: Row(
               children: [
-                _MomentBubble(
-                  label: 'Your Moment',
-                  photoUrl: profile?.photoUrl,
-                  displayName: profile?.displayName,
-                  showAdd: true,
-                  onTap: onCreateMoment,
-                ),
+                yours,
                 for (final moment in others.take(12)) ...[
                   const SizedBox(width: 12),
                   _MomentBubble(
@@ -167,6 +199,9 @@ class _MomentBubble extends StatelessWidget {
     this.photoUrl,
     this.displayName,
     this.showAdd = false,
+    this.semanticLabel,
+    this.onAddTap,
+    super.key,
   });
 
   final String label;
@@ -175,11 +210,20 @@ class _MomentBubble extends StatelessWidget {
   final String? displayName;
   final bool showAdd;
 
+  /// What the bubble DOES, for a screen reader — "Your Moment" names the
+  /// tile, it does not say whether tapping plays or records.
+  final String? semanticLabel;
+
+  /// The plus badge's own action. Without it the badge inherits [onTap],
+  /// which is right for a person who has never posted and wrong for one
+  /// who has.
+  final VoidCallback? onAddTap;
+
   @override
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
-      label: label,
+      label: semanticLabel ?? label,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
@@ -217,22 +261,25 @@ class _MomentBubble extends StatelessWidget {
                     Positioned(
                       right: -2,
                       bottom: -2,
-                      child: Container(
-                        width: 22,
-                        height: 22,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: AppColors.primary,
-                          border: Border.all(
-                            color: const Color(0xFF0C0814),
-                            width: 2,
+                      child: _AddMomentBadge(
+                        onTap: onAddTap,
+                        child: Container(
+                          width: 22,
+                          height: 22,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppColors.primary,
+                            border: Border.all(
+                              color: const Color(0xFF0C0814),
+                              width: 2,
+                            ),
                           ),
-                        ),
-                        child: const Icon(
-                          Icons.add_rounded,
-                          size: 13,
-                          color: Colors.white,
+                          child: const Icon(
+                            Icons.add_rounded,
+                            size: 13,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
                     ),
@@ -253,6 +300,31 @@ class _MomentBubble extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// The plus on your own bubble. A nested tap target inside the bubble's
+/// InkWell: the innermost recognizer wins, so the badge means "record"
+/// while the rest of the bubble means "play mine".
+class _AddMomentBadge extends StatelessWidget {
+  const _AddMomentBadge({required this.child, this.onTap});
+
+  final Widget child;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (onTap == null) return child;
+    return Semantics(
+      button: true,
+      label: 'Record a Voice Moment',
+      child: InkWell(
+        key: const ValueKey('home-record-moment'),
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: child,
       ),
     );
   }

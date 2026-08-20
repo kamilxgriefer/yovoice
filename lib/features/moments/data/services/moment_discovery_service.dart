@@ -72,6 +72,29 @@ class MomentDiscoveryFeed {
   bool get everythingFiltered => fetchedCount > 0 && moments.isEmpty;
 }
 
+/// The two counters a Moment document carries that can change while it
+/// is on screen.
+///
+/// Kept as its own type rather than a second [VoiceMoment]: a live
+/// counter update must never be able to change WHICH Moment a tile is,
+/// only how much engagement it reports.
+@immutable
+class MomentEngagement {
+  const MomentEngagement({required this.likeCount, required this.commentCount});
+
+  final int likeCount;
+  final int commentCount;
+
+  @override
+  bool operator ==(Object other) =>
+      other is MomentEngagement &&
+      other.likeCount == likeCount &&
+      other.commentCount == commentCount;
+
+  @override
+  int get hashCode => Object.hash(likeCount, commentCount);
+}
+
 /// The global Voice Moments discovery feed: every published Moment from
 /// every user, shuffled, weighted so genuinely popular ones surface more
 /// often.
@@ -179,6 +202,36 @@ class MomentDiscoveryService {
     ];
     keyed.sort((a, b) => b.key.compareTo(a.key));
     return [for (final entry in keyed) entry.moment];
+  }
+
+  /// Ranks strictly by engagement, most-engaged FIRST, with no randomness
+  /// at all.
+  ///
+  /// [weightedShuffle] answers "surface the popular more often"; this
+  /// answers the different question "put the most-engaged at the very
+  /// top", which is what the avatar board shows by default. Both read the
+  /// same [discoveryWeight], so there is exactly one definition of
+  /// engagement in this codebase — a like plus half a comment, compressed
+  /// logarithmically so a forged counter cannot buy the whole board.
+  ///
+  /// Total and deterministic: ties break on recency and then on id, so
+  /// the board never reorders between two builds of the same data.
+  /// Author spacing is deliberately NOT applied — spacing exists to stop
+  /// one account owning a shuffled feed, and applying it here would push
+  /// a genuinely top-ranked Moment down, which is the exact opposite of
+  /// what this ordering is for.
+  static List<VoiceMoment> rankByEngagement(List<VoiceMoment> moments) {
+    final ranked = List<VoiceMoment>.of(moments);
+    ranked.sort((a, b) {
+      final byWeight = discoveryWeight(b).compareTo(discoveryWeight(a));
+      if (byWeight != 0) return byWeight;
+      final aDate = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bDate = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final byDate = bDate.compareTo(aDate);
+      if (byDate != 0) return byDate;
+      return a.id.compareTo(b.id);
+    });
+    return List<VoiceMoment>.unmodifiable(ranked);
   }
 
   /// Spreads one author out: at most [maxPerWindow] of any
@@ -370,5 +423,44 @@ class MomentDiscoveryService {
       seed: effectiveSeed,
       poolExhausted: anyPoolFull,
     );
+  }
+
+  /// Live `likeCount` / `commentCount` for the Moments on screen.
+  ///
+  /// This is the companion to [loadDiscoveryFeed]'s deliberate one-shot
+  /// `get()`. That decision is right for the ORDER — a globally ordered
+  /// `snapshots()` re-delivers on any like by anyone and would rearrange
+  /// the board under the reader's finger — but it also froze the two
+  /// counters, so a like or a comment made in the app only appeared after
+  /// a full reload. Splitting the two is what fixes that: order stays
+  /// fixed for the life of a load, counters stay live.
+  ///
+  /// ONE listener over the same recency pool the feed already reads, so
+  /// it needs no new composite index and costs one document read per
+  /// change rather than a re-query.
+  ///
+  /// KNOWN AND STATED, not hidden: this covers the [poolSize] most recent
+  /// published Moments. In a corpus larger than that, an older Moment
+  /// that only reached the board through the popularity pool keeps the
+  /// counters it was loaded with — real numbers, just not live ones.
+  Stream<Map<String, MomentEngagement>> watchEngagement({
+    int poolSize = defaultPoolSize,
+  }) {
+    return _moments
+        .where('isPublished', isEqualTo: true)
+        .orderBy('createdAt', descending: true)
+        .limit(poolSize)
+        .snapshots()
+        .map((snapshot) {
+          final counters = <String, MomentEngagement>{};
+          for (final document in snapshot.docs) {
+            final data = document.data();
+            counters[document.id] = MomentEngagement(
+              likeCount: (data['likeCount'] as num?)?.toInt() ?? 0,
+              commentCount: (data['commentCount'] as num?)?.toInt() ?? 0,
+            );
+          }
+          return counters;
+        });
   }
 }

@@ -48,6 +48,7 @@ class MobileHome extends StatefulWidget {
     required this.onOpenProfile,
     required this.onCreateMoment,
     required this.onCreateRoom,
+    required this.onOpenMoment,
     required this.onOpenComments,
     required this.onOpenConversation,
     required this.onSeeAllChats,
@@ -72,6 +73,13 @@ class MobileHome extends StatefulWidget {
   /// Starting a room — a different flow from recording a Moment, which
   /// this used to be wired to by mistake.
   final VoidCallback onCreateRoom;
+
+  /// Opens ONE Moment in the player. Distinct from [onOpenComments] on
+  /// purpose: the rail's faces mean "hear this person", and routing them
+  /// into the comment thread is why tapping your own avatar on Home never
+  /// played anything.
+  final ValueChanged<VoiceMoment> onOpenMoment;
+
   final ValueChanged<VoiceMoment> onOpenComments;
   final ValueChanged<Conversation> onOpenConversation;
   final VoidCallback onSeeAllChats;
@@ -210,15 +218,28 @@ class _MobileHomeState extends State<MobileHome> {
                 const SizedBox(height: 4),
                 StreamBuilder<List<VoiceMoment>>(
                   stream: _feed,
-                  builder: (context, momentSnapshot) => MobileMomentsStrip(
-                    moments: momentSnapshot.data ?? const <VoiceMoment>[],
-                    profile: null,
-                    currentUserId: _resolvedUserId,
-                    onOpenMoment: widget.onOpenComments,
-                    onCreateMoment: widget.onCreateMoment,
-                    onDiscover:
-                        widget.onOpenFindCreators ?? widget.onOpenDiscover,
-                  ),
+                  builder: (context, momentSnapshot) =>
+                      // The signed-in avatar comes from the SHARED profile
+                      // stream the header already reads, not from
+                      // FirebaseAuth.currentUser.photoURL — a separate,
+                      // staler store. It was hard-coded null here, so your
+                      // own tile always fell back to a generic person icon.
+                      StreamBuilder<UserProfile>(
+                        stream: _profile,
+                        builder: (context, profileSnapshot) =>
+                            MobileMomentsStrip(
+                              moments:
+                                  momentSnapshot.data ??
+                                  const <VoiceMoment>[],
+                              profile: profileSnapshot.data,
+                              currentUserId: _resolvedUserId,
+                              onOpenMoment: widget.onOpenMoment,
+                              onCreateMoment: widget.onCreateMoment,
+                              onDiscover:
+                                  widget.onOpenFindCreators ??
+                                  widget.onOpenDiscover,
+                            ),
+                      ),
                 ),
                 MobileSectionHeader(
                   title: 'Rooms for you',
