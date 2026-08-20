@@ -9,7 +9,11 @@ process.env.FIRESTORE_EMULATOR_HOST =
 process.env.GCLOUD_PROJECT = process.env.GCLOUD_PROJECT ?? "yovoice-fn-test";
 
 const { getApps, initializeApp } = require("firebase-admin/app");
-const { getFirestore, Timestamp } = require("firebase-admin/firestore");
+const {
+  getFirestore,
+  Timestamp,
+  FieldValue,
+} = require("firebase-admin/firestore");
 
 if (getApps().length === 0) initializeApp();
 
@@ -574,6 +578,65 @@ describe("host room control", () => {
     assert.equal(room.data().participantCount, 0);
     assert.equal((await room.ref.collection("participants").get()).empty, true);
     assert.deepEqual(control.calls, [["endRoom", roomId]]);
+  });
+
+  // THE MAJORITY PRODUCTION SHAPE: no `status` FIELD AT ALL.
+  //
+  // 25 of the 45 rooms in production predate the field. firestore.rules reads
+  // it as `.get('status','active')` everywhere, so the ruleset authorises the
+  // client's `isLive: true` write on these rooms — and every callable that
+  // gated on a bare `room.status !== "active"` then refused to act on the very
+  // same room. That disagreement is the defect: voice could be switched ON and
+  // never switched off, and the token call answered with the exact sentence
+  // this whole change exists to remove.
+  test("a room with NO status field can still end its voice session", async () => {
+    const roomId = `${P}legacy-no-status`;
+    const control = fakeControl();
+    await seedRoom(roomId, { participantCount: 0 });
+    // Remove the field entirely — absent, not "active", not empty string.
+    await db.collection("rooms").doc(roomId).update({
+      status: FieldValue.delete(),
+    });
+    const before = await db.collection("rooms").doc(roomId).get();
+    assert.equal(before.data().status, undefined, "fixture must have no status");
+
+    const result = await executeEndRoomVoice(request(HOST, { roomId }), control);
+
+    const room = await db.collection("rooms").doc(roomId).get();
+    assert.equal(result.ended, true);
+    assert.equal(room.data().isLive, false);
+    assert.deepEqual(control.calls, [["endRoom", roomId]]);
+  });
+
+  test("a room with NO status field is still refused once it is being deleted", async () => {
+    const roomId = `${P}legacy-no-status-deleting`;
+    const control = fakeControl();
+    await seedRoom(roomId, { participantCount: 0, deletionInProgress: true });
+    await db.collection("rooms").doc(roomId).update({
+      status: FieldValue.delete(),
+    });
+
+    await assert.rejects(
+      () => executeEndRoomVoice(request(HOST, { roomId }), control),
+      (error) => error.code === "failed-precondition",
+      "defaulting an absent status to active must not also defeat the deletion guard",
+    );
+    assert.deepEqual(control.calls, []);
+  });
+
+  // An EXPLICIT non-active status is still refused. This is what proves the
+  // default loosens nothing moderation depends on: a suspended or closed room
+  // always carries the field, because moderation writes it.
+  test("an explicitly suspended room is still refused", async () => {
+    const roomId = `${P}suspended`;
+    const control = fakeControl();
+    await seedRoom(roomId, { participantCount: 0, status: "suspended" });
+
+    await assert.rejects(
+      () => executeEndRoomVoice(request(HOST, { roomId }), control),
+      (error) => error.code === "failed-precondition",
+    );
+    assert.deepEqual(control.calls, []);
   });
 
   // THE SHAPE THE CLIENT ACTUALLY PRODUCES. room_service.dart's leave path

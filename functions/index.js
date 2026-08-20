@@ -108,6 +108,14 @@ const {
   setOwnRoomParticipantMute,
   setRoomStatusSelf,
 } = require("./rooms/participants");
+// The only repair for a room stranded live with an empty roster — the
+// start→join window in RoomVoiceEntryCoordinator, and any process death
+// inside it. No client can fix that state: `leaveRoomSelf` returns early
+// without a participant row, and granting it the repair would hand every
+// signed-in account a lever to drop `isLive` on somebody else's room.
+const {
+  sweepStrandedLiveRoomsSchedule,
+} = require("./rooms/liveness_sweeper");
 
 /*
 |--------------------------------------------------------------------------
@@ -233,6 +241,7 @@ exports.setRoomStatusSelf = setRoomStatusSelf;
 exports.endRoomVoiceSelf = endRoomVoiceSelf;
 exports.leaveRoomSelf = leaveRoomSelf;
 exports.deleteRoomSelf = deleteRoomSelf;
+exports.sweepStrandedLiveRoomsSchedule = sweepStrandedLiveRoomsSchedule;
 
 /*
 |--------------------------------------------------------------------------

@@ -926,9 +926,24 @@ class RoomService {
     final room = _rooms.doc(roomId);
     final currentRoom = await room.get();
     final currentData = currentRoom.data();
+    // THE LITERAL FIELD, not RoomType.fromValue.
+    //
+    // `fromValue` answers `temporary` for ANYTHING that is not the string
+    // 'community' — including a room with no `roomType` field at all, which
+    // is 24 of the 45 rooms in production. Routed through this branch, a host
+    // merely backing out of such a room would end the voice session for
+    // everyone still talking in it, because this call is unconditional: it
+    // does not pass `onlyIfEmpty`, and it never reaches `leaveRoomSelf` at
+    // all, so the caller's own participant row is left behind.
+    //
+    // A room that genuinely opted into `roomType: 'temporary'` still ends
+    // when its host leaves — that is what temporary MEANS and the behaviour
+    // is unchanged. A room that never declared one falls through to the
+    // ordinary path instead, where `leaveRoomSelf` removes the row and the
+    // server ends the session only once the ROSTER proves it is empty.
     if (currentData != null &&
         currentData['hostId'] == user.uid &&
-        RoomType.fromValue(currentData['roomType']) == RoomType.temporary) {
+        currentData['roomType'] == RoomType.temporary.name) {
       await endCommunityVoice(roomId);
       return;
     }

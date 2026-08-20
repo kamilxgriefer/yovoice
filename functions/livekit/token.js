@@ -5,7 +5,7 @@ const { Timestamp } = require("firebase-admin/firestore");
 
 const { requireAuthentication } = require("../utils/auth");
 
-const { db, normalizeText } = require("../utils/firestore");
+const { db, normalizeText, roomIsActive } = require("../utils/firestore");
 const {
   activeVoiceSessionReference,
   writeActiveVoiceSession,
@@ -98,7 +98,7 @@ async function authorizeRoomVoiceAccess(
     throw new HttpsError("not-found", "This room does not exist.");
   }
   const room = roomSnapshot.data() ?? {};
-  if (room.status !== "active" || room.isLive !== true) {
+  if (!roomIsActive(room) || room.isLive !== true) {
     throw new HttpsError(
       "failed-precondition",
       "This room is not currently live.",

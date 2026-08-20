@@ -3,7 +3,7 @@ const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { getStorage } = require("firebase-admin/storage");
 
 const { requireAuthentication } = require("../utils/auth");
-const { db, normalizeText } = require("../utils/firestore");
+const { db, normalizeText, roomIsActive } = require("../utils/firestore");
 const {
   canonicalNotificationData,
   notificationReference,
@@ -111,7 +111,7 @@ async function executeRemoveRoomParticipant(
           "Only the room host can remove participants.",
         );
       }
-      if (room.status !== "active" || room.isLive !== true ||
+      if (!roomIsActive(room) || room.isLive !== true ||
           room.deletionInProgress === true) {
         throw new HttpsError(
           "failed-precondition",
@@ -248,7 +248,7 @@ async function executeLeaveRoom(request, roomControl = null) {
     // do, or 24 of the 45 production rooms would never qualify.
     const voiceIsRunning =
       room.isLive === true &&
-      String(room.status ?? "active") === "active" &&
+      roomIsActive(room) &&
       room.deletionInProgress !== true;
     const rosterIsEmptyAfterLeave = !(roster?.docs ?? []).some(
       (document) => document.id !== auth.uid,
@@ -381,7 +381,7 @@ async function executeEndRoomVoice(
   await db.runTransaction(async (transaction) => {
     ended = false;
     const room = await requireHostRoom(transaction, roomReference, auth.uid);
-    if (room.status !== "active" || room.deletionInProgress === true) {
+    if (!roomIsActive(room) || room.deletionInProgress === true) {
       throw new HttpsError(
         "failed-precondition",
         "Only an active room can end its voice session.",
@@ -503,7 +503,7 @@ async function executeModerateRoomParticipant(
     if (!participantSnapshot.exists) {
       throw new HttpsError("not-found", "The participant is no longer here.");
     }
-    if (room.status !== "active" || room.isLive !== true ||
+    if (!roomIsActive(room) || room.isLive !== true ||
         room.deletionInProgress === true) {
       throw new HttpsError(
         "failed-precondition",
@@ -665,7 +665,7 @@ async function executeSetOwnParticipantMute(
     }
     const room = roomSnapshot.data() ?? {};
     const participant = participantSnapshot.data() ?? {};
-    if (room.status !== "active" || room.isLive !== true ||
+    if (!roomIsActive(room) || room.isLive !== true ||
         room.deletionInProgress === true || participant.userId !== auth.uid) {
       throw new HttpsError(
         "failed-precondition",
