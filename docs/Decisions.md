@@ -5729,3 +5729,66 @@ made that choice explicitly with `.get(field, default)`; the callables made it
 implicitly and differently. **When a rule uses `.get` with a default, the
 server code reading the same field must use the same default, and the cheapest
 way to guarantee that is one shared predicate rather than a convention.**
+
+## ADR-094: A self-mute is a track state, not a permission — and outside a broadcast, everyone present may speak
+
+**Context.** Muting yourself in a room revoked the LiveKit `canPublish`
+permission: `deriveVoiceGrant` and both permission-recompute callables folded
+`participant.isMuted` — the person's OWN mute — into the grant. The client
+reads a missing publish grant as "you are audience" (`MicState.listenOnly`),
+hides the mute toggle, and leaves nothing to unmute with; the flag persists in
+Firestore, so every later token — including on re-entry — reproduced the trap.
+Separately, self-service joins are pinned to `role: 'listener'` by
+firestore.rules while the grant required host-or-speaker, so every non-host in
+a Family or Community room was a permanent audience member who could never
+speak at all.
+
+**Decision.** Publishing is taken away only by a moderator mute (`hostMuted`),
+a server mute (`serverMuted`) or a sanction (`communicationMuted`) — never by
+the participant's own mute, which is a track state the client toggles locally.
+Outside a broadcast room (`experience` of `broadcast` or the legacy
+`podcast`), every participant may publish without promotion; a fieldless room
+is a community room, mirroring `RoomExperience.fromValue`. One shared
+`publishAllowed` predicate keeps the two callables and the token computing the
+same answer, and `joinRoom`'s re-entry path reconciles the caller's own stale
+`isMuted` flag (moderator flags are pinned by the rules on that write and
+survive re-entry).
+
+**Reasoning.** The Discord model is the correct one: mute controls the track,
+permission controls the right, and conflating them builds a trap that closes
+on the person who used the control correctly. The broadcast audience model is
+untouched — that product genuinely has listeners who must be promoted, and the
+tests pin promotion on both sides of the change.
+
+**Consequences.** 7 new `deriveVoiceGrant` cases; 3 fail against the previous
+code and the moderation/broadcast cases pass on both sides, which is what
+proves nothing was loosened. The permission had NO test before this — that is
+how a defect this visible shipped. No rules change, no schema change.
+
+## ADR-095: The Moments board ranks deterministically and freezes its order, while counts update live in place
+
+**Context.** The Discover tab rendered one Moment per viewport with a huge
+empty middle; the operator asked for a wall of avatar circles with the
+most-engaged at the top, compact Following tiles, and counts that do not wait
+for a page reload.
+
+**Decision.** The board sorts by `rankByEngagement` — a deterministic
+descending sort over the existing `discoveryWeight` (like + half-comment,
+log-compressed), ties broken by recency then id — and the weighted shuffle
+survives behind an explicit chip. Engagement counts stream via
+`watchEngagement()` (one listener over the recency pool, an already-used query
+shape) and patch documents in place through `VoiceMoment.withCounts`, but the
+ORDER is frozen for the life of a load.
+
+**Reasoning.** Live counts and live ordering must not be coupled: reordering a
+board under a person's finger as likes arrive is worse than a count being a
+minute old. Freezing the order per load gives both truths — the numbers move,
+the layout does not. A failing counter stream leaves the loaded (real) numbers
+alone rather than zeroing them.
+
+**Consequences.** Live counters cover the 60 most recent published Moments; an
+older Moment that reached the board only via the popularity pool keeps its
+loaded counts — real numbers, just not live. `MomentCard` moved to its own
+file with a re-export from `moments_screen.dart`, so importers are untouched.
+Playback, like, comment, report and offline download all survive behind the
+new tile/sheet presentation.

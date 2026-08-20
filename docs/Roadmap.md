@@ -36,6 +36,20 @@ someone decide what to pick up next.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it)
 > for why that distinction is the whole point of this wave.
 
+- **The microphone works like Discord's: self-mute never costs the right to
+  speak, and everyone in a non-broadcast room may talk** (2026-08-20,
+  `eb51e96`, DEPLOYED — functions + hosting, byte-verified): fixes the
+  reported loop where re-entering a room left you muted and a few unmute
+  attempts degraded the control to "Listening". ADR-094. Functions suite
+  727 → 734.
+
+- **Moments: Discover is an avatar board (most-engaged on top), Following is
+  compact tiles, counts are live, and the Home "Your Moment" tile actually
+  opens your Moment** (2026-08-20, `7938c88`, DEPLOYED — hosting,
+  byte-verified): ADR-095. Flutter suite 1053 → 1081; 36 screenshot frames at
+  390/768/1100/1440 + 2× text, key frames inspected. UNVERIFIED: no
+  simulator/browser pass yet.
+
 - **Rooms can go live at all — voice now starts in Community rooms and
   lounges** (2026-08-20, `b0f1062`, **NOT DEPLOYED**): opening a Family Room
   you created yourself and pressing unmute returned "This room is not

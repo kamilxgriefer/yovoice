@@ -872,6 +872,35 @@ permission flags).
 
 ## UI
 
+- **FIXED AND DEPLOYED 2026-08-20 (`eb51e96`) — muting yourself removed the
+  microphone and could never be undone.** `deriveVoiceGrant` and both
+  permission-recompute callables folded the participant's OWN `isMuted` into
+  LiveKit `canPublish`; the client reads a missing grant as "you are
+  audience", hides the mute toggle, and the persisted flag reproduced the trap
+  on every re-entry. Same root: self-service joins are rules-pinned to
+  `role: 'listener'` while the grant required host-or-speaker, so every
+  non-host in a Community/Family room was permanently voiceless. Both fixed —
+  see [ADR-094](Decisions.md#adr-094-a-self-mute-is-a-track-state-not-a-permission--and-outside-a-broadcast-everyone-present-may-speak).
+  The permission had NO test before this; 7 cases now pin it, 3 failing
+  against the old code.
+
+- **FIXED AND DEPLOYED 2026-08-20 (`7938c88`) — Moments counts froze until a
+  full page reload.** The feed was a deliberate one-shot `get()`. Counts now
+  stream via `watchEngagement()` and patch in place while the board order
+  stays frozen per load ([ADR-095](Decisions.md#adr-095-the-moments-board-ranks-deterministically-and-freezes-its-order-while-counts-update-live-in-place)).
+  Limitation, stated: live counters cover the 60 most recent published
+  Moments.
+
+- **FIXED AND DEPLOYED 2026-08-20 (`7938c88`) — tapping "Your Moment" on Home
+  did nothing, and the working part opened the wrong screen.** Only the 66pt
+  disc was wrapped in an InkWell — the label and status line under it were
+  dead — and the callback pushed the COMMENTS screen, which owns no player,
+  so Home was the one surface where a Moment could not be heard. The whole
+  tile is now the target and both rails open the playing sheet; mobile's own
+  bubble opened the recorder even when a Moment existed and the strip was
+  hidden entirely when nobody else had posted.
+
+
 - **FIXED IN SOURCE 2026-08-20, NOT DEPLOYED AND NOT ROUND-TRIPPED — voice
   had never worked in ANY Community room or lounge.** Reported as "opening a
   Family Room you created yourself and pressing unmute returns *This room is
