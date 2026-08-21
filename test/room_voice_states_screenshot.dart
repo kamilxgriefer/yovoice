@@ -15,6 +15,7 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
@@ -674,6 +675,92 @@ void main() {
       );
     });
   }
+
+  // THE POPULATED CHAT — the one surface no frame had ever shown. Real
+  // seeded messages with reactions and a server timestamp, so the panel's
+  // bubbles, role badges, reaction chips and the new per-message clock all
+  // have visual evidence.
+  testWidgets('community live with a populated chat, 1440', (tester) async {
+    final model = room(id: 'room-chat', isLive: true);
+    await seed(model, participantCount: 2);
+    final messages = db
+        .collection('rooms')
+        .doc('room-chat')
+        .collection('messages');
+    await messages.doc('m1').set({
+      'senderId': 'host',
+      'senderName': 'Host',
+      'senderPhotoUrl': null,
+      'text': 'Witajcie! Super, ze jestescie.',
+      'createdAt': Timestamp.fromDate(DateTime(2026, 8, 21, 10, 32)),
+      'reactions': {
+        '❤️': ['relative', 'spk0'],
+      },
+    });
+    await messages.doc('m2').set({
+      'senderId': 'relative',
+      'senderName': 'Kamil',
+      'senderPhotoUrl': null,
+      'text': 'Czesc wszystkim! Dobrze was slyszec.',
+      'createdAt': Timestamp.fromDate(DateTime(2026, 8, 21, 10, 33)),
+      'reactions': <String, List<String>>{},
+    });
+    await db
+        .collection('rooms')
+        .doc('room-chat')
+        .collection('participants')
+        .doc('relative')
+        .set({
+          'userId': 'relative',
+          'displayName': 'Kamil',
+          'role': 'listener',
+          'isMuted': false,
+          'isSpeaker': true,
+          'isHandRaised': false,
+        });
+    await shootCommunity(
+      tester,
+      name: 'voice-community-chat-populated-1440',
+      model: model,
+      viewport: const Size(1440, 900),
+      micState: MicState.on,
+      connected: true,
+      entry: RoomVoiceEntry(
+        outcome: RoomVoiceEntryOutcome.live,
+        room: model,
+        authority: RoomVoiceStartAuthority.none,
+      ),
+    );
+  });
+
+  // THE HOST FILL-GATE REGRESSION FRAME. 1100x800 sits inside the range the
+  // review caught overflowing (host fixed content ~570-650px + a filled
+  // stage at 720-850px heights); under the corrected gate this height falls
+  // back to the scrolling column, and the frame's takeException assertion
+  // is what pins "no overflow" rather than a promise.
+  testWidgets('broadcast HOST at 1100x800 does not overflow', (tester) async {
+    final model = room(
+      id: 'room-pod-short',
+      isLive: true,
+      experience: 'broadcast',
+      name: 'The Sunday Broadcast',
+    );
+    await seed(model, participantCount: 1);
+    await shootBroadcast(
+      tester,
+      name: 'voice-broadcast-host-1100x800',
+      model: model,
+      viewport: const Size(1100, 800),
+      micState: MicState.on,
+      connected: true,
+      uid: 'host',
+      entry: RoomVoiceEntry(
+        outcome: RoomVoiceEntryOutcome.live,
+        room: model,
+        authority: RoomVoiceStartAuthority.host,
+      ),
+    );
+  });
 
   testWidgets('long content: dormant lounge, 320px, 200% text', (tester) async {
     final model = room(

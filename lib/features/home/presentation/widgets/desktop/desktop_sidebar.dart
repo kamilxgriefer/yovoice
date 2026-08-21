@@ -120,6 +120,7 @@ class DesktopSidebar extends StatelessWidget {
                 count: unreadNotificationCount,
                 active: active == DesktopNavItem.notifications,
                 label: copy.notifications,
+                unreadWord: copy.text('unread', 'nieprzeczytane'),
                 onTap: () => onSelect(DesktopNavItem.notifications),
               ),
             ],
@@ -263,11 +264,13 @@ class _BellButton extends StatefulWidget {
     required this.count,
     required this.active,
     required this.label,
+    required this.unreadWord,
     required this.onTap,
   });
 
   final int count;
   final bool active;
+  final String unreadWord;
   final String label;
   final VoidCallback onTap;
 
@@ -285,8 +288,11 @@ class _BellButtonState extends State<_BellButton> {
     return Semantics(
       button: true,
       selected: active,
+      // `unreadLabel` comes through the same copy mechanism as every
+      // other rail string — the literal English 'unread' was the one
+      // unlocalized word on an otherwise bilingual rail.
       label: widget.count > 0
-          ? '${widget.label}, ${widget.count} unread'
+          ? '${widget.label}, ${widget.count} ${widget.unreadWord}'
           : widget.label,
       child: Tooltip(
         message: widget.label,
@@ -432,66 +438,75 @@ class _NavTileState extends State<_NavTile> {
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(10),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(10),
-          onHover: (value) => setState(() => _hovered = value),
-          onTap: () => widget.onTap(widget.item),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 140),
-            height: 40,
-            padding: const EdgeInsets.symmetric(horizontal: 9),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              color: active
-                  ? AppColors.primary.withValues(alpha: .16)
-                  : _hovered
-                  ? colors.onSurface.withValues(alpha: .05)
-                  : Colors.transparent,
-            ),
-            child: Row(
-              children: [
-                // Thin left accent — always laid out so icons stay
-                // aligned; painted only on the selected row.
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 140),
-                  width: 3,
-                  height: 16,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(2),
-                    color: active
-                        ? DesktopSidebar._accentTint
-                        : Colors.transparent,
-                  ),
-                ),
-                const SizedBox(width: 9),
-                Icon(
-                  widget.icon,
-                  size: 19,
-                  color: active ? colors.onSurface : colors.onSurfaceVariant,
-                ),
-                const SizedBox(width: 11),
-                Expanded(
-                  child: Text(
-                    widget.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
+        child: Semantics(
+          button: true,
+          // The wash and the 3px bar are visual-only; without this a
+          // screen-reader user tabbing the rail cannot tell which
+          // destination is current.
+          selected: active,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onHover: (value) => setState(() => _hovered = value),
+            onTap: () => widget.onTap(widget.item),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
+              // 44, the project's own minimum for interactive targets
+              // (docs/UI.md) — the rail rows sat at 40.
+              height: 44,
+              padding: const EdgeInsets.symmetric(horizontal: 9),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: active
+                    ? AppColors.primary.withValues(alpha: .16)
+                    : _hovered
+                    ? colors.onSurface.withValues(alpha: .05)
+                    : Colors.transparent,
+              ),
+              child: Row(
+                children: [
+                  // Thin left accent — always laid out so icons stay
+                  // aligned; painted only on the selected row.
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 140),
+                    width: 3,
+                    height: 16,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(2),
                       color: active
-                          ? colors.onSurface
-                          : colors.onSurfaceVariant,
-                      fontSize: 13.5,
-                      fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+                          ? DesktopSidebar._accentTint
+                          : Colors.transparent,
                     ),
                   ),
-                ),
-                if (widget.badge > 0) _Badge(count: widget.badge),
-                if (widget.trailingChevron)
+                  const SizedBox(width: 9),
                   Icon(
-                    Icons.chevron_right_rounded,
-                    size: 17,
-                    color: colors.onSurfaceVariant.withValues(alpha: .8),
+                    widget.icon,
+                    size: 19,
+                    color: active ? colors.onSurface : colors.onSurfaceVariant,
                   ),
-              ],
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Text(
+                      widget.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: active
+                            ? colors.onSurface
+                            : colors.onSurfaceVariant,
+                        fontSize: 13.5,
+                        fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  if (widget.badge > 0) _Badge(count: widget.badge),
+                  if (widget.trailingChevron)
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 17,
+                      color: colors.onSurfaceVariant.withValues(alpha: .8),
+                    ),
+                ],
+              ),
             ),
           ),
         ),

@@ -902,6 +902,37 @@ permission flags).
 
 ## UI
 
+- **FIXED AND DEPLOYED 2026-08-21 — the redesign's three post-release reviews
+  returned FIX_FIRST; every high and medium is closed.** Highlights: the
+  podcast HOST's filled column overflowed at 720-850px heights (gate is now
+  role-aware: 880 host / 780 guest, pinned by a 1100x800 harness frame whose
+  takeException assertion is the regression net); a dormant podcast showed
+  "1 Speaking" beside NOT LIVE YET with an unmuted accent mic chip (dormant
+  now reports 0 and defaults the placeholder host muted; the dormant host
+  dock also no longer offers a red End for a session that does not exist);
+  the chat send button and the participants-sheet close had no accessible
+  name; the white mic glyph failed non-text contrast on the emerald and gold
+  accents (2.0-2.25:1 — glyphs now follow the fill's brightness in the dock
+  and the stage chip); '+N' overflow/audience counts and the own-name chat
+  color sat under the 4.5:1 small-text bar; dock labels truncated to "Sta…"
+  at 200% text (two lines + a caption-only scale cap, full label always in
+  Semantics); sidebar nav rows never exposed `selected` to assistive tech
+  and sat at 40px (now 44); the bell's "unread" was the rail's one
+  unlocalized word; the 768 tablet kept the dead band (fill gate now 700);
+  the family hero's lone ↗ became the labeled "Open family space" button;
+  chat messages gained real per-message timestamps; the sidebar harness
+  rendered under a generic theme (now AppTheme.darkTheme), which immediately
+  exposed a real 1px overflow of the Home room card under Inter metrics.
+
+- **OPEN, accessibility (from the 2026-08-21 review) — recorded, not yet
+  fixed.** (1) Compact room chat is widget state, not a route: system Back
+  exits the whole room instead of closing the chat. (2) Room lifecycle
+  transitions (connecting/reconnecting/live/ended) make no polite
+  screen-reader announcement; ADR-058's single-LiveRegion constraint applies.
+  (3) Sub-44px targets remain: counter pills 34px (informational, but
+  tappable in places), reaction chips ~22px. (4) The speaking pulse and
+  waveform have no rendered-frame proof (animation; stills cannot show it).
+
 - **FIXED AND DEPLOYED 2026-08-21 (`84ab319`) — three rendering defects found
   only by opening the redesign's PNGs.** (1) The hero's "View club" drew as
   solid blocks: `styleFrom(textStyle:)` replaces a button's text style, so an

@@ -931,16 +931,22 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
           accentColor: accent,
           onTap: _ending ? null : _openShareSheet,
         ),
-        const RoomDockDivider(),
-        RoomDockButton(
-          icon: _isHost ? Icons.stop_circle_rounded : Icons.logout_rounded,
-          label: _isHost ? 'End' : 'Leave',
-          style: RoomDockStyle.danger,
-          accentColor: accent,
-          onTap: _ending
-              ? null
-              : () => unawaited(_isHost ? _confirmEndBroadcast() : _leaveRoom()),
-        ),
+        // A host looking at a dormant room has nothing to End — the red
+        // control appeared beside "Start voice" and read as a threat to a
+        // session that did not exist. A non-host can always Leave.
+        if (!_isHost || _live) ...[
+          const RoomDockDivider(),
+          RoomDockButton(
+            icon: _isHost ? Icons.stop_circle_rounded : Icons.logout_rounded,
+            label: _isHost ? 'End' : 'Leave',
+            style: RoomDockStyle.danger,
+            accentColor: accent,
+            onTap: _ending
+                ? null
+                : () =>
+                      unawaited(_isHost ? _confirmEndBroadcast() : _leaveRoom()),
+          ),
+        ],
       ],
     );
   }
@@ -978,7 +984,11 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                     hostParticipant?.displayName ?? widget.room.hostName,
                 photoUrl: hostParticipant?.photoUrl ?? widget.room.hostPhotoUrl,
                 isHost: true,
-                isMuted: hostParticipant?.isMuted ?? false,
+                // Before the session runs there is no live mic anywhere,
+                // so a missing participant row defaults MUTED while dormant
+                // — the dormant screen was showing an unmuted accent chip
+                // next to "NOT LIVE YET".
+                isMuted: hostParticipant?.isMuted ?? !_live,
                 isSpeaking:
                     voiceByIdentity[hostParticipant?.userId ??
                             widget.room.hostId]
@@ -1024,7 +1034,10 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                           subtitle: _live
                               ? 'PODCAST ROOM'
                               : 'PODCAST ROOM · NOT LIVE YET',
-                          speaking: stageSpeakers.length,
+                          // Zero while dormant: "1 Speaking" beside
+                          // NOT LIVE YET was three contradictory signals on
+                          // one screen.
+                          speaking: _live ? stageSpeakers.length : 0,
                           listeners: listeners.length,
                           onBack: () => Navigator.of(context).pop(),
                           onSpeakingTap: () => _openParticipants(
@@ -1068,9 +1081,17 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                         // narrow viewport keeps scrolling, because there is
                         // no spare height to hand out.
                         stage: _PodcastColumn(
+                          // The HOST column carries more fixed content than
+                          // the community one (taller hero with the
+                          // hosted-by credit and waveform, plus the quick
+                          // actions row) — at 720-850px of height the
+                          // filled Column overflowed and painted under the
+                          // audience strip. The gate buys the stage room to
+                          // actually exist; below it, scrolling returns.
                           fillStage:
-                              MediaQuery.sizeOf(context).width >= 900 &&
-                              MediaQuery.sizeOf(context).height >= 720,
+                              MediaQuery.sizeOf(context).width >= 700 &&
+                              MediaQuery.sizeOf(context).height >=
+                                  (_isHost ? 880 : 780),
                           children: [
                             RoomHeroBanner(
                               identity: SpaceIdentity.podcast,
@@ -1127,8 +1148,9 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                               speakers: stageSpeakers,
                               identity: SpaceIdentity.podcast,
                               fill:
-                                  MediaQuery.sizeOf(context).width >= 900 &&
-                                  MediaQuery.sizeOf(context).height >= 720,
+                                  MediaQuery.sizeOf(context).width >= 700 &&
+                                  MediaQuery.sizeOf(context).height >=
+                                      (_isHost ? 880 : 780),
                               onOverflowTap: () => _openParticipants(
                                 participants,
                                 initialFilter: 'speakers',

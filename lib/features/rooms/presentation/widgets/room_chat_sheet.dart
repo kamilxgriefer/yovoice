@@ -346,7 +346,9 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
                             counterText: '',
                             hintText: 'Say something…',
                             hintStyle: const TextStyle(
-                              color: Color(0xFF766B80),
+                              // Lifted from 0xFF766B80 (3.55:1) to clear the 4.5:1 small-text
+                              // bar — a placeholder is still text.
+                              color: Color(0xFF9C93AB),
                             ),
                             filled: true,
                             fillColor: const Color(0xFF1C1428),
@@ -372,9 +374,21 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
                       const SizedBox(width: 8),
                       IconButton.filled(
                         onPressed: _sending ? null : _send,
+                        // The one control a nonspeaking person needs most in
+                        // a voice room, and it announced as an unnamed
+                        // "button" — chat is the alternative channel, so its
+                        // send action must have a name.
+                        tooltip: 'Send',
                         style: IconButton.styleFrom(
                           backgroundColor: widget.accent,
                           minimumSize: const Size(46, 46),
+                          foregroundColor:
+                              ThemeData.estimateBrightnessForColor(
+                                    widget.accent,
+                                  ) ==
+                                  Brightness.light
+                              ? const Color(0xFF120C1B)
+                              : Colors.white,
                         ),
                         icon: _sending
                             ? const SizedBox(
@@ -456,7 +470,13 @@ class _MessageRow extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: isMine ? accent : const Color(0xFFCFC5D8),
+                            // "My" name keeps a hint of the identity but is
+                            // lifted toward white: the raw community violet
+                            // measured 3.25:1 at this size, under the 4.5:1
+                            // small-text bar.
+                            color: isMine
+                                ? Color.lerp(accent, Colors.white, .55)!
+                                : const Color(0xFFCFC5D8),
                             fontSize: 12,
                             fontWeight: FontWeight.w800,
                           ),
@@ -464,6 +484,23 @@ class _MessageRow extends StatelessWidget {
                       ),
                       const SizedBox(width: 6),
                       UserIdentityBadges(uid: message.senderId),
+                      const Spacer(),
+                      if (message.createdAt != null)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: Text(
+                            _clock(message.createdAt!),
+                            style: const TextStyle(
+                              // 24-hour clock, from the message's REAL
+                              // server timestamp. A just-sent message whose
+                              // serverTimestamp has not resolved shows no
+                              // time at all — never a fabricated one.
+                              color: Color(0xFF9C93AB),
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 3),
@@ -527,4 +564,11 @@ class _MessageRow extends StatelessWidget {
       ),
     );
   }
+}
+
+String _clock(DateTime time) {
+  final local = time.toLocal();
+  final h = local.hour.toString().padLeft(2, '0');
+  final m = local.minute.toString().padLeft(2, '0');
+  return '$h:$m';
 }

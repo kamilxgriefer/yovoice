@@ -150,8 +150,10 @@ class _SpeakerTileState extends State<SpeakerTile>
   );
 
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Also the FIRST sync: initState cannot read MediaQuery, and the
+    // reduced-motion flag lives there.
     _syncPulse();
   }
 
@@ -162,9 +164,13 @@ class _SpeakerTileState extends State<SpeakerTile>
   }
 
   /// The pulse runs on exactly one condition: this person is genuinely
-  /// speaking right now. Anything else stops the motion at rest.
+  /// speaking right now AND the platform has not asked for reduced motion.
+  /// The static cues (ring width, glow, the equaliser chip glyph) carry the
+  /// state on their own, so honouring `disableAnimations` costs nothing.
   void _syncPulse() {
-    if (widget.speaker.isSpeaking) {
+    final reduceMotion =
+        MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (widget.speaker.isSpeaking && !reduceMotion) {
       if (!_pulse.isAnimating) _pulse.repeat(reverse: true);
     } else if (_pulse.isAnimating || _pulse.value != 0) {
       _pulse.stop();
@@ -300,9 +306,26 @@ class _SpeakerTileState extends State<SpeakerTile>
                       child: Icon(
                         speaker.isMuted
                             ? Icons.mic_off_rounded
+                            // The equaliser glyph while GENUINELY speaking
+                            // is the non-color cue: without it the accent
+                            // ring and glow were the only signal, invisible
+                            // to anyone who cannot rely on hue.
+                            : speaker.isSpeaking
+                            ? Icons.graphic_eq_rounded
                             : Icons.mic_rounded,
                         size: 10,
-                        color: Colors.white,
+                        // White fails 2.0-2.25:1 on the emerald and gold
+                        // accents (same measurement as the dock), so the
+                        // glyph follows the chip fill's brightness.
+                        color:
+                            ThemeData.estimateBrightnessForColor(
+                                  speaker.isMuted
+                                      ? const Color(0xFF3A3151)
+                                      : accent,
+                                ) ==
+                                Brightness.light
+                            ? const Color(0xFF120C1B)
+                            : Colors.white,
                       ),
                     ),
                   ),
@@ -520,8 +543,11 @@ class _OverflowTile extends StatelessWidget {
                 alignment: Alignment.center,
                 child: Text(
                   '+$count',
-                  style: TextStyle(
-                    color: accent,
+                  style: const TextStyle(
+                    // Measured 3.25:1 as accent-on-dark at this size — small
+                    // text needs 4.5:1, so the number is white and the
+                    // accent stays on the chip wash and border around it.
+                    color: Colors.white,
                     fontWeight: FontWeight.w900,
                     fontSize: 15,
                   ),
@@ -666,8 +692,12 @@ class AudienceStrip extends StatelessWidget {
                           ),
                           child: Text(
                             '+$more',
-                            style: TextStyle(
-                              color: identity.accent,
+                            style: const TextStyle(
+                              // Same rule as the stage overflow tile: the
+                              // wash carries the identity, the small number
+                              // itself must clear 4.5:1, which the violet
+                              // variant missed (4.24:1 measured).
+                              color: Colors.white,
                               fontSize: 10.5,
                               fontWeight: FontWeight.w900,
                             ),

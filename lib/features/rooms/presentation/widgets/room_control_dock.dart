@@ -107,88 +107,116 @@ class RoomDockButton extends StatelessWidget {
   final bool enabled;
   final bool showSpinner;
 
+  /// White on the emerald and gold accents measures 2.0-2.25:1 — a
+  /// non-text contrast failure on the room's PRIMARY control. The glyph
+  /// therefore follows the fill's brightness: near-black on a light accent,
+  /// white on a dark one. `estimateBrightnessForColor` is the same estimate
+  /// Material uses for foregrounds, so this cannot drift per-identity.
+  static Color _foregroundFor(Color fill) =>
+      ThemeData.estimateBrightnessForColor(fill) == Brightness.light
+      ? const Color(0xFF120C1B)
+      : Colors.white;
+
   static const _dangerRed = Color(0xFFE93A57);
   static const _mutedAmber = Color(0xFFB3801A);
 
   @override
   Widget build(BuildContext context) {
-    final (Color fill, Color? borderColor, List<BoxShadow>? glow) =
-        switch (style) {
-          RoomDockStyle.accent => (
-            accentColor,
-            null,
-            [
-              BoxShadow(
-                color: accentColor.withValues(alpha: .5),
-                blurRadius: 22,
-                spreadRadius: 1,
-              ),
-            ],
+    final (
+      Color fill,
+      Color? borderColor,
+      List<BoxShadow>? glow,
+    ) = switch (style) {
+      RoomDockStyle.accent => (
+        accentColor,
+        null,
+        [
+          BoxShadow(
+            color: accentColor.withValues(alpha: .5),
+            blurRadius: 22,
+            spreadRadius: 1,
           ),
-          RoomDockStyle.warning => (_mutedAmber, null, null),
-          RoomDockStyle.neutral => (
-            Colors.white.withValues(alpha: .08),
-            Colors.white.withValues(alpha: .1),
-            null,
-          ),
-          RoomDockStyle.alert => (const Color(0xFF7A2436), null, null),
-          RoomDockStyle.danger => (_dangerRed, null, null),
-        };
+        ],
+      ),
+      RoomDockStyle.warning => (_mutedAmber, null, null),
+      RoomDockStyle.neutral => (
+        Colors.white.withValues(alpha: .08),
+        Colors.white.withValues(alpha: .1),
+        null,
+      ),
+      RoomDockStyle.alert => (const Color(0xFF7A2436), null, null),
+      RoomDockStyle.danger => (_dangerRed, null, null),
+    };
 
-    return Opacity(
-      opacity: onTap == null
-          ? .45
-          : enabled
-          ? 1
-          : .75,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(22),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // FittedBox keeps the control CIRCULAR when a narrow viewport
-              // squeezes the dock — a scaled-down circle, never an oval.
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Container(
-                  width: 50,
-                  height: 50,
-                  decoration: BoxDecoration(
-                    color: fill,
-                    shape: BoxShape.circle,
-                    border: borderColor == null
-                        ? null
-                        : Border.all(color: borderColor),
-                    boxShadow: glow,
+    return Semantics(
+      button: true,
+      enabled: onTap != null && enabled,
+      label: label,
+      child: Opacity(
+        opacity: onTap == null
+            ? .45
+            : enabled
+            ? 1
+            : .75,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(22),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // FittedBox keeps the control CIRCULAR when a narrow viewport
+                // squeezes the dock — a scaled-down circle, never an oval.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      color: fill,
+                      shape: BoxShape.circle,
+                      border: borderColor == null
+                          ? null
+                          : Border.all(color: borderColor),
+                      boxShadow: glow,
+                    ),
+                    child: showSpinner
+                        ? const Padding(
+                            padding: EdgeInsets.all(15),
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.4,
+                              color: Colors.white70,
+                            ),
+                          )
+                        : Icon(icon, color: _foregroundFor(fill), size: 23),
                   ),
-                  child: showSpinner
-                      ? const Padding(
-                          padding: EdgeInsets.all(15),
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.4,
-                            color: Colors.white70,
-                          ),
-                        )
-                      : Icon(icon, color: Colors.white, size: 23),
                 ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                label,
-                maxLines: 1,
-                softWrap: false,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w800,
+                const SizedBox(height: 6),
+                // Two lines and a capped caption scale, or 200% text
+                // truncated the labels to "Sta…"/"Lea…" for exactly the users
+                // who enlarged them. The cap applies ONLY to this caption:
+                // the dock's width is bounded, the icon carries the meaning,
+                // and the FULL label always reaches assistive tech through
+                // the Semantics wrapper below — nothing is lost, it is just
+                // not rendered at a size the pill cannot hold.
+                MediaQuery.withClampedTextScaling(
+                  maxScaleFactor: 1.6,
+                  child: Text(
+                    label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w800,
+                      height: 1.15,
+                    ),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

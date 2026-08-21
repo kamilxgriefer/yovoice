@@ -493,7 +493,11 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     // The scrolling list stays for narrow and SHORT viewports, where there
     // is no leftover height to give away and the content must be reachable.
     final media = MediaQuery.sizeOf(context);
-    final canFillStage = media.width >= 900 && media.height >= 720;
+    // 700, not 900: a 768-wide tablet has no side chat panel and 1024px of
+    // height, and the scrolling fallback left ~40% of it as the exact dead
+    // band this layout exists to remove. Anything narrower is a phone,
+    // where the scroll is the right shape.
+    final canFillStage = media.width >= 700 && media.height >= 720;
 
     final hero = RoomHeroBanner(
       identity: identity,
@@ -510,7 +514,10 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
               label: club.isFamilyRoom ? 'Open family space' : 'View club',
               onTap: _openClubOverview,
               identity: identity,
-              compact: club.isFamilyRoom || media.width < 520,
+              // Width alone decides. The family room previously forced
+              // the icon-only variant at EVERY width, leaving a lone ↗ in
+              // a wide hero that read as decoration, not a control.
+              compact: media.width < 520,
             ),
     );
     final audience = AudienceStrip(
@@ -711,9 +718,14 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
       builder: (context, snapshot) {
         final roomParticipants = snapshot.data ?? const <RoomParticipant>[];
         _latestParticipants = roomParticipants;
-        final speaking = roomParticipants
-            .where((participant) => participant.isSpeaker)
-            .length;
+        // Zero while dormant, for the same reason as the broadcast
+        // screen: the pill says "Speaking", and before the session runs
+        // nobody is.
+        final speaking = !_live
+            ? 0
+            : roomParticipants
+                  .where((participant) => participant.isSpeaker)
+                  .length;
         final listeners = roomParticipants.length - speaking;
         // Liveness leads: in a dormant room there is no audio session at
         // all, so no MicState value could describe the control honestly.
@@ -865,6 +877,7 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                 ),
                 IconButton(
                   onPressed: () => Navigator.of(context).pop(),
+                  tooltip: 'Close',
                   icon: const Icon(Icons.close_rounded, color: Colors.white),
                 ),
               ],

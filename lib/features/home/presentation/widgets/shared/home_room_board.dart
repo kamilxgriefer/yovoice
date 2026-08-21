@@ -887,7 +887,12 @@ class HomeActiveRooms extends StatelessWidget {
 
     final side = compact ? 148.0 : 168.0;
     return SizedBox(
-      height: side + 92,
+      // +96, not +92: under the app's real typeface (Inter) the card's
+      // natural height is a hair taller than under the fallback font, and
+      // the row overflowed by 1px — caught the moment the screenshot
+      // harness started rendering with AppTheme instead of a generic dark
+      // theme. The extra room is headroom, not layout.
+      height: side + 96,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         clipBehavior: Clip.none,

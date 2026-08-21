@@ -163,7 +163,9 @@ class SidebarClockState extends State<SidebarClock>
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                color: Color(0xFF6E6683),
+                // Lifted from 0xFF6E6683 (3.34:1): the zone name is 10px text
+                // and must clear 4.5:1.
+                color: Color(0xFF9C93AB),
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
                 letterSpacing: .4,

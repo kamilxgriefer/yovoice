@@ -43,9 +43,11 @@ someone decide what to pick up next.
   components; the stage takes the column's leftover height on wide viewports;
   floating centered dock; sidebar with the notification bell on top, a true
   More overlay and internal scroll. Flutter suite 1096 → 1098; 52 room + 9
-  sidebar frames rendered and inspected. UNVERIFIED: no real browser/simulator
-  pass; the three independent reviews ran post-release (2026-08-21) rather
-  than pre-release, because the first attempt died on a model limit.
+  sidebar frames rendered and inspected. The three independent reviews (visual,
+  accessibility, principal) ran post-release on 2026-08-21 — all three
+  returned FIX_FIRST and every high and medium finding was fixed and
+  redeployed the same day (see Bugs.md). Still UNVERIFIED: no real
+  browser/simulator pass; animations have no still-frame proof.
 
 - **Family and club rooms are deletable — from the same dialog as any room**
   (2026-08-20, DEPLOYED: indexes → `deleteClubSelf` → hosting, each verified;
