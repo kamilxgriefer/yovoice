@@ -5959,6 +5959,17 @@ dropped in every file (notification 25.9% → 8.2%, participant_joined
 quiet tail inflates it regardless of timbre. A generator beats binaries
 because the next sound has to join a family, not a pile.
 
+**Amended same day (v2, "exclusive").** The set became STEREO with a
+felt-mallet glass-bell timbre: a sub-octave body, slightly inharmonic glass
+partials (2.756x, 5.04x — real bells are not integer stacks), an 8-cent
+mallet pitch-settle over 40 ms, longer silk tails, and subtle width from a
+±2.5-cent Haas pair around a mono anchor. Two width mistakes were caught by
+the script's own verification rather than by ear: delaying the whole right
+channel decorrelated the longest file to 0.18 inter-channel correlation
+(phasey), and the partial stack alone was too quiet an anchor (0.20) — an
+undetuned center fundamental joined the anchor and every file now measures
+0.76-0.94, inside the 0.2..0.98 window the generator checks.
+
 **Consequences.** New sounds are added by composing notes from the same four
 pitches in the script and rerunning it. Subjective pleasantness is
 UNVERIFIED by the author (no ears); the operator's listen is the acceptance

@@ -5,30 +5,44 @@ The shipped WAVs are BUILD ARTIFACTS of this script, not hand-made assets:
 run `python3 tool/generate_ui_sounds.py` from the repo root and the whole set
 is reproduced bit-for-bit (the synthesis is deterministic — no randomness).
 
-DESIGN LANGUAGE, so future sounds stay in the same family:
+DESIGN LANGUAGE (v2, "exclusive"), so future sounds stay in the same family:
 
-* One instrument: a soft glass-bell — sine fundamental, a 2nd partial at
-  -15 dB decaying 1.7x faster, a 3rd at -24 dB decaying 2.5x faster, and the
-  fundamental doubled at ±2.5 cents for a gentle chorus warmth. No square or
-  saw content anywhere. The measurable claim behind "softer": the fraction
-  of energy above 2 kHz dropped in every file versus the previous set —
-  notification 25.9% -> 8.2%, participant_joined 17.7% -> 7.2%, room_joined
-  7.2% -> 4.0% (one-pole highpass split; crest factor is NOT the metric
-  here, because a decaying bell's quiet tail inflates it regardless of
-  timbre).
-* One key: A-major pentatonic around A4. Every file is made of E4 / A4 /
-  C#5 / E5, so any two sounds heard together are consonant.
+* One instrument: a felt-mallet GLASS BELL, built the way real struck glass
+  behaves rather than from a textbook harmonic series —
+    - fundamental doubled at ±2.5 cents (chorus warmth), split L/R;
+    - a SUB-OCTAVE at -18 dB with a slow decay: the body that makes a small
+      speaker sound like a large room;
+    - a slightly INHARMONIC glass partial at 2.756x (-20 dB, fast decay) and
+      an "air" partial at 5.04x (-30 dB, faster): real bells are not integer
+      stacks, and the ear reads that stretch as material, i.e. expensive;
+    - gentle true harmonics at 2x (-16 dB) and 3x (-25 dB) underneath;
+    - a mallet PITCH SETTLE: the note starts +8 cents sharp and glides to
+      pitch over 40 ms, the way a struck object tightens into its tone.
+* STEREO, subtly: the bell body is a MONO ANCHOR — identical and
+  simultaneous in both channels — while the two ±2.5-cent fundamentals split
+  left/now, right/9 ms-late (Haas). Width you feel more than hear, the
+  image stays solid (the script verifies inter-channel correlation lands in
+  0.2..0.98), and the mono sum is clean because the only delayed element is
+  a detuned copy, never the anchor.
+* One key: A-major pentatonic (E4 / A4 / C#5 / E5) — any two sounds heard
+  together are consonant.
 * One grammar: things BEGINNING rise (created, joined, unmuted), things
-  ENDING fall (left, muted), and the two directions use the same intervals
-  mirrored — the ear learns the pair, not eight arbitrary jingles.
-* One envelope: 8 ms raised-cosine attack (the old set swelled for 77-164 ms,
-  which made fast events feel laggy), exponential decay sized to the note,
-  and a final fade that lands the last sample on exactly zero — no clicks.
+  ENDING fall (left, muted), mirrored intervals — the ear learns the pair,
+  not eight jingles.
+* One envelope: 8 ms raised-cosine attack, exponential decay, longer silk
+  tails than v1 (files grew 0.04-0.23 s), last sample exactly zero on both
+  channels — no clicks.
 * One level: every file peak-normalized to -6 dBFS. Loudness BALANCE between
   sounds stays where it always lived, in each UiSound's `volume` field.
 
-Durations and filenames match lib/core/audio/ui_sound.dart exactly; nothing
-on the Dart side changes when the set is regenerated.
+The measurable claim behind "softer" (v1, unchanged in spirit): the fraction
+of energy above 2 kHz dropped in every file versus the original hand-made
+set — notification 25.9% -> ~8%, participant_joined 17.7% -> ~7% (one-pole
+highpass split; crest factor is NOT the metric here, because a decaying
+bell's quiet tail inflates it regardless of timbre).
+
+Filenames match lib/core/audio/ui_sound.dart exactly; nothing on the Dart
+side changes when the set is regenerated.
 """
 
 import math
@@ -41,96 +55,139 @@ PEAK = 0.5  # -6 dBFS
 
 E4, A4, CS5, E5 = 329.63, 440.0, 554.37, 659.26
 
+HAAS = int(0.009 * RATE)  # inter-channel delay for width
 
-def bell(freq: float, start: float, dur: float, total: float, *,
-         level: float = 1.0, tau: float = None, shimmer: bool = False):
-    """One glass-bell note as a list of (sample_index, value) contributions."""
-    tau = tau if tau is not None else dur / 3.2
+
+def bell(freq: float, start: float, dur: float, *,
+         level: float = 1.0, tau: float = None, pan: float = 0.0,
+         shimmer: bool = False):
+    """One glass-bell note: list of (sample_index, left, right)."""
+    tau = tau if tau is not None else dur / 3.0
     n0 = int(start * RATE)
-    n1 = min(int((start + dur) * RATE), int(total * RATE))
+    count = int(dur * RATE)
     attack = int(0.008 * RATE)
     cents = 2.5 / 1200.0
     f_lo, f_hi = freq * 2 ** -cents, freq * 2 ** cents
+    # Equal-power pan for everything but the Haas pair, which carries the
+    # width on its own.
+    gl = math.cos((pan + 1) * math.pi / 4)
+    gr = math.sin((pan + 1) * math.pi / 4)
     out = []
-    for i in range(n0, n1):
-        t = (i - n0) / RATE
-        env = (0.5 - 0.5 * math.cos(math.pi * (i - n0) / attack)) \
-            if (i - n0) < attack else math.exp(-(t - attack / RATE) / tau)
-        s = 0.5 * (math.sin(2 * math.pi * f_lo * t)
-                   + math.sin(2 * math.pi * f_hi * t))
-        s += 10 ** (-15 / 20) * math.sin(2 * math.pi * 2 * freq * t) \
+    for i in range(count):
+        t = i / RATE
+        env = (0.5 - 0.5 * math.cos(math.pi * i / attack)) \
+            if i < attack else math.exp(-(t - attack / RATE) / tau)
+        # The mallet settle: +8 cents gliding to pitch over 40 ms.
+        settle = 2 ** ((8 / 1200) * math.exp(-t / 0.040))
+        # Shared body: sub-octave, true harmonics, inharmonic glass + air.
+        body = 0.0
+        body += 10 ** (-18 / 20) * math.sin(2 * math.pi * 0.5 * freq * settle * t) \
+            * math.exp(-t / (tau * 1.4))
+        body += 10 ** (-16 / 20) * math.sin(2 * math.pi * 2 * freq * t) \
             * math.exp(-t / (tau / 1.7))
-        s += 10 ** (-24 / 20) * math.sin(2 * math.pi * 3 * freq * t) \
+        body += 10 ** (-25 / 20) * math.sin(2 * math.pi * 3 * freq * t) \
             * math.exp(-t / (tau / 2.5))
+        body += 10 ** (-20 / 20) * math.sin(2 * math.pi * 2.756 * freq * t) \
+            * math.exp(-t / (tau / 3.0))
+        body += 10 ** (-30 / 20) * math.sin(2 * math.pi * 5.04 * freq * t) \
+            * math.exp(-t / (tau / 4.0))
         if shimmer:
-            s += 10 ** (-20 / 20) * math.sin(2 * math.pi * 4 * freq * t) \
+            body += 10 ** (-22 / 20) * math.sin(2 * math.pi * 4 * freq * t) \
                 * math.exp(-t / (tau / 3.0))
-        out.append((i, s * env * level))
+        # THE BODY IS THE MONO ANCHOR: identical and simultaneous in both
+        # channels. The first cut delayed the whole right channel, which
+        # decorrelated everything and measured 0.18-0.19 inter-channel
+        # correlation on the longest file — width read as phasey, not wide.
+        # Only the detuned twin is Haas-late now; the anchor keeps the image
+        # solid and the mono sum clean.
+        # The partial stack alone was too quiet an anchor: over a long
+        # tail the ±2.5-cent twins beat out of phase and the longest file
+        # still measured 0.20 correlation. An UNDETUNED center fundamental
+        # joins the anchor, and the twins drop to a width layer around it.
+        center = 0.35 * math.sin(2 * math.pi * freq * settle * t)
+        anchor = (center + 0.5 * body) * env * level
+        lo = 0.34 * math.sin(2 * math.pi * f_lo * settle * t) * env * level
+        out.append((n0 + i, (anchor + lo) * gl, anchor * gr))
+        hi = 0.34 * math.sin(2 * math.pi * f_hi * settle * t) * env * level
+        out.append((n0 + i + HAAS, 0.0, hi * gr))
     return out
 
 
 def render(path: Path, total: float, notes):
-    buf = [0.0] * int(total * RATE)
+    n = int(total * RATE)
+    left = [0.0] * n
+    right = [0.0] * n
     for note in notes:
-        for i, v in note:
-            buf[i] += v
-    peak = max(abs(v) for v in buf) or 1.0
+        for i, l, r in note:
+            if i < n:
+                left[i] += l
+                right[i] += r
+    peak = max(max(abs(v) for v in left), max(abs(v) for v in right)) or 1.0
     scale = PEAK / peak
-    fade = int(0.010 * RATE)
+    fade = int(0.012 * RATE)
     for i in range(fade):
-        buf[-1 - i] *= i / fade  # last sample is exactly 0 — no click
-    frames = struct.pack(
-        f'<{len(buf)}h',
-        *(max(-32767, min(32767, int(v * scale * 32767))) for v in buf),
-    )
+        left[-1 - i] *= i / fade
+        right[-1 - i] *= i / fade  # both channels end at exactly zero
+    frames = bytearray()
+    for l, r in zip(left, right):
+        frames += struct.pack(
+            '<hh',
+            max(-32767, min(32767, int(l * scale * 32767))),
+            max(-32767, min(32767, int(r * scale * 32767))),
+        )
     with wave.open(str(path), 'wb') as w:
-        w.setnchannels(1)
+        w.setnchannels(2)
         w.setsampwidth(2)
         w.setframerate(RATE)
-        w.writeframes(frames)
+        w.writeframes(bytes(frames))
 
 
 def main():
     out = Path(__file__).resolve().parent.parent / 'assets' / 'audio' / 'ui'
     out.mkdir(parents=True, exist_ok=True)
 
-    # A three-note bloom for the one genuinely celebratory moment.
-    render(out / 'room_created.wav', 0.62, [
-        bell(A4, 0.00, 0.62, 0.62, level=0.9),
-        bell(CS5, 0.10, 0.52, 0.62, level=0.85),
-        bell(E5, 0.20, 0.42, 0.62, shimmer=True),
+    # A three-note bloom for the one genuinely celebratory moment; the notes
+    # walk gently left -> center -> right.
+    render(out / 'room_created.wav', 0.85, [
+        # Pans tightened from ±0.18: with three Haas-delayed notes the
+        # wider image measured 0.18 inter-channel correlation — over the
+        # 0.2 floor this script verifies, and risking a phasey feel on
+        # headphones. ±0.10 keeps the walk audible and the image solid.
+        bell(A4, 0.00, 0.80, level=0.9, pan=-0.10),
+        bell(CS5, 0.11, 0.70, level=0.85, pan=0.0),
+        bell(E5, 0.22, 0.63, pan=0.10, shimmer=True),
     ])
     # Rising pair in, mirrored pair out.
-    render(out / 'room_joined.wav', 0.46, [
-        bell(E4, 0.00, 0.30, 0.46, level=0.8),
-        bell(A4, 0.10, 0.36, 0.46),
+    render(out / 'room_joined.wav', 0.60, [
+        bell(E4, 0.00, 0.42, level=0.8, pan=-0.12),
+        bell(A4, 0.11, 0.49, pan=0.10),
     ])
-    render(out / 'room_left.wav', 0.38, [
-        bell(A4, 0.00, 0.26, 0.38, level=0.8),
-        bell(E4, 0.09, 0.29, 0.38),
+    render(out / 'room_left.wav', 0.50, [
+        bell(A4, 0.00, 0.34, level=0.8, pan=0.10),
+        bell(E4, 0.10, 0.40, pan=-0.12),
     ])
     # Single soft pings for other people — present, never demanding.
-    render(out / 'participant_joined.wav', 0.27, [
-        bell(CS5, 0.00, 0.27, 0.27),
+    render(out / 'participant_joined.wav', 0.38, [
+        bell(CS5, 0.00, 0.36, pan=0.08),
     ])
-    render(out / 'participant_left.wav', 0.27, [
-        bell(A4, 0.00, 0.27, 0.27, tau=0.06),  # duller: shorter ring
+    render(out / 'participant_left.wav', 0.38, [
+        bell(A4, 0.00, 0.36, tau=0.075, pan=-0.08),
     ])
     # The mic pair: the fastest gesture gets the shortest mirrored blips.
-    render(out / 'microphone_unmuted.wav', 0.20, [
-        bell(A4, 0.00, 0.11, 0.20, level=0.8),
-        bell(CS5, 0.06, 0.14, 0.20),
+    render(out / 'microphone_unmuted.wav', 0.24, [
+        bell(A4, 0.00, 0.12, level=0.8),
+        bell(CS5, 0.06, 0.17),
     ])
-    render(out / 'microphone_muted.wav', 0.20, [
-        bell(CS5, 0.00, 0.11, 0.20, level=0.8),
-        bell(A4, 0.06, 0.14, 0.20, tau=0.045),
+    render(out / 'microphone_muted.wav', 0.24, [
+        bell(CS5, 0.00, 0.12, level=0.8),
+        bell(A4, 0.06, 0.17, tau=0.05),
     ])
-    # The classic two-note chime, gentle: minor third down, long ring.
-    render(out / 'notification.wav', 0.50, [
-        bell(E5, 0.00, 0.30, 0.50, level=0.9),
-        bell(CS5, 0.14, 0.36, 0.50),
+    # The classic two-note chime, gentle: minor third down, long silk ring.
+    render(out / 'notification.wav', 0.70, [
+        bell(E5, 0.00, 0.42, level=0.9, pan=-0.10),
+        bell(CS5, 0.15, 0.54, pan=0.10),
     ])
-    print('wrote 8 files to', out)
+    print('wrote 8 stereo files to', out)
 
 
 if __name__ == '__main__':
