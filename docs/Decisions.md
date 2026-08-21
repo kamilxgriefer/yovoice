@@ -5838,3 +5838,54 @@ accepted: if the post-commit sweep fails midway (e.g. Storage outage), the
 repeat call resumes it, but once the dialog is dismissed the UI offers no
 retry surface — the club stays consistently marked and refusable, never
 half-alive.
+
+## ADR-097: A live-room count that must honour an absent `status` is a bounded read, not a `count()` aggregate
+
+**Context.** [ADR-093](#adr-093-an-absent-status-means-active--one-reading-of-the-field-shared-by-the-rules-and-every-callable)
+settled that an absent `status` means active, and `roomIsActive()` made that
+the one reading used by every callable. Three server-side queries were never
+converted, because they are not in-memory checks: `getAdminDashboard`'s
+`liveRooms` `.count()`, and `getStaffOverview`'s live-room `.count()` and its
+`limit(5)` listing. All three ran
+`where("status","==","active").where("isLive","==",true)`, which matches only
+documents where the field is present and equal — so all 25 legacy production
+rooms were dropped from the numbers the owner and staff use to see what is
+happening right now. `DEPLOYMENT.md` had already named this gap in writing
+when the liveness sweeper shipped, and left it open.
+
+**Decision.** One helper, `listLiveActiveRoomDocs()` in
+`functions/rooms/live_rooms.js`: query `where("isLive","==",true)` with a
+bounded `limit`, then filter the documents with `roomIsActive()` in memory.
+Both callables use it. It returns the documents rather than a number, because
+the staff overview needs both a count and the first few rows and previously
+issued the same query twice to get them. A run that reaches the scan bound
+reports `truncated: true` and logs it.
+
+**Reasoning.** There is no Firestore filter that spells "absent OR equal to
+active", so a server-side aggregate **cannot** express the reading the rules
+use — the choice is not between two equivalent implementations. That leaves
+reading the documents or backfilling `status: "active"` onto the 25 legacy
+rooms, and ADR-093 already rejected the backfill for a reason that has not
+changed: it fixes the data once and leaves the next legacy field to produce
+the same class of bug. Reading the documents is affordable here for the same
+reason `sweepStrandedLiveRooms` relies on: the whole collection is ~45
+documents and only a handful are ever live. **This is not a general licence to
+replace aggregates with reads** — it applies where an absent-field default has
+to be honoured AND the candidate set is small and bounded.
+
+**Consequences.** The index that serves the query changed, which is the part
+worth checking before landing a dropped clause: the two-equality form needed a
+zigzag merge of two automatic single-field indexes (there is no
+`(status, isLive)` composite in `firestore.indexes.json` and there never was),
+while a single equality on `isLive` is served by the automatic single-field
+index alone. This **removes** an index dependency rather than adding one, and
+it is the identical query the deployed sweeper has run every five minutes
+since `b7c6d99`. The staff overview now performs one live-room read instead of
+two. Both counts become O(live rooms) reads rather than a metered aggregate —
+correct, and on this collection cheaper than the pair of aggregates it
+replaces. If `rooms` ever grows such that hundreds are live at once, the bound
+is what will show it: the `truncated` warning names the surface, and that is
+the point at which a `status` backfill plus a real aggregate becomes the right
+trade. `LIVE_ROOM_SCAN_LIMIT` duplicates the sweeper's `MAX_LIVE_ROOM_SCAN`
+rather than importing it, so two callables do not drag the scheduler and the
+LiveKit control plane into their cold start.

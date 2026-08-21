@@ -773,7 +773,11 @@ clause would drop every one of them — the same defect `roomIsActive()` was
 written to fix in `b7c6d99`. The filter is applied in memory instead. Note in
 passing that the two dashboard queries above **do** carry that clause, so both
 undercount live rooms on the legacy shape; that is pre-existing and untouched
-by this release.
+by this release. *(Closed in source on 2026-08-20, after this release and not
+yet deployed: `getAdminDashboard` and `getStaffOverview` now share
+`listLiveActiveRoomDocs()`, which makes exactly the query described in this
+paragraph. See
+[ADR-097](Decisions.md#adr-097-a-live-room-count-that-must-honour-an-absent-status-is-a-bounded-read-not-a-count-aggregate).)*
 
 Safe release order:
 

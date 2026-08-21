@@ -15,6 +15,7 @@ const { onCall } = require("firebase-functions/v2/https");
 
 const { requireProtectedOwner } = require("../utils/auth");
 const { db, timestampToIso } = require("../utils/firestore");
+const { listLiveActiveRoomDocs } = require("../rooms/live_rooms");
 
 const LIST_LIMIT = 5;
 
@@ -95,7 +96,7 @@ const getStaffOverview = onCall(
 
     const [
       totalUsers,
-      activeRooms,
+      liveRooms,
       openReports,
       indefiniteRestrictions,
       runningRestrictions,
@@ -103,19 +104,18 @@ const getStaffOverview = onCall(
       vipUsers,
       securityAlerts,
       latestOpenReportDocs,
-      activeRoomDocs,
       recentSanctionDocs,
       recentRoleChangeDocs,
       securityAlertDocs,
     ] = await Promise.all([
       // Auth-authoritative account count via the directory mirror.
       db.collection("userDirectory").count().get(),
-      db
-        .collection("rooms")
-        .where("status", "==", "active")
-        .where("isLive", "==", true)
-        .count()
-        .get(),
+      // ONE read serves both the count and the list below; this was two
+      // identical queries, and both of them dropped every room with no
+      // `status` field — 25 of the 45 in production. See
+      // functions/rooms/live_rooms.js for why the clause is gone and what
+      // index the query now uses.
+      listLiveActiveRoomDocs({ surface: "getStaffOverview" }),
       // Non-terminal reports. (A pre-`status` report counts as open in
       // the workflow but is invisible to this filter; none remain in
       // production.)
@@ -134,12 +134,6 @@ const getStaffOverview = onCall(
         .collection("reports")
         .where("status", "==", "open")
         .orderBy("createdAt", "desc")
-        .limit(LIST_LIMIT)
-        .get(),
-      db
-        .collection("rooms")
-        .where("status", "==", "active")
-        .where("isLive", "==", true)
         .limit(LIST_LIMIT)
         .get(),
       audit
@@ -162,7 +156,7 @@ const getStaffOverview = onCall(
     return {
       counts: {
         totalUsers: totalUsers.data().count,
-        activeRooms: activeRooms.data().count,
+        activeRooms: liveRooms.docs.length,
         openReports: openReports.data().count,
         restrictedAccounts:
           indefiniteRestrictions.data().count + runningRestrictions.data().count,
@@ -171,7 +165,7 @@ const getStaffOverview = onCall(
         securityAlerts: securityAlerts.data().count,
       },
       latestOpenReports: latestOpenReportDocs.docs.map(summariseReportRow),
-      activeRooms: activeRoomDocs.docs.map(summariseRoomRow),
+      activeRooms: liveRooms.docs.slice(0, LIST_LIMIT).map(summariseRoomRow),
       recentSanctions: recentSanctionDocs.docs.map(summariseAuditRow),
       recentRoleChanges: recentRoleChangeDocs.docs.map(summariseAuditRow),
       securityAlerts: securityAlertDocs.docs.map(summariseAuditRow),

@@ -296,6 +296,36 @@ permission flags).
 
 ## Data integrity
 
+- **FIXED IN SOURCE 2026-08-20, NOT DEPLOYED — the two staff surfaces that
+  report live rooms both under-reported them, and by the majority shape.**
+  `getAdminDashboard`'s `liveRooms` figure and `getStaffOverview`'s live-room
+  count *and* list all ran
+  `where("status","==","active").where("isLive","==",true)`. That form matches
+  only documents where `status` is PRESENT and equal, and **25 of the 45
+  production rooms carry no `status` field at all** — so every legacy room was
+  invisible to the only people who can act on it. This is the same defect
+  `b7c6d99` fixed on the callable side by introducing `roomIsActive()`
+  ([ADR-093](Decisions.md#adr-093-an-absent-status-means-active--one-reading-of-the-field-shared-by-the-rules-and-every-callable));
+  the aggregates were not part of that change, and
+  [DEPLOYMENT.md](DEPLOYMENT.md) recorded them as a known, untouched gap when
+  the liveness sweeper shipped. Both now go through one shared
+  `listLiveActiveRoomDocs()` (`functions/rooms/live_rooms.js`) that queries
+  `isLive` alone and applies `roomIsActive()` in memory, exactly as
+  `liveness_sweeper.js` already did
+  ([ADR-097](Decisions.md#adr-097-a-live-room-count-that-must-honour-an-absent-status-is-a-bounded-read-not-a-count-aggregate)).
+  The staff overview issued that query **twice** — once to count, once to
+  list — and now issues it once. **Index impact, checked because dropping a
+  clause changes which index serves the query**: the two-equality form needed
+  a zigzag merge of two automatic single-field indexes (there is no
+  `(status, isLive)` composite in `firestore.indexes.json`); a single equality
+  on `isLive` is served by the automatic single-field index alone, so this
+  **removes** an index dependency and needs no deploy of
+  `firestore.indexes.json`. It is also the identical query the deployed
+  sweeper has run every five minutes since `b7c6d99`. Verified: 754 Functions
+  tests, 0 failures, on a clean emulator; the three new no-status cases were
+  each confirmed to FAIL against the reinstated query. **Not deployed** — this
+  is a Cloud Functions change only, no rules, index, client or Storage change.
+
 - **FIXED IN SOURCE 2026-08-19, NOT DEPLOYED — extra fields on a room message
   silently dropped the sender's achievement credit.**
   `functions/achievements/sources.js` treats an exact six-key room message as
