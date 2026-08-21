@@ -5937,3 +5937,29 @@ carried the app default purple into green/gold/coral rooms — fallback colours
 are identity surface too. The sidebar's More popover is a true Overlay (no
 layout shift), the bell is the single notifications entry point, and Alerts
 (preferences) stays a separate concept.
+
+## ADR-099: UI sounds are build artifacts of a checked-in generator, in one musical language
+
+**Context.** The eight UI sounds (room created/joined/left, participant
+joined/left, mic muted/unmuted, notification) were opaque hand-made WAVs the
+operator found unpleasant, with no record of how to remake or extend them
+consistently.
+
+**Decision.** `tool/generate_ui_sounds.py` deterministically synthesizes the
+whole set — soft glass-bell timbre (sine partials only, ±2.5-cent chorus),
+one key (A-major pentatonic: E4/A4/C#5/E5), one grammar (beginnings rise,
+endings fall, mirrored intervals), 8 ms attacks, exponential decays, last
+sample exactly zero, every file peak-normalized to -6 dBFS. Filenames and
+durations match `lib/core/audio/ui_sound.dart`, so regeneration never touches
+Dart; loudness balance stays in each `UiSound.volume`.
+
+**Reasoning.** "More pleasant" was made measurable: energy above 2 kHz
+dropped in every file (notification 25.9% → 8.2%, participant_joined
+17.7% → 7.2%). Crest factor was rejected as the metric — a decaying bell's
+quiet tail inflates it regardless of timbre. A generator beats binaries
+because the next sound has to join a family, not a pile.
+
+**Consequences.** New sounds are added by composing notes from the same four
+pitches in the script and rerunning it. Subjective pleasantness is
+UNVERIFIED by the author (no ears); the operator's listen is the acceptance
+test. Preview locally: `afplay assets/audio/ui/notification.wav`.
