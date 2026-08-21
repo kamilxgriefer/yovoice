@@ -1014,6 +1014,7 @@ const adminDeleteClub = onCall(
       await Promise.all(
         roomsSnapshot.docs.slice(offset, offset + 5).map(async (roomDocument) => {
           await liveKitControl.endRoom(roomDocument.id);
+          await deleteActiveVoiceSessionsForRoom(roomDocument.id);
           requireMediaCleanup(
             await cleanupRoomMedia({
               roomId: roomDocument.id,
