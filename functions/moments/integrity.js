@@ -35,6 +35,33 @@ const DEFAULT_LIMITS = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------
+// 24-hour story expiry (2026-08).
+//
+// Every published Voice Moment carries `expiresAt = createdAt + 24h`,
+// stamped by finalizeMomentDraft inside the publish transaction. The
+// deadline anchors on the STORED createdAt — the reserve transaction's
+// request time — rather than on the finalize request's clock, because the
+// client-side contract derives chain order and countdowns from the exact
+// equality of the two fields; deriving each from its own request would let
+// them drift by the upload duration. Enforcement is two-layer:
+// expireVoiceMomentsSchedule (functions/moments/expiry.js) flips passed
+// deadlines to `status: "expired"` every 10 minutes, and the client feed
+// filters `expiresAt > now` so the sweep gap never shows a dead Moment.
+//
+// MAX_ACTIVE_MOMENTS caps how many simultaneously live (published, not yet
+// expired) Moments one author may hold — the story-chain length the product
+// is designed around. ACTIVE_MOMENT_SCAN_LIMIT bounds the cap's counting
+// query; active Moments are at most 24 hours old and reserves are
+// rate-limited to 5 per 10 minutes, so a live story pushed past the newest
+// 100 author documents requires a deliberate draft flood — and the only
+// failure direction is an UNDER-count, which lets a determined flooder
+// briefly exceed the cap rather than ever locking an honest author out.
+// ---------------------------------------------------------------------------
+const MOMENT_TTL_MS = 24 * 60 * 60_000;
+const MAX_ACTIVE_MOMENTS = 10;
+const ACTIVE_MOMENT_SCAN_LIMIT = 100;
+
+// ---------------------------------------------------------------------------
 // Content reports
 //
 // Every surface a report can name, and the ids that surface requires. The
@@ -184,7 +211,10 @@ function reportIdentityInput(target, reason, note) {
   return input;
 }
 
-function validateMoment(snapshot, momentId, { published = undefined } = {}) {
+function validateMoment(snapshot, momentId, {
+  published = undefined,
+  allowExpired = false,
+} = {}) {
   if (!snapshot.exists) fail("not-found", "The Voice Moment does not exist.");
   const data = snapshot.data() ?? {};
   const expectedKeys = [
@@ -209,6 +239,15 @@ function validateMoment(snapshot, momentId, { published = undefined } = {}) {
     "storagePath",
     "updatedAt",
   ];
+  // `expiresAt` is additive (2026-08): finalizeMomentDraft stamps it on
+  // every new publish, but production still holds pre-expiry documents
+  // without it. Optional here so the legacy shape stays canonical; when the
+  // key is present it must be a real timestamp (checked below).
+  const hasExpiresAt = Object.prototype.hasOwnProperty.call(data, "expiresAt");
+  if (hasExpiresAt) {
+    expectedKeys.push("expiresAt");
+    expectedKeys.sort();
+  }
   const keys = Object.keys(data).sort();
   if (keys.length !== expectedKeys.length ||
       keys.some((key, index) => key !== expectedKeys[index]) ||
@@ -227,7 +266,8 @@ function validateMoment(snapshot, momentId, { published = undefined } = {}) {
           data.authorPhotoUrl.length > 2048)) ||
       data.replyToMomentId !== null ||
       timestampMillis(data.createdAt) === null ||
-      timestampMillis(data.updatedAt) === null) {
+      timestampMillis(data.updatedAt) === null ||
+      (hasExpiresAt && timestampMillis(data.expiresAt) === null)) {
     fail("data-loss", "The Voice Moment identity or timestamps are malformed.");
   }
   if (data.isDeleted || data.status === "deleting") {
@@ -237,7 +277,27 @@ function validateMoment(snapshot, momentId, { published = undefined } = {}) {
     }
     fail("failed-precondition", "The Voice Moment is being deleted.");
   }
-  if (data.isPublished) {
+  if (data.status === "expired") {
+    // expireVoiceMomentsSchedule flips exactly
+    // { isPublished, status, updatedAt } and nothing else, so an expired
+    // Moment still carries the full published media shape plus the
+    // expiresAt that retired it. Likes and comments refuse it below;
+    // deletion passes { allowExpired: true } because the author keeps the
+    // right to remove an expired story (and its audio) at any time.
+    if (data.isPublished !== false || !hasExpiresAt ||
+        typeof data.audioUrl !== "string" ||
+        !data.audioUrl || data.audioUrl.length > 4096 ||
+        typeof data.mediaGeneration !== "string" || !data.mediaGeneration ||
+        !Number.isSafeInteger(data.mediaSize) || data.mediaSize < MIN_AUDIO_BYTES ||
+        data.mediaSize > MAX_AUDIO_BYTES ||
+        !AUDIO_TYPES.has(data.mediaContentType) ||
+        timestampMillis(data.publishedAt) === null) {
+      fail("data-loss", "The expired Voice Moment state is malformed.");
+    }
+    if (!allowExpired) {
+      fail("failed-precondition", "This Voice Moment has expired.");
+    }
+  } else if (data.isPublished) {
     if (data.status !== "published" || typeof data.audioUrl !== "string" ||
         !data.audioUrl || data.audioUrl.length > 4096 ||
         typeof data.mediaGeneration !== "string" || !data.mediaGeneration ||
@@ -533,6 +593,39 @@ function createMomentIntegrityService({
       if (replay) return replay;
       activeProfile(profileSnapshot, "Your");
       assertNotRestricted(restriction, "Your", timing.nowMs);
+      // ACTIVE-STORY CAP. Counted inside the transaction so the count and
+      // the reservation commit or abort together, and counted in MEMORY
+      // over a bounded newest-first scan rather than in the query — the
+      // filter is `isPublished && expiresAt > now`, and `now` moves, so no
+      // index can serve it directly. The query itself needs the deployed
+      // (authorId ASC, createdAt DESC) composite — the same one the
+      // client's story-chain reads use. A refusal aborts the transaction,
+      // so a capped attempt consumes neither the ledger nor rate budget:
+      // the identical requestId succeeds once a slot frees.
+      const authoredMoments = await transaction.get(
+        db.collection("voiceMoments")
+          .where("authorId", "==", auth.uid)
+          .orderBy("createdAt", "desc")
+          .limit(ACTIVE_MOMENT_SCAN_LIMIT),
+      );
+      let activeCount = 0;
+      for (const candidate of authoredMoments.docs) {
+        const candidateData = candidate.data() ?? {};
+        const candidateExpiresAtMs = timestampMillis(candidateData.expiresAt);
+        if (candidateData.isPublished === true &&
+            candidateExpiresAtMs !== null &&
+            candidateExpiresAtMs > timing.nowMs) {
+          activeCount += 1;
+        }
+      }
+      if (activeCount >= MAX_ACTIVE_MOMENTS) {
+        fail(
+          "resource-exhausted",
+          `You already have ${MAX_ACTIVE_MOMENTS} active Voice Moments. ` +
+            "Wait for one to expire, or delete one to make room for a " +
+            "new recording.",
+        );
+      }
       consume(
         transaction,
         rate,
@@ -655,6 +748,13 @@ function createMomentIntegrityService({
           momentData.audioUrl !== null || momentData.mediaGeneration !== null) {
         fail("permission-denied", "Only the canonical draft author can publish it.");
       }
+      // The 24h deadline anchors on the STORED createdAt (the reserve
+      // transaction's request time), not on this request's clock: the
+      // contract the client builds chains and countdowns on is the exact
+      // equality `expiresAt == createdAt + 24h`, and validateMoment above
+      // has already proven createdAt is a real timestamp. On replay the
+      // ledger short-circuits before this write, so the deadline never
+      // moves after first publish.
       transaction.update(momentRef, {
         audioUrl: downloadUrl,
         isPublished: true,
@@ -662,6 +762,9 @@ function createMomentIntegrityService({
         mediaGeneration: media.generation,
         mediaSize: media.size,
         mediaContentType: media.contentType,
+        expiresAt: Timestamp.fromMillis(
+          timestampMillis(momentData.createdAt) + MOMENT_TTL_MS,
+        ),
         publishedAt: timing.now,
         updatedAt: timing.now,
       });
@@ -1166,7 +1269,10 @@ function createMomentIntegrityService({
       });
       if (replay) return replay;
       activeProfile(profile, "Your");
-      const momentData = validateMoment(moment, momentId);
+      // allowExpired: your own comment stays deletable after the Moment's
+      // 24 hours pass — expiry retires a story from feeds, it does not
+      // freeze other people's words in place.
+      const momentData = validateMoment(moment, momentId, { allowExpired: true });
       const commentData = validateComment(comment, momentId);
       if (commentData.authorId !== auth.uid) {
         fail("permission-denied", "You can only delete your own comment.");
@@ -1244,7 +1350,10 @@ function createMomentIntegrityService({
       });
       if (replay) return replay;
       activeProfile(profile, "Your");
-      const momentData = validateMoment(moment, momentId);
+      // allowExpired: the author keeps the right to delete an expired
+      // story — expiry hides it from feeds, deletion is what actually
+      // removes the document, its comments and the audio object.
+      const momentData = validateMoment(moment, momentId, { allowExpired: true });
       if (momentData.authorId !== auth.uid) {
         fail("permission-denied", "You can only delete your own Voice Moment.");
       }
@@ -1907,7 +2016,10 @@ function createBucketStorageAdapter(bucket) {
 }
 
 module.exports = {
+  ACTIVE_MOMENT_SCAN_LIMIT,
   DEFAULT_LIMITS,
+  MAX_ACTIVE_MOMENTS,
+  MOMENT_TTL_MS,
   canonicalCommentId,
   canonicalMomentId,
   createBucketStorageAdapter,

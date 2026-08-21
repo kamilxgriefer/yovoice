@@ -13,6 +13,7 @@ class VoiceMoment {
     required this.commentCount,
     required this.isPublished,
     required this.createdAt,
+    this.expiresAt,
     this.schemaVersion = 0,
     this.status = 'legacy',
     this.isDeleted = false,
@@ -29,12 +30,40 @@ class VoiceMoment {
   final int commentCount;
   final bool isPublished;
   final DateTime? createdAt;
+
+  /// When this Moment stops being publicly alive. Written by
+  /// `finalizeMomentDraft` as `createdAt + 24h`; enforced server-side by
+  /// the expiry sweeper AND client-side by [isActiveAt] so the sweep gap
+  /// (up to 10 minutes) never surfaces a dead Moment.
+  ///
+  /// `null` means a legacy document published before expiry existed. Per
+  /// the expiry contract those are treated as ALREADY EXPIRED by every
+  /// feed and chain — never as immortal.
+  final DateTime? expiresAt;
   final int schemaVersion;
   final String status;
   final bool isDeleted;
 
   bool get isCanonicalPublished =>
       schemaVersion == 2 && status == 'published' && isPublished && !isDeleted;
+
+  /// Whether this Moment may be surfaced in a feed, strip or chain at
+  /// [now].
+  ///
+  /// The rules, in the order they can fail:
+  ///
+  ///  * never deleted, never a draft (`isPublished` is the server's word);
+  ///  * never `status == 'expired'` — the sweeper's mark is final even if
+  ///    the timestamps somehow disagree;
+  ///  * `expiresAt` must exist and still be in the future. A missing
+  ///    `expiresAt` is a pre-expiry legacy document and reads as expired,
+  ///    NOT as never-expiring — the fail-closed direction.
+  bool isActiveAt(DateTime now) {
+    if (!isPublished || isDeleted) return false;
+    if (status == 'expired') return false;
+    final expiry = expiresAt;
+    return expiry != null && expiry.isAfter(now);
+  }
 
   factory VoiceMoment.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> document,
@@ -53,9 +82,49 @@ class VoiceMoment {
       commentCount: (data['commentCount'] as num?)?.toInt() ?? 0,
       isPublished: data['isPublished'] as bool? ?? false,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
+      expiresAt: (data['expiresAt'] as Timestamp?)?.toDate(),
       schemaVersion: (data['schemaVersion'] as num?)?.toInt() ?? 0,
       status: data['status'] as String? ?? 'legacy',
       isDeleted: data['isDeleted'] as bool? ?? false,
+    );
+  }
+
+  /// A field-for-field copy with selective overrides. `expiresAt` and the
+  /// other nullable fields keep their current value when the parameter is
+  /// omitted; passing them explicitly replaces them.
+  VoiceMoment copyWith({
+    String? id,
+    String? authorId,
+    String? authorName,
+    String? authorPhotoUrl,
+    String? caption,
+    String? audioUrl,
+    int? durationSeconds,
+    int? likeCount,
+    int? commentCount,
+    bool? isPublished,
+    DateTime? createdAt,
+    DateTime? expiresAt,
+    int? schemaVersion,
+    String? status,
+    bool? isDeleted,
+  }) {
+    return VoiceMoment(
+      id: id ?? this.id,
+      authorId: authorId ?? this.authorId,
+      authorName: authorName ?? this.authorName,
+      authorPhotoUrl: authorPhotoUrl ?? this.authorPhotoUrl,
+      caption: caption ?? this.caption,
+      audioUrl: audioUrl ?? this.audioUrl,
+      durationSeconds: durationSeconds ?? this.durationSeconds,
+      likeCount: likeCount ?? this.likeCount,
+      commentCount: commentCount ?? this.commentCount,
+      isPublished: isPublished ?? this.isPublished,
+      createdAt: createdAt ?? this.createdAt,
+      expiresAt: expiresAt ?? this.expiresAt,
+      schemaVersion: schemaVersion ?? this.schemaVersion,
+      status: status ?? this.status,
+      isDeleted: isDeleted ?? this.isDeleted,
     );
   }
 
@@ -72,22 +141,7 @@ class VoiceMoment {
         (commentCount ?? this.commentCount) == this.commentCount) {
       return this;
     }
-    return VoiceMoment(
-      id: id,
-      authorId: authorId,
-      authorName: authorName,
-      authorPhotoUrl: authorPhotoUrl,
-      caption: caption,
-      audioUrl: audioUrl,
-      durationSeconds: durationSeconds,
-      likeCount: likeCount ?? this.likeCount,
-      commentCount: commentCount ?? this.commentCount,
-      isPublished: isPublished,
-      createdAt: createdAt,
-      schemaVersion: schemaVersion,
-      status: status,
-      isDeleted: isDeleted,
-    );
+    return copyWith(likeCount: likeCount, commentCount: commentCount);
   }
 
   String get durationLabel {

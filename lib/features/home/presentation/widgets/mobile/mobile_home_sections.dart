@@ -105,6 +105,7 @@ class MobileMomentsStrip extends StatelessWidget {
     required this.onOpenMoment,
     required this.onCreateMoment,
     required this.onDiscover,
+    this.onOpenOwnChain,
     super.key,
   });
 
@@ -115,6 +116,11 @@ class MobileMomentsStrip extends StatelessWidget {
   final VoidCallback onCreateMoment;
   final VoidCallback onDiscover;
 
+  /// Opens the signed-in user's whole ACTIVE chain in the story viewer.
+  /// Optional so existing callers keep working; when null the bubble
+  /// falls back to [onOpenMoment] with the newest.
+  final ValueChanged<List<VoiceMoment>>? onOpenOwnChain;
+
   static const double _tile = 66;
 
   @override
@@ -122,16 +128,17 @@ class MobileMomentsStrip extends StatelessWidget {
     final others = moments
         .where((m) => m.authorId != currentUserId)
         .toList(growable: false);
-    // Your own newest Moment, if the feed carries one. The bubble used to
-    // open the recorder unconditionally, so on a phone there was no way
-    // to play back what you had already posted from Home at all — and
-    // when nobody else had posted, your tile was not even rendered.
-    final mine = currentUserId.isEmpty
-        ? null
+    // ALL of your own live Moments, newest first — the chain the bubble
+    // opens. The bubble used to open the recorder unconditionally, so on
+    // a phone there was no way to play back what you had already posted
+    // from Home at all — and when nobody else had posted, your tile was
+    // not even rendered.
+    final mineAll = currentUserId.isEmpty
+        ? const <VoiceMoment>[]
         : moments
               .where((m) => m.authorId == currentUserId)
-              .cast<VoiceMoment?>()
-              .firstWhere((m) => true, orElse: () => null);
+              .toList(growable: false);
+    final mine = mineAll.isEmpty ? null : mineAll.first;
 
     final yours = _MomentBubble(
       key: const ValueKey('home-your-moment'),
@@ -139,10 +146,18 @@ class MobileMomentsStrip extends StatelessWidget {
       photoUrl: mine?.authorPhotoUrl ?? profile?.photoUrl,
       displayName: profile?.displayName,
       showAdd: true,
+      // A real count of YOUR live Moments — the chain badge.
+      count: mineAll.length > 1 ? mineAll.length : null,
       semanticLabel: mine == null
           ? 'Record your first Voice Moment'
-          : 'Play your Voice Moment',
-      onTap: mine == null ? onCreateMoment : () => onOpenMoment(mine),
+          : (mineAll.length > 1
+                ? 'Play your ${mineAll.length} Voice Moments'
+                : 'Play your Voice Moment'),
+      onTap: mine == null
+          ? onCreateMoment
+          : (onOpenOwnChain != null
+                ? () => onOpenOwnChain!(mineAll)
+                : () => onOpenMoment(mine)),
       onAddTap: onCreateMoment,
     );
 
@@ -199,6 +214,7 @@ class _MomentBubble extends StatelessWidget {
     this.photoUrl,
     this.displayName,
     this.showAdd = false,
+    this.count,
     this.semanticLabel,
     this.onAddTap,
     super.key,
@@ -209,6 +225,9 @@ class _MomentBubble extends StatelessWidget {
   final String? photoUrl;
   final String? displayName;
   final bool showAdd;
+
+  /// A real chain count (own live Moments); null hides the badge.
+  final int? count;
 
   /// What the bubble DOES, for a screen reader — "Your Moment" names the
   /// tile, it does not say whether tapping plays or records.
@@ -257,6 +276,36 @@ class _MomentBubble extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (count != null)
+                    Positioned(
+                      left: -3,
+                      top: -3,
+                      child: Container(
+                        key: const ValueKey('home-your-moment-count'),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(999),
+                          gradient: const LinearGradient(
+                            colors: [AppColors.primary, AppColors.secondary],
+                          ),
+                          border: Border.all(
+                            color: const Color(0xFF0C0814),
+                            width: 2,
+                          ),
+                        ),
+                        child: Text(
+                          '$count',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
                   if (showAdd)
                     Positioned(
                       right: -2,

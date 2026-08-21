@@ -902,6 +902,18 @@ permission flags).
 
 ## UI
 
+- **OPEN (Voice Moments stories, 2026-08-22)** — known edges shipped with
+  ADR-101, deliberately: (1) playback through the row sheet / MomentCard
+  does not write the viewed-mark, so a chain fully heard there keeps its
+  gradient "unviewed" ring (the story viewer marks correctly); (2) the
+  website's `yovoice.app/?moment=` share links outlive the 24h life and land
+  on an `isPublished:false/status:'expired'` doc — the website's rendering of
+  that shape is unverified; (3) `users/{uid}/momentViews` accepts unbounded
+  self-writes (same accepted class as the sibling owner-writable
+  subcollections); (4) the 10-cap's parallel-reserve race safety rests on
+  Firestore serializable isolation — sequential test only, worst case a
+  brief over-admit.
+
 - **FIXED AND DEPLOYED 2026-08-21 — the redesign's three post-release reviews
   returned FIX_FIRST; every high and medium is closed.** Highlights: the
   podcast HOST's filled column overflowed at 720-850px heights (gate is now

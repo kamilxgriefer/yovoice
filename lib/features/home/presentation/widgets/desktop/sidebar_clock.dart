@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+
+import 'package:yovoice/core/theme/app_colors.dart';
 
 /// Where a clock's idea of "now" and "which zone" comes from.
 ///
@@ -131,15 +134,19 @@ class SidebarClockState extends State<SidebarClock>
   Widget build(BuildContext context) {
     final time = formatTime(_now);
     final zone = widget.source.label();
+    // The map is decoration and yields FIRST on a height-constrained
+    // window: the block must stay compact enough that it never crowds
+    // the pinned profile card below it.
+    final showMap = MediaQuery.sizeOf(context).height >= 700;
 
     return Semantics(
       // One label, not a live region: the sidebar should not announce
       // itself every minute while someone is reading something else.
       label: 'Local time $time, $zone',
       excludeSemantics: true,
-      // Compact block: one big time line, one small zone line — nothing
-      // else, so the pinned bottom of the rail stays short even on a
-      // height-constrained window.
+      // Compact block: one big time line, one small zone line, and — when
+      // the window is tall enough — a quiet dotted world map whose glow
+      // dot sits at the longitude of the device's real UTC offset.
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
         child: Column(
@@ -171,9 +178,124 @@ class SidebarClockState extends State<SidebarClock>
                 letterSpacing: .4,
               ),
             ),
+            if (showMap) ...[
+              const SizedBox(height: 6),
+              SizedBox(
+                height: 52,
+                width: double.infinity,
+                child: CustomPaint(
+                  key: const ValueKey('sidebar-clock-map'),
+                  painter: DottedWorldMapPainter(
+                    utcOffset: _now.timeZoneOffset,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
   }
+}
+
+/// A coarse dotted world map, drawn procedurally — no asset, no network,
+/// no geo lookup. The single glow dot is placed by the only geographic
+/// fact this app actually holds: the device's UTC offset, mapped to a
+/// longitude (`offset / 12h × 180°`) at a fixed mid-northern latitude.
+/// That is an approximation of a meridian, not a location — which is why
+/// the block deliberately names no city and no country: the app has no
+/// geo data, and printing one would be an invention.
+class DottedWorldMapPainter extends CustomPainter {
+  DottedWorldMapPainter({required this.utcOffset});
+
+  final Duration utcOffset;
+
+  static const int columns = 44;
+  static const int rows = 20;
+
+  /// The latitude band the grid covers (equirectangular, cropped the way
+  /// dotted maps usually are — no empty polar bands).
+  static const double latTop = 75;
+  static const double latBottom = -55;
+
+  /// Where the glow dot sits vertically: a fixed mid-northern latitude.
+  static const double dotLatitude = 45;
+
+  /// Landmass as inclusive column ranges per row, row 0 at [latTop].
+  /// Hand-encoded and deliberately coarse: it only has to read as "the
+  /// world", not survive a geography exam.
+  static const List<List<(int, int)>> landRanges = [
+    [(1, 4), (6, 13), (15, 19), (24, 25), (27, 43)], // ~72N
+    [(1, 3), (5, 13), (16, 18), (23, 42)], // ~65N
+    [(1, 3), (6, 13), (17, 17), (23, 42)], // ~59N
+    [(6, 13), (20, 20), (22, 42)], // ~52N
+    [(6, 13), (21, 40)], // ~46N
+    [(6, 12), (20, 27), (29, 38), (40, 40)], // ~39N
+    [(6, 11), (20, 29), (33, 39)], // ~33N
+    [(7, 9), (19, 29), (31, 37)], // ~26N
+    [(8, 10), (19, 29), (31, 33), (34, 37)], // ~20N
+    [(9, 11), (19, 27), (31, 32), (34, 38)], // ~13N
+    [(11, 14), (20, 28), (34, 38)], // ~7N
+    [(11, 16), (21, 27), (34, 39)], // ~0
+    [(11, 17), (22, 26), (35, 41)], // ~6S
+    [(12, 17), (22, 26), (37, 40)], // ~13S
+    [(12, 16), (22, 25), (36, 40)], // ~19S
+    [(12, 15), (22, 25), (36, 40)], // ~26S
+    [(12, 14), (23, 24), (36, 40)], // ~32S
+    [(12, 13), (38, 40), (42, 42)], // ~39S
+    [(12, 13), (42, 42)], // ~45S
+    [(12, 13)], // ~52S
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cellWidth = size.width / columns;
+    final cellHeight = size.height / rows;
+    final dotRadius = math.min(cellWidth, cellHeight) * .28;
+
+    final dotPaint = Paint()
+      ..color = AppColors.textHint.withValues(alpha: .34);
+    for (var row = 0; row < rows && row < landRanges.length; row++) {
+      final y = (row + .5) * cellHeight;
+      for (final (start, end) in landRanges[row]) {
+        for (var column = start; column <= end && column < columns; column++) {
+          canvas.drawCircle(
+            Offset((column + .5) * cellWidth, y),
+            dotRadius,
+            dotPaint,
+          );
+        }
+      }
+    }
+
+    // The "you are around here" glow: longitude from the real UTC
+    // offset, latitude fixed.
+    final offsetHours = utcOffset.inMinutes / 60.0;
+    final longitude = (offsetHours / 12.0 * 180.0).clamp(-180.0, 180.0);
+    final x = (longitude + 180.0) / 360.0 * size.width;
+    final y = (latTop - dotLatitude) / (latTop - latBottom) * size.height;
+    final center = Offset(x, y);
+
+    canvas.drawCircle(
+      center,
+      dotRadius * 4.6,
+      Paint()
+        ..color = AppColors.primary.withValues(alpha: .5)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+    );
+    canvas.drawCircle(
+      center,
+      dotRadius * 1.7,
+      Paint()..color = AppColors.secondary,
+    );
+    canvas.drawCircle(
+      center,
+      dotRadius * .8,
+      Paint()..color = AppColors.textPrimary,
+    );
+  }
+
+  @override
+  bool shouldRepaint(DottedWorldMapPainter oldDelegate) =>
+      oldDelegate.utcOffset != utcOffset;
 }

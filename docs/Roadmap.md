@@ -36,6 +36,17 @@ someone decide what to pick up next.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it)
 > for why that distinction is the whole point of this wave.
 
+- **Voice Moments are 24-hour audio stories** (2026-08-22, ADR-101,
+  DEPLOYED — indexes/rules/functions/hosting in that order): many Moments
+  per author consumed as story chains (viewer with progress bars, "1 of 3",
+  auto-advance, per-user viewed rings), server-side 24h expiry (finalize
+  stamp + 10-min sweeper + client gap filter), a 10-active cap, and the
+  stories feed (chips, featured, recent, detail panel, share via the
+  existing ?moment= link) plus the sidebar clock's procedural world map.
+  Flutter suite → 1114; functions → 768; rules → 484. Three pre-deploy
+  reviews: security PASS, principal+visual FIX_FIRST with every high and
+  medium fixed before release.
+
 - **The room experience and the desktop sidebar are visually rebuilt onto one
   design system** (2026-08-21, `84ab319`, DEPLOYED — hosting, byte-verified;
   ADR-098): four room identities (violet/emerald/gold/coral) over shared

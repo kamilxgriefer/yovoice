@@ -1141,6 +1141,122 @@ async function main() {
     },
   );
 
+  // --- voiceMoments 24h expiry pinning + momentViews (story chains) ---
+  //
+  // expiresAt is server authority: finalizeMomentDraft stamps it
+  // createdAt + 24h and the scheduled sweep retires the Moment when it
+  // passes. If the author could write either timestamp, they could extend
+  // their own story past 24 hours (or re-order a chain), so both must be
+  // immutable on update and expiresAt unforgeable on create.
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), "voiceMoments/moment-expiry"), {
+      authorId: "host-uid",
+      caption: "Expiring story",
+      isPublished: true,
+      status: "published",
+      likeCount: 0,
+      commentCount: 0,
+      createdAt: Timestamp.fromMillis(1_820_000_000_000),
+      expiresAt: Timestamp.fromMillis(1_820_000_000_000 + 86_400_000),
+    });
+  });
+
+  await check("SECURITY: the author cannot extend their own Moment's expiresAt", async () => {
+    const ref = doc(host.firestore(), "voiceMoments/moment-expiry");
+    await assertFails(updateDoc(ref, {
+      expiresAt: Timestamp.fromMillis(1_820_000_000_000 + 10 * 86_400_000),
+    }));
+  });
+
+  await check("SECURITY: the author cannot rewrite createdAt to re-order a chain", async () => {
+    const ref = doc(host.firestore(), "voiceMoments/moment-expiry");
+    await assertFails(updateDoc(ref, {
+      createdAt: Timestamp.fromMillis(1_820_000_500_000),
+    }));
+  });
+
+  await check("SECURITY: the author cannot attach expiresAt to a Moment that has none", async () => {
+    const ref = doc(host.firestore(), "voiceMoments/moment1");
+    await assertFails(updateDoc(ref, {
+      expiresAt: Timestamp.fromMillis(2_000_000_000_000),
+    }));
+  });
+
+  await check("regression: the author can still edit the caption on an expiring Moment", async () => {
+    const ref = doc(host.firestore(), "voiceMoments/moment-expiry");
+    await assertSucceeds(updateDoc(ref, { caption: "Owner edit before expiry" }));
+  });
+
+  await check("SECURITY: a client-created Moment cannot carry its own expiresAt", async () => {
+    await assertFails(setDoc(doc(host.firestore(), "voiceMoments/forged-expiry-create"), {
+      authorId: "host-uid",
+      caption: "Forged deadline",
+      isPublished: true,
+      likeCount: 0,
+      commentCount: 0,
+      expiresAt: Timestamp.fromMillis(3_000_000_000_000),
+    }));
+  });
+
+  await check("regression: a legacy client Moment create without expiresAt still passes", async () => {
+    await assertSucceeds(setDoc(doc(host.firestore(), "voiceMoments/legacy-client-create"), {
+      authorId: "host-uid",
+      caption: "Legacy create",
+      isPublished: true,
+      likeCount: 0,
+      commentCount: 0,
+    }));
+  });
+
+  // Viewed state for story chains lives at users/{uid}/momentViews/{momentId}
+  // with the exact shape { viewedAt: request.time }. Owner-only in both
+  // directions — who watched whose story is private — and rows never carry
+  // anything beyond the server-stamped watch time. No delete: "unviewed"
+  // cannot be re-armed by clearing history, and there is deliberately no
+  // global view counter anywhere for it to feed.
+  await check("regression: the owner records their own Moment view with server time", async () => {
+    const ref = doc(host.firestore(), "users/host-uid/momentViews/moment1");
+    await assertSucceeds(setDoc(ref, { viewedAt: serverTimestamp() }));
+  });
+
+  await check("regression: re-viewing updates the same row with server time", async () => {
+    const ref = doc(host.firestore(), "users/host-uid/momentViews/moment1");
+    await assertSucceeds(updateDoc(ref, { viewedAt: serverTimestamp() }));
+  });
+
+  await check("regression: the owner can read and list their own Moment views", async () => {
+    const db = host.firestore();
+    await assertSucceeds(getDoc(doc(db, "users/host-uid/momentViews/moment1")));
+    await assertSucceeds(getDocs(collection(db, "users/host-uid/momentViews")));
+  });
+
+  await check("SECURITY: nobody can write a Moment view into someone else's history", async () => {
+    const ref = doc(attacker.firestore(), "users/host-uid/momentViews/moment1");
+    await assertFails(setDoc(ref, { viewedAt: serverTimestamp() }));
+  });
+
+  await check("SECURITY: nobody can read someone else's Moment view history", async () => {
+    const db = attacker.firestore();
+    await assertFails(getDoc(doc(db, "users/host-uid/momentViews/moment1")));
+    await assertFails(getDocs(collection(db, "users/host-uid/momentViews")));
+  });
+
+  await check("SECURITY: a Moment view cannot carry a forged or extra payload", async () => {
+    const db = host.firestore();
+    await assertFails(setDoc(doc(db, "users/host-uid/momentViews/forged-time"), {
+      viewedAt: Timestamp.fromMillis(1_000_000_000_000),
+    }));
+    await assertFails(setDoc(doc(db, "users/host-uid/momentViews/extra-keys"), {
+      viewedAt: serverTimestamp(),
+      count: 9999,
+    }));
+  });
+
+  await check("SECURITY: Moment views cannot be deleted to re-arm unviewed rings", async () => {
+    const ref = doc(host.firestore(), "users/host-uid/momentViews/moment1");
+    await assertFails(deleteDoc(ref));
+  });
+
   // --- room messages visibility (#9) ---
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     await setDoc(doc(ctx.firestore(), "rooms/publicRoom"), {

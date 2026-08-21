@@ -65,8 +65,18 @@ class HomeFeedService {
     void emit() {
       if (controller.isClosed) return;
       final allowedAuthors = <String>{_uid, ...friendIds, ...followingIds};
+      // Expiry is enforced client-side on every surface this stream feeds
+      // (Home strips, the social feed, the Following filter): a Moment
+      // past its `expiresAt` — or a legacy document with none — must not
+      // render during the sweeper's ≤10-minute gap. `isActiveAt` is the
+      // single definition of "still alive".
+      final now = DateTime.now();
       final filtered = moments
-          .where((moment) => allowedAuthors.contains(moment.authorId))
+          .where(
+            (moment) =>
+                allowedAuthors.contains(moment.authorId) &&
+                moment.isActiveAt(now),
+          )
           .toList(growable: false);
       filtered.sort((a, b) {
         final aDate = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
@@ -106,6 +116,18 @@ class HomeFeedService {
       _firestore
           .collection('voiceMoments')
           .where('isPublished', isEqualTo: true)
+          // Ordered NEWEST-FIRST, deliberately. Without an orderBy this
+          // limit(40) returned the 40 LOWEST DOCUMENT IDS among published
+          // docs — an arbitrary slice. Legacy pre-expiry documents keep
+          // isPublished forever (the sweeper skips a missing expiresAt), so
+          // they would permanently squat the window while the client-side
+          // expiry filter hides them, and a friend's genuinely live Moment
+          // whose id sorts late would silently never reach Home or the
+          // Following feed. Freshest-first makes the window exactly the 40
+          // most recent — live moments always in, squatters aged out. The
+          // (isPublished ASC, createdAt DESC) composite this needs is
+          // deployed and query-proved.
+          .orderBy('createdAt', descending: true)
           .limit(limit)
           .snapshots()
           .listen((snapshot) {

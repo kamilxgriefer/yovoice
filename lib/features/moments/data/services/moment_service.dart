@@ -121,6 +121,22 @@ class MomentService {
     });
   }
 
+  /// The comment thread under one Moment, oldest first — the same
+  /// documents `MomentCommentsScreen` reads, exposed as a typed stream so
+  /// the desktop detail panel can render the thread inline without
+  /// duplicating the Firestore path or the field names.
+  Stream<List<MomentComment>> watchComments(String momentId, {int limit = 80}) {
+    return _commentsFor(momentId)
+        .orderBy('createdAt', descending: false)
+        .limit(limit)
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map(MomentComment.fromDocument)
+              .toList(growable: false),
+        );
+  }
+
   /// Publishes a finished recording.
   ///
   /// [audio] is the platform seam: native passes a temporary file, web
@@ -269,12 +285,21 @@ class MomentService {
       }
     }
 
-    _pendingMomentPublishes.remove(audio);
-    return _publishRecordedMomentLegacy(
-      user: user,
-      audio: audio,
-      durationSeconds: durationSeconds,
-      caption: normalizedCaption,
+    // NO LEGACY FALLBACK ANY MORE — a loud refusal instead, deliberately.
+    //
+    // The direct-write fallback predates the 24-hour story contract. Under
+    // it, only finalizeMomentDraft can stamp `expiresAt` (the create rule
+    // BANS the field on client writes, so a forged expiry is impossible),
+    // which means a fallback-published Moment would carry none — and a
+    // Moment with no expiry is treated as expired on every surface, so it
+    // would be INVISIBLE FOREVER, including to its own author, with no
+    // self-heal. Publishing into permanent invisibility while reporting
+    // success is strictly worse than failing with the truth. The recording
+    // itself is retained by the pending-publish map, so a retry when the
+    // server is reachable loses nothing.
+    throw StateError(
+      'Publishing needs the YO Voice server right now and it could not be '
+      'reached. Your recording is kept — try again in a moment.',
     );
   }
 
@@ -459,70 +484,6 @@ class MomentService {
     return commentReference.id;
   }
 
-  Future<String> _publishRecordedMomentLegacy({
-    required User user,
-    required RecordedAudio audio,
-    required int durationSeconds,
-    required String caption,
-  }) async {
-    final document = _moments.doc();
-    final storageReference = _storage.ref(
-      'voice_moments/${user.uid}/${document.id}.$kVoiceMomentFileExtension',
-    );
-
-    final identity = await _identity(user);
-    await document.set({
-      'schemaVersion': 2,
-      'authorId': user.uid,
-      'authorName': identity.displayName,
-      'authorPhotoUrl': identity.photoUrl,
-      'caption': caption,
-      'audioUrl': null,
-      'storagePath': storageReference.fullPath,
-      'durationSeconds': durationSeconds,
-      'likeCount': 0,
-      'commentCount': 0,
-      'replyToMomentId': null,
-      'isPublished': false,
-      'isDeleted': false,
-      'status': 'uploading',
-      'mediaGeneration': null,
-      'mediaSize': null,
-      'mediaContentType': null,
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'publishedAt': null,
-    });
-
-    try {
-      final objectGeneration = await audio.uploadTo(
-        storageReference,
-        SettableMetadata(
-          contentType: audio.contentType,
-          customMetadata: {'authorId': user.uid, 'momentId': document.id},
-        ),
-      );
-
-      final downloadUrl = await storageReference.getDownloadURL();
-      await document.update({
-        'audioUrl': downloadUrl,
-        'isPublished': true,
-        'status': 'published',
-        'mediaGeneration': objectGeneration,
-        'mediaSize': audio.byteLength,
-        'mediaContentType': audio.contentType,
-        'publishedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      return document.id;
-    } catch (_) {
-      await document.delete().catchError((_) {});
-      await storageReference.delete().catchError((_) {});
-      rethrow;
-    }
-  }
-
   Future<String> _publishVoiceReplyLegacy({
     required String parentMomentId,
     required RecordedAudio audio,
@@ -642,6 +603,51 @@ class MomentService {
       }
       await batch.commit();
     }
+  }
+}
+
+/// One comment under a Voice Moment, exactly as stored — no field is
+/// invented and a missing author falls back the same way the comments
+/// screen falls back.
+class MomentComment {
+  const MomentComment({
+    required this.id,
+    required this.type,
+    required this.authorId,
+    required this.authorName,
+    required this.authorPhotoUrl,
+    required this.text,
+    required this.durationSeconds,
+    required this.createdAt,
+  });
+
+  final String id;
+
+  /// `'text'` or `'voice'`.
+  final String type;
+  final String authorId;
+  final String authorName;
+  final String? authorPhotoUrl;
+  final String text;
+  final int durationSeconds;
+  final DateTime? createdAt;
+
+  bool get isVoice => type == 'voice';
+
+  factory MomentComment.fromDocument(
+    DocumentSnapshot<Map<String, dynamic>> document,
+  ) {
+    final data = document.data() ?? const <String, dynamic>{};
+    return MomentComment(
+      id: document.id,
+      type: data['type'] as String? ?? 'text',
+      authorId: data['authorId'] as String? ?? '',
+      authorName: data['authorName'] as String? ?? 'YO Voice user',
+      authorPhotoUrl: data['authorPhotoUrl'] as String?,
+      text: data['text'] as String? ?? '',
+      durationSeconds: (data['durationSeconds'] as num?)?.toInt() ?? 0,
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
+    );
   }
 }
 

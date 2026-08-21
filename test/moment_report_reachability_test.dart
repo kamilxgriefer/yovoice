@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:audioplayers/audioplayers.dart' as audio;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
@@ -5,24 +8,32 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
 import 'package:yovoice/features/moments/data/services/offline_voice_moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
-import 'package:yovoice/features/moments/presentation/widgets/moment_discovery_view.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
 /// `voiceMoment` and `voiceMomentComment` are the other two targets the
 /// deployed `createContentReport` accepts, and nothing in the app reached
-/// them either. Moments is now a primary destination with a global
-/// discovery feed of strangers' audio, which makes an unreachable report
-/// path a bigger hole here than anywhere else.
+/// them either. Moments is a primary destination with a global feed of
+/// strangers' audio, which makes an unreachable report path a bigger hole
+/// here than anywhere else.
 ///
-/// Three surfaces, because Moments has three places a person meets
-/// someone else's content: the Following feed card, the Discover board's
-/// player, and a comment thread.
+/// Three kinds of surface, because Moments has three places a person
+/// meets someone else's content: the full Moment card (the sheet the
+/// Following rows open), the feed itself (rows, the story viewer, and on
+/// desktop the detail panel), and a comment thread.
+///
+/// HISTORY: the middle group used to pump the Discover avatar board
+/// (`MomentDiscoveryView`). The stories redesign replaced that surface
+/// with the feed + story viewer, so those tests were re-targeted — the
+/// claims they carried (Report beside Like and Comment, hidden on your
+/// own Moment, still on screen at a 2x text scale) all survive against
+/// the new surfaces below.
 void main() {
   const viewerUid = 'viewer-uid';
   const authorUid = 'author-uid';
@@ -47,6 +58,8 @@ void main() {
     PublicIdentityRepository.instance = originalIdentityRepository;
   });
 
+  // Live inside its 24-hour window: the feed (correctly) refuses to
+  // render an expired or expiry-less Moment at all.
   VoiceMoment moment({String id = 'v1', String author = authorUid}) =>
       VoiceMoment(
         id: id,
@@ -59,7 +72,8 @@ void main() {
         likeCount: 0,
         commentCount: 0,
         isPublished: true,
-        createdAt: DateTime(2026, 8, 1),
+        createdAt: DateTime.now().subtract(const Duration(hours: 2)),
+        expiresAt: DateTime.now().add(const Duration(hours: 22)),
         schemaVersion: 2,
         status: 'published',
         isDeleted: false,
@@ -155,63 +169,95 @@ void main() {
     }
   });
 
-  group('the Discover board', () {
-    Future<void> pumpStage(
+  group('the Moments feed and the story viewer', () {
+    Future<void> pumpFeed(
       WidgetTester tester, {
       required _RecordingFunctions functions,
       String author = authorUid,
       Size size = const Size(390, 844),
+      double textScale = 1.0,
     }) async {
       useSize(tester, size);
-      final db = FakeFirebaseFirestore();
-      await db.collection('voiceMoments').doc('v1').set(<String, dynamic>{
-        'authorId': author,
-        'authorName': 'Author',
-        'authorPhotoUrl': null,
-        'caption': 'caption',
-        'audioUrl': 'https://cdn.example/a.m4a',
-        'durationSeconds': 12,
-        'likeCount': 0,
-        'commentCount': 0,
-        'isPublished': true,
-        'createdAt': Timestamp.fromDate(DateTime(2026, 8, 1)),
-        'schemaVersion': 2,
-        'status': 'published',
-        'isDeleted': false,
-      });
-      final auth = MockFirebaseAuth(
-        signedIn: true,
-        mockUser: MockUser(uid: viewerUid),
-      );
-
       await tester.pumpWidget(
         MaterialApp(
           theme: ThemeData.dark(useMaterial3: true),
-          home: Scaffold(
-            body: MomentDiscoveryView(
-              discoveryService: MomentDiscoveryService(
-                firestore: db,
-                auth: auth,
+          home: MediaQuery(
+            data: MediaQueryData(
+              size: size,
+              textScaler: TextScaler.linear(textScale),
+            ),
+            child: MomentsScreen(
+              auth: MockFirebaseAuth(
+                signedIn: true,
+                mockUser: MockUser(uid: viewerUid),
               ),
-              auth: auth,
+              feedService: _QuietFeed(
+                firestore: FakeFirebaseFirestore(),
+                auth: MockFirebaseAuth(
+                  signedIn: true,
+                  mockUser: MockUser(uid: viewerUid),
+                ),
+              ),
+              discoveryService: _StaticDiscovery([moment(author: author)]),
               contentReportService: ContentReportService(functions: functions),
-              onOpenComments: (_) {},
-              onRecord: () {},
+              playerFactory: _SilentPlayer.new,
             ),
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
     }
 
-    testWidgets('offers Report beside Like and Comment, and files it', (
+    testWidgets('a feed row\'s menu offers Report and files it through the '
+        'deployed callable', (tester) async {
+      final functions = _RecordingFunctions();
+      await pumpFeed(tester, functions: functions);
+
+      await tester.tap(find.byKey(const ValueKey('moment-row-menu-v1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Report'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('report-reason-hate')));
+      await tester.pumpAndSettle();
+
+      expect(functions.calls.single.name, 'createContentReport');
+      expect(functions.calls.single.payload, <String, Object?>{
+        'targetType': 'voiceMoment',
+        'momentId': 'v1',
+        'reason': 'hate',
+        'requestId': ContentReportService.requestIdFor(
+          const ReportedContent.voiceMoment(momentId: 'v1'),
+        ),
+      });
+    });
+
+    testWidgets('your own Moment\'s row carries no report menu at all', (
       tester,
     ) async {
       final functions = _RecordingFunctions();
-      await pumpStage(tester, functions: functions);
+      await pumpFeed(tester, functions: functions, author: viewerUid);
 
-      expect(find.byKey(const ValueKey('report-discovery-v1')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('report-discovery-v1')));
+      expect(find.byKey(const ValueKey('moment-row-v1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('moment-row-menu-v1')), findsNothing);
+    });
+
+    testWidgets('the story viewer offers Report beside Like and Comment, '
+        'and files it', (tester) async {
+      final functions = _RecordingFunctions();
+      await pumpFeed(tester, functions: functions);
+
+      await tester.tap(find.byKey(ValueKey('moments-chain-$authorUid')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // The three controls share the action row: engagement and safety
+      // side by side, never one at the cost of the other.
+      expect(find.byKey(const ValueKey('story-like')), findsOneWidget);
+      expect(find.byKey(const ValueKey('story-comments')), findsOneWidget);
+      expect(find.byKey(const ValueKey('story-report-v1')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('story-report-v1')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('report-reason-violence')));
       await tester.pumpAndSettle();
@@ -221,88 +267,73 @@ void main() {
       expect(functions.calls.single.payload['reason'], 'violence');
     });
 
-    testWidgets('your own Moment on the board has no report chip', (
+    testWidgets('your own chain in the story viewer has no report control', (
       tester,
     ) async {
       final functions = _RecordingFunctions();
-      await pumpStage(tester, functions: functions, author: viewerUid);
+      await pumpFeed(tester, functions: functions, author: viewerUid);
 
-      expect(find.byKey(const ValueKey('report-discovery-v1')), findsNothing);
+      await tester.tap(find.byKey(ValueKey('moments-chain-$viewerUid')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byKey(const ValueKey('story-play-toggle')), findsOneWidget);
+      expect(find.byKey(const ValueKey('story-report-v1')), findsNothing);
     });
 
-    testWidgets('the report chip stays on screen at a large text scale', (
+    testWidgets('the report control stays on screen at a 2x text scale', (
       tester,
     ) async {
-      useSize(tester, const Size(360, 780));
-      final db = FakeFirebaseFirestore();
-      await db.collection('voiceMoments').doc('v1').set(<String, dynamic>{
-        'authorId': authorUid,
-        'authorName': 'Author',
-        'authorPhotoUrl': null,
-        'caption': 'caption',
-        'audioUrl': 'https://cdn.example/a.m4a',
-        'durationSeconds': 12,
-        'likeCount': 0,
-        'commentCount': 0,
-        'isPublished': true,
-        'createdAt': Timestamp.fromDate(DateTime(2026, 8, 1)),
-        'schemaVersion': 2,
-        'status': 'published',
-        'isDeleted': false,
-      });
-      final auth = MockFirebaseAuth(
-        signedIn: true,
-        mockUser: MockUser(uid: viewerUid),
+      // The old avatar board drained a KNOWN 179-px overflow here; the
+      // stories surfaces must not regress to tolerating one. The claim
+      // is positional: the count chips squeezing at 2x must never push
+      // the safety control past the viewport edge.
+      final functions = _RecordingFunctions();
+      await pumpFeed(
+        tester,
+        functions: functions,
+        size: const Size(360, 780),
+        textScale: 2.0,
       );
+      expect(tester.takeException(), isNull);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: ThemeData.dark(useMaterial3: true),
-          home: MediaQuery(
-            data: const MediaQueryData(
-              textScaler: TextScaler.linear(2),
-              size: Size(360, 780),
-            ),
-            child: Scaffold(
-              body: MomentDiscoveryView(
-                discoveryService: MomentDiscoveryService(
-                  firestore: db,
-                  auth: auth,
-                ),
-                auth: auth,
-                contentReportService: ContentReportService(
-                  functions: _RecordingFunctions(),
-                ),
-                onOpenComments: (_) {},
-                onRecord: () {},
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      // This used to drain a KNOWN overflow: the old _PagerControls row
-      // ran 179 px past a 360 pt phone at this text scale, with or
-      // without the report chip. The pager is gone — the board's order
-      // chips and the player's count chips both ellipsize instead — so
-      // there is nothing left to tolerate, and this now asserts the
-      // stronger thing.
+      await tester.tap(find.byKey(ValueKey('moments-chain-$authorUid')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
       expect(
         tester.takeException(),
         isNull,
-        reason: 'the Discover board must not overflow at a 2x text scale',
+        reason: 'the story viewer must not overflow at a 2x text scale',
       );
 
-      // The assertion is positional rather than "nothing threw": what
-      // this test owns is that the third chip did not push the safety
-      // control off the edge — Like / Comment / Report wrap onto a
-      // second run instead of running past the viewport.
-      final chip = find.byKey(const ValueKey('report-discovery-v1'));
-      expect(chip, findsOneWidget);
-      final rect = tester.getRect(chip);
+      final control = find.byKey(const ValueKey('story-report-v1'));
+      expect(control, findsOneWidget);
+      final rect = tester.getRect(control);
       expect(rect.left, greaterThanOrEqualTo(0));
       expect(rect.right, lessThanOrEqualTo(360));
+    });
+
+    testWidgets('the desktop detail panel offers Report beside Like and '
+        'Share, and files it', (tester) async {
+      final functions = _RecordingFunctions();
+      await pumpFeed(
+        tester,
+        functions: functions,
+        size: const Size(1440, 900),
+      );
+
+      expect(find.byKey(const ValueKey('detail-like')), findsOneWidget);
+      expect(find.byKey(const ValueKey('detail-share')), findsOneWidget);
+      expect(find.byKey(const ValueKey('detail-report-v1')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('detail-report-v1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('report-reason-harassment')));
+      await tester.pumpAndSettle();
+
+      expect(functions.calls.single.payload['targetType'], 'voiceMoment');
+      expect(functions.calls.single.payload['momentId'], 'v1');
+      expect(functions.calls.single.payload['reason'], 'harassment');
     });
   });
 
@@ -447,6 +478,88 @@ void main() {
 class _StubOfflineService implements OfflineVoiceMomentService {
   @override
   Future<bool> isDownloaded(String momentId) async => false;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _StaticDiscovery implements MomentDiscoveryService {
+  _StaticDiscovery(this.moments);
+
+  final List<VoiceMoment> moments;
+
+  @override
+  Future<MomentDiscoveryFeed> loadDiscoveryFeed({
+    int poolSize = MomentDiscoveryService.defaultPoolSize,
+    int? seed,
+  }) async => MomentDiscoveryFeed(
+    moments: moments,
+    fetchedCount: moments.length,
+    drops: const <String, MomentDropReason>{},
+    seed: seed ?? 0,
+    poolExhausted: false,
+  );
+
+  @override
+  Stream<Map<String, MomentEngagement>> watchEngagement({
+    int poolSize = MomentDiscoveryService.defaultPoolSize,
+  }) => const Stream<Map<String, MomentEngagement>>.empty();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _QuietFeed extends HomeFeedService {
+  _QuietFeed({super.firestore, super.auth});
+
+  @override
+  Stream<List<VoiceMoment>> watchSocialMoments({int limit = 40}) =>
+      Stream<List<VoiceMoment>>.value(const []);
+
+  @override
+  Stream<bool> watchLiked(String momentId) => Stream<bool>.value(false);
+
+  @override
+  Future<void> toggleLike(String momentId) async {}
+}
+
+/// An [audio.AudioPlayer] that never touches a platform channel — the
+/// story viewer auto-plays on open, and a real player reports its
+/// missing channel asynchronously, after the frame under test.
+class _SilentPlayer implements audio.AudioPlayer {
+  @override
+  Stream<Duration> get onPositionChanged => const Stream<Duration>.empty();
+
+  @override
+  Stream<Duration> get onDurationChanged => const Stream<Duration>.empty();
+
+  @override
+  Stream<void> get onPlayerComplete => const Stream<void>.empty();
+
+  @override
+  Future<void> play(
+    audio.Source source, {
+    double? volume,
+    double? balance,
+    audio.AudioContext? ctx,
+    Duration? position,
+    audio.PlayerMode? mode,
+  }) async {}
+
+  @override
+  Future<void> pause() async {}
+
+  @override
+  Future<void> resume() async {}
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> seek(Duration position) async {}
+
+  @override
+  Future<void> dispose() async {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

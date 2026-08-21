@@ -35,8 +35,10 @@ import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
+import 'package:yovoice/features/moments/data/models/moment_chain.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_sheet.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
@@ -215,6 +217,7 @@ class _MainShellState extends State<MainShell>
     onCreateMoment: _openCreateMoment,
     onCreateRoom: () => unawaited(_openCreateRoom()),
     onOpenMoment: (moment) => unawaited(_openMoment(moment)),
+    onOpenOwnChain: (mine) => unawaited(_openOwnChain(mine)),
     onOpenComments: (moment) => unawaited(
       Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
@@ -240,6 +243,7 @@ class _MainShellState extends State<MainShell>
     onViewAllFriends: () => _onDestinationSelected(2),
     onStartRoom: () => unawaited(_openCreateRoom()),
     onOpenMoment: (moment) => unawaited(_openMoment(moment)),
+    onOpenOwnChain: (mine) => unawaited(_openOwnChain(mine)),
     onCreateMoment: _openCreateMoment,
     onSeeAllMoments: () =>
         unawaited(_openMoreDestination(MoreDestination.moments)),
@@ -826,6 +830,19 @@ class _MainShellState extends State<MainShell>
       isOwn: uid.isNotEmpty && moment.authorId == uid,
       canReport: uid.isNotEmpty && moment.authorId != uid,
     );
+  }
+
+  /// Opens the signed-in user's own ACTIVE chain in the story viewer:
+  /// every live Moment, oldest first — the multi-Moment surface Home's
+  /// "Your Moment" tiles show a count badge for. Falls back to the
+  /// single-Moment sheet when the chain somehow arrives empty.
+  Future<void> _openOwnChain(List<VoiceMoment> mine) async {
+    final chains = buildMomentChains(mine);
+    if (chains.isEmpty) {
+      if (mine.isNotEmpty) await _openMoment(mine.first);
+      return;
+    }
+    await showMomentStoryViewer(context, chain: chains.first);
   }
 
   Widget _tabContent({

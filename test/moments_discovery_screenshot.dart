@@ -1,4 +1,4 @@
-// Developer-only visual QA harness for the MOMENTS discovery surface.
+// Developer-only visual QA harness for the MOMENTS stories feed.
 //
 // The filename deliberately has no `_test` suffix, so the ordinary suite
 // skips it. Run explicitly:
@@ -7,23 +7,23 @@
 //
 // PNGs land in test/.screenshots/ (git-ignored).
 //
-// Why this exists: `moments_discovery_test.dart` proves the ranking, the
-// shuffle, the safety filter and which state KEY is mounted — it never
-// proves any of it renders. ADR-059 requires a UI change to be looked at
-// before it ships, and the Moments tab reached `main` without that. This
-// covers the four states a person can land in (loading, empty, error,
-// populated) plus long content, at narrow, medium and wide — for BOTH
-// halves of the destination: the Discover avatar board and the compact
-// Following grid.
+// Why this exists: `moments_discovery_test.dart` and
+// `moments_board_test.dart` prove the ranking, the expiry filter and
+// which state KEY is mounted — they never prove any of it renders.
+// ADR-059 requires a UI change to be looked at before it ships. This
+// covers the states a person can land in (loading, empty, error,
+// populated, long content) at narrow, medium and wide, for the feed
+// (story strip + featured + recent list + the 1100+ detail panel), the
+// story viewer (phone route and desktop dialog), the Following slice and
+// its empty state, the sheet a row opens, and the sidebar clock's dotted
+// world map.
 //
-// `solo` is not a nicety. Production holds exactly one published Moment,
-// so a board that only looks composed when it is full would be broken on
-// the only data that actually exists.
+// `solo` is not a nicety. Production holds roughly one live Moment, so a
+// feed that only looks composed when it is full would be broken on the
+// data that actually exists.
 //
-// The widths are measured on the space the VIEW receives, not the window:
-// MomentDiscoveryView's own breakpoints are 600 and 980, and on desktop the
-// shell takes 264 pt for the rail. 390 / 768 / 1100 / 1440 therefore land on
-// either side of both.
+// The widths land on either side of the feed's own breakpoints (600 for
+// compact padding, 1100 for the detail panel): 390 / 768 / 1100 / 1440.
 
 import 'dart:async';
 import 'dart:io';
@@ -39,10 +39,14 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/sidebar_clock.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
+import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
@@ -95,6 +99,9 @@ Future<void> _loadFonts() async {
   await inter.load();
 }
 
+/// Every fixture is a LIVE Moment: `expiresAt = createdAt + 24h`, the
+/// shape `finalizeMomentDraft` writes — which is also what puts a real
+/// "Expires in Xh" label on every frame.
 VoiceMoment _moment(
   String id, {
   required String author,
@@ -102,7 +109,9 @@ VoiceMoment _moment(
   required String caption,
   int likes = 0,
   int comments = 0,
+  Duration age = const Duration(hours: 3),
 }) {
+  final createdAt = DateTime.now().subtract(age);
   return VoiceMoment(
     id: id,
     authorId: author,
@@ -114,17 +123,20 @@ VoiceMoment _moment(
     likeCount: likes,
     commentCount: comments,
     isPublished: true,
-    createdAt: DateTime(2026, 8, 18, 14, 30),
+    createdAt: createdAt,
+    expiresAt: createdAt.add(const Duration(hours: 24)),
     schemaVersion: 2,
     status: 'published',
     isDeleted: false,
   );
 }
 
-/// Ordered the way the ranker would leave them: most-engaged first. The
-/// harness does not re-rank, because what is being photographed is the
-/// surface, not the arithmetic — `moments_discovery_test.dart` owns that.
+/// A populated feed with real chain shapes: Nadia holds a 3-Moment
+/// chain, Tomás a 2-Moment one — the strip badges, the viewer's progress
+/// bars and "1 of 3" all have something to prove.
 final _populated = <VoiceMoment>[
+  // Nadia's chain in the order it was told: the viewer walks oldest →
+  // newest, so "part one" carries the oldest createdAt.
   _moment(
     'm1',
     author: 'nadia',
@@ -132,18 +144,56 @@ final _populated = <VoiceMoment>[
     caption: 'The one thing nobody tells you about moving to a new city.',
     likes: 412,
     comments: 87,
+    age: const Duration(hours: 9),
   ),
   _moment(
     'm2',
+    author: 'nadia',
+    authorName: 'Nadia Rutkowska',
+    caption: 'Part two — the grocery store epiphany.',
+    likes: 121,
+    comments: 14,
+    age: const Duration(hours: 5),
+  ),
+  _moment(
+    'm3',
+    author: 'nadia',
+    authorName: 'Nadia Rutkowska',
+    caption: 'Part three, recorded on the night bus home.',
+    likes: 58,
+    comments: 6,
+    age: const Duration(hours: 2),
+  ),
+  _moment(
+    'm4',
     author: 'tomas',
     authorName: 'Tomás Oliveira',
     caption: 'Three minutes on why my grandmother never measured anything.',
     likes: 268,
     comments: 51,
+    age: const Duration(hours: 4),
+  ),
+  _moment(
+    'm5',
+    author: 'tomas',
+    authorName: 'Tomás Oliveira',
+    caption: 'The follow-up: measuring everything for one week.',
+    likes: 34,
+    comments: 3,
+    age: const Duration(hours: 12),
+  ),
+  _moment(
+    'm6',
+    author: 'joana',
+    authorName: 'Joana Almeida',
+    caption: 'A field recording from the tram, and what it taught me.',
+    likes: 91,
+    comments: 12,
+    age: const Duration(hours: 7),
   ),
 ];
 
-/// Production, as measured: one published Moment, 1 like, 1 comment.
+/// Production, as measured: one live Moment, 1 like, 1 comment.
 final _solo = <VoiceMoment>[
   _moment(
     'solo',
@@ -155,8 +205,8 @@ final _solo = <VoiceMoment>[
   ),
 ];
 
-/// A board with enough faces that the columns, the ranking and the
-/// wrapping all have something to prove.
+/// Enough authors that the strip, the featured rail and the list all
+/// have to compose, wrap and scroll.
 final _crowd = <VoiceMoment>[
   for (var i = 0; i < 23; i++)
     _moment(
@@ -168,6 +218,7 @@ final _crowd = <VoiceMoment>[
       caption: 'A Moment from person $i.',
       likes: (23 - i) * 3,
       comments: 23 - i,
+      age: Duration(hours: 1 + (i % 20)),
     ),
 ];
 
@@ -248,7 +299,9 @@ class _ThrowingDiscovery implements MomentDiscoveryService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-/// An [audio.AudioPlayer] that never touches a platform channel.
+/// An [audio.AudioPlayer] that never touches a platform channel — the
+/// story viewer auto-plays on open, and a real player reports its missing
+/// channel asynchronously, after the frame has been photographed.
 class _SilentPlayer implements audio.AudioPlayer {
   @override
   Stream<Duration> get onPositionChanged => const Stream<Duration>.empty();
@@ -291,7 +344,7 @@ class _SilentPlayer implements audio.AudioPlayer {
 class _QuietFeed extends HomeFeedService {
   _QuietFeed({super.firestore, super.auth, this.social = const []});
 
-  /// What the Following tab's "From people you follow" section shows.
+  /// What the Following filter's "From your circle" section shows.
   final List<VoiceMoment> social;
 
   @override
@@ -316,18 +369,41 @@ Map<String, dynamic> _document(VoiceMoment moment) => <String, dynamic>{
   'commentCount': moment.commentCount,
   'isPublished': moment.isPublished,
   'createdAt': Timestamp.fromDate(moment.createdAt!),
+  'expiresAt': Timestamp.fromDate(moment.expiresAt!),
   'schemaVersion': 2,
   'status': 'published',
   'isDeleted': false,
 };
 
-/// A MomentService whose `watchMyMoments` really reads the seeded fake,
-/// so the Following tab's own-Moments section is rendered by the same
-/// code path production uses.
-Future<MomentService> _seededMomentService(List<VoiceMoment> mine) async {
+/// A MomentService over a seeded fake, so the Following slice, the sheet
+/// and the desktop detail panel's inline comment thread are all rendered
+/// by the same code paths production uses.
+Future<MomentService> _seededMomentService(
+  List<VoiceMoment> mine, {
+  Map<String, List<(String, String)>> comments = const {},
+}) async {
   final db = FakeFirebaseFirestore();
   for (final moment in mine) {
     await db.collection('voiceMoments').doc(moment.id).set(_document(moment));
+  }
+  for (final entry in comments.entries) {
+    var minute = 0;
+    for (final (author, text) in entry.value) {
+      minute += 7;
+      await db
+          .collection('voiceMoments')
+          .doc(entry.key)
+          .collection('comments')
+          .add(<String, dynamic>{
+            'authorId': author.toLowerCase(),
+            'authorName': author,
+            'text': text,
+            'type': 'text',
+            'createdAt': Timestamp.fromDate(
+              DateTime.now().subtract(Duration(minutes: 90 - minute)),
+            ),
+          });
+    }
   }
   return MomentService(
     firestore: db,
@@ -337,14 +413,15 @@ Future<MomentService> _seededMomentService(List<VoiceMoment> mine) async {
 }
 
 /// The capture boundary sits ABOVE the MaterialApp, not inside `home`.
-/// A modal bottom sheet is a route in the Navigator's overlay, which is a
-/// sibling of `home` — with the boundary inside it, the sheet frames
-/// photographed the page underneath and nothing else.
+/// A modal sheet, the story viewer's route and the desktop dialog are all
+/// routes in the Navigator's overlay, which is a sibling of `home` — with
+/// the boundary inside it, those frames photographed the page underneath
+/// and nothing else.
 Widget _host(Widget child) => RepaintBoundary(
   key: _capture,
   child: MaterialApp(
     debugShowCheckedModeBanner: false,
-    theme: ThemeData.dark(useMaterial3: true),
+    theme: AppTheme.darkTheme,
     home: child,
   ),
 );
@@ -392,10 +469,21 @@ void main() {
     PublicIdentityRepository.instance = originalIdentity;
   });
 
-  HomeFeedService feed() => _QuietFeed(
+  MockFirebaseAuth authMe() =>
+      MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me'));
+
+  HomeFeedService feed({List<VoiceMoment> social = const []}) => _QuietFeed(
     firestore: FakeFirebaseFirestore(),
-    auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me')),
+    auth: authMe(),
+    social: social,
   );
+
+  void useSize(WidgetTester tester, double width, double height) {
+    tester.view.physicalSize = Size(width, height);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+  }
 
   Future<void> shootAt(
     WidgetTester tester, {
@@ -405,19 +493,26 @@ void main() {
     required double height,
     double textScale = 1.0,
     bool settle = true,
+    MomentService? momentService,
+    MomentViewsService? viewsService,
+    String? openChain,
   }) async {
-    tester.view.physicalSize = Size(width, height);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+    useSize(tester, width, height);
 
     await tester.pumpWidget(
       _host(
         MediaQuery(
-          data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
+          data: MediaQueryData(
+            size: Size(width, height),
+            textScaler: TextScaler.linear(textScale),
+          ),
           child: MomentsScreen(
             feedService: feed(),
+            auth: authMe(),
             discoveryService: discovery,
+            momentService: momentService,
+            viewsService: viewsService,
+            playerFactory: _SilentPlayer.new,
             isRootTab: true,
           ),
         ),
@@ -429,13 +524,18 @@ void main() {
         await tester.pump(const Duration(milliseconds: 120));
       }
     }
+    if (openChain != null) {
+      await tester.tap(find.byKey(ValueKey('moments-chain-$openChain')));
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 120));
+      }
+    }
     await _shoot(tester, name);
-
   }
 
-  // 390 phone, 768 tablet (above the view's 600 breakpoint), 1100 and 1440
-  // desktop (above 980). Heights are realistic viewports, not square canvases,
-  // because a pager that only fits when the frame is tall proves nothing.
+  // 390 phone, 768 tablet, 1100 and 1440 desktop — either side of the
+  // feed's 600 (compact) and 1100 (detail panel) breakpoints. Heights are
+  // realistic viewports, not square canvases.
   const widths = <String, (double, double)>{
     '390': (390, 844),
     '768': (768, 1024),
@@ -451,34 +551,24 @@ void main() {
     required List<VoiceMoment> mine,
     required List<VoiceMoment> social,
     double textScale = 1.0,
-    String? openTile,
+    String? openRow,
   }) async {
-    tester.view.physicalSize = Size(width, height);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+    useSize(tester, width, height);
 
     final moments = await _seededMomentService(mine);
     await tester.pumpWidget(
       _host(
         MediaQuery(
-          data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
+          data: MediaQueryData(
+            size: Size(width, height),
+            textScaler: TextScaler.linear(textScale),
+          ),
           child: MomentsScreen(
             initialTab: MomentsTab.following,
             momentService: moments,
-            feedService: _QuietFeed(
-              firestore: FakeFirebaseFirestore(),
-              auth: MockFirebaseAuth(
-                signedIn: true,
-                mockUser: MockUser(uid: 'me'),
-              ),
-              social: social,
-            ),
+            auth: authMe(),
+            feedService: feed(social: social),
             discoveryService: _StaticDiscovery(const <VoiceMoment>[]),
-            // A silent player: constructing a real one reaches for a
-            // platform channel that does not exist off-device and
-            // reports the failure asynchronously, after the frame has
-            // been photographed.
             playerFactory: _SilentPlayer.new,
             isRootTab: true,
           ),
@@ -489,8 +579,8 @@ void main() {
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 120));
     }
-    if (openTile != null) {
-      await tester.tap(find.byKey(ValueKey('moment-square-$openTile')));
+    if (openRow != null) {
+      await tester.tap(find.byKey(ValueKey('moment-row-$openRow')));
       for (var i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 120));
       }
@@ -498,7 +588,11 @@ void main() {
     await _shoot(tester, name);
   }
 
-  group('moments discovery', () {
+  group('moments feed', () {
+    // The composed page at every width: strip + featured + recent list,
+    // and from 1100 the right detail panel with the player, the actions
+    // and the inline thread. The "Expires in Xh" labels on the rows and
+    // in the panel come from the fixtures' real expiresAt.
     for (final entry in widths.entries) {
       final label = entry.key;
       final (width, height) = entry.value;
@@ -508,6 +602,17 @@ void main() {
           tester,
           name: 'moments-populated-$label',
           discovery: _StaticDiscovery(_populated),
+          momentService: await _seededMomentService(
+            _populated,
+            // On the newest Moment, because that is the one the detail
+            // panel selects first.
+            comments: {
+              'm3': [
+                ('Tomás Oliveira', 'The night bus is where the truth lives.'),
+                ('Joana Almeida', 'Came for part one, stayed for part three.'),
+              ],
+            },
+          ),
           width: width,
           height: height,
         );
@@ -562,8 +667,8 @@ void main() {
       await tester.pump();
     });
 
-    // The board with a real crowd on it: this is what proves the columns,
-    // the ranking order and the name wrapping at every width.
+    // The feed with a real crowd on it: columns, ranking order, name
+    // wrapping, and the strip's chain badges at every width.
     for (final entry in widths.entries) {
       final label = entry.key;
       final (width, height) = entry.value;
@@ -578,13 +683,14 @@ void main() {
         );
       });
 
-      // Production's actual corpus: ONE Moment. A board that only looks
+      // Production's actual corpus: ONE Moment. A feed that only looks
       // composed when full is broken on the data that exists today.
       testWidgets('solo $label', (tester) async {
         await shootAt(
           tester,
           name: 'moments-solo-$label',
           discovery: _StaticDiscovery(_solo),
+          momentService: await _seededMomentService(_solo),
           width: width,
           height: height,
         );
@@ -605,6 +711,7 @@ void main() {
                 caption: 'my moment $i',
                 likes: i,
                 comments: i * 2,
+                age: Duration(hours: 1 + i),
               ),
           ],
           social: [
@@ -618,13 +725,14 @@ void main() {
                 caption: 'their moment $i',
                 likes: i * 4,
                 comments: i,
+                age: Duration(hours: 2 + i),
               ),
           ],
         );
       });
 
-      // The Following tab with nothing in it: both sections honest, and
-      // the recorder still offered.
+      // The Following filter with nothing in it: the honest empty state,
+      // with the recorder still offered.
       testWidgets('following empty $label', (tester) async {
         await shootFollowing(
           tester,
@@ -637,10 +745,37 @@ void main() {
       });
     }
 
-    // The sheet a tile opens: the full card, unchanged, with playback,
-    // like, comment and the offline download still on it. Shot at both
-    // ends of the range because a bottom sheet stretched across 1440 pt
-    // is a phone layout that grew.
+    // The story viewer, both shells: the full-screen route a phone gets
+    // and the centred overlay dialog a desktop window gets. Nadia's chain
+    // holds three Moments, so the progress bars and "1 of 3" are real.
+    testWidgets('story viewer 390', (tester) async {
+      await shootAt(
+        tester,
+        name: 'moments-viewer-390',
+        discovery: _StaticDiscovery(_populated),
+        momentService: await _seededMomentService(_populated),
+        width: 390,
+        height: 844,
+        openChain: 'nadia',
+      );
+    });
+
+    testWidgets('story viewer 1440', (tester) async {
+      await shootAt(
+        tester,
+        name: 'moments-viewer-1440',
+        discovery: _StaticDiscovery(_populated),
+        momentService: await _seededMomentService(_populated),
+        width: 1440,
+        height: 900,
+        openChain: 'nadia',
+      );
+    });
+
+    // The sheet a row opens on a narrow surface: the full existing card
+    // with playback, like, comment and the offline download. Shot at both
+    // ends because a bottom sheet stretched across 1440 pt is a phone
+    // layout that grew.
     for (final label in <String>['390', '1440']) {
       final (width, height) = widths[label]!;
       testWidgets('following sheet $label', (tester) async {
@@ -649,7 +784,7 @@ void main() {
           name: 'moments-following-sheet-$label',
           width: width,
           height: height,
-          openTile: 'mine0',
+          openRow: 'mine0',
           mine: [
             _moment(
               'mine0',
@@ -701,14 +836,15 @@ void main() {
               authorName: 'Aleksandra-Konstantina Wielkopolska $i',
               caption: 'their moment $i',
               likes: i * 4,
+              age: Duration(hours: 3 + i),
             ),
         ],
       );
     });
 
-    // The two frames most likely to overflow: a very long caption and a very
-    // long author name, at the narrowest width, once at normal scale and once
-    // at the accessibility scale a real user can set.
+    // The two frames most likely to overflow: a very long caption and a
+    // very long author name, at the narrowest width, once at normal scale
+    // and once at the accessibility scale a real user can set.
     testWidgets('long content 390', (tester) async {
       await shootAt(
         tester,
@@ -728,6 +864,57 @@ void main() {
         height: 844,
         textScale: 2.0,
       );
+    });
+  });
+
+  group('sidebar clock', () {
+    // The desktop sidebar's local-time block with its dotted world map,
+    // in its real 264-pt column at a desktop window size. The time is
+    // injected so the frame is reproducible; the zone label and the glow
+    // dot's longitude still come from the machine's real UTC offset —
+    // the block deliberately names no city and no country.
+    testWidgets('sidebar clock map 1440x900', (tester) async {
+      useSize(tester, 1440, 900);
+
+      await tester.pumpWidget(
+        _host(
+          Scaffold(
+            backgroundColor: AppColors.background,
+            body: Row(
+              children: [
+                Container(
+                  width: 264,
+                  decoration: const BoxDecoration(
+                    color: AppColors.surface,
+                    border: Border(
+                      right: BorderSide(color: AppColors.divider),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      const Spacer(),
+                      SidebarClock(
+                        source: ClockSource(
+                          now: () => DateTime(2026, 8, 21, 21, 42),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                  ),
+                ),
+                const Expanded(child: SizedBox()),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await _shoot(tester, 'sidebar-clock-map-1440');
+
+      // The clock schedules a minute-boundary timer; unmount it inside
+      // the test body so no timer outlives the tree.
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
     });
   });
 }

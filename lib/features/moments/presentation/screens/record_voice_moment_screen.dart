@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:record/record.dart' show Amplitude;
@@ -492,16 +493,34 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
       );
     } catch (error) {
       if (!mounted) return;
+      // The active-Moment cap is the SERVER'S refusal
+      // (`reserveMomentDraft` answers `resource-exhausted` when the
+      // caller already has the maximum of live Moments). The client
+      // never pre-guesses the cap — recording stays available with any
+      // number of active Moments — it only translates the refusal into
+      // copy that explains what actually happened instead of the generic
+      // "we're overloaded" quota line.
+      final capRefusal =
+          error is FirebaseFunctionsException &&
+          error.code == 'resource-exhausted';
       // The recording is kept: the capture succeeded, only publishing
       // failed, and making the user re-record would lose good audio.
       _showNotice(
         VoiceRecordingException(
           VoiceRecordingProblem.uploadFailed,
-          intentionalOrFriendly(
-            error,
-            fallback: 'Your Voice Moment could not be published.',
-          ),
-          action: 'Your recording is still here — try publishing again.',
+          capRefusal
+              ? (error.message?.trim().isNotEmpty == true
+                    ? error.message!.trim()
+                    : 'You have reached the limit of active Moments. '
+                          'Moments expire 24 hours after posting — one '
+                          'must expire before you can publish another.')
+              : intentionalOrFriendly(
+                  error,
+                  fallback: 'Your Voice Moment could not be published.',
+                ),
+          action: capRefusal
+              ? 'Your recording is kept — publish it once a Moment expires.'
+              : 'Your recording is still here — try publishing again.',
           cause: error,
         ),
         phase: VoiceMomentRecordingPhase.reviewing,

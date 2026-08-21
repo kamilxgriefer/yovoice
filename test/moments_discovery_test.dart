@@ -1,5 +1,6 @@
 // The Moments discovery surface: the ranking seam, the shuffle, the
-// safety filter, and the five states.
+// safety filter (including the 24-hour expiry contract), and the five
+// states of the stories-style feed.
 //
 // This suite deliberately tests the SEAM, not Firestore. The ranking and
 // shuffle are pure functions over VoiceMoment lists, which is the whole
@@ -25,6 +26,16 @@ import 'package:yovoice/features/moments/data/services/moment_discovery_service.
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
+/// One fixed reading of "now" for the whole file, so every fixture's
+/// `createdAt`/`expiresAt` relation to the clock is stable for the life
+/// of a run. Every live fixture sits 2 hours into its 24-hour life —
+/// the shape `finalizeMomentDraft` really writes — because since the
+/// expiry contract landed, a Moment with no future `expiresAt` is
+/// (correctly) filtered out of every feed before it can render.
+final DateTime _anchor = DateTime.now();
+final DateTime _created = _anchor.subtract(const Duration(hours: 2));
+final DateTime _expires = _created.add(const Duration(hours: 24));
+
 VoiceMoment _moment(
   String id, {
   String author = 'author',
@@ -35,6 +46,11 @@ VoiceMoment _moment(
   bool published = true,
   int schemaVersion = 2,
   String status = 'published',
+  DateTime? expiresAt,
+
+  /// A pre-expiry legacy document: no `expiresAt` at all. Reads as
+  /// already expired per the contract, never as immortal.
+  bool withoutExpiry = false,
 }) {
   return VoiceMoment(
     id: id,
@@ -47,7 +63,8 @@ VoiceMoment _moment(
     likeCount: likes,
     commentCount: comments,
     isPublished: published,
-    createdAt: DateTime(2026, 8, 1),
+    createdAt: _created,
+    expiresAt: withoutExpiry ? null : (expiresAt ?? _expires),
     schemaVersion: schemaVersion,
     status: status,
     isDeleted: deleted,
@@ -65,6 +82,8 @@ Map<String, dynamic> _doc(
   bool deleted = false,
   bool published = true,
   DateTime? createdAt,
+  DateTime? expiresAt,
+  bool withoutExpiry = false,
 }) => <String, dynamic>{
   'authorId': author,
   'authorName': 'Author $author',
@@ -75,7 +94,9 @@ Map<String, dynamic> _doc(
   'likeCount': likes,
   'commentCount': comments,
   'isPublished': published,
-  'createdAt': Timestamp.fromDate(createdAt ?? DateTime(2026, 8, 1)),
+  'createdAt': Timestamp.fromDate(createdAt ?? _created),
+  if (!withoutExpiry)
+    'expiresAt': Timestamp.fromDate(expiresAt ?? _expires),
   'schemaVersion': 2,
   'status': 'published',
   'isDeleted': deleted,
@@ -224,7 +245,8 @@ void main() {
   });
 
   group('safety and playability filter', () {
-    test('drops deleted, unplayable and blocked — and says which is which', () {
+    test('drops deleted, unplayable, blocked, expired and expiry-less — '
+        'and says which is which', () {
       final result = MomentDiscoveryService.filterPlayable(
         [
           _moment('ok'),
@@ -232,8 +254,18 @@ void main() {
           _moment('draft', audioUrl: null),
           _moment('blank', audioUrl: '   '),
           _moment('blocked', author: 'villain'),
+          // The two halves of the expiry claim: a deadline in the past,
+          // and no deadline at all — BOTH must read as dead, because a
+          // legacy document treated as immortal would outlive every
+          // Moment published under the 24-hour contract.
+          _moment(
+            'dead',
+            expiresAt: _anchor.subtract(const Duration(minutes: 1)),
+          ),
+          _moment('clockless', withoutExpiry: true),
         ],
         blockedAuthorIds: {'villain'},
+        now: _anchor,
       );
 
       expect(result.kept.map((m) => m.id), ['ok']);
@@ -241,18 +273,51 @@ void main() {
       expect(result.drops['draft'], MomentDropReason.unplayable);
       expect(result.drops['blank'], MomentDropReason.unplayable);
       expect(result.drops['blocked'], MomentDropReason.blockedAuthor);
+      expect(result.drops['dead'], MomentDropReason.expired);
+      expect(result.drops['clockless'], MomentDropReason.expired);
     });
 
-    test('a LEGACY Moment survives — filtering on canonical status would '
-        'be invisible data loss', () {
+    test('expiry is exclusive: a Moment whose expiresAt IS now is already '
+        'dead', () {
+      // `expiresAt <= now` hides, `expiresAt > now` shows — the boundary
+      // itself must fail closed or a Moment flickers back for one frame
+      // at the stroke of its own death.
+      final result = MomentDiscoveryService.filterPlayable(
+        [_moment('boundary', expiresAt: _anchor)],
+        now: _anchor,
+      );
+      expect(result.kept, isEmpty);
+      expect(result.drops['boundary'], MomentDropReason.expired);
+    });
+
+    test('the sweeper\'s mark is final: status expired hides a Moment even '
+        'when its expiresAt is still in the future', () {
+      final result = MomentDiscoveryService.filterPlayable(
+        [_moment('swept', status: 'expired')],
+        now: _anchor,
+      );
+      expect(result.kept, isEmpty);
+      expect(result.drops['swept'], MomentDropReason.expired);
+    });
+
+    test('a LEGACY Moment with a live expiresAt survives — filtering on '
+        'canonical status would be invisible data loss', () {
       // VoiceMoment.isCanonicalPublished demands schemaVersion == 2 and
       // status == 'published'; pre-Stage-B documents default to
       // schemaVersion 0 / status 'legacy'. Filtering on that would make
       // every one of them vanish with no error and no empty state.
+      //
+      // ADAPTED for the expiry contract: the legacy fixture now carries a
+      // future `expiresAt`, because a legacy document WITHOUT one is
+      // dropped as expired by design (asserted above) — that part of the
+      // old "legacy always survives" claim no longer applies.
       final legacy = _moment('old', schemaVersion: 0, status: 'legacy');
       expect(legacy.isCanonicalPublished, isFalse);
       expect(
-        MomentDiscoveryService.filterPlayable([legacy]).kept.map((m) => m.id),
+        MomentDiscoveryService.filterPlayable(
+          [legacy],
+          now: _anchor,
+        ).kept.map((m) => m.id),
         ['old'],
       );
     });
@@ -296,6 +361,35 @@ void main() {
 
       final feed = await harness.service.loadDiscoveryFeed(seed: 1);
       expect(feed.moments.map((m) => m.id), ['live']);
+    });
+
+    test('expired and expiry-less documents never enter the feed, and are '
+        'recorded as expired drops', () async {
+      final harness = build();
+      await harness.db.collection('voiceMoments').doc('live').set(_doc('live'));
+      await harness.db
+          .collection('voiceMoments')
+          .doc('dead')
+          .set(
+            _doc(
+              'dead',
+              author: 'b',
+              createdAt: _anchor.subtract(const Duration(hours: 30)),
+              expiresAt: _anchor.subtract(const Duration(hours: 6)),
+            ),
+          );
+      await harness.db
+          .collection('voiceMoments')
+          .doc('clockless')
+          .set(_doc('clockless', author: 'c', withoutExpiry: true));
+
+      final feed = await harness.service.loadDiscoveryFeed(seed: 1);
+      expect(feed.moments.map((m) => m.id), ['live']);
+      expect(feed.drops['dead'], MomentDropReason.expired);
+      expect(feed.drops['clockless'], MomentDropReason.expired);
+      // All three WERE fetched: the empty-state arithmetic depends on
+      // the distinction between "not published" and "published but dead".
+      expect(feed.fetchedCount, 3);
     });
 
     test('an EMPTY corpus and an ALL-UNPLAYABLE corpus are different '
@@ -456,7 +550,16 @@ void main() {
         host(
           MomentsScreen(
             feedService: feed,
-            discoveryService: _StaticDiscovery(const [], fetchedCount: 4),
+            discoveryService: _StaticDiscovery(
+              const [],
+              fetchedCount: 4,
+              drops: const {
+                'x1': MomentDropReason.unplayable,
+                'x2': MomentDropReason.unplayable,
+                'x3': MomentDropReason.unplayable,
+                'x4': MomentDropReason.unplayable,
+              },
+            ),
           ),
         ),
       );
@@ -468,9 +571,71 @@ void main() {
       expect(find.textContaining('4 published Moments'), findsOneWidget);
     });
 
-    testWidgets('a populated board shows every Moment as a circle, loads the '
-        'top one with its real counts, and keeps a visible Next control — '
-        'never tap-only', (tester) async {
+    testWidgets('an all-EXPIRED corpus is the third distinct empty state: '
+        'not "nobody posted", not "pipeline broken" — just the 24-hour '
+        'life doing its job, with the recorder offered', (tester) async {
+      await tester.pumpWidget(
+        host(
+          MomentsScreen(
+            feedService: feed,
+            discoveryService: _StaticDiscovery(
+              const [],
+              fetchedCount: 2,
+              drops: const {
+                'x1': MomentDropReason.expired,
+                'x2': MomentDropReason.expired,
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('Nothing live right now'), findsOneWidget);
+      expect(find.text('No Voice Moments yet'), findsNothing);
+      expect(find.text('Nothing playable right now'), findsNothing);
+      expect(find.textContaining('expired'), findsOneWidget);
+      expect(
+        find.widgetWithText(FilledButton, 'Record a Moment'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('the loading skeleton itself holds a 390 pt phone — the '
+        'strip bones clip instead of overflowing 54 px past the edge', (
+      tester,
+    ) async {
+      // Pins the exact defect this file's redesign shipped with: the
+      // skeleton drew five fixed 80-pt bones in a Row, which is 400 pt
+      // of content inside the 346 pt a padded 390 pt phone leaves.
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        host(
+          MomentsScreen(
+            feedService: feed,
+            discoveryService: _StaticDiscovery(
+              const [],
+              delay: const Duration(milliseconds: 30),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('moments-discovery-loading')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+
+      await tester.pump(const Duration(milliseconds: 50));
+    });
+
+    testWidgets('a populated feed shows the story strip, one row per '
+        'Moment with its real counts, and the creation entry — and '
+        'fabricates nothing for a zero counter', (tester) async {
       await tester.binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -488,39 +653,36 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      // The board: one circle per Moment, all of them at once.
-      expect(find.byKey(const ValueKey('moment-tile-one')), findsOneWidget);
-      expect(find.byKey(const ValueKey('moment-tile-two')), findsOneWidget);
-      // Plus the recorder entry point, which the pager used to own.
+      // The strip: one circle per author chain.
+      expect(find.byKey(const ValueKey('moments-chain-a')), findsOneWidget);
+      expect(find.byKey(const ValueKey('moments-chain-b')), findsOneWidget);
+      // The list: one row per Moment, each with a real play control.
+      expect(find.byKey(const ValueKey('moment-row-one')), findsOneWidget);
+      expect(find.byKey(const ValueKey('moment-row-two')), findsOneWidget);
       expect(
-        find.byKey(const ValueKey('moments-discovery-record')),
+        find.byKey(const ValueKey('moment-row-play-one')),
         findsOneWidget,
       );
-
-      final player = find.byKey(const ValueKey('moments-discovery-player'));
-      expect(player, findsOneWidget);
+      // The real count on the row that owns it…
       expect(
-        find.descendant(of: player, matching: find.text('1 of 2')),
+        find.descendant(
+          of: find.byKey(const ValueKey('moment-row-one')),
+          matching: find.text('3'),
+        ),
         findsOneWidget,
       );
-      // The real count, on the control that can change it.
+      // …and no fabricated "0" anywhere for the zero counters.
+      expect(find.text('0'), findsNothing);
+      // The creation entry the recorder tile used to own lives in the
+      // header now, and reload is a visible control.
+      expect(find.byKey(const ValueKey('moments-create-cta')), findsOneWidget);
       expect(
-        find.descendant(of: player, matching: find.text('3')),
+        find.byKey(const ValueKey('moments-discovery-refresh')),
         findsOneWidget,
       );
-      // A zero count reads as a verb, not a fabricated "0".
-      expect(
-        find.descendant(of: player, matching: find.text('Comment')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('moments-discovery-next')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('moments-discovery-shuffle')),
-        findsOneWidget,
-      );
+      // The label under every live Moment is derived from the document's
+      // real expiresAt.
+      expect(find.textContaining('Expires in'), findsWidgets);
     });
 
     for (final size in <Size>[
@@ -552,6 +714,19 @@ void main() {
         // The transport is pinned: the play control is reachable at every
         // width regardless of caption length.
         expect(find.byIcon(Icons.play_arrow_rounded), findsWidgets);
+        // The wide layout is a real desktop composition, not a stretched
+        // phone: the detail panel appears at 1100+ and only there.
+        if (size.width >= 1100) {
+          expect(
+            find.byKey(const ValueKey('moments-detail-panel')),
+            findsOneWidget,
+          );
+        } else {
+          expect(
+            find.byKey(const ValueKey('moments-detail-panel')),
+            findsNothing,
+          );
+        }
       });
     }
   });
@@ -579,12 +754,30 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
+      // ADAPTED to the stories redesign: Following is a filter chip on
+      // the one feed now, not a second tab with its own section
+      // headings ("Your Moments" / "From people you follow" no longer
+      // exist). The claim that survives is the one that matters: the
+      // personal slice is reachable from the destination, and an empty
+      // circle renders its own honest state with the recorder offered.
       expect(find.text('Following'), findsOneWidget);
       await tester.tap(find.text('Following'));
-      await tester.pump();
+      // The personal slice is a composite stream (friends + following +
+      // moments); give the fake Firestore listeners a few frames to
+      // deliver before asserting the resolved state.
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
 
-      expect(find.text('Your Moments'), findsOneWidget);
-      expect(find.text('From people you follow'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('moments-following-empty')),
+        findsOneWidget,
+      );
+      expect(find.text('Nothing here yet'), findsOneWidget);
+      expect(
+        find.widgetWithText(FilledButton, 'Record a Moment'),
+        findsOneWidget,
+      );
     });
   });
 
@@ -755,11 +948,20 @@ class _ThrowingDiscovery implements MomentDiscoveryService {
 }
 
 class _StaticDiscovery implements MomentDiscoveryService {
-  _StaticDiscovery(this.moments, {int? fetchedCount, this.delay})
-    : fetchedCount = fetchedCount ?? moments.length;
+  _StaticDiscovery(
+    this.moments, {
+    int? fetchedCount,
+    this.delay,
+    this.drops = const <String, MomentDropReason>{},
+  }) : fetchedCount = fetchedCount ?? moments.length;
 
   final List<VoiceMoment> moments;
   final int fetchedCount;
+
+  /// Why the fetched-but-not-shown Moments were dropped. The feed's three
+  /// empty states are told apart by these reasons, so a test that claims
+  /// one must say why.
+  final Map<String, MomentDropReason> drops;
 
   /// Lets a test observe the loading state, which otherwise resolves
   /// inside the same microtask drain as the first pump.
@@ -782,7 +984,7 @@ class _StaticDiscovery implements MomentDiscoveryService {
     return MomentDiscoveryFeed(
       moments: moments,
       fetchedCount: fetchedCount,
-      drops: const <String, MomentDropReason>{},
+      drops: drops,
       seed: seed ?? 0,
       poolExhausted: false,
     );

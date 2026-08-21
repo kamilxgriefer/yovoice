@@ -2006,6 +2006,23 @@ service cloud.firestore {
         allow read, write: if isOwner(userId);
       }
 
+      // Story-chain viewed state: one row per Voice Moment this account
+      // has listened to, keyed by momentId. Owner-only in both directions
+      // — who watched whose story is private — and the row carries EXACTLY
+      // { viewedAt: request.time }: the pinned server time keeps "seen 2h
+      // ago" honest, and the exact-shape allowlist keeps this from quietly
+      // growing into a client-writable analytics store. There is
+      // deliberately no global view counter for these rows to feed, and no
+      // delete — "unviewed" rings cannot be re-armed by clearing history.
+      // A re-listen is an update refreshing the same row's viewedAt.
+      match /momentViews/{momentId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) &&
+            request.resource.data.keys().hasOnly(['viewedAt']) &&
+            request.resource.data.viewedAt == request.time;
+        allow delete: if false;
+      }
+
       match /clubs/{clubId} {
         allow read: if isOwner(userId);
         allow create, update: if
@@ -3370,20 +3387,39 @@ service cloud.firestore {
     }
     match /voiceMoments/{momentId} {
       allow read: if isSignedIn();
+      // `expiresAt` is server authority: finalizeMomentDraft stamps it
+      // `createdAt + 24h` inside the publish transaction, and
+      // expireVoiceMomentsSchedule retires the Moment when it passes. A
+      // client-supplied deadline on create would be a story that outlives
+      // 24 hours by construction, so the legacy client create path may
+      // carry anything EXCEPT one. Legacy clients never send the field, so
+      // this refuses only forgeries.
       allow create: if isVerified() &&
           canCommunicate() &&
-          request.resource.data.authorId == request.auth.uid;
+          request.resource.data.authorId == request.auth.uid &&
+          !('expiresAt' in request.resource.data);
       // Non-author updates used to allow likeCount/commentCount to be set to
       // any value at all — now each write must actually correspond to the
       // caller's own like being added/removed (toggleLike() in
       // home_feed_service.dart runs both writes in one transaction, so
       // existsAfter() correctly reflects the like doc's post-write state),
       // or a plain +1 for a new comment.
+      //
+      // The author branch pins createdAt and expiresAt immutable: createdAt
+      // orders the author's story chain and expiresAt is the 24-hour
+      // deadline, so a writable pair would let an author re-order their own
+      // chain or extend their own story indefinitely. `affectedKeys()` (not
+      // hasAny-on-values) is the right gate here — an omitted field is
+      // simply unchanged, which is exactly the invariant. Server writes go
+      // through the Admin SDK and bypass rules, so finalize can still stamp
+      // the deadline.
       allow update: if isSignedIn() &&
           (
             (
               resource.data.authorId == request.auth.uid &&
-              request.resource.data.authorId == resource.data.authorId
+              request.resource.data.authorId == resource.data.authorId &&
+              !request.resource.data.diff(resource.data).affectedKeys()
+                  .hasAny(['createdAt', 'expiresAt'])
             ) ||
             (
               request.resource.data.diff(resource.data).affectedKeys()

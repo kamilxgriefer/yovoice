@@ -5,7 +5,12 @@ process.env.FIRESTORE_EMULATOR_HOST ||= "127.0.0.1:8080";
 process.env.GCLOUD_PROJECT ||= "yovoice-fn-test";
 
 const { getApps, initializeApp } = require("firebase-admin/app");
-const { FieldPath, getFirestore, Timestamp } = require("firebase-admin/firestore");
+const {
+  FieldPath,
+  FieldValue,
+  getFirestore,
+  Timestamp,
+} = require("firebase-admin/firestore");
 
 if (getApps().length === 0) initializeApp();
 
@@ -1599,4 +1604,207 @@ test("cleanup worker rejects a forged outbox instead of becoming a delete oracle
   );
   assert.equal(storage.objects.has(victimPath), true);
   await db.doc(`contentCleanupOutbox/${outboxId}`).delete();
+});
+
+// ---------------------------------------------------------------------------
+// 24-hour story expiry (2026-08). The contract both product halves build to:
+// finalize stamps `expiresAt` exactly `createdAt + 24h`, an author holds at
+// most 10 simultaneously active Moments, and a Moment the scheduled sweep
+// has flipped to `status: "expired"` refuses new engagement while its author
+// keeps the right to delete it. The literal 10 and 24h below are the
+// contract's numbers on purpose — they must not silently follow a constant.
+// ---------------------------------------------------------------------------
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+test("finalize stamps expiresAt exactly 24 hours after the stored createdAt", async () => {
+  const service = momentService();
+  const reserved = await service.reserveMomentDraft(request(A, {
+    caption: "Expiring story",
+    durationSeconds: 8,
+    requestId: "reserve-expiry-01",
+  }));
+  const reservedAtMs = nowMs;
+
+  // Publish 47 minutes later. The deadline must anchor on the STORED
+  // createdAt, not on the finalize request's clock — the client derives
+  // chain order and the countdown badge from the exact equality
+  // `expiresAt == createdAt + 24h`, so a drift here is a visible bug.
+  nowMs += 47 * 60_000;
+  storage.put(reserved.storagePath, {
+    authorId: A,
+    momentId: reserved.momentId,
+    generation: "77001",
+  });
+  const finalized = await service.finalizeMomentDraft(request(A, {
+    momentId: reserved.momentId,
+    objectGeneration: "77001",
+    requestId: "finalize-expiry-01",
+  }));
+  assert.equal(finalized.published, true);
+
+  const moment = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
+  assert.equal(moment.createdAt.toMillis(), reservedAtMs);
+  assert.ok(moment.expiresAt instanceof Timestamp, "expiresAt is stamped");
+  assert.equal(
+    moment.expiresAt.toMillis() - moment.createdAt.toMillis(),
+    DAY_MS,
+    "expiresAt is exactly createdAt + 24h",
+  );
+
+  // Replay must return the stored result without moving the deadline.
+  await service.finalizeMomentDraft(request(A, {
+    momentId: reserved.momentId,
+    objectGeneration: "77001",
+    requestId: "finalize-expiry-01",
+  }));
+  const replayed = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
+  assert.equal(replayed.expiresAt.toMillis(), moment.expiresAt.toMillis());
+});
+
+test("the active-story cap refuses an eleventh live Moment and frees on expiry", async () => {
+  const service = momentService({
+    uploadReserve: { maxEvents: 100, windowMs: 60_000 },
+    finalize: { maxEvents: 100, windowMs: 60_000 },
+  });
+
+  // One story published at T0, nine more two hours later, so exactly one
+  // of the ten expires first.
+  await publish(service, {
+    uid: A,
+    reserveRequestId: "cap-r-00",
+    finalizeRequestId: "cap-f-00",
+    generation: "80000",
+  });
+  nowMs += 2 * 60 * 60_000;
+  for (let index = 1; index < 10; index += 1) {
+    const suffix = String(index).padStart(2, "0");
+    await publish(service, {
+      uid: A,
+      reserveRequestId: `cap-r-${suffix}`,
+      finalizeRequestId: `cap-f-${suffix}`,
+      generation: `800${suffix}`,
+    });
+  }
+
+  await assert.rejects(
+    service.reserveMomentDraft(request(A, {
+      caption: "Eleventh story",
+      durationSeconds: 5,
+      requestId: "cap-r-10",
+    })),
+    (error) => error.code === "resource-exhausted" &&
+      /10 active/u.test(error.message),
+    "the eleventh reserve is refused while ten stories are live",
+  );
+
+  // Another author is not affected by A's cap.
+  const other = await service.reserveMomentDraft(request(B, {
+    caption: "Someone else's story",
+    durationSeconds: 5,
+    requestId: "cap-r-other",
+  }));
+  assert.equal(other.created, true);
+
+  // T0 + 24h + 1min: only the FIRST story has expired (the other nine run
+  // until T0 + 26h), so exactly one active slot is free — and the refused
+  // transaction consumed nothing, so the very same requestId succeeds now.
+  nowMs += 22 * 60 * 60_000 + 60_000;
+  const eleventh = await service.reserveMomentDraft(request(A, {
+    caption: "Eleventh story",
+    durationSeconds: 5,
+    requestId: "cap-r-10",
+  }));
+  assert.equal(eleventh.created, true);
+});
+
+test("unpublished drafts do not count against the active-story cap", async () => {
+  const service = momentService({
+    uploadReserve: { maxEvents: 100, windowMs: 60_000 },
+  });
+  // Eleven reservations, none finalized: the cap counts LIVE stories, not
+  // reservations, so every one of these must pass.
+  for (let index = 0; index < 11; index += 1) {
+    const reserved = await service.reserveMomentDraft(request(A, {
+      caption: `Draft ${index}`,
+      durationSeconds: 5,
+      requestId: `draft-cap-${String(index).padStart(2, "0")}`,
+    }));
+    assert.equal(reserved.created, true);
+  }
+});
+
+test("a sweeper-expired Moment refuses likes and comments but the author still deletes it", async () => {
+  const service = momentService();
+  const reserved = await publish(service, {
+    uid: B,
+    reserveRequestId: "exp-r-01",
+    finalizeRequestId: "exp-f-01",
+  });
+
+  // The exact flip expireVoiceMomentsSchedule performs — nothing else moves.
+  await db.doc(`voiceMoments/${reserved.momentId}`).update({
+    isPublished: false,
+    status: "expired",
+    updatedAt: Timestamp.fromMillis(nowMs),
+  });
+
+  await assert.rejects(
+    service.setMomentLike(request(A, {
+      liked: true,
+      momentId: reserved.momentId,
+      requestId: "exp-like-01",
+    })),
+    (error) => error.code === "failed-precondition" &&
+      /expired/u.test(error.message),
+  );
+  await assert.rejects(
+    service.createMomentComment(request(A, {
+      momentId: reserved.momentId,
+      requestId: "exp-comment-01",
+      text: "too late",
+    })),
+    (error) => error.code === "failed-precondition" &&
+      /expired/u.test(error.message),
+  );
+
+  const deleted = await service.deleteMoment(request(B, {
+    momentId: reserved.momentId,
+    requestId: "exp-del-01",
+  }));
+  assert.equal(deleted.deletionQueued, true);
+});
+
+test("a legacy published Moment without expiresAt stays canonical and likeable", async () => {
+  const service = momentService();
+  const reserved = await publish(service, {
+    uid: B,
+    reserveRequestId: "leg-r-01",
+    finalizeRequestId: "leg-f-01",
+  });
+  // Production still holds pre-expiry documents with no expiresAt at all.
+  // Strip the field to reproduce that exact legacy shape.
+  await db.doc(`voiceMoments/${reserved.momentId}`).update({
+    expiresAt: FieldValue.delete(),
+  });
+
+  const liked = await service.setMomentLike(request(A, {
+    liked: true,
+    momentId: reserved.momentId,
+    requestId: "leg-like-01",
+  }));
+  assert.equal(liked.likeCount, 1);
+
+  // A present-but-garbage expiresAt is corruption, not legacy.
+  await db.doc(`voiceMoments/${reserved.momentId}`).update({
+    expiresAt: "tomorrow",
+  });
+  await assert.rejects(
+    service.setMomentLike(request(A, {
+      liked: false,
+      momentId: reserved.momentId,
+      requestId: "leg-like-02",
+    })),
+    (error) => error.code === "data-loss",
+  );
 });

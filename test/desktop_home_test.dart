@@ -138,7 +138,15 @@ void main() {
     required String caption,
     Duration age = const Duration(minutes: 30),
     int durationSeconds = 42,
+
+    /// Defaults to the shape `finalizeMomentDraft` writes: createdAt +
+    /// 24h. Since the expiry contract landed, a Moment without a future
+    /// `expiresAt` never renders on Home (see `HomeFeedService`'s
+    /// `isActiveAt` filter), so live fixtures must carry one.
+    DateTime? expiresAt,
+    bool withoutExpiry = false,
   }) async {
+    final createdAt = DateTime.now().subtract(age);
     await db.collection('voiceMoments').doc(id).set({
       'authorId': authorId,
       'authorName': authorName,
@@ -148,7 +156,11 @@ void main() {
       'likeCount': 0,
       'commentCount': 0,
       'isPublished': true,
-      'createdAt': Timestamp.fromDate(DateTime.now().subtract(age)),
+      'createdAt': Timestamp.fromDate(createdAt),
+      if (!withoutExpiry)
+        'expiresAt': Timestamp.fromDate(
+          expiresAt ?? createdAt.add(const Duration(hours: 24)),
+        ),
     });
   }
 
@@ -629,6 +641,11 @@ void main() {
         caption: 'Studio update',
         age: const Duration(days: 3),
         durationSeconds: 95,
+        // Older than the 24-hour "New" window but explicitly still live:
+        // the claim under test is that a non-fresh Moment shows its REAL
+        // duration, and the strip trusts the document's expiresAt rather
+        // than re-deriving it.
+        expiresAt: DateTime.now().add(const Duration(hours: 1)),
       );
       // A stranger the user neither follows nor is friends with.
       await seedMoment(
@@ -636,6 +653,26 @@ void main() {
         authorId: 'stranger',
         authorName: 'Nobody',
         caption: 'Not in the circle',
+      );
+      // In the circle but DEAD: past its 24-hour life. The expiry filter
+      // must keep it off Home even before the sweeper marks it.
+      await seedFollowing('creator-2', 'Bartek');
+      await seedMoment(
+        id: 'm4',
+        authorId: 'creator-2',
+        authorName: 'Bartek',
+        caption: 'Expired yesterday',
+        age: const Duration(days: 2),
+      );
+      // In the circle but a pre-expiry legacy document with no expiresAt
+      // at all — reads as expired, never as immortal.
+      await seedFollowing('creator-3', 'Celina');
+      await seedMoment(
+        id: 'm5',
+        authorId: 'creator-3',
+        authorName: 'Celina',
+        caption: 'No expiry field',
+        withoutExpiry: true,
       );
 
       await tester.pumpWidget(host(buildHome()));
@@ -648,6 +685,11 @@ void main() {
       expect(find.text('Marek'), findsOneWidget);
       // Nobody outside friends/following/self may appear.
       expect(find.text('Nobody'), findsNothing);
+      // Nobody whose Moment is dead may appear either: a past expiresAt
+      // and a missing expiresAt both read as expired. (Both authors are
+      // followed and would otherwise be shown.)
+      expect(find.text('Bartek'), findsNothing);
+      expect(find.text('Celina'), findsNothing);
       // Real state only: fresh Moments read "New", older ones show their
       // real duration.
       expect(find.text('New'), findsWidgets);

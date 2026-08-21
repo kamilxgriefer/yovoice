@@ -362,7 +362,21 @@ void main() {
         'rules require', () async {
       final audio = FakeRecordedAudio();
 
-      final momentId = await service.publishRecordedMoment(
+      // Exercised through the CANONICAL callable path: with no Functions,
+      // publishing now REFUSES rather than falling back (the fallback could
+      // not stamp `expiresAt`, so its output was invisible forever — closed
+      // deliberately; the refusal itself is pinned in the retry group).
+      final seamService = MomentService(
+        firestore: firestore,
+        auth: auth,
+        storage: storage,
+        functions: _MomentPublishFunctions(
+          momentId: 'seam-moment',
+          storagePath: 'voice_moments/$uid/seam-moment.m4a',
+        ),
+      );
+
+      final momentId = await seamService.publishRecordedMoment(
         audio: audio,
         durationSeconds: 7,
         caption: 'Hello',
@@ -738,51 +752,47 @@ void main() {
     );
 
     test(
-      'explicit unimplemented fallback writes the canonical 20-field shape',
+      'an unimplemented callable REFUSES loudly, keeps the recording and '
+      'writes no legacy moment',
       () async {
+        // The direct-write fallback this test used to pin is gone on
+        // purpose: only finalizeMomentDraft can stamp `expiresAt` (the
+        // create rule bans the field on client writes), so a fallback
+        // publish would be treated as expired on every surface — success
+        // into permanent invisibility. The pinned behaviour is now the
+        // refusal itself.
         final functions = _MomentPublishFunctions(
           momentId: momentId,
           storagePath: storagePath,
           reserveErrorCode: 'unimplemented',
         );
 
-        final fallbackId = await serviceWith(functions).publishRecordedMoment(
-          audio: FakeRecordedAudio(),
-          durationSeconds: 1,
-          caption: 'Legacy deployment only',
+        final audio = FakeRecordedAudio();
+        await expectLater(
+          serviceWith(functions).publishRecordedMoment(
+            audio: audio,
+            durationSeconds: 1,
+            caption: 'Legacy deployment only',
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('recording is kept'),
+            ),
+          ),
         );
-        final document = await firestore
-            .collection('voiceMoments')
-            .doc(fallbackId)
-            .get();
-        final data = document.data()!;
-
-        expect(data.keys.toSet(), {
-          'schemaVersion',
-          'authorId',
-          'authorName',
-          'authorPhotoUrl',
-          'caption',
-          'audioUrl',
-          'storagePath',
-          'mediaGeneration',
-          'mediaSize',
-          'mediaContentType',
-          'durationSeconds',
-          'createdAt',
-          'publishedAt',
-          'isPublished',
-          'isDeleted',
-          'status',
-          'likeCount',
-          'commentCount',
-          'replyToMomentId',
-          'updatedAt',
-        });
-        expect(data['durationSeconds'], 1);
-        expect(data['isPublished'], true);
-        expect(data['status'], 'published');
-        expect(data['mediaGeneration'], '1700000000000001');
+        final docs = await firestore.collection('voiceMoments').get();
+        expect(
+          docs.docs,
+          isEmpty,
+          reason: 'a refused publish must write NOTHING',
+        );
+        expect(
+          audio.uploadCalls,
+          0,
+          reason: 'the reserve failed, so no upload may have happened',
+        );
       },
     );
   });

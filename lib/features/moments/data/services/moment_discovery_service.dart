@@ -24,6 +24,12 @@ enum MomentDropReason {
 
   /// The viewer blocked this author.
   blockedAuthor,
+
+  /// Past its 24-hour life, marked expired by the sweeper, or a legacy
+  /// document with no `expiresAt` at all — which per the expiry contract
+  /// reads as already expired, never as immortal. The client filter is
+  /// what covers the sweeper's ≤10-minute gap.
+  expired,
 }
 
 /// The outcome of one discovery load. Every field is measured, never
@@ -280,17 +286,30 @@ class MomentDiscoveryService {
   /// status would make every legacy Moment disappear from the feed with
   /// no error and no empty state — invisible data loss. `isPublished`
   /// is what both existing feeds already prove works in production.
+  ///
+  /// What IS filtered on since the 24-hour expiry contract landed:
+  /// [VoiceMoment.isActiveAt]. A Moment past its `expiresAt`, marked
+  /// `status: 'expired'` by the sweeper, or carrying no `expiresAt` at
+  /// all (pre-expiry legacy) is dropped as [MomentDropReason.expired] —
+  /// the client-side half of the two-layer enforcement, covering the
+  /// sweeper's ≤10-minute gap so a dead Moment never renders.
   @visibleForTesting
   static ({List<VoiceMoment> kept, Map<String, MomentDropReason> drops})
   filterPlayable(
     List<VoiceMoment> moments, {
     Set<String> blockedAuthorIds = const <String>{},
+    DateTime? now,
   }) {
+    final effectiveNow = now ?? DateTime.now();
     final kept = <VoiceMoment>[];
     final drops = <String, MomentDropReason>{};
     for (final moment in moments) {
       if (moment.isDeleted) {
         drops[moment.id] = MomentDropReason.deleted;
+        continue;
+      }
+      if (!moment.isActiveAt(effectiveNow)) {
+        drops[moment.id] = MomentDropReason.expired;
         continue;
       }
       if (blockedAuthorIds.contains(moment.authorId)) {

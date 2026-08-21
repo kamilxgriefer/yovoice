@@ -5997,3 +5997,50 @@ archive; the working tree should only contain what runs.
 **Consequences.** `flutter analyze` clean and all 1114 tests pass after the
 removal. Any future "board" style discovery surface starts from the current
 feed architecture, not from resurrecting this file.
+
+## ADR-101: Voice Moments are 24-hour audio stories — many per author, expiring server-side, viewed per-user
+
+**Context.** The operator asked for an Instagram-Stories-like rebuild: more
+than one Moment per user, a clear 24-hour lifetime, story-chain playback,
+and a modern feed with a detail panel. Scouting found the backend never
+enforced a single Moment (`momentId = digest(uid, requestId)`) — the limit
+was a client illusion — but nothing expired, nothing was viewed-tracked,
+and the feed was the ADR-089 board.
+
+**Decision.**
+- `finalizeMomentDraft` stamps `expiresAt = createdAt + 24h` (additive);
+  the create rule BANS `expiresAt` on client writes and the author-update
+  branch pins `createdAt`/`expiresAt` immutable, so only the server ever
+  sets or moves an expiry — an author cannot extend their own story.
+- Expiry is two-layer: `expireVoiceMomentsSchedule` (10 min) flips past-due
+  docs to `{isPublished:false, status:'expired'}` and the client filters
+  `expiresAt > now` everywhere, covering the sweep gap. A legacy document
+  with NO `expiresAt` is treated as expired — intended: the 24-hour product
+  has no place for immortal posts.
+- `reserveMomentDraft` caps 10 simultaneously active Moments per author
+  (bounded scan over the new `(authorId, createdAt DESC)` composite; the
+  sweeper query gets `(isPublished, expiresAt ASC)`).
+- Viewed state is per-user at `users/{uid}/momentViews/{momentId}`,
+  owner-only, `{viewedAt: request.time}` pinned, no delete. No global view
+  counter exists, so none is displayed — the reference's play counts are
+  deliberately not reproduced.
+- Chains play oldest→newest; the strip orders authors by newest Moment;
+  a chain is unviewed if any member lacks the caller's view doc.
+- The client's legacy direct-publish fallback is CLOSED with a loud
+  refusal: it could never stamp `expiresAt`, so its output would be
+  invisible forever — including to its author — while reporting success.
+
+**Reasoning.** Every piece keeps server authority where forgery would pay
+(expiry, cap, canonical creation) and keeps client-side what only the
+client knows (which Moments THIS user heard). The review pass earned its
+place again: it caught an ADR-095 regression (ranking on live counters —
+reordering under the user), an unordered `limit(40)` window that legacy
+squatters could starve, and the fallback-invisibility trap, all fixed
+before deploy.
+
+**Consequences.** Deploy order is load-bearing: indexes to READY and
+query-proved (ADR-007), then rules, then functions, then hosting — hosting
+before functions would publish author-invisible Moments for the window.
+Known open edges (Bugs.md): sheet/card playback does not yet mark viewed
+(chain rings can stay "unviewed" after listening through the sheet); the
+website's `?moment=` links to expired Moments land on an unpublished doc.

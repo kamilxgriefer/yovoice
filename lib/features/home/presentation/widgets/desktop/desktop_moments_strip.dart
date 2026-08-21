@@ -36,6 +36,7 @@ class DesktopMomentsStrip extends StatefulWidget {
     required this.onCreateMoment,
     required this.onSeeAll,
     required this.onDiscover,
+    this.onOpenOwnChain,
     this.profile,
     this.feedService,
     this.friendService,
@@ -50,6 +51,12 @@ class DesktopMomentsStrip extends StatefulWidget {
   /// has no player at all — so tapping a face on Home was the one place in
   /// the app where you could not hear the Moment you tapped.
   final ValueChanged<VoiceMoment> onOpenMoment;
+
+  /// Opens the signed-in user's whole ACTIVE chain in the story viewer —
+  /// every live Moment, oldest first, not just the newest. Optional so
+  /// existing callers keep working; when null the tile falls back to
+  /// [onOpenMoment] with the newest.
+  final ValueChanged<List<VoiceMoment>>? onOpenOwnChain;
 
   /// The existing Moment creation flow (RecordVoiceMomentScreen).
   final VoidCallback onCreateMoment;
@@ -209,9 +216,10 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                             final tiles = <Widget>[
                               _YourMomentTile(
                                 profile: profile,
-                                newest: mine.isEmpty ? null : mine.first,
+                                mine: mine,
                                 onCreate: widget.onCreateMoment,
                                 onOpen: widget.onOpenMoment,
+                                onOpenChain: widget.onOpenOwnChain,
                               ),
                               for (final moment in shown)
                                 _MomentTile(
@@ -719,10 +727,11 @@ class _FollowablePersonTileState extends State<_FollowablePersonTile> {
   }
 }
 
-/// The signed-in user's slot. Opens their newest Moment when they have
-/// one; the small plus always opens the existing creation flow — the
-/// desktop entry point for recording, now that the rail's duplicate
-/// action is gone.
+/// The signed-in user's slot. Opens their ACTIVE CHAIN — every live
+/// Moment, as a story — when they have any; the small plus always opens
+/// the existing creation flow, with any number of Moments already live
+/// (many active Moments per user is the product; the 10-at-once cap is
+/// the server's rule, enforced at reserve time, never pre-guessed here).
 ///
 /// THE WHOLE TILE is the target, not just the 66 pt disc. Every other
 /// tile in this rail already wrapped its column in one [InkWell], while
@@ -734,22 +743,27 @@ class _FollowablePersonTileState extends State<_FollowablePersonTile> {
 class _YourMomentTile extends StatelessWidget {
   const _YourMomentTile({
     required this.profile,
-    required this.newest,
+    required this.mine,
     required this.onCreate,
     required this.onOpen,
+    required this.onOpenChain,
   });
 
   final UserProfile? profile;
-  final VoiceMoment? newest;
+
+  /// The signed-in user's live Moments, newest first (the stream's
+  /// order). Empty when nothing is live right now.
+  final List<VoiceMoment> mine;
   final VoidCallback onCreate;
   final ValueChanged<VoiceMoment> onOpen;
+  final ValueChanged<List<VoiceMoment>>? onOpenChain;
 
   @override
   Widget build(BuildContext context) {
-    final mine = newest;
+    final newest = mine.isEmpty ? null : mine.first;
     final fresh =
-        mine?.createdAt != null &&
-        DateTime.now().difference(mine!.createdAt!) <
+        newest?.createdAt != null &&
+        DateTime.now().difference(newest!.createdAt!) <
             DesktopMomentsStrip.newWindow;
 
     return SizedBox(
@@ -757,12 +771,18 @@ class _YourMomentTile extends StatelessWidget {
       height: _MomentTile.heightFor(context),
       child: Semantics(
         button: true,
-        label: mine == null
+        label: newest == null
             ? 'Record your first Voice Moment'
-            : 'Play your Voice Moment',
+            : (mine.length > 1
+                  ? 'Play your ${mine.length} Voice Moments'
+                  : 'Play your Voice Moment'),
         child: InkWell(
           key: const ValueKey('home-your-moment'),
-          onTap: mine == null ? onCreate : () => onOpen(mine),
+          onTap: newest == null
+              ? onCreate
+              : (onOpenChain != null
+                    ? () => onOpenChain!(mine)
+                    : () => onOpen(newest)),
           borderRadius: BorderRadius.circular(14),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -779,6 +799,39 @@ class _YourMomentTile extends StatelessWidget {
                       fallbackIcon: Icons.person_rounded,
                     ),
                   ),
+                  // The chain badge: how many of YOUR Moments are live
+                  // right now — a real count from the same stream that
+                  // renders them, never an estimate.
+                  if (mine.length > 1)
+                    Positioned(
+                      left: -1,
+                      top: -1,
+                      child: Container(
+                        key: const ValueKey('home-your-moment-count'),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(999),
+                          gradient: const LinearGradient(
+                            colors: [AppColors.primary, AppColors.secondary],
+                          ),
+                          border: Border.all(
+                            color: const Color(0xFF0C0814),
+                            width: 2,
+                          ),
+                        ),
+                        child: Text(
+                          '${mine.length}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
                   // Nested inside the tile's own InkWell on purpose: the
                   // innermost recognizer wins the tap, so the plus still
                   // means "record" while every other pixel of the tile
@@ -824,12 +877,14 @@ class _YourMomentTile extends StatelessWidget {
                 height: _MomentTile.actionHeightFor(context),
                 child: Center(
                   child: Text(
-                    mine == null
+                    newest == null
                         ? 'Record'
-                        : (fresh ? 'New' : mine.durationLabel),
+                        : (mine.length > 1
+                              ? '${mine.length} Moments'
+                              : (fresh ? 'New' : newest.durationLabel)),
                     maxLines: 1,
                     style: TextStyle(
-                      color: mine == null || !fresh
+                      color: newest == null || !fresh
                           ? const Color(0xFF9A90AC)
                           : const Color(0xFFE879F9),
                       fontSize: 10.5,

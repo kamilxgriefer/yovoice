@@ -49,6 +49,7 @@ class MobileHome extends StatefulWidget {
     required this.onCreateMoment,
     required this.onCreateRoom,
     required this.onOpenMoment,
+    this.onOpenOwnChain,
     required this.onOpenComments,
     required this.onOpenConversation,
     required this.onSeeAllChats,
@@ -79,6 +80,9 @@ class MobileHome extends StatefulWidget {
   /// into the comment thread is why tapping your own avatar on Home never
   /// played anything.
   final ValueChanged<VoiceMoment> onOpenMoment;
+
+  /// Opens the signed-in user's active chain in the story viewer.
+  final ValueChanged<List<VoiceMoment>>? onOpenOwnChain;
 
   final ValueChanged<VoiceMoment> onOpenComments;
   final ValueChanged<Conversation> onOpenConversation;
@@ -234,6 +238,7 @@ class _MobileHomeState extends State<MobileHome> {
                               profile: profileSnapshot.data,
                               currentUserId: _resolvedUserId,
                               onOpenMoment: widget.onOpenMoment,
+                              onOpenOwnChain: widget.onOpenOwnChain,
                               onCreateMoment: widget.onCreateMoment,
                               onDiscover:
                                   widget.onOpenFindCreators ??

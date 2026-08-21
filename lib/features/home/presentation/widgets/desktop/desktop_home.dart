@@ -55,6 +55,7 @@ class DesktopHome extends StatefulWidget {
     required this.onOpenMoment,
     required this.onCreateMoment,
     required this.onSeeAllMoments,
+    this.onOpenOwnChain,
     required this.onOpenConversation,
     required this.onOpenClub,
     required this.onSeeAllChats,
@@ -88,6 +89,9 @@ class DesktopHome extends StatefulWidget {
   final ValueChanged<VoiceMoment> onOpenMoment;
   final VoidCallback onCreateMoment;
   final VoidCallback onSeeAllMoments;
+
+  /// Opens the signed-in user's active chain in the story viewer.
+  final ValueChanged<List<VoiceMoment>>? onOpenOwnChain;
 
   /// The existing chat screen, club surface, Chats and Clubs destinations.
   final ValueChanged<Conversation> onOpenConversation;
@@ -244,6 +248,7 @@ class _DesktopHomeState extends State<DesktopHome> {
                   followService: widget.followService,
                   currentUserId: widget.currentUserId,
                   onOpenMoment: widget.onOpenMoment,
+                  onOpenOwnChain: widget.onOpenOwnChain,
                   onCreateMoment: widget.onCreateMoment,
                   onSeeAll: widget.onSeeAllMoments,
                   onDiscover: widget.onFindCreators ?? widget.onSeeAllRooms,
