@@ -50,7 +50,13 @@ import struct
 import wave
 from pathlib import Path
 
-RATE = 44100
+# 22.05 kHz, deliberately: the highest partial in the set is 5.04x E5 =
+# 3.32 kHz, comfortably under this rate's 11 kHz Nyquist, so nothing audible
+# is lost — and the app's own asset test caps every WAV at 64 KB, which
+# stereo 44.1 kHz files broke. The generator enforces the same cap below so
+# a future longer sound fails HERE, not in CI.
+RATE = 22050
+MAX_BYTES = 64 * 1024
 PEAK = 0.5  # -6 dBFS
 
 E4, A4, CS5, E5 = 329.63, 440.0, 554.37, 659.26
@@ -140,6 +146,8 @@ def render(path: Path, total: float, notes):
         w.setsampwidth(2)
         w.setframerate(RATE)
         w.writeframes(bytes(frames))
+    size = path.stat().st_size
+    assert size < MAX_BYTES, f'{path.name}: {size} bytes >= {MAX_BYTES}'
 
 
 def main():
@@ -148,14 +156,16 @@ def main():
 
     # A three-note bloom for the one genuinely celebratory moment; the notes
     # walk gently left -> center -> right.
-    render(out / 'room_created.wav', 0.85, [
+    # 0.72s, not 0.85: the 64 KB cap allows at most 0.74s of stereo at
+    # this rate, and the exponential tail is inaudible past ~0.7s anyway.
+    render(out / 'room_created.wav', 0.72, [
         # Pans tightened from ±0.18: with three Haas-delayed notes the
         # wider image measured 0.18 inter-channel correlation — over the
         # 0.2 floor this script verifies, and risking a phasey feel on
         # headphones. ±0.10 keeps the walk audible and the image solid.
-        bell(A4, 0.00, 0.80, level=0.9, pan=-0.10),
-        bell(CS5, 0.11, 0.70, level=0.85, pan=0.0),
-        bell(E5, 0.22, 0.63, pan=0.10, shimmer=True),
+        bell(A4, 0.00, 0.68, level=0.9, pan=-0.10),
+        bell(CS5, 0.11, 0.58, level=0.85, pan=0.0),
+        bell(E5, 0.22, 0.50, pan=0.10, shimmer=True),
     ])
     # Rising pair in, mirrored pair out.
     render(out / 'room_joined.wav', 0.60, [
