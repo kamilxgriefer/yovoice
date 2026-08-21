@@ -5889,3 +5889,51 @@ the point at which a `status` backfill plus a real aggregate becomes the right
 trade. `LIVE_ROOM_SCAN_LIMIT` duplicates the sweeper's `MAX_LIVE_ROOM_SCAN`
 rather than importing it, so two callables do not drag the scheduler and the
 LiveKit control plane into their cold start.
+
+## ADR-098: One room presentation system, four identities — and the stage owns the leftover height
+
+**Context.** The four room types (Community, Family, Club, Podcast/Broadcast)
+had drifted into near-copies of the same stage/controls/chat code —
+`broadcast_stage.dart`, `broadcast_bottom_controls.dart` and
+`broadcast_owner_controls.dart` largely duplicated what the community screen
+built inline — and the operator supplied rendered references asking for a
+substantial visual rebuild: floating control dock, light header, hero banner,
+a stage where the host reads as central rather than a small card adrift in a
+tall panel, compact audience strip, and a compact desktop sidebar with the
+notification bell moved to the top.
+
+**Decision.** One shared presentation layer under
+`lib/features/rooms/presentation/widgets/` — `RoomHeader`, `RoomHeroBanner`,
+`RoomStagePanel`/`StageGrid`/`SpeakerTile`, `AudienceStrip`,
+`RoomControlDock`, `RoomQuickActions`, `RoomEnergyWave` — consumed by both
+screens. The room type controls ONLY accent, icon, wording, hero content and
+optional actions (Community/violet, Family/emerald, Club/gold,
+Podcast/coral); layout is one system. The three `broadcast_*` duplicates are
+deleted. Community and Broadcast remain SEPARATE PRODUCTS — separate screens,
+separate routing, broadcast audiences still promoted to speak; only
+presentation is shared, which is the boundary CLAUDE.md's invariant draws.
+
+On width>=900 and height>=720 the main column stops being a ListView: hero
+and audience strip keep natural size and the stage takes the leftover height
+(`RoomStagePanel.fill`), growing a small cast's tiles. Narrow and short
+viewports keep the scroll — fill inside an unbounded-height parent would be
+both broken and pointless.
+
+**Reasoning.** A stage is the room's centre of gravity; a layout that lets it
+hug one small card under a third of a screen of dead space misstates what the
+product is. Sharing the system rather than the screens keeps the two-product
+invariant intact while ending the four-way drift.
+
+**Consequences.** Accent-consistency is now a per-identity property the
+harness photographs (all four identities, 1..n speakers, empty and crowded
+audiences, 390..1440 plus 320@200% and short viewports). Three defects were
+found only by OPENING the rendered PNGs and are worth remembering as classes:
+(1) `ButtonStyle.styleFrom(textStyle:)` REPLACES the style — omit the family
+and that control falls off the app typeface (it rendered as solid block
+glyphs under the test framework's fallback font); (2) a screenshot harness
+rendering under `ThemeData.dark()` instead of `AppTheme.darkTheme` produces
+PNGs that prove nothing about the shipped screen; (3) letter-fallback avatars
+carried the app default purple into green/gold/coral rooms — fallback colours
+are identity surface too. The sidebar's More popover is a true Overlay (no
+layout shift), the bell is the single notifications entry point, and Alerts
+(preferences) stays a separate concept.

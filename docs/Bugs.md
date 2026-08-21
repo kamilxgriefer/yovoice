@@ -902,6 +902,16 @@ permission flags).
 
 ## UI
 
+- **FIXED AND DEPLOYED 2026-08-21 (`84ab319`) — three rendering defects found
+  only by opening the redesign's PNGs.** (1) The hero's "View club" drew as
+  solid blocks: `styleFrom(textStyle:)` replaces a button's text style, so an
+  omitted `fontFamily` dropped the control off Inter. (2) The room screenshot
+  harness rendered under `ThemeData.dark()` instead of `AppTheme.darkTheme` —
+  its PNGs proved nothing about the shipped screens until corrected. (3)
+  Letter-fallback avatars stayed app-purple inside emerald/gold/coral rooms
+  (stage, header, audience strip, podcast hero credit) — fallback colour now
+  derives from the room identity.
+
 - **FIXED AND DEPLOYED 2026-08-20 — family and club rooms were permanently
   undeletable.** The room delete dialog opened for a lounge and its Delete
   button could only display the server refusal "A Club Lounge is deleted

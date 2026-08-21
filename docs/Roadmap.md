@@ -36,6 +36,17 @@ someone decide what to pick up next.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it)
 > for why that distinction is the whole point of this wave.
 
+- **The room experience and the desktop sidebar are visually rebuilt onto one
+  design system** (2026-08-21, `84ab319`, DEPLOYED — hosting, byte-verified;
+  ADR-098): four room identities (violet/emerald/gold/coral) over shared
+  RoomHeader/HeroBanner/Stage/AudienceStrip/ControlDock/QuickActions
+  components; the stage takes the column's leftover height on wide viewports;
+  floating centered dock; sidebar with the notification bell on top, a true
+  More overlay and internal scroll. Flutter suite 1096 → 1098; 52 room + 9
+  sidebar frames rendered and inspected. UNVERIFIED: no real browser/simulator
+  pass; the three independent reviews ran post-release (2026-08-21) rather
+  than pre-release, because the first attempt died on a model limit.
+
 - **Family and club rooms are deletable — from the same dialog as any room**
   (2026-08-20, DEPLOYED: indexes → `deleteClubSelf` → hosting, each verified;
   ADR-096): owner-only whole-club teardown with honest copy naming the club.
