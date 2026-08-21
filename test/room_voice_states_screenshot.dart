@@ -24,6 +24,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
@@ -124,7 +125,7 @@ class _StubVoice extends VoiceCallService {
 
 Widget _host(Widget child) => MaterialApp(
   debugShowCheckedModeBanner: false,
-  theme: ThemeData.dark(useMaterial3: true),
+  theme: AppTheme.darkTheme,
   home: RepaintBoundary(key: _capture, child: child),
 );
 
@@ -235,6 +236,59 @@ void main() {
     });
   }
 
+  /// A COMMUNITY club, not a family one — this is what selects the gold
+  /// identity. Without it the harness photographed three of the four room
+  /// types the operator asked for and left Club unproven.
+  Future<void> seedClub() async {
+    await db.collection('clubs').doc('grief').set({
+      'name': 'Club Grieferowski',
+      'description': 'Opis klubu grieferowskiego',
+      'ownerId': 'host',
+      'ownerName': 'Host',
+      'avatarUrl': null,
+      'bannerUrl': null,
+      'privacy': 'inviteOnly',
+      'type': 'community',
+      'defaultLanguage': 'English',
+      'memberCount': 34,
+      'onlineCount': 12,
+    });
+  }
+
+  /// Extra people on the stage and in the audience. The stage must compose
+  /// at one speaker AND at several, and the audience strip must show real
+  /// faces with a +N chip rather than a number alone.
+  Future<void> seedCast(
+    String roomId, {
+    int speakers = 0,
+    int listeners = 0,
+  }) async {
+    final participants = db
+        .collection('rooms')
+        .doc(roomId)
+        .collection('participants');
+    for (var i = 0; i < speakers; i++) {
+      await participants.doc('spk$i').set({
+        'userId': 'spk$i',
+        'displayName': i.isEven ? 'Zosia Wieczorek' : 'Bartek K.',
+        'role': 'speaker',
+        'isMuted': i.isOdd,
+        'isSpeaker': true,
+        'isHandRaised': false,
+      });
+    }
+    for (var i = 0; i < listeners; i++) {
+      await participants.doc('lst$i').set({
+        'userId': 'lst$i',
+        'displayName': 'Listener $i',
+        'role': 'listener',
+        'isMuted': true,
+        'isSpeaker': false,
+        'isHandRaised': false,
+      });
+    }
+  }
+
   ClubService clubs(String uid) => ClubService(
     firestore: db,
     auth: authFor(uid),
@@ -274,7 +328,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         debugShowCheckedModeBanner: false,
-        theme: ThemeData.dark(useMaterial3: true),
+        theme: AppTheme.darkTheme,
         builder: (context, child) => MediaQuery(
           data: MediaQuery.of(
             context,
@@ -458,6 +512,84 @@ void main() {
           outcome: RoomVoiceEntryOutcome.started,
           room: model,
           authority: RoomVoiceStartAuthority.clubMember,
+        ),
+      );
+    });
+
+    // THE FOURTH ROOM TYPE. Club is a community-type club lounge, which is
+    // what resolves the gold identity — the reference the operator supplied
+    // and the only one the harness never photographed.
+    testWidgets('club lounge live, busy stage and audience @$label', (
+      tester,
+    ) async {
+      final model = room(
+        id: 'club_lounge_grief',
+        isLive: true,
+        clubId: 'grief',
+        name: 'Club Grieferowski Lounge',
+      );
+      await seed(model, participantCount: 9);
+      await seedClub();
+      await seedCast('club_lounge_grief', speakers: 2, listeners: 8);
+      await db
+          .collection('rooms')
+          .doc('club_lounge_grief')
+          .collection('participants')
+          .doc('relative')
+          .set({
+            'userId': 'relative',
+            'displayName': 'Kamil',
+            'role': 'listener',
+            'isMuted': false,
+            'isSpeaker': true,
+            'isHandRaised': false,
+          });
+      await shootCommunity(
+        tester,
+        name: 'voice-club-live-busy-$label',
+        model: model,
+        viewport: size,
+        withClub: true,
+        micState: MicState.on,
+        connected: true,
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.live,
+          room: model,
+          authority: RoomVoiceStartAuthority.none,
+        ),
+      );
+    });
+
+    // MANY LISTENERS, ONE SPEAKER: the audience strip has to carry real
+    // faces and a +N chip without stealing the stage's height.
+    testWidgets('community live, many listeners @$label', (tester) async {
+      final model = room(id: 'room-crowd', isLive: true);
+      await seed(model, participantCount: 15);
+      await seedCast('room-crowd', listeners: 14);
+      await db
+          .collection('rooms')
+          .doc('room-crowd')
+          .collection('participants')
+          .doc('relative')
+          .set({
+            'userId': 'relative',
+            'displayName': 'Kamil',
+            'role': 'listener',
+            'isMuted': false,
+            'isSpeaker': true,
+            'isHandRaised': false,
+          });
+      await shootCommunity(
+        tester,
+        name: 'voice-community-crowd-$label',
+        model: model,
+        viewport: size,
+        micState: MicState.on,
+        connected: true,
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.live,
+          room: model,
+          authority: RoomVoiceStartAuthority.none,
         ),
       );
     });

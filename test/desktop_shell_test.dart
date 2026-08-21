@@ -62,13 +62,41 @@ void main() {
         'Home',
         'Moments',
         'Discover',
+        'Find creators',
         'Chats',
-        'Notifications',
         'Friends',
         'More',
       ]) {
         expect(find.text(label), findsOneWidget, reason: '$label missing');
       }
+      // Notifications is the header BELL now — one entry point at the
+      // top, and no duplicate row in the nav list below it.
+      expect(
+        find.text('Notifications'),
+        findsNothing,
+        reason: 'Notifications must not be a nav row any more',
+      );
+      expect(
+        find.byTooltip('Notifications'),
+        findsOneWidget,
+        reason: 'the header bell is the one notifications entry point',
+      );
+      expect(
+        tester.getCenter(find.byTooltip('Notifications')).dy,
+        lessThan(tester.getCenter(find.text('Home')).dy),
+        reason: 'the bell lives in the pinned header, above the nav list',
+      );
+      // The Create and More section labels frame their blocks.
+      expect(find.text('CREATE'), findsOneWidget);
+      expect(find.text('MORE'), findsOneWidget);
+      expect(
+        tester.getCenter(find.text('CREATE')).dy,
+        lessThan(tester.getCenter(find.text('Create Room')).dy),
+      );
+      expect(
+        tester.getCenter(find.text('MORE')).dy,
+        lessThan(tester.getCenter(find.text('More')).dy),
+      );
       // Moments sits DIRECTLY above Discover — the operator's ordering,
       // and the rail is the only place the two coexist in one list.
       expect(
@@ -211,22 +239,26 @@ void main() {
         'Discover',
         'Find creators',
         'Chats',
-        'Notifications',
         'Friends',
         'More',
       ]) {
         await tester.tap(find.text(label));
         await tester.pump();
       }
+      // The bell is the notifications entry point — it must report the
+      // SAME destination the old nav row did, so the shell's routing and
+      // content slot are untouched by the redesign.
+      await tester.tap(find.byTooltip('Notifications'));
+      await tester.pump();
 
       expect(tapped, [
         DesktopNavItem.moments,
         DesktopNavItem.discover,
         DesktopNavItem.findCreators,
         DesktopNavItem.chats,
-        DesktopNavItem.notifications,
         DesktopNavItem.friends,
         DesktopNavItem.more,
+        DesktopNavItem.notifications,
       ]);
     });
 
@@ -387,7 +419,6 @@ void main() {
         'Moments',
         'Discover',
         'Find creators',
-        'Notifications',
         'Chats',
         'Friends',
       ]) {
@@ -400,6 +431,14 @@ void main() {
           reason: '$label must not create a second shell',
         );
       }
+      // Notifications via the header bell — same contract.
+      await tester.tap(find.byTooltip('Notifications'));
+      await tester.pump();
+      expect(
+        find.byType(DesktopSidebar),
+        findsOneWidget,
+        reason: 'the bell must not create a second shell',
+      );
 
       expect(
         observer.pushes,

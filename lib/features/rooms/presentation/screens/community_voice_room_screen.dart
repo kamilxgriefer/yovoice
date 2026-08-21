@@ -16,12 +16,14 @@ import 'package:yovoice/features/rooms/data/services/room_mute_coordinator.dart'
 import 'package:yovoice/features/rooms/data/services/room_voice_entry_coordinator.dart';
 import 'package:yovoice/features/rooms/presentation/room_mic_affordance.dart';
 import 'package:yovoice/features/rooms/presentation/voice_room_identity.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_control_dock.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_header.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_hero_banner.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
-import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class CommunityVoiceRoomScreen extends StatefulWidget {
   const CommunityVoiceRoomScreen({
@@ -451,12 +453,12 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     );
   }
 
-  /// Rooms 2.0 stage: identity card + a calm speaker grid + the
-  /// audience as a strip. Live speaking state and audio levels come from
-  /// LiveKit ([_voice.participants], matched by uid identity); roles and
-  /// mute flags come from the Firestore roster. Listeners never render
-  /// on the stage — a room with 500 listeners paints the same number of
-  /// widgets as a room with 5.
+  /// Rooms stage: hero banner + a calm speaker grid + the audience as a
+  /// compact strip. Live speaking state and audio levels come from LiveKit
+  /// ([_voice.participants], matched by uid identity); roles and mute
+  /// flags come from the Firestore roster. Listeners never render on the
+  /// stage — a room with 500 listeners paints the same number of widgets
+  /// as a room with 5.
   Widget _buildStage(List<RoomParticipant> roomParticipants, Club? club) {
     final identity = voiceRoomIdentity(widget.room, club: club);
     final voiceByIdentity = {
@@ -478,57 +480,213 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     final listeners = roomParticipants
         .where((p) => !p.isSpeaker && !p.isHost)
         .toList(growable: false);
-    final anyoneSpeaking = stageSpeakers.any((s) => s.isSpeaking);
+
+    // WIDE LAYOUTS GIVE THE STAGE THE LEFTOVER HEIGHT.
+    //
+    // As a plain ListView the three panels stacked at the top and left a
+    // dead band beneath the audience strip — a 1440x900 room wasted roughly
+    // a third of its main column, and one host read as a small card adrift
+    // in a wide box. With a bounded height available, the hero and the
+    // audience strip keep their natural size and the stage takes the rest,
+    // so the speakers sit optically centred in a panel that looks intended.
+    //
+    // The scrolling list stays for narrow and SHORT viewports, where there
+    // is no leftover height to give away and the content must be reachable.
+    final media = MediaQuery.sizeOf(context);
+    final canFillStage = media.width >= 900 && media.height >= 720;
+
+    final hero = RoomHeroBanner(
+      identity: identity,
+      title: widget.room.name,
+      topic: widget.room.description.trim().isNotEmpty
+          ? widget.room.description
+          : club?.description.trim().isNotEmpty == true
+          ? club!.description
+          : widget.room.category,
+      imageUrl: widget.room.imageUrl ?? club?.bannerUrl,
+      action: club == null
+          ? null
+          : RoomHeroLinkAction(
+              label: club.isFamilyRoom ? 'Open family space' : 'View club',
+              onTap: _openClubOverview,
+              identity: identity,
+              compact: club.isFamilyRoom || media.width < 520,
+            ),
+    );
+    final audience = AudienceStrip(
+      count: listeners.length,
+      identity: identity,
+      onTap: () => _openParticipants(_latestParticipants),
+      previewPhotoUrls: [for (final l in listeners.take(6)) l.photoUrl],
+      previewNames: [for (final l in listeners.take(6)) l.displayName],
+    );
+    RoomStagePanel stage({required bool fill}) => RoomStagePanel(
+      speakers: stageSpeakers,
+      identity: identity,
+      fill: fill,
+      onOverflowTap: () => _openParticipants(_latestParticipants),
+      onSpeakerTap: (speaker) => showProfilePreview(
+        context,
+        userId: speaker.userId,
+        displayName: speaker.displayName,
+        photoUrl: speaker.photoUrl,
+      ),
+    );
+
+    if (canFillStage) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            hero,
+            const SizedBox(height: 14),
+            Expanded(child: stage(fill: true)),
+            const SizedBox(height: 12),
+            audience,
+          ],
+        ),
+      );
+    }
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
       children: [
-        RoomIdentityCard(
-          roomName: widget.room.name,
-          topic: widget.room.description.trim().isNotEmpty
-              ? widget.room.description
-              : club?.description.trim().isNotEmpty == true
-              ? club!.description
-              : widget.room.category,
-          identity: identity,
-          imageUrl: widget.room.imageUrl ?? club?.bannerUrl,
-          quiet: !anyoneSpeaking,
-          trailing: club == null
-              ? null
-              : IconButton(
-                  tooltip: club.isFamilyRoom
-                      ? 'Open family space'
-                      : 'Open club',
-                  onPressed: _openClubOverview,
-                  color: identity.accent,
-                  icon: const Icon(Icons.arrow_outward_rounded, size: 20),
-                ),
-        ),
+        hero,
         const SizedBox(height: 14),
-        RoomStagePanel(
-          speakers: stageSpeakers,
-          identity: identity,
-          onOverflowTap: () => _openParticipants(_latestParticipants),
-          onSpeakerTap: (speaker) => showProfilePreview(
-            context,
-            userId: speaker.userId,
-            displayName: speaker.displayName,
-            photoUrl: speaker.photoUrl,
-          ),
-        ),
+        stage(fill: false),
         const SizedBox(height: 12),
-        ListenersStrip(
-          count: listeners.length,
-          identity: identity,
-          onTap: () => _openParticipants(_latestParticipants),
-          previewPhotoUrls: [for (final l in listeners.take(4)) l.photoUrl],
-          previewNames: [for (final l in listeners.take(4)) l.displayName],
-        ),
+        audience,
       ],
     );
   }
 
   List<RoomParticipant> _latestParticipants = const [];
+
+  /// The header's identity line. A club room keeps its identity
+  /// ("FAMILY ROOM", "CLUB ROOM") and GAINS the dormant marker rather
+  /// than losing the identity to it; a dormant room must never read
+  /// "OFFLINE" — that describes a broken connection, not a room nobody
+  /// has opened the mics in yet.
+  String _subtitleText(Club? club) {
+    final subtitle = club?.isFamilyRoom == true
+        ? 'FAMILY ROOM'
+        : _isClubRoom
+        ? 'CLUB ROOM'
+        : null;
+    if (!_live) {
+      return subtitle == null ? 'NOT LIVE YET' : '$subtitle · NOT LIVE YET';
+    }
+    return subtitle ?? _statusText(_voice.status);
+  }
+
+  static String _statusText(VoiceCallStatus status) => switch (status) {
+    VoiceCallStatus.connected => 'COMMUNITY LIVE',
+    VoiceCallStatus.connecting => 'CONNECTING…',
+    VoiceCallStatus.reconnecting => 'RECONNECTING…',
+    VoiceCallStatus.failed => 'CONNECTION FAILED',
+    VoiceCallStatus.disconnected => 'OFFLINE',
+  };
+
+  /// The floating control dock. Every affordance is a visually distinct
+  /// button — the mic must never look "permanently pressed" or dead while
+  /// it actually works, and a room with no voice session must never show
+  /// a mute control at all. A blocked mic explains itself on tap instead
+  /// of failing silently.
+  Widget _buildDock(
+    SpaceIdentity identity,
+    RoomMicAffordance affordance, {
+    required bool desktop,
+  }) {
+    final busy =
+        _voice.muteChangeInProgress ||
+        _muteCoordinator.isBusy ||
+        _startingVoice;
+    final (icon, label, style) = switch (affordance) {
+      RoomMicAffordance.live => (
+        Icons.mic_rounded,
+        'Mute',
+        RoomDockStyle.accent,
+      ),
+      RoomMicAffordance.muted => (
+        Icons.mic_off_rounded,
+        'Unmute',
+        RoomDockStyle.warning,
+      ),
+      RoomMicAffordance.connecting => (
+        Icons.mic_rounded,
+        'Connecting…',
+        RoomDockStyle.neutral,
+      ),
+      RoomMicAffordance.listenOnly => (
+        Icons.headphones_rounded,
+        'Listening',
+        RoomDockStyle.neutral,
+      ),
+      RoomMicAffordance.startVoice => (
+        Icons.graphic_eq_rounded,
+        'Start voice',
+        RoomDockStyle.accent,
+      ),
+      RoomMicAffordance.waitingForHost => (
+        Icons.mic_off_rounded,
+        'Not live',
+        RoomDockStyle.neutral,
+      ),
+      RoomMicAffordance.unavailable => (
+        Icons.mic_off_rounded,
+        'Audio off',
+        RoomDockStyle.alert,
+      ),
+    };
+
+    return RoomControlDock(
+      children: [
+        RoomDockButton(
+          icon: icon,
+          label: label,
+          style: style,
+          accentColor: identity.primary,
+          enabled: affordance != RoomMicAffordance.connecting && !busy,
+          showSpinner:
+              affordance == RoomMicAffordance.connecting ||
+              (busy && affordance == RoomMicAffordance.startVoice),
+          onTap: () {
+            if (affordance.isMuteControl) {
+              unawaited(_toggleMute());
+            } else if (affordance.isStartControl) {
+              unawaited(_enterVoice());
+            } else {
+              _explainMicState(affordance);
+            }
+          },
+        ),
+        if (!desktop)
+          RoomDockButton(
+            icon: Icons.forum_rounded,
+            label: 'Chat',
+            style: RoomDockStyle.neutral,
+            accentColor: identity.primary,
+            onTap: _openChat,
+          ),
+        RoomDockButton(
+          icon: Icons.groups_rounded,
+          label: 'People',
+          style: RoomDockStyle.neutral,
+          accentColor: identity.primary,
+          onTap: () => _openParticipants(_latestParticipants),
+        ),
+        const RoomDockDivider(),
+        RoomDockButton(
+          icon: Icons.call_end_rounded,
+          label: 'Leave',
+          style: RoomDockStyle.danger,
+          accentColor: identity.primary,
+          onTap: () => unawaited(_leave()),
+        ),
+      ],
+    );
+  }
 
   void _openChat() {
     if (RoomWorkspace.usesDesktopLayout(context)) return;
@@ -598,18 +756,12 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
                     Center(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 1120),
-                        child: _TopBar(
-                          roomName: club?.name ?? widget.room.name,
-                          subtitle: club?.isFamilyRoom == true
-                              ? 'FAMILY ROOM'
-                              : _isClubRoom
-                              ? 'CLUB ROOM'
-                              : null,
+                        child: RoomHeader(
+                          identity: identity,
+                          title: club?.name ?? widget.room.name,
+                          subtitle: _subtitleText(club),
                           avatarUrl: club?.avatarUrl,
                           avatarName: club?.name,
-                          identity: identity,
-                          status: _voice.status,
-                          roomIsLive: _live,
                           speaking: speaking,
                           listeners: listeners,
                           onBack: () => Navigator.of(context).pop(),
@@ -636,21 +788,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
                         ),
                       ),
                     ),
-                    _BottomControls(
-                      identity: identity,
-                      affordance: affordance,
-                      busy:
-                          _voice.muteChangeInProgress ||
-                          _muteCoordinator.isBusy ||
-                          _startingVoice,
-                      onMute: _toggleMute,
-                      onStartVoice: _enterVoice,
-                      onLeave: _leave,
-                      onMicBlocked: () => _explainMicState(affordance),
-                      onChat: _openChat,
-                      onPeople: () => _openParticipants(_latestParticipants),
-                      showChat: !desktop,
-                    ),
+                    _buildDock(identity, affordance, desktop: desktop),
                   ],
                 ),
               ),
@@ -658,458 +796,6 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
           ),
         );
       },
-    );
-  }
-}
-
-class _TopBar extends StatelessWidget {
-  const _TopBar({
-    required this.roomName,
-    required this.status,
-    required this.roomIsLive,
-    required this.speaking,
-    required this.listeners,
-    required this.onBack,
-    required this.onSpeakingTap,
-    required this.onListenersTap,
-    required this.identity,
-    this.subtitle,
-    this.avatarUrl,
-    this.avatarName,
-  });
-
-  final String roomName;
-  final VoiceCallStatus status;
-
-  /// Whether the ROOM has a voice session, which is not the same question as
-  /// whether this device's audio transport is connected. A dormant room must
-  /// never read "OFFLINE" — that describes a broken connection, not a room
-  /// nobody has opened the mics in yet.
-  final bool roomIsLive;
-  final int speaking;
-  final int listeners;
-  final VoidCallback onBack;
-  final VoidCallback onSpeakingTap;
-  final VoidCallback onListenersTap;
-  final SpaceIdentity identity;
-
-  /// Club rooms label themselves ("Club Room") instead of the generic
-  /// connection status line.
-  final String? subtitle;
-  final String? avatarUrl;
-  final String? avatarName;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final narrow = constraints.maxWidth < 520;
-        final identityRow = Row(
-          children: [
-            IconButton(
-              onPressed: onBack,
-              icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 32),
-              color: Colors.white,
-            ),
-            if (avatarName != null) ...[
-              UserAvatar(
-                radius: 17,
-                photoUrl: avatarUrl,
-                displayName: avatarName,
-              ),
-              const SizedBox(width: 10),
-            ],
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    roomName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  Text(
-                    _subtitleText(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: identity.accent,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (!narrow) ...[
-              _CounterPill(
-                label: 'Speaking',
-                value: speaking,
-                identity: identity,
-                onTap: onSpeakingTap,
-              ),
-              const SizedBox(width: 8),
-              _CounterPill(
-                label: 'Listeners',
-                value: listeners,
-                identity: identity,
-                onTap: onListenersTap,
-              ),
-            ],
-          ],
-        );
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(8, 8, 12, 6),
-          child: Column(
-            children: [
-              identityRow,
-              if (narrow) ...[
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    const SizedBox(width: 48),
-                    Expanded(
-                      child: _CounterPill(
-                        label: 'Speaking',
-                        value: speaking,
-                        identity: identity,
-                        onTap: onSpeakingTap,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _CounterPill(
-                        label: 'Listeners',
-                        value: listeners,
-                        identity: identity,
-                        onTap: onListenersTap,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  /// A club room keeps its identity line ("FAMILY ROOM", "CLUB ROOM") and
-  /// gains the dormant marker rather than losing the identity to it.
-  String _subtitleText() {
-    if (!roomIsLive) {
-      return subtitle == null ? 'NOT LIVE YET' : '$subtitle · NOT LIVE YET';
-    }
-    return subtitle ?? _statusText(status);
-  }
-
-  static String _statusText(VoiceCallStatus status) => switch (status) {
-    VoiceCallStatus.connected => 'COMMUNITY LIVE',
-    VoiceCallStatus.connecting => 'CONNECTING…',
-    VoiceCallStatus.reconnecting => 'RECONNECTING…',
-    VoiceCallStatus.failed => 'CONNECTION FAILED',
-    VoiceCallStatus.disconnected => 'OFFLINE',
-  };
-}
-
-class _CounterPill extends StatelessWidget {
-  const _CounterPill({
-    required this.label,
-    required this.value,
-    required this.onTap,
-    required this.identity,
-  });
-
-  final String label;
-  final int value;
-  final VoidCallback onTap;
-  final SpaceIdentity identity;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        decoration: BoxDecoration(
-          color: const Color(0xFF171020).withValues(alpha: .86),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: identity.outline),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '$value',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            Text(
-              label,
-              style: const TextStyle(
-                color: Color(0xFFAFA3BA),
-                fontSize: 8,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _BottomControls extends StatelessWidget {
-  const _BottomControls({
-    required this.affordance,
-    required this.busy,
-    required this.onMute,
-    required this.onStartVoice,
-    required this.onLeave,
-    required this.onMicBlocked,
-    required this.onChat,
-    required this.onPeople,
-    required this.identity,
-    this.showChat = true,
-  });
-
-  final RoomMicAffordance affordance;
-  final bool busy;
-  final Future<void> Function() onMute;
-
-  /// Offered on exactly one condition: the room is dormant AND the deployed
-  /// rules would accept a voice start from this account.
-  final Future<void> Function() onStartVoice;
-  final Future<void> Function() onLeave;
-  final VoidCallback onChat;
-  final VoidCallback onPeople;
-  final SpaceIdentity identity;
-  final bool showChat;
-
-  /// Tapping the mic while it genuinely can't publish explains WHY
-  /// instead of silently doing nothing.
-  final VoidCallback onMicBlocked;
-
-  @override
-  Widget build(BuildContext context) {
-    // Every affordance is a visually distinct button — the mic must never
-    // look "permanently pressed" or dead while it actually works, and a
-    // room with no voice session must never show a mute control at all.
-    final (icon, label, style, tappable) = switch (affordance) {
-      RoomMicAffordance.live => (
-        Icons.mic_rounded,
-        'Mute',
-        _MicStyle.live,
-        true,
-      ),
-      RoomMicAffordance.muted => (
-        Icons.mic_off_rounded,
-        'Unmute',
-        _MicStyle.muted,
-        true,
-      ),
-      RoomMicAffordance.connecting => (
-        Icons.mic_rounded,
-        'Connecting…',
-        _MicStyle.waiting,
-        false,
-      ),
-      RoomMicAffordance.listenOnly => (
-        Icons.headphones_rounded,
-        'Listening',
-        _MicStyle.info,
-        true,
-      ),
-      RoomMicAffordance.startVoice => (
-        Icons.graphic_eq_rounded,
-        'Start voice',
-        _MicStyle.live,
-        true,
-      ),
-      RoomMicAffordance.waitingForHost => (
-        Icons.mic_off_rounded,
-        'Not live',
-        _MicStyle.waiting,
-        true,
-      ),
-      RoomMicAffordance.unavailable => (
-        Icons.mic_off_rounded,
-        'Audio off',
-        _MicStyle.error,
-        true,
-      ),
-    };
-
-    return Container(
-      padding: EdgeInsets.fromLTRB(
-        MediaQuery.sizeOf(context).width < 360 ? 10 : 22,
-        12,
-        MediaQuery.sizeOf(context).width < 360 ? 10 : 22,
-        20,
-      ),
-      decoration: BoxDecoration(
-        color: const Color(0xFF09050F).withValues(alpha: .96),
-        border: const Border(top: BorderSide(color: Color(0xFF2B1937))),
-      ),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
-          child: Row(
-            children: [
-              Expanded(
-                child: _RoundControl(
-                  icon: icon,
-                  label: label,
-                  enabled: tappable && !busy,
-                  micStyle: style,
-                  identity: identity,
-                  showSpinner:
-                      affordance == RoomMicAffordance.connecting ||
-                      (busy && affordance == RoomMicAffordance.startVoice),
-                  onTap: affordance.isMuteControl
-                      ? onMute
-                      : affordance.isStartControl
-                      ? onStartVoice
-                      : () async => onMicBlocked(),
-                ),
-              ),
-              if (showChat) ...[
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _RoundControl(
-                    icon: Icons.forum_rounded,
-                    label: 'Chat',
-                    enabled: true,
-                    micStyle: _MicStyle.info,
-                    identity: identity,
-                    onTap: () async => onChat(),
-                  ),
-                ),
-              ],
-              const SizedBox(width: 6),
-              Expanded(
-                child: _RoundControl(
-                  icon: Icons.groups_rounded,
-                  label: 'People',
-                  enabled: true,
-                  micStyle: _MicStyle.waiting,
-                  identity: identity,
-                  onTap: () async => onPeople(),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: _RoundControl(
-                  icon: Icons.call_end_rounded,
-                  label: 'Leave',
-                  enabled: true,
-                  micStyle: _MicStyle.danger,
-                  identity: identity,
-                  onTap: onLeave,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-enum _MicStyle { live, muted, waiting, info, error, danger }
-
-class _RoundControl extends StatelessWidget {
-  const _RoundControl({
-    required this.icon,
-    required this.label,
-    required this.enabled,
-    required this.onTap,
-    required this.micStyle,
-    required this.identity,
-    this.showSpinner = false,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool enabled;
-  final Future<void> Function() onTap;
-  final _MicStyle micStyle;
-  final SpaceIdentity identity;
-  final bool showSpinner;
-
-  @override
-  Widget build(BuildContext context) {
-    // Muted is a bright, obviously-tappable amber — never the old
-    // near-background dark that read as a disabled button.
-    final color = switch (micStyle) {
-      _MicStyle.live => identity.primary,
-      _MicStyle.muted => const Color(0xFFB3801A),
-      _MicStyle.waiting => const Color(0xFF3A2C49),
-      _MicStyle.info => const Color(0xFF2A5A8A),
-      _MicStyle.error => const Color(0xFF7A2436),
-      _MicStyle.danger => const Color(0xFFFF3C68),
-    };
-    return Opacity(
-      // Even "waiting" stays near-opaque: a briefly-connecting mic must
-      // not read as a permanently dead control.
-      opacity: enabled ? 1 : .8,
-      child: InkWell(
-        onTap: () => onTap(),
-        borderRadius: BorderRadius.circular(40),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 60,
-              height: 60,
-              decoration: BoxDecoration(
-                color: color,
-                shape: BoxShape.circle,
-                boxShadow: micStyle == _MicStyle.live
-                    ? const [
-                        BoxShadow(
-                          color: Color(0x88B62CFF),
-                          blurRadius: 24,
-                          spreadRadius: 2,
-                        ),
-                      ]
-                    : null,
-              ),
-              child: showSpinner
-                  ? const Padding(
-                      padding: EdgeInsets.all(18),
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.4,
-                        color: Colors.white70,
-                      ),
-                    )
-                  : Icon(icon, color: Colors.white, size: 28),
-            ),
-            const SizedBox(height: 7),
-            Text(
-              label,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

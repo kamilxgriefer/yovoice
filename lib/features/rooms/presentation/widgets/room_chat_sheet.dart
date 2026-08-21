@@ -47,6 +47,7 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
     widget.roomId,
   );
   bool _sending = false;
+  bool _emojiRowOpen = false;
 
   String get _uid =>
       widget.currentUserId ?? FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -80,6 +81,32 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  /// Inserts one of the room's quick emojis at the caret. Reuses the same
+  /// vocabulary as message reactions — one set, no invented catalog.
+  void _insertEmoji(String emoji) {
+    final value = _composer.value;
+    final selection = value.selection;
+    if (!selection.isValid) {
+      _composer.text = value.text + emoji;
+      _composer.selection = TextSelection.collapsed(
+        offset: _composer.text.length,
+      );
+      return;
+    }
+    final text = value.text.replaceRange(
+      selection.start,
+      selection.end,
+      emoji,
+    );
+    _composer.value = value.copyWith(
+      text: text,
+      selection: TextSelection.collapsed(
+        offset: selection.start + emoji.length,
+      ),
+      composing: TextRange.empty,
+    );
   }
 
   Future<void> _toggleReaction(RoomMessage message, String emoji) async {
@@ -165,9 +192,16 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
     return Container(
       key: const ValueKey('room-chat-surface'),
       decoration: BoxDecoration(
-        color: const Color(0xFF120C1B),
+        color: const Color(0xFF110B19),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: widget.accent.withValues(alpha: .32)),
+        border: Border.all(color: Colors.white.withValues(alpha: .07)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x66000000),
+            blurRadius: 24,
+            offset: Offset(0, 8),
+          ),
+        ],
       ),
       child: Column(
         children: [
@@ -175,17 +209,18 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
             padding: const EdgeInsets.fromLTRB(18, 16, 12, 8),
             child: Row(
               children: [
+                Icon(Icons.forum_rounded, color: widget.accent, size: 19),
+                const SizedBox(width: 9),
                 const Expanded(
                   child: Text(
                     'Room chat',
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: 20,
+                      fontSize: 17,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
                 ),
-                Icon(Icons.forum_rounded, color: widget.accent, size: 20),
                 if (widget.onClose != null) ...[
                   const SizedBox(width: 4),
                   IconButton(
@@ -250,58 +285,109 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
           SafeArea(
             top: false,
             child: Padding(
-              padding: EdgeInsets.only(left: 14, right: 14, top: 8, bottom: 10),
-              child: Row(
+              padding: EdgeInsets.only(left: 10, right: 12, top: 8, bottom: 10),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _composer,
-                      maxLength: 500,
-                      style: const TextStyle(color: Colors.white),
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (_) => _send(),
-                      decoration: InputDecoration(
-                        counterText: '',
-                        hintText: 'Say something…',
-                        hintStyle: const TextStyle(color: Color(0xFF766B80)),
-                        filled: true,
-                        fillColor: const Color(0xFF1C1428),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(22),
-                          borderSide: const BorderSide(
-                            color: Color(0xFF3A2C49),
+                  // The quick-emoji row: the same five reactions the room
+                  // already uses, inserted into the composer. Opt-in, so
+                  // the resting composer stays a single calm line.
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 150),
+                    curve: Curves.easeOut,
+                    child: !_emojiRowOpen
+                        ? const SizedBox(width: double.infinity)
+                        : Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Wrap(
+                              spacing: 4,
+                              alignment: WrapAlignment.center,
+                              children: [
+                                for (final emoji in roomReactionEmojis)
+                                  InkWell(
+                                    borderRadius: BorderRadius.circular(18),
+                                    onTap: () => _insertEmoji(emoji),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(7),
+                                      child: Text(
+                                        emoji,
+                                        style: const TextStyle(fontSize: 21),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
+                  ),
+                  Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Quick emoji',
+                        onPressed: () =>
+                            setState(() => _emojiRowOpen = !_emojiRowOpen),
+                        icon: Icon(
+                          _emojiRowOpen
+                              ? Icons.keyboard_alt_outlined
+                              : Icons.emoji_emotions_outlined,
+                          size: 22,
                         ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(22),
-                          borderSide: const BorderSide(
-                            color: Color(0xFF3A2C49),
+                        color: _emojiRowOpen
+                            ? widget.accent
+                            : const Color(0xFF9E92A8),
+                      ),
+                      Expanded(
+                        child: TextField(
+                          controller: _composer,
+                          maxLength: 500,
+                          style: const TextStyle(color: Colors.white),
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: (_) => _send(),
+                          decoration: InputDecoration(
+                            counterText: '',
+                            hintText: 'Say something…',
+                            hintStyle: const TextStyle(
+                              color: Color(0xFF766B80),
+                            ),
+                            filled: true,
+                            fillColor: const Color(0xFF1C1428),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(22),
+                              borderSide: const BorderSide(
+                                color: Color(0xFF3A2C49),
+                              ),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(22),
+                              borderSide: const BorderSide(
+                                color: Color(0xFF3A2C49),
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    onPressed: _sending ? null : _send,
-                    style: IconButton.styleFrom(
-                      backgroundColor: widget.accent,
-                      minimumSize: const Size(46, 46),
-                    ),
-                    icon: _sending
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.send_rounded, size: 20),
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        onPressed: _sending ? null : _send,
+                        style: IconButton.styleFrom(
+                          backgroundColor: widget.accent,
+                          minimumSize: const Size(46, 46),
+                        ),
+                        icon: _sending
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Icons.send_rounded, size: 20),
+                      ),
+                    ],
                   ),
                 ],
               ),

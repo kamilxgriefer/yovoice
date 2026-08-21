@@ -1,7 +1,7 @@
 // Developer-only harness for the Rooms 2.0 stage system.
 //
-// Renders the REAL stage widgets (RoomIdentityCard / StageGrid /
-// ListenersStrip) with mocked participant sets of 2, 10, 50 and 500 so
+// Renders the REAL stage widgets (RoomHeroBanner / StageGrid /
+// AudienceStrip) with mocked participant sets of 2, 10, 50 and 500 so
 // the scalability contract can be verified visually on Web without live
 // users: the stage must stay calm at every size.
 //
@@ -15,6 +15,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/space_identity.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_hero_banner.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
 
 void main() => runApp(const _PreviewApp());
@@ -115,13 +116,12 @@ class _PreviewAppState extends State<_PreviewApp> {
                     child: ListView(
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
                       children: [
-                        RoomIdentityCard(
-                          roomName: 'Midnight Tech Talk',
+                        RoomHeroBanner(
+                          title: 'Midnight Tech Talk',
                           topic:
                               'Late-night conversations about building things '
                               'that matter.',
                           identity: _identity,
-                          quiet: !_someoneSpeaking,
                         ),
                         const SizedBox(height: 14),
                         RoomStagePanel(
@@ -130,7 +130,7 @@ class _PreviewAppState extends State<_PreviewApp> {
                           onOverflowTap: () {},
                         ),
                         const SizedBox(height: 12),
-                        ListenersStrip(
+                        AudienceStrip(
                           count: max(0, listeners),
                           identity: _identity,
                           onTap: () {},

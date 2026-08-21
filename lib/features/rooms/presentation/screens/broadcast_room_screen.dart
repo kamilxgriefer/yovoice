@@ -15,19 +15,24 @@ import 'package:yovoice/features/rooms/data/services/room_mute_coordinator.dart'
 import 'package:yovoice/features/rooms/data/services/room_voice_entry_coordinator.dart';
 import 'package:yovoice/features/rooms/presentation/room_mic_affordance.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_background.dart';
-import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_bottom_controls.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
-import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_owner_controls.dart';
-import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_stage.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/owner_menu_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/participants_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/settings_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/share_room_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_control_dock.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_energy_wave.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_header.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_hero_banner.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_quick_actions.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
+import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
+import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class BroadcastRoomScreen extends StatefulWidget {
   const BroadcastRoomScreen({
@@ -737,6 +742,209 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
       );
   }
 
+  /// The podcast hero's identity footer: the REAL host (roster row first,
+  /// the room document as fallback) and, while the show is live, a subtle
+  /// waveform bound to the real room audio meter. No live-duration timer —
+  /// the schema stores no started-at timestamp, so none is invented.
+  Widget _heroFooter(RoomParticipant? host) {
+    final name = host?.displayName ?? widget.room.hostName;
+    final photoUrl = host?.photoUrl ?? widget.room.hostPhotoUrl;
+    final uid = host?.userId ?? widget.room.hostId;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            UserAvatar(
+              radius: 13,
+              photoUrl: photoUrl,
+              displayName: name,
+              // Takes the podcast coral like every other letter fallback in
+              // the room, so the hero credit does not read purple.
+              backgroundColor: Color.lerp(
+                SpaceIdentity.podcast.primary,
+                const Color(0xFF120C1B),
+                .45,
+              )!,
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'Hosted by $name',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: .85),
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(width: 7),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: SpaceIdentity.podcast.wash,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'HOST',
+                style: TextStyle(
+                  color: BroadcastRoomColors.accentSoft,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: .8,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            UserIdentityBadges(uid: uid, variant: IdentityBadgeVariant.icon),
+          ],
+        ),
+        if (_live) ...[
+          const SizedBox(height: 12),
+          RoomEnergyWave(
+            // The meter belongs to THIS room's session only; another
+            // room's audio must never animate this hero.
+            energy: _ownsAudioSession ? _voice.roomEnergy : 0,
+            color: BroadcastRoomColors.accentSoft,
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// The floating control dock. The primary slot is decided by the
+  /// affordance first: a show that has not started has neither a mic to
+  /// mute nor a stage to raise a hand for, so neither control is offered
+  /// into it.
+  Widget _buildDock({
+    required RoomMicAffordance affordance,
+    required RoomParticipant? me,
+    required List<RoomParticipant> participants,
+    required bool desktop,
+  }) {
+    const accent = BroadcastRoomColors.accent;
+    final micBusy =
+        _voice.muteChangeInProgress ||
+        _muteCoordinator.isBusy ||
+        _startingVoice;
+    final connected = _voice.isConnected;
+    final micMuted = _voice.isMuted;
+    final canSpeak = me != null && (me.isSpeaker || me.isHost);
+    final handRaised = me?.isHandRaised ?? false;
+    final canRaiseHand = me != null && !me.isSpeaker && !me.isHost;
+
+    final Widget primary;
+    if (affordance == RoomMicAffordance.startVoice) {
+      primary = RoomDockButton(
+        icon: Icons.graphic_eq_rounded,
+        label: 'Start voice',
+        style: RoomDockStyle.accent,
+        accentColor: accent,
+        showSpinner: micBusy,
+        onTap: _ending || micBusy ? null : () => unawaited(_enterVoice()),
+      );
+    } else if (affordance == RoomMicAffordance.waitingForHost) {
+      primary = RoomDockButton(
+        icon: Icons.mic_off_rounded,
+        label: 'Not live',
+        style: RoomDockStyle.neutral,
+        accentColor: accent,
+        onTap: _ending
+            ? null
+            : () => _showMessage(
+                _entry.message ?? _entry.authority.waitingExplanation,
+              ),
+      );
+    } else if (canSpeak) {
+      primary = RoomDockButton(
+        icon: switch (affordance) {
+          RoomMicAffordance.listenOnly => Icons.headphones_rounded,
+          RoomMicAffordance.connecting => Icons.mic_rounded,
+          _ => micMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
+        },
+        label: switch (affordance) {
+          RoomMicAffordance.connecting => 'Connecting…',
+          RoomMicAffordance.listenOnly => 'Listening',
+          RoomMicAffordance.unavailable => 'Audio off',
+          _ => micMuted ? 'Unmute' : 'Mute',
+        },
+        style: switch (affordance) {
+          RoomMicAffordance.live => RoomDockStyle.accent,
+          RoomMicAffordance.muted => RoomDockStyle.warning,
+          RoomMicAffordance.unavailable => RoomDockStyle.alert,
+          _ => RoomDockStyle.neutral,
+        },
+        accentColor: accent,
+        showSpinner: affordance == RoomMicAffordance.connecting,
+        // A blocked mic explains itself instead of sitting dead. Only
+        // `connecting` is genuinely untappable — there is nothing to say
+        // that the label is not already saying.
+        onTap: _ending
+            ? null
+            : affordance.isMuteControl
+            ? (micBusy || !connected ? null : () => unawaited(_toggleMic()))
+            : affordance == RoomMicAffordance.connecting
+            ? null
+            : () => _explainMicState(affordance),
+      );
+    } else {
+      primary = RoomDockButton(
+        icon: handRaised
+            ? Icons.pan_tool_alt_rounded
+            : Icons.back_hand_outlined,
+        label: handRaised ? 'Lower hand' : 'Raise hand',
+        style: handRaised ? RoomDockStyle.accent : RoomDockStyle.neutral,
+        accentColor: accent,
+        onTap: _ending || !canRaiseHand
+            ? null
+            : () => unawaited(_toggleHand(me)),
+      );
+    }
+
+    return RoomControlDock(
+      children: [
+        primary,
+        if (!desktop)
+          RoomDockButton(
+            icon: Icons.forum_rounded,
+            label: 'Chat',
+            style: RoomDockStyle.neutral,
+            accentColor: accent,
+            onTap: _ending
+                ? null
+                : () => setState(() => _showCompactChat = true),
+          ),
+        RoomDockButton(
+          icon: Icons.groups_rounded,
+          label: 'People',
+          style: RoomDockStyle.neutral,
+          accentColor: accent,
+          onTap: _ending ? null : () => _openParticipants(participants),
+        ),
+        RoomDockButton(
+          icon: Icons.ios_share_rounded,
+          label: 'Share',
+          style: RoomDockStyle.neutral,
+          accentColor: accent,
+          onTap: _ending ? null : _openShareSheet,
+        ),
+        const RoomDockDivider(),
+        RoomDockButton(
+          icon: _isHost ? Icons.stop_circle_rounded : Icons.logout_rounded,
+          label: _isHost ? 'End' : 'Leave',
+          style: RoomDockStyle.danger,
+          accentColor: accent,
+          onTap: _ending
+              ? null
+              : () => unawaited(_isHost ? _confirmEndBroadcast() : _leaveRoom()),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final desktop = RoomWorkspace.usesDesktopLayout(context);
@@ -794,9 +1002,6 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                       voiceByIdentity[participant.userId]?.audioLevel ?? 0,
                 ),
             ];
-            final anyoneSpeaking = stageSpeakers.any(
-              (speaker) => speaker.isSpeaking,
-            );
             // Liveness leads the audio session: a dormant broadcast has no
             // session, so no MicState value could describe the control.
             final affordance = roomMicAffordance(
@@ -813,54 +1018,117 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                     Center(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 1120),
-                        child: BroadcastTopBar(
+                        child: RoomHeader(
+                          identity: SpaceIdentity.podcast,
                           title: widget.room.name,
-                          count: participants.length,
-                          isHost: _isHost,
+                          subtitle: _live
+                              ? 'PODCAST ROOM'
+                              : 'PODCAST ROOM · NOT LIVE YET',
+                          speaking: stageSpeakers.length,
+                          listeners: listeners.length,
                           onBack: () => Navigator.of(context).pop(),
-                          onPeople: () => _openParticipants(participants),
-                          onMenu: () => _openOwnerMenu(participants),
-                          onShare: _openShareSheet,
+                          onSpeakingTap: () => _openParticipants(
+                            participants,
+                            initialFilter: 'speakers',
+                          ),
+                          onListenersTap: () => _openParticipants(
+                            participants,
+                            initialFilter: 'listeners',
+                          ),
+                          actions: [
+                            IconButton(
+                              tooltip: 'Share room',
+                              onPressed: _openShareSheet,
+                              color: Colors.white,
+                              icon: const Icon(
+                                Icons.ios_share_rounded,
+                                size: 21,
+                              ),
+                            ),
+                            if (_isHost)
+                              IconButton(
+                                tooltip: 'Manage podcast',
+                                onPressed: () => _openOwnerMenu(participants),
+                                color: Colors.white,
+                                icon: const Icon(Icons.more_vert_rounded),
+                              ),
+                          ],
                         ),
                       ),
                     ),
                     Expanded(
                       child: RoomWorkspace(
                         showCompactChat: _showCompactChat,
-                        stage: ListView(
-                          padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
+                        // The podcast column fills the same way the
+                        // community one does (see
+                        // community_voice_room_screen): with a bounded
+                        // height the stage takes what the hero, the quick
+                        // actions and the audience strip do not, instead of
+                        // stranding the cast above a dead band. A short or
+                        // narrow viewport keeps scrolling, because there is
+                        // no spare height to hand out.
+                        stage: _PodcastColumn(
+                          fillStage:
+                              MediaQuery.sizeOf(context).width >= 900 &&
+                              MediaQuery.sizeOf(context).height >= 720,
                           children: [
-                            RoomIdentityCard(
-                              roomName: widget.room.name,
+                            RoomHeroBanner(
+                              identity: SpaceIdentity.podcast,
+                              title: widget.room.name,
                               topic: widget.room.description.trim().isNotEmpty
                                   ? widget.room.description
                                   : widget.room.category,
-                              identity: SpaceIdentity.podcast,
                               imageUrl: widget.room.imageUrl,
-                              quiet: !anyoneSpeaking,
-                              // The live badge follows the room document,
+                              // The live pill follows the room document,
                               // not the possibly-stale document this screen
                               // was pushed with.
-                              trailing: BroadcastLiveBadge(isLive: _live),
+                              statusPill: RoomHeroStatusPill(
+                                label: _live ? 'LIVE PODCAST' : 'NOT LIVE YET',
+                                live: _live,
+                                identity: SpaceIdentity.podcast,
+                              ),
+                              footer: _heroFooter(host),
                             ),
                             if (_isHost) ...[
-                              const SizedBox(height: 16),
-                              BroadcastOwnerQuickActions(
-                                raisedHands: raised.length,
-                                onParticipants: () =>
-                                    _openParticipants(participants),
-                                onHands: () => _openParticipants(
-                                  participants,
-                                  initialFilter: 'hands',
-                                ),
-                                onManage: () => _openOwnerMenu(participants),
-                                onShare: _openShareSheet,
+                              const SizedBox(height: 14),
+                              // Share is deliberately absent here: the
+                              // host's dock and the header already carry
+                              // it, and a third copy is noise.
+                              RoomQuickActions(
+                                identity: SpaceIdentity.podcast,
+                                items: [
+                                  RoomQuickActionItem(
+                                    icon: Icons.groups_rounded,
+                                    label: 'Guests',
+                                    onTap: () =>
+                                        _openParticipants(participants),
+                                  ),
+                                  RoomQuickActionItem(
+                                    icon: Icons.back_hand_rounded,
+                                    label: raised.isNotEmpty
+                                        ? 'Hands ${raised.length}'
+                                        : 'Hands',
+                                    highlighted: raised.isNotEmpty,
+                                    onTap: () => _openParticipants(
+                                      participants,
+                                      initialFilter: 'hands',
+                                    ),
+                                  ),
+                                  RoomQuickActionItem(
+                                    icon: Icons.tune_rounded,
+                                    label: 'Manage',
+                                    onTap: () => _openOwnerMenu(participants),
+                                  ),
+                                ],
                               ),
                             ],
                             const SizedBox(height: 14),
                             RoomStagePanel(
                               speakers: stageSpeakers,
                               identity: SpaceIdentity.podcast,
+                              fill:
+                                  MediaQuery.sizeOf(context).width >= 900 &&
+                                  MediaQuery.sizeOf(context).height >= 720,
                               onOverflowTap: () => _openParticipants(
                                 participants,
                                 initialFilter: 'speakers',
@@ -873,7 +1141,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                               ),
                             ),
                             const SizedBox(height: 12),
-                            ListenersStrip(
+                            AudienceStrip(
                               count: listeners.length,
                               identity: SpaceIdentity.podcast,
                               onTap: () => _openParticipants(
@@ -881,11 +1149,11 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                                 initialFilter: 'listeners',
                               ),
                               previewPhotoUrls: [
-                                for (final listener in listeners.take(4))
+                                for (final listener in listeners.take(6))
                                   listener.photoUrl,
                               ],
                               previewNames: [
-                                for (final listener in listeners.take(4))
+                                for (final listener in listeners.take(6))
                                   listener.displayName,
                               ],
                             ),
@@ -903,32 +1171,11 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                         ),
                       ),
                     ),
-                    BroadcastBottomControls(
-                      isHost: _isHost,
-                      ending: _ending,
-                      connected: _voice.isConnected,
-                      micMuted: _voice.isMuted,
-                      micBusy:
-                          _voice.muteChangeInProgress ||
-                          _muteCoordinator.isBusy ||
-                          _startingVoice,
+                    _buildDock(
                       affordance: affordance,
-                      canSpeak: me != null && (me.isSpeaker || me.isHost),
-                      handRaised: me?.isHandRaised ?? false,
-                      canRaiseHand: me != null && !me.isSpeaker && !me.isHost,
-                      onMic: _toggleMic,
-                      onStartVoice: () => unawaited(_enterVoice()),
-                      onNotLive: () => _showMessage(
-                        _entry.message ?? _entry.authority.waitingExplanation,
-                      ),
-                      onMicBlocked: () => _explainMicState(affordance),
-                      onRaiseHand: () => _toggleHand(me),
-                      onShare: _openShareSheet,
-                      onParticipants: () => _openParticipants(participants),
-                      onEnd: _confirmEndBroadcast,
-                      onLeave: _leaveRoom,
-                      showChat: !desktop,
-                      onChat: () => setState(() => _showCompactChat = true),
+                      me: me,
+                      participants: participants,
+                      desktop: desktop,
                     ),
                   ],
                 ),
@@ -962,4 +1209,38 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
 
 extension _FirstOrNullExtension<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
+}
+
+/// The podcast main column.
+///
+/// Scrolls when the viewport is narrow or short, and otherwise lays the same
+/// children out as a Column whose STAGE — the one child built to fill — takes
+/// the leftover height. Keeping both shapes in one widget means the podcast
+/// and community screens stay describable as the same layout rule rather than
+/// drifting into two.
+class _PodcastColumn extends StatelessWidget {
+  const _PodcastColumn({required this.fillStage, required this.children});
+
+  final bool fillStage;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!fillStage) {
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
+        children: children,
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final child in children)
+            if (child is RoomStagePanel) Expanded(child: child) else child,
+        ],
+      ),
+    );
+  }
 }

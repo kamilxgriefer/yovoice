@@ -207,7 +207,11 @@ Future<MoreDestination?> showDesktopMoreMenu(
     ),
     color: const Color(0xFF171021),
     surfaceTintColor: Colors.transparent,
-    elevation: 14,
+    elevation: 10,
+    // The default fully-opaque shadow rendered as a hard black ring
+    // around the panel on the dark Home surface; a translucent one
+    // reads as depth instead.
+    shadowColor: Colors.black.withValues(alpha: .55),
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(18),
       side: const BorderSide(color: MoreSheet._border),

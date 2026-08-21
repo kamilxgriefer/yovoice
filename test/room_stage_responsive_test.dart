@@ -4,10 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
-import 'package:yovoice/features/rooms/presentation/room_mic_affordance.dart';
-import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_bottom_controls.dart';
-import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_stage.dart';
 import 'package:yovoice/features/rooms/presentation/voice_room_identity.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_control_dock.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_header.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_hero_banner.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
 
 VoiceRoom _room({String experience = 'community', String? clubId}) => VoiceRoom(
@@ -75,12 +75,11 @@ Widget _scene(SpaceIdentity identity) => MaterialApp(
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              RoomIdentityCard(
-                roomName: 'Late night voices that bring people together',
+              RoomHeroBanner(
+                identity: identity,
+                title: 'Late night voices that bring people together',
                 topic:
                     'A welcoming conversation with enough copy to wrap safely.',
-                identity: identity,
-                quiet: true,
               ),
               const SizedBox(height: 14),
               RoomStagePanel(
@@ -110,7 +109,7 @@ Widget _scene(SpaceIdentity identity) => MaterialApp(
                 onSpeakerTap: (_) {},
               ),
               const SizedBox(height: 12),
-              ListenersStrip(count: 842, identity: identity, onTap: () {}),
+              AudienceStrip(count: 842, identity: identity, onTap: () {}),
             ],
           ),
         ),
@@ -215,6 +214,44 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('a lone host renders as a hero tile, not a lost thumbnail', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1440, 900);
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        home: Scaffold(
+          body: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 720),
+              child: RoomStagePanel(
+                identity: SpaceIdentity.podcast,
+                speakers: const [
+                  StageSpeaker(
+                    userId: 'host',
+                    displayName: 'Host',
+                    photoUrl: null,
+                    isHost: true,
+                  ),
+                ],
+                onOverflowTap: () {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final tile = tester.getSize(find.byType(SpeakerTile));
+    expect(tile.width, greaterThanOrEqualTo(158));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('desktop workspace gives stage and chat purposeful widths', (
     tester,
   ) async {
@@ -246,7 +283,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  for (final width in const [320.0, 390.0, 768.0]) {
+  // A tablet is never a squeezed desktop: below the 1100 breakpoint the
+  // workspace shows exactly one full-width pane.
+  for (final width in const [320.0, 390.0, 768.0, 1024.0]) {
     testWidgets(
       'compact workspace shows one full-width pane at ${width.toInt()}',
       (tester) async {
@@ -317,36 +356,70 @@ void main() {
               backgroundColor: const Color(0xFF05030A),
               body: Column(
                 children: [
-                  BroadcastTopBar(
+                  RoomHeader(
+                    identity: SpaceIdentity.podcast,
                     title: 'A podcast with a long room title',
-                    count: 842,
-                    isHost: true,
+                    subtitle: 'PODCAST ROOM',
+                    speaking: 3,
+                    listeners: 842,
                     onBack: () {},
-                    onPeople: () {},
-                    onMenu: () {},
-                    onShare: () {},
+                    onSpeakingTap: () {},
+                    onListenersTap: () {},
+                    actions: [
+                      IconButton(
+                        tooltip: 'Share room',
+                        onPressed: () {},
+                        color: Colors.white,
+                        icon: const Icon(Icons.ios_share_rounded, size: 21),
+                      ),
+                      IconButton(
+                        tooltip: 'Manage podcast',
+                        onPressed: () {},
+                        color: Colors.white,
+                        icon: const Icon(Icons.more_vert_rounded),
+                      ),
+                    ],
                   ),
                   const Spacer(),
-                  BroadcastBottomControls(
-                    isHost: true,
-                    ending: false,
-                    connected: true,
-                    micMuted: false,
-                    micBusy: false,
-                    affordance: RoomMicAffordance.live,
-                    canSpeak: true,
-                    handRaised: false,
-                    canRaiseHand: false,
-                    onMic: () {},
-                    onStartVoice: () {},
-                    onNotLive: () {},
-                    onMicBlocked: () {},
-                    onRaiseHand: () {},
-                    onShare: () {},
-                    onParticipants: () {},
-                    onEnd: () {},
-                    onLeave: () {},
-                    onChat: () {},
+                  RoomControlDock(
+                    children: [
+                      RoomDockButton(
+                        icon: Icons.mic_rounded,
+                        label: 'Mute',
+                        style: RoomDockStyle.accent,
+                        accentColor: SpaceIdentity.podcast.primary,
+                        onTap: () {},
+                      ),
+                      RoomDockButton(
+                        icon: Icons.forum_rounded,
+                        label: 'Chat',
+                        style: RoomDockStyle.neutral,
+                        accentColor: SpaceIdentity.podcast.primary,
+                        onTap: () {},
+                      ),
+                      RoomDockButton(
+                        icon: Icons.groups_rounded,
+                        label: 'People',
+                        style: RoomDockStyle.neutral,
+                        accentColor: SpaceIdentity.podcast.primary,
+                        onTap: () {},
+                      ),
+                      RoomDockButton(
+                        icon: Icons.ios_share_rounded,
+                        label: 'Share',
+                        style: RoomDockStyle.neutral,
+                        accentColor: SpaceIdentity.podcast.primary,
+                        onTap: () {},
+                      ),
+                      const RoomDockDivider(),
+                      RoomDockButton(
+                        icon: Icons.stop_circle_rounded,
+                        label: 'End',
+                        style: RoomDockStyle.danger,
+                        accentColor: SpaceIdentity.podcast.primary,
+                        onTap: () {},
+                      ),
+                    ],
                   ),
                 ],
               ),

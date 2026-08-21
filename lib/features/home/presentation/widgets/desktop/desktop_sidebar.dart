@@ -14,8 +14,28 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 /// navigation state of its own and creates no routes; every tap calls
 /// back into `MainShell`, which remains the single source of truth.
 ///
-/// Deliberately NOT a nav item: Profile. On desktop the signed-in user is
-/// represented by the profile card pinned at the bottom of this rail
+/// Layout contract (the operator's reference design):
+///
+///  * TOP ROW, pinned: wordmark at the left, the notification BELL at
+///    the right. The bell is the ONE entry point to the notifications
+///    feed on desktop — there is deliberately no Notifications row in
+///    the nav list below. It reports [DesktopNavItem.notifications]
+///    through [onSelect] exactly like the old row did, so the shell's
+///    routing, content slot and unread stream are untouched.
+///  * NAV: compact rows — Home, Moments, Discover, Find creators,
+///    Chats, Friends. The selected row gets a subtle violet surface, a
+///    thin left accent bar and brighter icon/text.
+///  * CREATE: a section label, the gradient "Create Room" primary CTA,
+///    and the quieter outlined "Create Voice Moment" under it.
+///  * MORE: a section label plus a single More row, which the shell
+///    anchors its floating popover to (via [moreItemKey]).
+///  * The compact local-time block and the profile card stay pinned at
+///    the bottom; the middle section scrolls INTERNALLY when the window
+///    is short, so the rail itself never overflows and never hands the
+///    page a scrollbar.
+///
+/// Deliberately NOT a nav item: Profile. On desktop the signed-in user
+/// is represented by the profile card pinned at the bottom of this rail
 /// (tap = profile, gear = profile & account settings).
 enum DesktopNavItem {
   home,
@@ -44,7 +64,9 @@ class DesktopSidebar extends StatelessWidget {
     super.key,
   });
 
-  /// Null while a More destination is open — no primary item highlights.
+  /// Null while a pushed More destination is open — no primary item
+  /// highlights. [DesktopNavItem.notifications] lights the BELL, since
+  /// the feed no longer owns a nav row.
   final DesktopNavItem? active;
   final int unreadConversationCount;
   final int unreadNotificationCount;
@@ -70,13 +92,18 @@ class DesktopSidebar extends StatelessWidget {
 
   static const double width = 264;
 
+  /// The rail's bright violet accent tint (established in this file long
+  /// before this redesign) — readable on the dark surface where the
+  /// saturated brand primary would sink.
+  static const Color _accentTint = Color(0xFFD3A5FF);
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
     return Container(
       width: width,
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 18),
+      padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
       decoration: BoxDecoration(
         color: colors.surface,
         border: Border(right: BorderSide(color: colors.outlineVariant)),
@@ -84,12 +111,24 @@ class DesktopSidebar extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _Wordmark(),
-          const SizedBox(height: 26),
-          // The rail must survive short desktop windows (a 1440x700
-          // laptop): nine destinations plus two create actions overflow
-          // a fixed column, so the navigation block scrolls while the
-          // profile card stays pinned to the bottom.
+          // Pinned header: identity left, the bell right. The bell is
+          // the single notifications entry point at desktop width.
+          Row(
+            children: [
+              const Expanded(child: _Wordmark()),
+              _BellButton(
+                count: unreadNotificationCount,
+                active: active == DesktopNavItem.notifications,
+                label: copy.notifications,
+                onTap: () => onSelect(DesktopNavItem.notifications),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          // The rail must survive short desktop windows (a 1280x620
+          // laptop): six destinations, two create actions and the More
+          // row overflow a fixed column, so this block scrolls while the
+          // header, clock and profile card stay pinned.
           Expanded(
             child: SingleChildScrollView(
               child: Column(
@@ -135,32 +174,28 @@ class DesktopSidebar extends StatelessWidget {
                     onTap: onSelect,
                   ),
                   _NavTile(
-                    item: DesktopNavItem.notifications,
-                    icon: Icons.notifications_none_rounded,
-                    label: copy.notifications,
-                    badge: unreadNotificationCount,
-                    active: active == DesktopNavItem.notifications,
-                    onTap: onSelect,
-                  ),
-                  _NavTile(
                     item: DesktopNavItem.friends,
                     icon: Icons.people_alt_outlined,
                     label: copy.friends,
                     active: active == DesktopNavItem.friends,
                     onTap: onSelect,
                   ),
+                  const SizedBox(height: 16),
+                  _SectionLabel(copy.text('CREATE', 'TWORZENIE')),
+                  _CreateRoomButton(onTap: onCreateRoom),
+                  const SizedBox(height: 8),
+                  _CreateMomentButton(onTap: onCreateMoment),
+                  const SizedBox(height: 16),
+                  _SectionLabel(copy.text('MORE', 'WIĘCEJ')),
                   _NavTile(
                     key: moreItemKey,
                     item: DesktopNavItem.more,
                     icon: Icons.more_horiz_rounded,
                     label: copy.more,
                     active: active == DesktopNavItem.more,
+                    trailingChevron: true,
                     onTap: onSelect,
                   ),
-                  const SizedBox(height: 18),
-                  _CreateRoomButton(onTap: onCreateRoom),
-                  const SizedBox(height: 10),
-                  _CreateMomentButton(onTap: onCreateMoment),
                 ],
               ),
             ),
@@ -188,29 +223,170 @@ class _Wordmark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(left: 6),
+      padding: const EdgeInsets.only(left: 4),
       child: Row(
         children: [
           Image.asset(
             'assets/images/logo.png',
-            width: 34,
-            height: 34,
+            width: 30,
+            height: 30,
             errorBuilder: (_, __, ___) => const Icon(
               Icons.graphic_eq_rounded,
-              color: Color(0xFFD3A5FF),
-              size: 28,
+              color: DesktopSidebar._accentTint,
+              size: 26,
             ),
           ),
-          const SizedBox(width: 10),
-          Text(
-            'YO Voice',
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
+          const SizedBox(width: 9),
+          Flexible(
+            child: Text(
+              'YO Voice',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface,
+                fontSize: 16.5,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// The compact circular notification bell in the pinned header — the ONE
+/// desktop entry point to the notifications feed, carrying the same live
+/// unread count the old nav row displayed.
+class _BellButton extends StatefulWidget {
+  const _BellButton({
+    required this.count,
+    required this.active,
+    required this.label,
+    required this.onTap,
+  });
+
+  final int count;
+  final bool active;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  State<_BellButton> createState() => _BellButtonState();
+}
+
+class _BellButtonState extends State<_BellButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final active = widget.active;
+    return Semantics(
+      button: true,
+      selected: active,
+      label: widget.count > 0
+          ? '${widget.label}, ${widget.count} unread'
+          : widget.label,
+      child: Tooltip(
+        message: widget.label,
+        child: Material(
+          color: Colors.transparent,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onHover: (value) => setState(() => _hovered = value),
+            onTap: widget.onTap,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 140),
+                  width: 38,
+                  height: 38,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: active
+                        ? AppColors.primary.withValues(alpha: .22)
+                        : _hovered
+                        ? colors.onSurface.withValues(alpha: .07)
+                        : colors.onSurface.withValues(alpha: .04),
+                    border: Border.all(
+                      color: active
+                          ? AppColors.primary.withValues(alpha: .55)
+                          : colors.outlineVariant,
+                    ),
+                  ),
+                  child: Icon(
+                    active
+                        ? Icons.notifications_rounded
+                        : Icons.notifications_none_rounded,
+                    size: 19,
+                    color: active
+                        ? DesktopSidebar._accentTint
+                        : colors.onSurfaceVariant,
+                  ),
+                ),
+                if (widget.count > 0)
+                  Positioned(
+                    top: -3,
+                    right: -3,
+                    child: Container(
+                      constraints: const BoxConstraints(minWidth: 18),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 2,
+                      ),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: colors.surface, width: 1.5),
+                      ),
+                      child: Text(
+                        widget.count > 99 ? '99+' : '${widget.count}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w800,
+                          height: 1,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Small uppercase section heading ("CREATE", "MORE"). Distinct strings
+/// from the nav row labels on purpose, so tests and screen readers never
+/// confuse a heading with the tappable row under it.
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: colors.onSurfaceVariant.withValues(alpha: .75),
+          fontSize: 10.5,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.2,
+        ),
       ),
     );
   }
@@ -224,6 +400,7 @@ class _NavTile extends StatefulWidget {
     required this.active,
     required this.onTap,
     this.badge = 0,
+    this.trailingChevron = false,
     super.key,
   });
 
@@ -232,6 +409,11 @@ class _NavTile extends StatefulWidget {
   final String label;
   final bool active;
   final int badge;
+
+  /// The More row hints that it opens a popover rather than swapping the
+  /// content slot.
+  final bool trailingChevron;
+
   final ValueChanged<DesktopNavItem> onTap;
 
   @override
@@ -246,52 +428,69 @@ class _NavTileState extends State<_NavTile> {
     final active = widget.active;
     final colors = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.only(bottom: 3),
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(10),
         child: InkWell(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(10),
           onHover: (value) => setState(() => _hovered = value),
           onTap: () => widget.onTap(widget.item),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 140),
-            height: 46,
-            padding: const EdgeInsets.symmetric(horizontal: 14),
+            height: 40,
+            padding: const EdgeInsets.symmetric(horizontal: 9),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(10),
               color: active
-                  ? AppColors.primary.withValues(alpha: .20)
+                  ? AppColors.primary.withValues(alpha: .16)
                   : _hovered
                   ? colors.onSurface.withValues(alpha: .05)
                   : Colors.transparent,
-              border: Border.all(
-                color: active
-                    ? AppColors.primary.withValues(alpha: .45)
-                    : Colors.transparent,
-              ),
             ),
             child: Row(
               children: [
+                // Thin left accent — always laid out so icons stay
+                // aligned; painted only on the selected row.
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 140),
+                  width: 3,
+                  height: 16,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(2),
+                    color: active
+                        ? DesktopSidebar._accentTint
+                        : Colors.transparent,
+                  ),
+                ),
+                const SizedBox(width: 9),
                 Icon(
                   widget.icon,
-                  size: 20,
+                  size: 19,
                   color: active ? colors.onSurface : colors.onSurfaceVariant,
                 ),
-                const SizedBox(width: 13),
+                const SizedBox(width: 11),
                 Expanded(
                   child: Text(
                     widget.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: active
                           ? colors.onSurface
                           : colors.onSurfaceVariant,
-                      fontSize: 14.5,
+                      fontSize: 13.5,
                       fontWeight: active ? FontWeight.w800 : FontWeight.w600,
                     ),
                   ),
                 ),
                 if (widget.badge > 0) _Badge(count: widget.badge),
+                if (widget.trailingChevron)
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 17,
+                    color: colors.onSurfaceVariant.withValues(alpha: .8),
+                  ),
               ],
             ),
           ),
@@ -309,8 +508,12 @@ class _Badge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      constraints: const BoxConstraints(minWidth: 22),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      // Explicit height: inside the fixed-height nav row an aligned
+      // Container would otherwise stretch to the row's full height and
+      // render as a tall pill instead of a compact badge.
+      height: 18,
+      constraints: const BoxConstraints(minWidth: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 6),
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: AppColors.primary,
@@ -320,14 +523,17 @@ class _Badge extends StatelessWidget {
         count > 99 ? '99+' : '$count',
         style: const TextStyle(
           color: Colors.white,
-          fontSize: 11,
+          fontSize: 10.5,
           fontWeight: FontWeight.w800,
+          height: 1,
         ),
       ),
     );
   }
 }
 
+/// THE primary CTA of the rail: full-width, YO purple gradient, visibly
+/// heavier than everything else in the Create section.
 class _CreateRoomButton extends StatelessWidget {
   const _CreateRoomButton({required this.onTap});
 
@@ -337,39 +543,39 @@ class _CreateRoomButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       width: double.infinity,
-      height: 52,
+      height: 46,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
           gradient: const LinearGradient(
             colors: [AppColors.primary, AppColors.secondary],
           ),
           boxShadow: [
             BoxShadow(
-              color: AppColors.primary.withValues(alpha: .38),
-              blurRadius: 22,
-              offset: const Offset(0, 6),
+              color: AppColors.primary.withValues(alpha: .32),
+              blurRadius: 18,
+              offset: const Offset(0, 5),
             ),
           ],
         ),
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(14),
             onTap: onTap,
             child: Center(
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.add_rounded, color: Colors.white, size: 20),
-                  SizedBox(width: 8),
+                  Icon(Icons.add_rounded, color: Colors.white, size: 19),
+                  SizedBox(width: 7),
                   Text(
                     AppLocalizations.of(
                       context,
                     ).text('Create Room', 'Utwórz pokój'),
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 15,
+                      fontSize: 14,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
@@ -406,17 +612,17 @@ class _CreateMomentButtonState extends State<_CreateMomentButton> {
     final colors = Theme.of(context).colorScheme;
     return Material(
       color: Colors.transparent,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(12),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         onHover: (value) => setState(() => _hovered = value),
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 140),
           width: double.infinity,
-          height: 44,
+          height: 40,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(12),
             color: _hovered
                 ? AppColors.primary.withValues(alpha: .16)
                 : colors.onSurface.withValues(alpha: .035),
@@ -433,10 +639,10 @@ class _CreateMomentButtonState extends State<_CreateMomentButton> {
               children: [
                 Icon(
                   Icons.mic_none_rounded,
-                  color: Color(0xFFD3A5FF),
-                  size: 18,
+                  color: DesktopSidebar._accentTint,
+                  size: 17,
                 ),
-                SizedBox(width: 8),
+                SizedBox(width: 7),
                 // Flexible so the label ellipsises rather than overflowing
                 // if the rail ever gets narrower (or the font wider) than
                 // the 264px this is designed against.
@@ -448,8 +654,8 @@ class _CreateMomentButtonState extends State<_CreateMomentButton> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Color(0xFFD3A5FF),
-                      fontSize: 13.5,
+                      color: DesktopSidebar._accentTint,
+                      fontSize: 13,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -493,9 +699,9 @@ class _ProfileCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 11, 8, 11),
+      padding: const EdgeInsets.fromLTRB(10, 10, 6, 10),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         color: colors.onSurface.withValues(alpha: .035),
         border: Border.all(color: colors.outlineVariant),
       ),
@@ -512,13 +718,13 @@ class _ProfileCard extends StatelessWidget {
                   child: Row(
                     children: [
                       UserAvatar(
-                        radius: 19,
+                        radius: 18,
                         photoUrl: profile?.photoUrl,
                         displayName: profile?.displayName,
                         premium: profile?.premiumIdentity ?? false,
                         fallbackIcon: Icons.person_rounded,
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 9),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -529,7 +735,7 @@ class _ProfileCard extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 color: colors.onSurface,
-                                fontSize: 13.5,
+                                fontSize: 13,
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
@@ -537,10 +743,21 @@ class _ProfileCard extends StatelessWidget {
                             // badges everyone else sees for this account,
                             // resolved from the public projection. An
                             // ordinary account shows USER, on purpose.
+                            // FittedBox keeps a long badge combination
+                            // (OWNER + SUPER ADMIN + VIP) on ONE scaled
+                            // line, so the pinned card can never grow
+                            // past its lane or break the rail layout.
                             if (profile != null)
                               Padding(
                                 padding: const EdgeInsets.only(top: 2),
-                                child: UserIdentityBadges(uid: profile.uid),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerLeft,
+                                    child: UserIdentityBadges(uid: profile.uid),
+                                  ),
+                                ),
                               ),
                             if (profile != null &&
                                 profile.username.trim().isNotEmpty)
@@ -550,7 +767,7 @@ class _ProfileCard extends StatelessWidget {
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   color: colors.onSurfaceVariant,
-                                  fontSize: 11.5,
+                                  fontSize: 11,
                                 ),
                               ),
                           ],
@@ -565,8 +782,8 @@ class _ProfileCard extends StatelessWidget {
                 tooltip: 'Profile settings',
                 visualDensity: VisualDensity.compact,
                 icon: Container(
-                  width: 34,
-                  height: 34,
+                  width: 32,
+                  height: 32,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
@@ -577,8 +794,8 @@ class _ProfileCard extends StatelessWidget {
                   ),
                   child: const Icon(
                     Icons.settings_rounded,
-                    size: 18,
-                    color: Color(0xFFD3A5FF),
+                    size: 17,
+                    color: DesktopSidebar._accentTint,
                   ),
                 ),
               ),

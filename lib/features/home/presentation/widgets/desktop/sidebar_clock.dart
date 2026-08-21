@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -136,8 +137,11 @@ class SidebarClockState extends State<SidebarClock>
       // itself every minute while someone is reading something else.
       label: 'Local time $time, $zone',
       excludeSemantics: true,
+      // Compact block: one big time line, one small zone line — nothing
+      // else, so the pinned bottom of the rail stays short even on a
+      // height-constrained window.
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -146,10 +150,11 @@ class SidebarClockState extends State<SidebarClock>
               time,
               style: const TextStyle(
                 color: Color(0xFFE8E2F2),
-                fontSize: 19,
-                height: 1.05,
-                fontWeight: FontWeight.w700,
+                fontSize: 21,
+                height: 1.0,
+                fontWeight: FontWeight.w800,
                 letterSpacing: .5,
+                fontFeatures: [ui.FontFeature.tabularFigures()],
               ),
             ),
             const SizedBox(height: 2),
@@ -159,9 +164,9 @@ class SidebarClockState extends State<SidebarClock>
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: Color(0xFF6E6683),
-                fontSize: 10.5,
+                fontSize: 10,
                 fontWeight: FontWeight.w600,
-                letterSpacing: .3,
+                letterSpacing: .4,
               ),
             ),
           ],

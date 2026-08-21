@@ -5,14 +5,15 @@ import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
-/// The Rooms 2.0 stage system — pure, data-driven widgets shared by the
-/// room screens and the dev preview harness.
+/// The shared room stage system — pure, data-driven widgets used by every
+/// room family (Community, Family, Club, Podcast) and the screenshot
+/// harness.
 ///
 /// Design contract (the scalability rule): the STAGE renders only people
-/// with a reason to be looked at — host, moderators, speakers — in a
-/// calm grid that never grows past [StageGrid.maxTiles]. The audience is
-/// a number and a drawer, never floating avatars. A room with 500
-/// listeners renders exactly as many stage tiles as a room with 5.
+/// with a reason to be looked at — host, moderators, speakers — in a calm
+/// grid that never grows past [StageGrid.maxTiles]. The audience is a
+/// compact strip and a drawer, never floating avatars. A room with 500
+/// listeners paints exactly as many stage tiles as a room with 5.
 class StageSpeaker {
   const StageSpeaker({
     required this.userId,
@@ -33,153 +34,23 @@ class StageSpeaker {
   final bool isMuted;
   final bool isSpeaking;
 
-  /// 0..1, already smoothed by the caller. Drives the subtle ring only —
+  /// 0..1, already smoothed by the caller. Drives the ring and glow only —
   /// no constant motion when nobody talks.
   final double audioLevel;
 }
 
-/// Room identity, painted into the stage instead of a black void: the
-/// cover (or a premium gradient fallback) and the topic. Speaking state
-/// belongs to the participant tiles, not to decorative copy in the room
-/// identity surface.
-class RoomIdentityCard extends StatelessWidget {
-  const RoomIdentityCard({
-    required this.roomName,
-    required this.topic,
-    required this.identity,
-    this.imageUrl,
-    this.quiet = false,
-    this.trailing,
-    super.key,
-  });
-
-  final String roomName;
-  final String topic;
-  final SpaceIdentity identity;
-  final String? imageUrl;
-  final Widget? trailing;
-
-  /// True when nobody is speaking. This only lets a longer topic breathe;
-  /// it never adds a synthetic activity prompt.
-  final bool quiet;
-
-  @override
-  Widget build(BuildContext context) {
-    final accent = identity.primary;
-    return ClipRRect(
-      key: ValueKey('room-identity-${identity.kind.name}'),
-      borderRadius: BorderRadius.circular(24),
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 96),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [accent.withValues(alpha: .32), identity.surface],
-          ),
-          border: Border.all(color: accent.withValues(alpha: .35)),
-          borderRadius: BorderRadius.circular(24),
-        ),
-        child: Stack(
-          fit: StackFit.passthrough,
-          children: [
-            if (imageUrl != null && imageUrl!.trim().isNotEmpty)
-              Positioned.fill(
-                child: Opacity(
-                  opacity: .34,
-                  child: Image.network(
-                    imageUrl!,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                  ),
-                ),
-              ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 34,
-                        height: 34,
-                        decoration: BoxDecoration(
-                          color: identity.wash,
-                          borderRadius: BorderRadius.circular(11),
-                          border: Border.all(color: identity.outline),
-                        ),
-                        child: Icon(
-                          identity.icon,
-                          color: identity.accent,
-                          size: 18,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          identity.label.toUpperCase(),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: .88),
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 1.15,
-                          ),
-                        ),
-                      ),
-                      trailing ?? const SizedBox.shrink(),
-                    ],
-                  ),
-                  const SizedBox(height: 13),
-                  Text(
-                    roomName,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -.4,
-                    ),
-                  ),
-                  if (topic.trim().isNotEmpty) ...[
-                    const SizedBox(height: 5),
-                    Text(
-                      topic,
-                      maxLines: quiet ? 3 : 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: .78),
-                        fontSize: 13.5,
-                        height: 1.35,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 /// Responsive room workspace shared by every live-room family.
 ///
-/// Desktop keeps the voice stage readable on the left and gives chat a
-/// permanent, bounded rail on the right. Compact layouts show either the
-/// stage or a full-width chat surface, so neither side is squeezed into an
-/// unusable mini-column.
+/// Desktop (>= [desktopBreakpoint] of usable width) keeps the voice stage
+/// readable on the left and gives chat a permanent, bounded rail on the
+/// right. Compact layouts show either the stage or a full-width chat
+/// surface, so neither side is squeezed into an unusable mini-column.
 class RoomWorkspace extends StatelessWidget {
   const RoomWorkspace({
     required this.stage,
     required this.chat,
     required this.showCompactChat,
-    this.desktopBreakpoint = 900,
+    this.desktopBreakpoint = 1100,
     super.key,
   });
 
@@ -188,8 +59,11 @@ class RoomWorkspace extends StatelessWidget {
   final bool showCompactChat;
   final double desktopBreakpoint;
 
+  /// Kept in lockstep with [desktopBreakpoint]: the chat rail earns its
+  /// place only when the stage still gets a generous column beside it —
+  /// a tablet is never a squeezed desktop.
   static bool usesDesktopLayout(BuildContext context) =>
-      MediaQuery.sizeOf(context).width >= 900;
+      MediaQuery.sizeOf(context).width >= 1100;
 
   @override
   Widget build(BuildContext context) {
@@ -242,32 +116,81 @@ class RoomWorkspace extends StatelessWidget {
   }
 }
 
-/// One person on stage: premium tile, avatar-forward, with a
-/// speaking ring that breathes with their real audio level and a small
-/// role/mute badge. No idle animation — a silent stage is a still stage.
-class SpeakerTile extends StatelessWidget {
+/// One person on stage: an avatar-forward hero card with an accent ring, a
+/// soft glow and a subtle pulse ONLY while genuinely speaking (bound to
+/// the real LiveKit speaking state), a mic badge, the name with the real
+/// identity badges and a role line. No idle animation — a silent stage is
+/// a still stage.
+class SpeakerTile extends StatefulWidget {
   const SpeakerTile({
     required this.speaker,
     required this.identity,
+    this.avatarRadius = 30,
     this.onTap,
     super.key,
   });
 
   final StageSpeaker speaker;
   final SpaceIdentity identity;
+
+  /// Larger when the stage holds only one or two people, so a lone host
+  /// reads as the hero rather than a tiny card in an empty panel.
+  final double avatarRadius;
   final VoidCallback? onTap;
 
   @override
+  State<SpeakerTile> createState() => _SpeakerTileState();
+}
+
+class _SpeakerTileState extends State<SpeakerTile>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1300),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _syncPulse();
+  }
+
+  @override
+  void didUpdateWidget(SpeakerTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncPulse();
+  }
+
+  /// The pulse runs on exactly one condition: this person is genuinely
+  /// speaking right now. Anything else stops the motion at rest.
+  void _syncPulse() {
+    if (widget.speaker.isSpeaking) {
+      if (!_pulse.isAnimating) _pulse.repeat(reverse: true);
+    } else if (_pulse.isAnimating || _pulse.value != 0) {
+      _pulse.stop();
+      _pulse.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final speaker = widget.speaker;
+    final identity = widget.identity;
     final accent = identity.primary;
     final ringStrength = speaker.isSpeaking
         ? (.45 + .55 * speaker.audioLevel)
         : 0.0;
 
     return Semantics(
-      button: onTap != null,
-      excludeSemantics: onTap != null,
-      label: onTap == null
+      button: widget.onTap != null,
+      excludeSemantics: widget.onTap != null,
+      label: widget.onTap == null
           ? null
           : '${speaker.displayName}, '
                 '${speaker.isHost
@@ -281,24 +204,24 @@ class SpeakerTile extends StatelessWidget {
                     ? 'speaking'
                     : 'not speaking'}. Open profile',
       child: InkWell(
-        onTap: onTap,
+        onTap: widget.onTap,
         borderRadius: BorderRadius.circular(20),
         child: Container(
-          padding: const EdgeInsets.fromLTRB(10, 12, 10, 10),
+          padding: const EdgeInsets.fromLTRB(10, 14, 10, 12),
           decoration: BoxDecoration(
-            color: identity.surface.withValues(alpha: .94),
+            color: identity.surface.withValues(alpha: .58),
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
               color: speaker.isSpeaking
-                  ? accent.withValues(alpha: .35 + .45 * speaker.audioLevel)
-                  : identity.outline,
-              width: speaker.isSpeaking ? 1.6 : 1,
+                  ? accent.withValues(alpha: .4 + .4 * speaker.audioLevel)
+                  : Colors.white.withValues(alpha: .06),
+              width: speaker.isSpeaking ? 1.5 : 1,
             ),
             boxShadow: speaker.isSpeaking
                 ? [
                     BoxShadow(
-                      color: accent.withValues(alpha: .28 * ringStrength),
-                      blurRadius: 22,
+                      color: accent.withValues(alpha: .3 * ringStrength),
+                      blurRadius: 26,
                     ),
                   ]
                 : null,
@@ -309,22 +232,54 @@ class SpeakerTile extends StatelessWidget {
               Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 140),
-                    padding: const EdgeInsets.all(2.5),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: speaker.isSpeaking
-                            ? accent
-                            : Colors.white.withValues(alpha: .12),
-                        width: speaker.isSpeaking ? 2 : 1.2,
-                      ),
+                  AnimatedBuilder(
+                    animation: _pulse,
+                    builder: (context, child) => Transform.scale(
+                      scale: speaker.isSpeaking
+                          ? 1 + .022 * _pulse.value
+                          : 1,
+                      child: child,
                     ),
-                    child: UserAvatar(
-                      radius: 27,
-                      photoUrl: speaker.photoUrl,
-                      displayName: speaker.displayName,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 140),
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: speaker.isSpeaking
+                              ? accent
+                              : accent.withValues(alpha: .32),
+                          width: speaker.isSpeaking ? 2.2 : 1.4,
+                        ),
+                        boxShadow: speaker.isSpeaking
+                            ? [
+                                BoxShadow(
+                                  color: accent.withValues(
+                                    alpha: .35 * ringStrength,
+                                  ),
+                                  blurRadius: 18,
+                                ),
+                              ]
+                            : null,
+                      ),
+                      child: UserAvatar(
+                        radius: widget.avatarRadius,
+                        photoUrl: speaker.photoUrl,
+                        displayName: speaker.displayName,
+                        // The initial-letter fallback follows the ROOM, not
+                        // the app default. Without this the largest object
+                        // on a Family or Club stage was a purple disc inside
+                        // a green or gold room — the one element loud enough
+                        // to break the room's identity. Deepened well below
+                        // the accent so it reads as a surface behind a
+                        // letter, never as a second accent competing with
+                        // the ring and the speaking glow.
+                        backgroundColor: Color.lerp(
+                          accent,
+                          const Color(0xFF120C1B),
+                          .45,
+                        )!,
+                      ),
                     ),
                   ),
                   Positioned(
@@ -334,10 +289,13 @@ class SpeakerTile extends StatelessWidget {
                       padding: const EdgeInsets.all(4),
                       decoration: BoxDecoration(
                         color: speaker.isMuted
-                            ? const Color(0xFF3A2C49)
+                            ? const Color(0xFF3A3151)
                             : accent,
                         shape: BoxShape.circle,
-                        border: Border.all(color: identity.surface, width: 2),
+                        border: Border.all(
+                          color: const Color(0xFF0D0813),
+                          width: 2,
+                        ),
                       ),
                       child: Icon(
                         speaker.isMuted
@@ -350,7 +308,7 @@ class SpeakerTile extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 9),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -376,7 +334,7 @@ class SpeakerTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 12,
+                        fontSize: 12.5,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -391,6 +349,7 @@ class SpeakerTile extends StatelessWidget {
                   ),
                 ],
               ),
+              const SizedBox(height: 1),
               Text(
                 speaker.isHost
                     ? 'Host'
@@ -411,10 +370,11 @@ class SpeakerTile extends StatelessWidget {
   }
 }
 
-/// The calm stage: at most [maxTiles] speaker tiles in a fixed-height
-/// grid — host first, then moderators, then whoever is actually
-/// speaking, then the rest. Overflow becomes a "+N on stage" tile that
-/// opens the People drawer. Complexity never grows with audience size.
+/// The calm stage: at most [maxTiles] speaker tiles in a centered wrap —
+/// host first, then moderators, then whoever is actually speaking, then
+/// the rest. Overflow becomes a "+N on stage" tile that opens the People
+/// drawer. With one or two people the tiles grow, so a lone host is the
+/// hero rather than a lost thumbnail.
 class StageGrid extends StatelessWidget {
   const StageGrid({
     required this.speakers,
@@ -422,8 +382,15 @@ class StageGrid extends StatelessWidget {
     required this.onOverflowTap,
     this.onSpeakerTap,
     this.maxTiles = 8,
+    this.roomy = false,
     super.key,
   });
+
+  /// The stage was given the column's leftover height, so a small cast can
+  /// afford to be larger. Purely presentational: the tile COUNT, ordering
+  /// and overflow behaviour are identical either way, so a crowded stage
+  /// still packs the same tiles at the same size.
+  final bool roomy;
 
   final List<StageSpeaker> speakers;
   final SpaceIdentity identity;
@@ -457,6 +424,7 @@ class StageGrid extends StatelessWidget {
     final visible = overflow > 0
         ? ordered.take(maxTiles - 1).toList()
         : ordered;
+    final few = ordered.length <= 2 && overflow <= 0;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -465,11 +433,18 @@ class StageGrid extends StatelessWidget {
             : constraints.maxWidth >= 480
             ? 3
             : 2;
-        final tileWidth =
-            ((constraints.maxWidth - (columns - 1) * 10) / columns).clamp(
-              132.0,
-              190.0,
-            );
+        // A filling stage with one or two speakers gets a wider tile and a
+        // bigger avatar, so the host reads as the room's centre rather than
+        // a small card marooned in a tall panel.
+        final tileWidth = few
+            ? ((constraints.maxWidth - 10) / 2).clamp(
+                roomy ? 210.0 : 158.0,
+                roomy ? 300.0 : 230.0,
+              )
+            : ((constraints.maxWidth - (columns - 1) * 10) / columns).clamp(
+                132.0,
+                190.0,
+              );
         return Wrap(
           alignment: WrapAlignment.center,
           spacing: 10,
@@ -481,6 +456,7 @@ class StageGrid extends StatelessWidget {
                 child: SpeakerTile(
                   speaker: speaker,
                   identity: identity,
+                  avatarRadius: few ? (roomy ? 54 : 40) : 30,
                   onTap: onSpeakerTap == null
                       ? null
                       : () => onSpeakerTap!(speaker),
@@ -524,18 +500,18 @@ class _OverflowTile extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
         child: Container(
-          padding: const EdgeInsets.fromLTRB(10, 12, 10, 10),
+          padding: const EdgeInsets.fromLTRB(10, 14, 10, 12),
           decoration: BoxDecoration(
-            color: identity.surface.withValues(alpha: .7),
+            color: identity.surface.withValues(alpha: .4),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: identity.outline),
+            border: Border.all(color: Colors.white.withValues(alpha: .06)),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 60,
-                height: 60,
+                width: 66,
+                height: 66,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: accent.withValues(alpha: .14),
@@ -551,12 +527,12 @@ class _OverflowTile extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 9),
               const Text(
                 'On stage',
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 12,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -575,11 +551,13 @@ class _OverflowTile extends StatelessWidget {
   }
 }
 
-/// The audience, as a number: a few avatars, the count, a tap into the
-/// People drawer. This is the ONLY place listeners appear outside the
-/// drawer — never as floating orbit avatars.
-class ListenersStrip extends StatelessWidget {
-  const ListenersStrip({
+/// The audience as a compact strip: headphones icon, up to six REAL
+/// participant avatars overlapping, a "+N" chip when more are listening,
+/// the live count and a chevron into the existing People surface. This is
+/// the ONLY place listeners appear outside the drawer — never as floating
+/// orbit avatars, never as a tall empty box.
+class AudienceStrip extends StatelessWidget {
+  const AudienceStrip({
     required this.count,
     required this.identity,
     required this.onTap,
@@ -591,13 +569,16 @@ class ListenersStrip extends StatelessWidget {
   final int count;
   final SpaceIdentity identity;
   final VoidCallback onTap;
+
+  /// REAL participant data from the roster stream — up to six are shown.
   final List<String?> previewPhotoUrls;
   final List<String> previewNames;
 
   @override
   Widget build(BuildContext context) {
     final accent = identity.primary;
-    final previews = previewPhotoUrls.take(4).toList();
+    final previews = previewPhotoUrls.take(6).toList();
+    final more = count - previews.length;
 
     return Semantics(
       button: true,
@@ -605,7 +586,7 @@ class ListenersStrip extends StatelessWidget {
       label: '$count listening. Open people',
       child: Material(
         key: ValueKey('room-listeners-${identity.kind.name}'),
-        color: identity.surface.withValues(alpha: .94),
+        color: const Color(0xFF0D0813).withValues(alpha: .92),
         borderRadius: BorderRadius.circular(20),
         child: InkWell(
           onTap: onTap,
@@ -614,62 +595,117 @@ class ListenersStrip extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: identity.outline),
+              border: Border.all(color: Colors.white.withValues(alpha: .06)),
             ),
-            child: Row(
-              children: [
-                if (previews.isEmpty)
-                  Icon(Icons.headphones_rounded, color: accent, size: 20)
-                else
-                  SizedBox(
-                    width: 24.0 + 16.0 * (previews.length - 1),
-                    height: 26,
-                    child: Stack(
-                      children: [
-                        for (var i = previews.length - 1; i >= 0; i--)
-                          Positioned(
-                            left: 16.0 * i,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: identity.surface,
-                                  width: 2,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final showLabel = constraints.maxWidth >= 420;
+                return Row(
+                  children: [
+                    Icon(Icons.headphones_rounded, color: accent, size: 19),
+                    if (showLabel) ...[
+                      const SizedBox(width: 9),
+                      const Text(
+                        'Audience',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13.5,
+                        ),
+                      ),
+                    ],
+                    if (previews.isNotEmpty) ...[
+                      const SizedBox(width: 12),
+                      SizedBox(
+                        width: 26.0 + 15.0 * (previews.length - 1),
+                        height: 26,
+                        child: Stack(
+                          children: [
+                            for (var i = previews.length - 1; i >= 0; i--)
+                              Positioned(
+                                left: 15.0 * i,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: const Color(0xFF0D0813),
+                                      width: 2,
+                                    ),
+                                  ),
+                                  child: UserAvatar(
+                                    radius: 11,
+                                    photoUrl: previews[i],
+                                    displayName: i < previewNames.length
+                                        ? previewNames[i]
+                                        : null,
+                                    // Same rule as the stage and the header:
+                                    // a letter fallback wears the room's
+                                    // colour, so a gold room's audience is
+                                    // not a row of purple discs.
+                                    backgroundColor: Color.lerp(
+                                      accent,
+                                      const Color(0xFF120C1B),
+                                      .45,
+                                    )!,
+                                  ),
                                 ),
                               ),
-                              child: UserAvatar(
-                                radius: 11,
-                                photoUrl: previews[i],
-                                displayName: i < previewNames.length
-                                    ? previewNames[i]
-                                    : null,
-                              ),
+                          ],
+                        ),
+                      ),
+                      if (more > 0) ...[
+                        const SizedBox(width: 7),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: accent.withValues(alpha: .16),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '+$more',
+                            style: TextStyle(
+                              color: identity.accent,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w900,
                             ),
                           ),
+                        ),
                       ],
+                    ],
+                    const SizedBox(width: 11),
+                    Expanded(
+                      child: Text(
+                        count == 1 ? '1 listening' : '$count listening',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.end,
+                        style: TextStyle(
+                          color: Colors.white.withValues(
+                            alpha: previews.isEmpty ? 1 : .75,
+                          ),
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                        ),
+                      ),
                     ),
-                  ),
-                const SizedBox(width: 11),
-                Expanded(
-                  child: Text(
-                    count == 1 ? '1 listening' : '$count listening',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 13.5,
-                    ),
-                  ),
-                ),
-                Text(
-                  'People',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: .8),
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12.5,
-                  ),
-                ),
-                Icon(Icons.expand_less_rounded, color: accent, size: 18),
-              ],
+                    if (previews.isEmpty) ...[
+                      const SizedBox(width: 10),
+                      Text(
+                        'People',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: .8),
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                    ],
+                    Icon(Icons.chevron_right_rounded, color: accent, size: 19),
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -678,15 +714,19 @@ class ListenersStrip extends StatelessWidget {
   }
 }
 
-/// A bounded stage surface shared by Community, Podcast, Club and Family.
-/// The product logic stays in each room screen; this component only keeps
-/// hierarchy, spacing and participant density consistent.
+/// A bounded stage surface shared by Community, Podcast, Club and Family:
+/// a subtle dark panel with one quiet border, the "On stage" header with
+/// the waveform icon and the live speaker count, and the speaker cards as
+/// the heroes. The product logic stays in each room screen; this
+/// component only keeps hierarchy, spacing and participant density
+/// consistent.
 class RoomStagePanel extends StatelessWidget {
   const RoomStagePanel({
     required this.speakers,
     required this.identity,
     required this.onOverflowTap,
     this.onSpeakerTap,
+    this.fill = false,
     super.key,
   });
 
@@ -695,22 +735,35 @@ class RoomStagePanel extends StatelessWidget {
   final VoidCallback onOverflowTap;
   final void Function(StageSpeaker speaker)? onSpeakerTap;
 
+  /// Take the height the parent offers instead of hugging the speakers.
+  ///
+  /// A stage is the room's centre of gravity, so on a desktop column it
+  /// should OWN the space left between the hero and the audience strip
+  /// rather than leaving a dead band underneath — the defect the operator
+  /// described as "a huge stage container with a tiny user card in the
+  /// middle". Filling also lets the speakers sit optically centred, which
+  /// is what makes one host read as deliberate rather than stranded.
+  ///
+  /// Off by default: on a narrow screen the panel is one card in a scroll
+  /// view, and an unbounded-height parent would have nothing to give it.
+  final bool fill;
+
   @override
   Widget build(BuildContext context) {
     return Container(
       key: ValueKey('room-stage-${identity.kind.name}'),
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 16),
+      padding: const EdgeInsets.fromLTRB(16, 15, 16, 18),
       decoration: BoxDecoration(
-        color: const Color(0xFF0E0915).withValues(alpha: .9),
+        color: const Color(0xFF0D0813).withValues(alpha: .92),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: identity.outline.withValues(alpha: .85)),
+        border: Border.all(color: Colors.white.withValues(alpha: .06)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.graphic_eq_rounded, color: identity.accent, size: 19),
+              Icon(Icons.graphic_eq_rounded, color: identity.accent, size: 18),
               const SizedBox(width: 8),
               const Expanded(
                 child: Text(
@@ -723,9 +776,9 @@ class RoomStagePanel extends StatelessWidget {
                 ),
               ),
               Container(
-                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 26),
                 alignment: Alignment.center,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 9),
                 decoration: BoxDecoration(
                   color: identity.wash,
                   borderRadius: BorderRadius.circular(20),
@@ -741,33 +794,40 @@ class RoomStagePanel extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 13),
-          if (speakers.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 24),
-              child: Center(
-                child: Text(
-                  'The stage is ready for the first voice.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: .62),
-                    height: 1.35,
-                  ),
-                ),
-              ),
-            )
-          else
-            SizedBox(
-              width: double.infinity,
-              child: StageGrid(
-                speakers: speakers,
-                identity: identity,
-                onOverflowTap: onOverflowTap,
-                onSpeakerTap: onSpeakerTap,
-              ),
-            ),
+          const SizedBox(height: 14),
+          if (fill) Expanded(child: Center(child: _speakerArea(context)))
+          else _speakerArea(context),
         ],
       ),
     );
   }
+
+  Widget _speakerArea(BuildContext context) {
+    if (speakers.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 26),
+        child: Center(
+          child: Text(
+            'The stage is ready for the first voice.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: .62),
+              height: 1.35,
+            ),
+          ),
+        ),
+      );
+    }
+    return SizedBox(
+      width: double.infinity,
+      child: StageGrid(
+        speakers: speakers,
+        identity: identity,
+        roomy: fill,
+        onOverflowTap: onOverflowTap,
+        onSpeakerTap: onSpeakerTap,
+      ),
+    );
+  }
 }
+
