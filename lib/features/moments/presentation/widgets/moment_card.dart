@@ -52,10 +52,10 @@ class MomentCard extends StatefulWidget {
   /// indicator rather than a button that silently does nothing.
   final HomeFeedService? feedService;
 
-  /// Injection seam for playback, matching [MomentDiscoveryView]'s.
-  /// Constructing a real [AudioPlayer] reaches for a platform channel
-  /// that does not exist off-device, and it reports the failure
-  /// asynchronously — after any frame a test could inspect.
+  /// Injection seam for playback, matching [offlineService] and
+  /// [feedService]. Constructing a real [AudioPlayer] reaches for a
+  /// platform channel that does not exist off-device, and it reports
+  /// the failure asynchronously — after any frame a test could inspect.
   @visibleForTesting
   final AudioPlayer Function()? playerFactory;
 

@@ -5974,3 +5974,26 @@ undetuned center fundamental joined the anchor and every file now measures
 pitches in the script and rerunning it. Subjective pleasantness is
 UNVERIFIED by the author (no ears); the operator's listen is the acceptance
 test. Preview locally: `afplay assets/audio/ui/notification.wav`.
+
+## ADR-100: The pre-stories Discover avatar board is deleted, not kept dormant
+
+**Context.** The Voice Moments stories redesign replaced the Discover avatar
+board (`MomentDiscoveryView`, ~2000 lines) with the feed + story viewer
+(`MomentsFeedView`, mounted by `moments_screen.dart`). After the last test
+importer (`test/moment_report_reachability_test.dart`) was re-targeted to the
+new surfaces, nothing in `lib/` or `test/` imported the board.
+
+**Decision.** `lib/features/moments/presentation/widgets/moment_discovery_view.dart`
+is removed. The dangling dartdoc link in `moment_card.dart` now points at the
+card's other injection seams; the HISTORY note in
+`moment_report_reachability_test.dart` deliberately keeps the old name as
+prose, recording where its claims came from.
+
+**Reasoning.** An unreferenced 2000-line surface is not a fallback, it is a
+trap: it silently drifts from the services and theme it once matched, and it
+keeps showing up in searches as if it were a live answer. Git history is the
+archive; the working tree should only contain what runs.
+
+**Consequences.** `flutter analyze` clean and all 1114 tests pass after the
+removal. Any future "board" style discovery surface starts from the current
+feed architecture, not from resurrecting this file.
