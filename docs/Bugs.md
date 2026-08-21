@@ -664,6 +664,44 @@ permission flags).
 
 ## Moderation & safety
 
+- **FIXED IN SOURCE 2026-08-21, INDEX NOT DEPLOYED — the Admin Center's
+  room-status filter did not work for any value, and its "active" value
+  asked the wrong question.** `listAdminRooms` built
+  `where("status", "==", status).orderBy("updatedAt", "desc")`, and **no
+  `status`+`updatedAt` composite index exists in the live project** — so
+  every status filter returned `9 FAILED_PRECONDITION`, not a truncated
+  list. Underneath that, the "active" value contradicted ADR-093: a
+  production census (2026-08-21) finds 45 rooms carrying **9 explicit
+  `"active"`, 11 `"closed"`, and 25 no `status` at all**, so the literal
+  clause recognised 9 of the 34 rooms the rules call active — while
+  `mapRoom`, in the same callable, already reported those 25 as
+  `status: "active"` to the browser. "Active" now means active as the rules
+  read it (`roomIsActive()`, in memory, for that value only); other values
+  keep the indexed equality. Eight cases in
+  `functions/test/admin_room_listing.test.js` pin it, three of which fail
+  against the unfixed callable. **Still open**: `closed` and `suspended`
+  stay broken until `firebase deploy --only firestore:indexes` runs — and
+  that deploy must NOT be run from this branch alone, which lacks the live
+  `clubs.clubId` exemption and would offer to delete it. Note this callable
+  has no caller in `lib/` — the browser it serves is in the website or
+  unbuilt — so the user-visible impact is confined to whoever calls it.
+  [ADR-101](Decisions.md#adr-101-the-admin-centers-active-room-filter-reads-status-the-way-the-rules-do--and-the-filter-it-replaced-never-ran-at-all).
+
+- **OPEN, found 2026-08-21 — three layers disagree about what an absent club
+  `status` means, and one of them invents a value.** Unlike rooms, the club
+  rules read the field BARE (`get(clubPath).data.status == 'active'`, three
+  sites in `firestore.rules`), so a club with no `status` is not active to
+  the ruleset — while `functions/clubs/deletion.js:128` defaults it the
+  other way (`String(club.status ?? "active")`), treating the same club as
+  deletable-because-active. Separately, `mapClub`
+  (`functions/admin/clubs.js`) defaults an absent status to **`"open"`**, a
+  value nothing in the codebase ever writes: production clubs carry
+  `"active"` or `"closed"`. 1 of 3 production clubs has no `status`, so all
+  three disagreements are live, just small. Not fixed with the room filter
+  on purpose — picking a direction here is a product call about club
+  lifecycle, not a mechanical copy of ADR-093, and the wrong pick changes
+  who can delete a club. See ADR-101's Consequences.
+
 - **FIXED IN SOURCE 2026-08-19, NOT DEPLOYED, AND NOT VISUALLY VERIFIED —
   club chat moderation had never worked.** A club owner could not remove an
   abusive message from their own club. Three layers held three different

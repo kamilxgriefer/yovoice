@@ -36,6 +36,21 @@ someone decide what to pick up next.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it)
 > for why that distinction is the whole point of this wave.
 
+- **The Admin Center's room-status filter reads `status` the way the rules do**
+  (2026-08-21, SOURCE ONLY — the index is NOT deployed; ADR-101):
+  `listAdminRooms`' "active" filter recognised 9 of the 34 rooms the deployed
+  ruleset calls active, because 25 of 45 production rooms predate the field —
+  and it never returned even those 9, since no `status`+`updatedAt` composite
+  index exists (`9 FAILED_PRECONDITION`, verified against production twice).
+  "Active" now means active as the rules read it, via the shared
+  `roomIsActive()`; every explicit value keeps its indexed equality, and the
+  two missing indexes are checked in. Functions suite 746 → 754, with three of
+  the eight new cases failing against the unfixed callable. **`closed` and
+  `suspended` remain broken until an index deploy** — which must not be run
+  from this branch alone (see ADR-101's Consequences). Clubs were checked and
+  deliberately left alone; two live club-`status` disagreements are logged in
+  [Bugs.md](Bugs.md).
+
 - **Family and club rooms are deletable — from the same dialog as any room**
   (2026-08-20, DEPLOYED: indexes → `deleteClubSelf` → hosting, each verified;
   ADR-096): owner-only whole-club teardown with honest copy naming the club.

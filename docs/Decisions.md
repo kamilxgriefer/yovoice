@@ -5838,3 +5838,94 @@ accepted: if the post-commit sweep fails midway (e.g. Storage outage), the
 repeat call resumes it, but once the dialog is dismissed the UI offers no
 retry surface — the club stays consistently marked and refusable, never
 half-alive.
+
+## ADR-101: The Admin Center's "active" room filter reads `status` the way the rules do — and the filter it replaced never ran at all
+
+*(Renumbered 097 → 101 before commit, the second instance of the hazard
+ADR-093 already records. 097 was free across `main` and every worktree when
+this entry was drafted; `main` then landed ADR-097/098/099 mid-session,
+including the sibling to this change — `fb88dbd`, "live-room figures honour
+an absent status, via one shared read". 100 is claimed by uncommitted work
+in the main worktree, so this took 101. Two collisions are still OPEN and
+are not this entry's to fix: `claude/determined-feistel-e7a87a` carries a
+different ADR-096 than `main` does, and the main worktree's unlanded ADR-100
+will need checking against whatever lands first.)*
+
+**Context.** `listAdminRooms` (`functions/admin/rooms.js`) built the room
+browser's status filter as a literal
+`db.collection("rooms").where("status", "==", status).orderBy("updatedAt", "desc")`
+from a caller-supplied value. ADR-093 had already settled what this field
+means everywhere else: `firestore.rules` reads it as
+`.get('status', 'active')`, `roomIsActive()` mirrors that default, and an
+absent `status` therefore IS active. ADR-097 had just applied that same
+reading to the staff aggregates via `listLiveActiveRoomDocs()`; this is the
+paginated browser, which that helper does not serve — it answers
+"`isLive` and active, up to a scan cap", not "any status, by cursor". A read-only production census
+(Admin SDK, 2026-08-21) puts numbers on the gap — of 45 rooms, **9 carry an
+explicit `"active"`, 11 carry `"closed"`, and 25 carry no `status` at all**.
+The clause recognised 9 of the 34 rooms the rules call active.
+
+Two things sharpened that from an inconsistency into a defect:
+
+1. **`mapRoom`, in the same callable, already defaulted the field** —
+   it returns `data.status ?? "active"`. So the unfiltered browser
+   displayed all 25 legacy rooms as *active*, and then the "active" filter
+   denied they existed. The callable contradicted its own output.
+2. **The filter never actually ran.** No `status`+`updatedAt` composite
+   index exists in the live project — confirmed twice, by executing the
+   query (`9 FAILED_PRECONDITION: The query requires an index`) and by
+   reading the deployed config with `firebase firestore:indexes`. Staff
+   filtering by *any* status got an error, not a short list. The premise
+   that legacy rooms were "silently dropped" was too generous.
+
+**Decision.** "Active" means active as the rules read it, absent included.
+For that one value the equality clause is dropped and the page is filtered
+in memory with the shared `roomIsActive()` predicate; every other value
+(`closed`, `suspended`, `archived`) is written EXPLICITLY by moderation and
+keeps the indexed server-side equality. The two missing composite indexes
+(`rooms` and `clubs`, `status` ASC + `updatedAt` DESC) are added to
+`firestore.indexes.json` so those other values can resolve at all.
+
+**Reasoning.** This was a product call before it was a code fix, and the
+census decides it: because moderation always writes an explicit value,
+"explicitly active" does not name a moderation state — it names the cohort
+of rooms created after the field was introduced. A staff member filtering
+"active" is asking which rooms users can currently enter, and under the
+deployed ruleset that is 34 rooms, not 9. Choosing the literal reading
+would have rebuilt, in the moderation surface specifically, the exact
+disagreement ADR-093 exists to prevent: a room the rules let a user join,
+that the browser insists is not active.
+
+**Consequences.**
+
+- **An index deploy is required for the non-"active" filters.** The
+  "active" path now needs no composite index at all (a bare
+  `orderBy("updatedAt")` is served by the automatic single-field index, and
+  all 45 production rooms carry `updatedAt`, so it drops nothing). `closed`
+  and `suspended` stay broken until `firebase deploy --only firestore:indexes`
+  runs. Deploys remain manual on purpose (`docs/DEPLOYMENT.md`).
+- **Do not deploy indexes from this branch alone.** This branch's
+  `firestore.indexes.json` does not carry the live `clubs.clubId` exemption
+  that `claude/determined-feistel-e7a87a` backported; an index deploy from
+  here would offer to DELETE it and break `adminDeleteClub`'s projection
+  sweep — precisely the trap that branch's ADR-096 documents. Merge first,
+  or verify against `firebase firestore:indexes` before deploying.
+- **`nextCursorId` counts documents SCANNED, not rooms returned.** Both
+  filters run after the `limit`, so a page can come back empty and still
+  carry a cursor. This is not new — `search` has always behaved this way —
+  but it is now commented at the call site and pinned by a test, because
+  the obvious "stop when a page is short" client loop would stop early.
+- **Clubs were checked and deliberately left alone.** `admin/clubs.js:180`
+  has the identical query shape and 1 of 3 production clubs carries no
+  `status` — but the answer there is NOT the same, because the club rules
+  read the field BARE (`get(clubPath).data.status == 'active'`), so an
+  absent status already means "not active" to the ruleset. Copying the room
+  fix across would have made the browser disagree with the rules rather than
+  agree with them. Two real findings are logged in `docs/Bugs.md` instead:
+  that bare read is itself inconsistent with `deletion.js`'s
+  `String(club.status ?? "active")`, and `mapClub` defaults absent to
+  `"open"` — a value the codebase never writes.
+- The emulator enforces no composite index (ADR-007, ADR-082, ADR-096), so
+  the eight new cases in `functions/test/admin_room_listing.test.js` prove
+  the *semantics* and prove nothing about the index. The index claim rests
+  on the two production reads above, not on the suite.

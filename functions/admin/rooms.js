@@ -20,6 +20,7 @@ const {
   getDocumentOrThrow,
   deleteDocumentRecursively,
   deleteCollectionInBatches,
+  roomIsActive,
 } = require("../utils/firestore");
 
 const { writeRoomAuditLog } = require("../utils/audit");
@@ -255,18 +256,27 @@ const listAdminRooms = onCall(
 
     const cursorId = normalizeText(request.data?.cursorId, 128);
 
-    let query = db
-      .collection("rooms")
-      .orderBy("updatedAt", "desc")
-      .limit(limit);
+    // "active" is the one status the browser cannot ask Firestore for.
+    // ADR-093: the rules read this field as `.get('status', 'active')`, so an
+    // absent `status` IS active, and 25 of the 45 production rooms predate the
+    // field entirely. `mapRoom` above already agrees — it reports
+    // `data.status ?? "active"` — so the unfiltered list SHOWS those 25 rooms
+    // as active and only the query disagreed: `where("status", "==",
+    // "active")` matches 9 rooms where the rules and the mapper recognise 34.
+    // It does not even return that truncated list, because no
+    // `status`+`updatedAt` composite index existed: it threw
+    // FAILED_PRECONDITION. Every other value ("closed", "suspended",
+    // "archived") is written EXPLICITLY by moderation, so those keep the
+    // indexed equality and stay a server-side query.
+    const activeFilter = status === "active";
 
-    if (status) {
-      query = db
-        .collection("rooms")
-        .where("status", "==", status)
-        .orderBy("updatedAt", "desc")
-        .limit(limit);
+    let query = db.collection("rooms");
+
+    if (status && !activeFilter) {
+      query = query.where("status", "==", status);
     }
+
+    query = query.orderBy("updatedAt", "desc").limit(limit);
 
     if (cursorId) {
       const cursorSnapshot = await db.collection("rooms").doc(cursorId).get();
@@ -278,8 +288,15 @@ const listAdminRooms = onCall(
 
     const snapshot = await query.get();
 
+    // Both in-memory filters run AFTER the limit, so a page can return fewer
+    // rooms than it scanned — including none. `nextCursorId` below is
+    // therefore derived from `snapshot.docs`, the documents scanned, never
+    // from `rooms`: it means "there may be more to scan", not "there are more
+    // to show". That is the contract `search` has always had; the caller pages
+    // until `nextCursorId` is null rather than until a page comes back short.
     const rooms = snapshot.docs
       .map(mapRoom)
+      .filter((room) => !activeFilter || roomIsActive(room))
       .filter((room) => roomMatchesSearch(room, search));
 
     const lastDocument =
