@@ -1,0 +1,40 @@
+name: Bootstrap browser-test lockfile
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - browser-tests/package.json
+      - .github/workflows/bootstrap-browser-tests-lock.yml
+
+permissions:
+  contents: write
+
+jobs:
+  generate-lockfile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: Generate npm lockfile
+        run: npm --prefix browser-tests install --package-lock-only --ignore-scripts --no-audit --no-fund
+
+      - name: Commit lockfile and remove bootstrap workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add browser-tests/package-lock.json
+          git rm .github/workflows/bootstrap-browser-tests-lock.yml
+          git commit -m "test: lock Playwright browser dependencies [skip ci]"
+          git push origin HEAD:main
