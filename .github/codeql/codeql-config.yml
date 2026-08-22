@@ -1,0 +1,11 @@
+name: YO Voice JavaScript and TypeScript security scope
+
+paths:
+  - functions
+  - web
+
+paths-ignore:
+  - functions/node_modules
+  - functions/coverage
+  - build
+  - .dart_tool

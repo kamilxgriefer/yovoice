@@ -1,86 +1,111 @@
 # YO Voice 🎙️
 
-> **Speak. Connect. Be you.**
+[![Continuous verification](https://github.com/kamilxgriefer/yovoice/actions/workflows/firebase-hosting-merge.yml/badge.svg?branch=main)](https://github.com/kamilxgriefer/yovoice/actions/workflows/firebase-hosting-merge.yml)
+[![Flutter web browser smoke](https://github.com/kamilxgriefer/yovoice/actions/workflows/browser-smoke.yml/badge.svg?branch=main)](https://github.com/kamilxgriefer/yovoice/actions/workflows/browser-smoke.yml)
+[![CodeQL](https://github.com/kamilxgriefer/yovoice/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/kamilxgriefer/yovoice/actions/workflows/codeql.yml)
+[![Dependabot](https://img.shields.io/badge/Dependabot-enabled-025E8C?logo=dependabot&logoColor=white)](https://github.com/kamilxgriefer/yovoice/network/updates)
 
-YO Voice is a voice-first social platform built with **Flutter** and
-**Firebase**: live voice rooms, Clubs, friends, Voice Moments, a real
-achievement system, and creator tools — designed around live conversation
-rather than a text feed.
+> **Speak. Connect. Be heard.**
 
-Full documentation lives in [`docs/`](docs/Architecture.md) — start there
-for anything beyond a quick clone-and-run. [docs/Architecture.md](docs/Architecture.md)
-is the map that links to everything else; the short list:
+YO Voice is a premium, voice-first social platform built with Flutter and
+Firebase. It combines live Community and Podcast rooms, Voice Moments,
+messaging, Clubs, Friends, creator tools and staff moderation in one
+responsive product for mobile, web and desktop.
 
-- [docs/Vision.md](docs/Vision.md) — what this product is for
-- [docs/Features.md](docs/Features.md) — what's actually built today
-- [docs/Architecture.md](docs/Architecture.md) — how it all fits together:
-  auth flow, data flow, Firestore/Functions/LiveKit interaction, website
-  integration
-- [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) — the repo tree,
-  directory by directory
-- [docs/Roadmap.md](docs/Roadmap.md) — done / in progress / planned, with
-  status, dependencies, and priority per item
-- [docs/Decisions.md](docs/Decisions.md) — the ADR log: why things are the
-  way they are
-- [docs/SECURITY.md](docs/SECURITY.md) — the security model and current
-  posture
-- [docs/Bugs.md](docs/Bugs.md) — current known issues
-- [docs/DEVELOPMENT_WORKFLOW.md](docs/DEVELOPMENT_WORKFLOW.md) — how to
-  actually work on this repo
-- [docs/TESTING.md](docs/TESTING.md), [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md),
-  [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) — what's tested, how it
-  ships, and why each dependency is there
-- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) — code style, commit
-  conventions, current solo-project reality
-- [CLAUDE.md](CLAUDE.md) — working conventions for this repo
+## 📚 Project documentation
 
----
+The repository documents both the product and the engineering decisions behind
+it:
 
-## 🛠️ Tech Stack
+- [`docs/Vision.md`](docs/Vision.md) — product purpose and quality bar;
+- [`docs/Architecture.md`](docs/Architecture.md) — Flutter, Firebase, Cloud
+  Functions and LiveKit system map;
+- [`docs/Features.md`](docs/Features.md) — implemented feature inventory;
+- [`docs/TESTING.md`](docs/TESTING.md) — measured automated-test coverage and
+  its known limits;
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — verified build and controlled
+  production-release process;
+- [`docs/SECURITY.md`](docs/SECURITY.md) — authorization and security model;
+- [`docs/QUALITY_AUTOMATION.md`](docs/QUALITY_AUTOMATION.md) — CI, browser
+  automation, SAST, dependency monitoring and portfolio evidence.
 
-Flutter, Dart, Material 3, Firebase (Auth, Firestore, Storage, Cloud
-Functions, Cloud Messaging, App Check), Google Sign-In, LiveKit. Full
-breakdown in [docs/Architecture.md](docs/Architecture.md); why each piece
-was chosen in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
+## 🧱 Technology stack
 
----
+- **Client:** Flutter, Dart, Material 3, Riverpod where cross-screen state
+  requires it;
+- **Backend:** Firebase Authentication, Firestore, Storage, Cloud Functions,
+  Cloud Messaging, App Check and Crashlytics;
+- **Realtime voice:** LiveKit;
+- **Backend runtime:** Node.js 22;
+- **Quality and security:** GitHub Actions, Flutter Analyzer, Flutter tests,
+  Firebase Emulator Suite, Node test runner, Playwright, CodeQL, npm audit and
+  Dependabot.
 
-## 🔧 Development Setup
+## 🛡️ Continuous quality and security
+
+Every push to `main` and every pull request to `main` automatically runs the
+project's verification gates. The pipeline checks:
+
+- `flutter analyze` and the complete Flutter test suite;
+- Firestore, Storage and cross-service authorization rules against Firebase
+  emulators;
+- Cloud Functions tests and emulator-backed binding smoke tests;
+- configured production dependency audits;
+- a release Flutter web build;
+- Chromium smoke tests against the compiled web artifact;
+- CodeQL static security analysis for the JavaScript/TypeScript production
+  surfaces.
+
+Dependabot checks Flutter, npm, Playwright and GitHub Actions dependencies every
+week. Playwright retains a trace, screenshot, video and HTML report when a
+browser check fails.
+
+Production is deliberately not published by an ordinary push. Firebase Hosting
+requires an explicit, verified manual release, while Firestore Rules, indexes,
+Storage Rules and Cloud Functions remain deliberate manual deployments because
+they form the product's authorization and trusted-backend boundary.
+
+See [`docs/QUALITY_AUTOMATION.md`](docs/QUALITY_AUTOMATION.md) for the trigger
+matrix, limitations and ready-to-use CV wording.
+
+## 🚀 Development setup
+
+Requirements:
+
+- Flutter stable matching the repository CI version;
+- Node.js 22;
+- Java 21 for Firebase emulators;
+- Firebase CLI for backend and rules verification.
+
+Install Flutter dependencies and run the app:
 
 ```bash
 flutter pub get
-flutter run                    # any connected device/simulator
-flutter analyze                # static analysis, keep at zero issues
+flutter run
 ```
 
-Firebase config is generated into `lib/firebase_options.dart` via
-`flutterfire configure` — already committed, no per-developer setup needed
-beyond having access to the `yovoice-ec54a` Firebase project.
+Run the primary Dart quality gates:
 
-For Firebase App Check debug-token setup and the Firestore rules
-emulator/test workflow, see
-[docs/Flutter.md](docs/Flutter.md#dev-setup) and
-[docs/Firebase.md](docs/Firebase.md#firestore-rules-testing) —
-kept there instead of duplicated here so there's one source of truth.
+```bash
+flutter analyze
+flutter test
+```
 
----
+Browser-smoke setup and commands live in
+[`browser-tests/README.md`](browser-tests/README.md). Complete emulator commands
+and current measured suite counts live in [`docs/TESTING.md`](docs/TESTING.md).
 
-## 📷 Screenshots
+## 📸 Screenshots
 
-Coming soon...
-
----
+Product screenshots and store-ready media will be added as release surfaces are
+finalised and verified on real devices.
 
 ## 👨‍💻 Developer
 
-Developed by **Kamil Jaguszewski**
+Developed by **Kamil Jaguszewski** (`kamilxgriefer`).
 
-GitHub: https://github.com/YOUR_GITHUB
-
----
+GitHub: [github.com/kamilxgriefer](https://github.com/kamilxgriefer)
 
 ## 📄 License
 
-This project is currently proprietary.
-
-All rights reserved.
+This project is proprietary. All rights reserved.

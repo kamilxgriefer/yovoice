@@ -66,3 +66,7 @@ app.*.map.json
 
 # Screenshots written by test/moderation_screenshot.dart (visual harness)
 test/.screenshots/
+
+# Playwright browser-smoke reports and failure diagnostics
+/browser-tests/playwright-report/
+/browser-tests/test-results/

@@ -1,7 +1,10 @@
-﻿name: Deploy YO Voice to Firebase Hosting
+name: Deploy YO Voice to Firebase Hosting
 
 on:
   push:
+    branches:
+      - main
+  pull_request:
     branches:
       - main
   workflow_dispatch:

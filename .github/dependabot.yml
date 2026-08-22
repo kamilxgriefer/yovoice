@@ -2,25 +2,46 @@ version: 2
 
 updates:
   - package-ecosystem: github-actions
-    directory: /
+    directory: "/"
     schedule:
       interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Warsaw
     open-pull-requests-limit: 5
 
   - package-ecosystem: npm
-    directory: /functions
+    directory: "/functions"
     schedule:
       interval: weekly
+      day: monday
+      time: "06:15"
+      timezone: Europe/Warsaw
     open-pull-requests-limit: 5
 
   - package-ecosystem: npm
-    directory: /firestore-tests
+    directory: "/firestore-tests"
     schedule:
       interval: weekly
+      day: monday
+      time: "06:30"
+      timezone: Europe/Warsaw
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directory: "/browser-tests"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:45"
+      timezone: Europe/Warsaw
     open-pull-requests-limit: 5
 
   - package-ecosystem: pub
-    directory: /
+    directory: "/"
     schedule:
       interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/Warsaw
     open-pull-requests-limit: 5
