@@ -29,10 +29,23 @@ figures this row used to carry (rules 466, Functions 699, Flutter 1036) were
 measured at `b0f1062` and are kept in the movement log below as history. The `*.test.js` and
 `*_test.dart` file counts are `find` over the working tree at `b0f1062`, so
 they are exact but do not carry the suite-count breakdown earlier rows had —
-that breakdown is dropped rather than carried forward as a guess. **Storage
-52 and family-media 11 were last measured 2026-08-17 and were not re-run in
-this pass**; `storage.rules` has not changed since `4f27b21` (2026-08-17), so
-they are stated as carried forward, not as re-verified.
+that breakdown is dropped rather than carried forward as a guess. **Storage 52 was re-measured on
+2026-08-22** and is green — and it is now green TWICE IN A ROW against one
+emulator, which it was not before (`64ba59a`): the second run used to report
+five failures because `clearStorage()` deleted nothing at all, `listAll()`
+being non-recursive while every object this suite writes lives under a prefix.
+Family-media 11 was last measured 2026-08-17 and was not re-run in this pass;
+`storage.rules` has not changed since `4f27b21`, so that one row is carried
+forward rather than re-verified.
+
+**A trap worth naming, because it cost a full diagnosis pass.**
+`firestore-tests/storage.test.js` HARDCODES the Firestore emulator at port
+8080 (line 323) and the Storage emulator at 9199 — it does not read
+`FIRESTORE_EMULATOR_HOST`. Storage rules read Firestore state, so if anything
+else already holds 8080 the suite silently talks to that instance instead and
+reports **19 of 52 failing**, all `storage/unauthorized` on the allow-cases
+while every deny-case still passes. That looks exactly like a rules
+regression and is not one. Check the port before believing a red run here.
 
 > **Correction, 2026-08-16.** These numbers were wrong in several docs for
 > most of a week — TESTING.md claimed 268 rules checks and 43 Storage

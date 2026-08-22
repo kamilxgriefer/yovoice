@@ -11,7 +11,9 @@ const {
   assertFails,
 } = require("@firebase/rules-unit-testing");
 const { doc, setDoc } = require("firebase/firestore");
-const { ref, uploadBytes, getBytes, deleteObject } = require("firebase/storage");
+const {
+  ref, uploadBytes, getBytes, deleteObject, listAll,
+} = require("firebase/storage");
 
 const FIRESTORE_RULES = path.resolve(__dirname, "../firestore.rules");
 const STORAGE_RULES = path.resolve(__dirname, "../storage.rules");
@@ -87,6 +89,44 @@ function directMetadata(ownerId, conversationId, messageId, type, extra = {}) {
       ...extra,
     },
   };
+}
+
+// `testEnv.clearStorage()` deletes only what a single `listAll()` at the
+// bucket root returns, and `listAll()` does not recurse. Every object this
+// suite writes lives under a prefix — `users/`, `room_images/`, `clubs/`,
+// `message_attachments/`, `voice_moments/`, `voice_replies/` — so that call
+// removes nothing at all here. Objects then survive into the next run
+// against the same emulator, where the create-only paths
+// (`allow create: if resource == null`)
+// correctly deny the re-upload — green checks turn red with no rule having
+// changed, in the one suite that gates a `storage.rules` deploy.
+//
+// Walk the prefix tree instead, so a re-run starts from the same empty bucket
+// a brand-new emulator would hand it. Verify the bucket really is empty
+// afterwards: if this ever stops keeping up with the paths under test, that
+// must surface as one loud, explicit failure here rather than as scattered
+// authorization failures further down.
+async function clearStorage(testEnv) {
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    async function objectsUnder(dir) {
+      const { items, prefixes } = await listAll(dir);
+      const nested = await Promise.all(prefixes.map((p) => objectsUnder(p)));
+      return items.concat(...nested);
+    }
+
+    const root = ref(ctx.storage());
+    await Promise.all((await objectsUnder(root)).map((item) => deleteObject(item)));
+
+    const remaining = await objectsUnder(root);
+    if (remaining.length > 0) {
+      throw new Error(
+        `Storage emulator still holds ${remaining.length} object(s) after ` +
+        `clearing: ${remaining.map((item) => item.fullPath).join(", ")}. ` +
+        "The create-only paths below would deny re-uploading them and report " +
+        "a rules regression that is not one.",
+      );
+    }
+  });
 }
 
 async function seed(testEnv) {
@@ -290,7 +330,7 @@ async function main() {
   });
 
   await testEnv.clearFirestore();
-  await testEnv.clearStorage();
+  await clearStorage(testEnv);
   await seed(testEnv);
 
   const storageFor = (uid, verified = true) =>

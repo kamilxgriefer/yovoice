@@ -42,6 +42,33 @@ npm test
 Exits non-zero if anything fails. Prints `OK`/`FAIL` per check plus a
 `<n> passed, <n> failed` summary.
 
+## Storage rules
+
+`storage.test.js` is the regression suite for `../storage.rules` — profile,
+Room cover, Club, Voice Moment and voice reply objects. A green run here is
+the precondition for deploying `storage.rules`.
+
+```bash
+firebase emulators:start --only firestore,storage --project demo-yovoice
+npm --prefix firestore-tests run test:storage
+```
+
+Both emulators are required: the Storage rules authorize almost every path
+through a `firestore.exists()`/`firestore.get()` lookup, so the same
+"same hub, same project id" warning as the Family Moment suite applies.
+
+**Re-running against a live emulator is safe**, and is expected to stay that
+way. The suite clears the whole Storage bucket before seeding, so it does not
+matter whether the emulator is brand new or has served ten previous runs.
+Note that `testEnv.clearStorage()` is *not* what does this — it only deletes
+objects a single non-recursive `listAll()` finds at the bucket root, which for
+this suite is none of them — leaving it at that put five checks red on an
+ordinary second run. `storage.test.js` walks the prefix tree itself and
+then asserts the bucket is empty; if you add a path whose objects it cannot
+reach, that assertion fails loudly up front instead of letting stale objects
+deny the create-only cases (`allow create: if resource == null`) further down
+and pose as rules regressions.
+
 ## Family Moment media (combined Firestore + Storage)
 
 `family-media.test.js` is the only suite that proves the cross-service
