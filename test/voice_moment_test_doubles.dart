@@ -11,6 +11,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:record/record.dart' show Amplitude, AudioEncoder, RecordConfig;
 
+import 'package:yovoice/features/moments/data/models/moment_availability.dart';
 import 'package:yovoice/features/moments/data/services/audio_capture/audio_capture.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
@@ -226,6 +227,7 @@ class StubMomentService extends MomentService {
   RecordedAudio? publishedAudio;
   int? publishedDuration;
   String? publishedCaption;
+  MomentAvailability? publishedAvailability;
 
   @override
   Future<String> publishRecordedMoment({
@@ -233,11 +235,13 @@ class StubMomentService extends MomentService {
     required int durationSeconds,
     required String caption,
     String? replyToMomentId,
+    MomentAvailability availability = MomentAvailability.fallback,
   }) async {
     publishCalls++;
     publishedAudio = audio;
     publishedDuration = durationSeconds;
     publishedCaption = caption;
+    publishedAvailability = availability;
     if (gate != null) await gate!.future;
     if (failure != null) throw failure!;
     return 'published-moment-id';

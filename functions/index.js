@@ -467,11 +467,14 @@ exports.onPinnedMomentEligibilityChanged = onPinnedMomentEligibilityChanged;
 exports.onPinnedCreatorEntitlementChanged = onPinnedCreatorEntitlementChanged;
 exports.onPinnedCreatorProfileChanged = onPinnedCreatorProfileChanged;
 
-// The server half of 24-hour Voice Moment expiry. finalizeMomentDraft stamps
-// `expiresAt = createdAt + 24h` on every publish; this schedule is what
+// The server half of Voice Moment expiry. finalizeMomentDraft stamps
+// `expiresAt = createdAt + availability` on every expiring publish (the
+// operator-chosen availability window, 24h by default; a "permanent"
+// publish writes no deadline and is never swept); this schedule is what
 // actually retires a Moment once that deadline passes — the client's
-// `expiresAt > now` feed filter only papers over the at-most-10-minute sweep
-// gap and must never be the sole enforcement. The flip is exactly
+// `expiresAt > now` feed filter (missing = permanent = visible) only papers
+// over the at-most-10-minute sweep gap and must never be the sole
+// enforcement. The flip is exactly
 // { isPublished: false, status: "expired", updatedAt }: audio, caption,
 // counters, likes, comments and reports all stay, and only the author's own
 // delete removes anything. Requires the deployed (isPublished ASC,

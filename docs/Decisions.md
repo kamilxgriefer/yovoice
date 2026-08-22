@@ -6079,3 +6079,49 @@ target → 44pt floor, duplicate merged tile labels → excludeSemantics,
 principal's sheet-outlives-room and End-overclaim findings were all fixed
 before release. Known limits, recorded: the in-player 1.6x text clamp;
 real mobile-Safari insets and AT behaviour unverified headlessly.
+
+## ADR-103: The author chooses a Moment's availability — and a missing `expiresAt` now means permanent
+
+**Context.** ADR-101 fixed every Moment's life at 24 hours and read a
+missing `expiresAt` as "legacy, hidden". The operator asked for
+author-chosen availability — 24h / 3 days / 7 days / 30 days / keep until
+deleted — plus first-class deletion of own Moments (the way to free a slot
+and record something new) and the mobile feed/detail/nav redesign.
+
+**Decision.**
+- `finalizeMomentDraft` accepts optional `availabilityHours`: strict
+  whitelist [24, 72, 168, 720] or the literal `'permanent'`; absent
+  defaults to 24; anything else is invalid-argument before any transaction.
+  `'permanent'` writes NO `expiresAt` field.
+- **A missing `expiresAt` now means PERMANENT** on every client surface —
+  the deliberate reversal of ADR-101's null=hidden. The only null-expiry
+  docs in production are operator-owned legacy ones, which become visible
+  again by design. The sweeper is untouched (a range filter never matches a
+  missing field), and the rules needed NO change: create still bans the
+  field, and the author-update `affectedKeys()` pin refuses add, change
+  AND removal — stripping the field to self-grant permanence is the new
+  attack the amendment creates, and it was already impossible (now pinned
+  by a rules test).
+- The ledger hash keeps the deployed composition for the default, so live
+  production replays keep working; a NON-default availability joins the
+  hash, so replaying the same requestId with a different duration answers
+  already-exists and the stored deadline never moves — no
+  publish-then-flip-permanent.
+- The cap counts permanent Moments as active forever; DELETION frees the
+  slot immediately. The client's `deleteMoment` now routes through the
+  deployed `deleteMoment` callable — the review caught the old client-side
+  subcollection sweep failing permission-denied on any Moment somebody
+  else had liked or commented (rules only let each engager delete their
+  own docs), which would have broken the ONLY exit for permanent Moments.
+- Mobile: the feed and the new `MomentDetailScreen` follow the operator's
+  mockup within the honesty deviations (no cover photos, no plays counter,
+  no tags — none of that data exists; "Top reactions" ARE real likers from
+  the likes subcollection); the bottom nav's center action is the YO logo.
+
+**Consequences.** Deploy order is functions BEFORE hosting: the old
+finalize refuses unknown fields, so a new client sending a non-default
+duration against old functions cannot publish at all. Legacy operator
+moments start occupying cap slots at functions deploy. Known small gaps
+recorded in Bugs.md: the availability cannot be changed after publishing
+(deferred by the brief), and real-device rendering remains unverified
+headlessly.

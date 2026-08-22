@@ -42,13 +42,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/sidebar_clock.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
+import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dart';
+import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
+import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+
+import 'voice_moment_test_doubles.dart';
 
 final _capture = GlobalKey();
 
@@ -99,9 +105,12 @@ Future<void> _loadFonts() async {
   await inter.load();
 }
 
-/// Every fixture is a LIVE Moment: `expiresAt = createdAt + 24h`, the
-/// shape `finalizeMomentDraft` writes — which is also what puts a real
-/// "Expires in Xh" label on every frame.
+/// Every timed fixture is a LIVE Moment: `expiresAt = createdAt + 24h`,
+/// the shape `finalizeMomentDraft` writes for the default availability —
+/// which is also what puts a real "Expires in Xh" label on the frame.
+/// [permanent] leaves `expiresAt` out entirely: the author's
+/// "keep until deleted" choice under the amended availability contract,
+/// which renders with no countdown at all.
 VoiceMoment _moment(
   String id, {
   required String author,
@@ -110,6 +119,7 @@ VoiceMoment _moment(
   int likes = 0,
   int comments = 0,
   Duration age = const Duration(hours: 3),
+  bool permanent = false,
 }) {
   final createdAt = DateTime.now().subtract(age);
   return VoiceMoment(
@@ -124,7 +134,7 @@ VoiceMoment _moment(
     commentCount: comments,
     isPublished: true,
     createdAt: createdAt,
-    expiresAt: createdAt.add(const Duration(hours: 24)),
+    expiresAt: permanent ? null : createdAt.add(const Duration(hours: 24)),
     schemaVersion: 2,
     status: 'published',
     isDeleted: false,
@@ -369,7 +379,10 @@ Map<String, dynamic> _document(VoiceMoment moment) => <String, dynamic>{
   'commentCount': moment.commentCount,
   'isPublished': moment.isPublished,
   'createdAt': Timestamp.fromDate(moment.createdAt!),
-  'expiresAt': Timestamp.fromDate(moment.expiresAt!),
+  // Absent for a permanent Moment — exactly what finalize writes for
+  // "keep until deleted".
+  if (moment.expiresAt != null)
+    'expiresAt': Timestamp.fromDate(moment.expiresAt!),
   'schemaVersion': 2,
   'status': 'published',
   'isDeleted': false,
@@ -865,6 +878,324 @@ void main() {
         textScale: 2.0,
       );
     });
+  });
+
+  // ------------------------------------------------------------------
+  // The availability amendment's surfaces: mockup-left feed fidelity at
+  // the four phone widths, the mockup-right detail page, the own-moment
+  // overflow, the recorder's Available-for selector, the permanent row,
+  // and the dock with the logo anchor.
+  // ------------------------------------------------------------------
+
+  group('availability amendment', () {
+    const phoneWidths = <String, (double, double)>{
+      '320': (320, 568),
+      '360': (360, 780),
+      '390': (390, 844),
+      '430': (430, 932),
+    };
+
+    // Mockup-left: header, chips, Featured Moments rail with View all,
+    // Recent list rows — at every phone width the operator actually uses.
+    for (final entry in phoneWidths.entries) {
+      final label = entry.key;
+      final (width, height) = entry.value;
+      testWidgets('feed $label', (tester) async {
+        await shootAt(
+          tester,
+          name: 'moments-feed-$label',
+          discovery: _StaticDiscovery(_populated),
+          momentService: await _seededMomentService(_populated),
+          width: width,
+          height: height,
+        );
+      });
+    }
+
+    Future<void> shootDetail(
+      WidgetTester tester, {
+      required String name,
+      required VoiceMoment moment,
+      required MomentService moments,
+      double width = 390,
+      double height = 844,
+    }) async {
+      useSize(tester, width, height);
+      await tester.pumpWidget(
+        _host(
+          MomentDetailScreen(
+            moment: moment,
+            momentService: moments,
+            feedService: feed(),
+            auth: authMe(),
+            playerFactory: _SilentPlayer.new,
+          ),
+        ),
+      );
+      await tester.pump();
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 120));
+      }
+      await _shoot(tester, name);
+    }
+
+    // Mockup-right: the detail page — author block, caption heading,
+    // player art, engagement, top reactions, comments and composer.
+    testWidgets('detail 390', (tester) async {
+      // Real likers behind "Top reactions": like docs plus their public
+      // profiles, resolved exactly the way production resolves them.
+      final db = FakeFirebaseFirestore();
+      for (final moment in _populated) {
+        await db
+            .collection('voiceMoments')
+            .doc(moment.id)
+            .set(_document(moment));
+      }
+      await db
+          .collection('voiceMoments')
+          .doc('m1')
+          .collection('comments')
+          .add(<String, dynamic>{
+            'type': 'text',
+            'authorId': 'tomas',
+            'authorName': 'Tomás Oliveira',
+            'text': 'The night bus is where the truth lives.',
+            'createdAt': Timestamp.fromDate(
+              DateTime.now().subtract(const Duration(minutes: 40)),
+            ),
+          });
+      final likes = db
+          .collection('voiceMoments')
+          .doc('m1')
+          .collection('likes');
+      var minute = 0;
+      for (final (uid, name) in const [
+        ('tomas', 'Tomás Oliveira'),
+        ('joana', 'Joana Almeida'),
+        ('kamil', 'Kamil'),
+      ]) {
+        minute += 3;
+        await likes.doc(uid).set({
+          'userId': uid,
+          'createdAt': Timestamp.fromDate(
+            DateTime.now().subtract(Duration(minutes: minute)),
+          ),
+        });
+        await db.collection('publicProfiles').doc(uid).set({
+          'displayName': name,
+        });
+      }
+      final withLikes = MomentService(
+        firestore: db,
+        auth: authMe(),
+        storage: MockFirebaseStorage(),
+      );
+      await shootDetail(
+        tester,
+        name: 'moment-detail-390',
+        moment: _populated.first,
+        moments: withLikes,
+      );
+    });
+
+    // The author's PERMANENT Moment on the detail page: "Stays until
+    // deleted", Delete beside the engagement row, no countdown anywhere.
+    testWidgets('detail 390 own permanent', (tester) async {
+      final mine = _moment(
+        'forever',
+        author: 'me',
+        authorName: 'Kamil',
+        caption: 'This one stays. My pinned welcome message.',
+        likes: 4,
+        comments: 1,
+        permanent: true,
+      );
+      final moments = await _seededMomentService([mine]);
+      await shootDetail(
+        tester,
+        name: 'moment-detail-390-own-permanent',
+        moment: mine,
+        moments: moments,
+      );
+    });
+
+    // The own-moment overflow: Details + Delete, no Report.
+    testWidgets('own overflow open 390', (tester) async {
+      useSize(tester, 390, 844);
+      final moments = await _seededMomentService([
+        _moment(
+          'mine0',
+          author: 'me',
+          authorName: 'Kamil',
+          caption: 'Testing the very first Voice Moment.',
+          likes: 1,
+          comments: 1,
+        ),
+      ]);
+      await tester.pumpWidget(
+        _host(
+          MomentsScreen(
+            initialTab: MomentsTab.following,
+            momentService: moments,
+            auth: authMe(),
+            feedService: feed(),
+            discoveryService: _StaticDiscovery(const <VoiceMoment>[]),
+            playerFactory: _SilentPlayer.new,
+            isRootTab: true,
+          ),
+        ),
+      );
+      await tester.pump();
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 120));
+      }
+      await tester.tap(find.byKey(const ValueKey('moment-row-menu-mine0')));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+      await _shoot(tester, 'moments-own-overflow-390');
+    });
+
+    // A permanent own Moment in the list: "Stays until deleted", no
+    // countdown; a friend's permanent one right under it shows NO
+    // availability copy at all.
+    testWidgets('permanent rows 390', (tester) async {
+      useSize(tester, 390, 844);
+      final moments = await _seededMomentService([
+        _moment(
+          'mine-forever',
+          author: 'me',
+          authorName: 'Kamil',
+          caption: 'This one stays. My pinned welcome message.',
+          likes: 4,
+          comments: 1,
+          permanent: true,
+        ),
+        _moment(
+          'mine-timed',
+          author: 'me',
+          authorName: 'Kamil',
+          caption: 'And this one is a normal 24-hour story.',
+          age: const Duration(hours: 5),
+        ),
+      ]);
+      await tester.pumpWidget(
+        _host(
+          MomentsScreen(
+            initialTab: MomentsTab.following,
+            momentService: moments,
+            auth: authMe(),
+            feedService: feed(
+              social: [
+                _moment(
+                  'theirs-forever',
+                  author: 'joana',
+                  authorName: 'Joana Almeida',
+                  caption: 'A field recording from the tram.',
+                  likes: 12,
+                  permanent: true,
+                ),
+              ],
+            ),
+            discoveryService: _StaticDiscovery(const <VoiceMoment>[]),
+            playerFactory: _SilentPlayer.new,
+            isRootTab: true,
+          ),
+        ),
+      );
+      await tester.pump();
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 120));
+      }
+      await _shoot(tester, 'moments-permanent-rows-390');
+    });
+
+    // The recorder's Available-for selector, with the new
+    // keep-until-deleted choice selected so its helper copy shows.
+    testWidgets('availability selector 390', (tester) async {
+      useSize(tester, 390, 844);
+      final backend = FakeRecorderBackend();
+      final capture = FakeAudioCapture()..result = FakeRecordedAudio();
+      final clock = FakeStopwatch();
+      await tester.pumpWidget(
+        _host(
+          RecordVoiceMomentScreen(
+            recorder: VoiceMomentRecorder(
+              backend: backend,
+              capture: capture,
+              clock: clock,
+            ),
+            momentService: StubMomentService(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.mic_rounded));
+      await tester.pump();
+      await tester.pump();
+      clock.value = const Duration(seconds: 23);
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.tap(find.byIcon(Icons.stop_rounded));
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('availability-permanent')));
+      await tester.pump();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('availability-permanent')),
+      );
+      await tester.pump();
+      await _shoot(tester, 'moments-availability-selector-390');
+    });
+
+    // The dock with its logo anchor hosting the feed — 390 and the 320
+    // floor. MoreDestinationHost is the production host that keeps the
+    // bottom navigation on Moment surfaces.
+    for (final entry in const <String, (double, double)>{
+      '390': (390, 844),
+      '320': (320, 568),
+    }.entries) {
+      final label = entry.key;
+      final (width, height) = entry.value;
+      testWidgets('nav with logo $label', (tester) async {
+        useSize(tester, width, height);
+        final moments = await _seededMomentService(_populated);
+        await tester.pumpWidget(
+          _host(
+            MoreDestinationHost(
+              body: MomentsScreen(
+                momentService: moments,
+                auth: authMe(),
+                feedService: feed(),
+                discoveryService: _StaticDiscovery(_populated),
+                playerFactory: _SilentPlayer.new,
+                isRootTab: true,
+              ),
+              selectedIndex: 5,
+              unreadConversationCount: 2,
+              onDestinationSelected: (_) {},
+              onVoicePressed: () {},
+              onMorePressed: () {},
+            ),
+          ),
+        );
+        await tester.pump();
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 120));
+        }
+        // The dock's logo is a real asset decode — asynchronous I/O that
+        // only progresses inside runAsync. Without this the frame shows
+        // an empty anchor where the logo belongs.
+        await tester.runAsync(() async {
+          await precacheImage(
+            const AssetImage('assets/images/logo.png'),
+            tester.element(find.byType(MaterialApp)),
+          );
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 60));
+        await _shoot(tester, 'moments-nav-logo-$label');
+      });
+    }
   });
 
   group('sidebar clock', () {

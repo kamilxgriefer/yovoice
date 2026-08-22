@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
+import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
@@ -39,9 +40,10 @@ enum MomentsTab {
 /// One surface, four filters (Discover / Following / Most engaged /
 /// Recent), a story strip of per-author chains with real viewed state,
 /// and a right detail panel on wide layouts. Chains open in the story
-/// viewer; every surfaced Moment is inside its 24-hour life
-/// (`expiresAt > now`), because expired audio is enforced dead server-side
-/// and filtered client-side.
+/// viewer; every surfaced Moment is live — inside its chosen availability
+/// window (`expiresAt > now`) or permanent (no `expiresAt`, the author's
+/// "keep until deleted" choice) — because expired audio is enforced dead
+/// server-side and filtered client-side.
 class MomentsScreen extends StatefulWidget {
   const MomentsScreen({
     this.momentService,
@@ -54,6 +56,7 @@ class MomentsScreen extends StatefulWidget {
     this.isVisible,
     this.initialTab = MomentsTab.discover,
     this.initialFilter,
+    this.onOpenDetail,
     this.playerFactory,
     super.key,
   });
@@ -87,6 +90,11 @@ class MomentsScreen extends StatefulWidget {
 
   /// Which filter chip starts selected.
   final MomentsFilter? initialFilter;
+
+  /// How a Moment's full detail page opens. The shell passes a route that
+  /// keeps the bottom navigation visible with Moments active; absent, the
+  /// feed pushes the plain detail route with its own Back control.
+  final void Function(VoiceMoment moment)? onOpenDetail;
 
   @visibleForTesting
   final AudioPlayer Function()? playerFactory;
@@ -138,6 +146,7 @@ class _MomentsScreenState extends State<MomentsScreen> {
                 contentReportService: widget.contentReportService,
                 auth: widget.auth,
                 isVisible: widget.isVisible,
+                onOpenDetail: widget.onOpenDetail,
                 playerFactory: widget.playerFactory,
                 onRecord: () => unawaited(_createMoment()),
               ),

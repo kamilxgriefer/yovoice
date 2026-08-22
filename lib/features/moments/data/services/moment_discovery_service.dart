@@ -25,10 +25,10 @@ enum MomentDropReason {
   /// The viewer blocked this author.
   blockedAuthor,
 
-  /// Past its 24-hour life, marked expired by the sweeper, or a legacy
-  /// document with no `expiresAt` at all — which per the expiry contract
-  /// reads as already expired, never as immortal. The client filter is
-  /// what covers the sweeper's ≤10-minute gap.
+  /// Past its chosen life, or marked expired by the sweeper. A document
+  /// with no `expiresAt` at all is PERMANENT under the amended
+  /// availability contract and is never dropped for this reason. The
+  /// client filter is what covers the sweeper's ≤10-minute gap.
   expired,
 }
 
@@ -287,12 +287,13 @@ class MomentDiscoveryService {
   /// no error and no empty state — invisible data loss. `isPublished`
   /// is what both existing feeds already prove works in production.
   ///
-  /// What IS filtered on since the 24-hour expiry contract landed:
-  /// [VoiceMoment.isActiveAt]. A Moment past its `expiresAt`, marked
-  /// `status: 'expired'` by the sweeper, or carrying no `expiresAt` at
-  /// all (pre-expiry legacy) is dropped as [MomentDropReason.expired] —
-  /// the client-side half of the two-layer enforcement, covering the
-  /// sweeper's ≤10-minute gap so a dead Moment never renders.
+  /// What IS filtered on since the expiry contract landed:
+  /// [VoiceMoment.isActiveAt]. A Moment past its `expiresAt` or marked
+  /// `status: 'expired'` by the sweeper is dropped as
+  /// [MomentDropReason.expired] — the client-side half of the two-layer
+  /// enforcement, covering the sweeper's ≤10-minute gap so a dead Moment
+  /// never renders. A Moment with NO `expiresAt` is PERMANENT under the
+  /// amended availability contract ("keep until deleted") and is kept.
   @visibleForTesting
   static ({List<VoiceMoment> kept, Map<String, MomentDropReason> drops})
   filterPlayable(

@@ -21,13 +21,15 @@ const REGION = "europe-west1";
 const MAX_EXPIRED_MOMENT_SCAN = 200;
 
 /**
- * THE SWEEP THAT TAKES A STORY OFF THE SHELF ONCE ITS 24 HOURS ARE OVER.
+ * THE SWEEP THAT TAKES A STORY OFF THE SHELF ONCE ITS DEADLINE PASSES.
  *
- * finalizeMomentDraft (./integrity.js) stamps every published Voice Moment
- * with `expiresAt = createdAt + 24h`. Expiry enforcement is two-layer by
- * design: this schedule is the SERVER truth that actually retires the
- * document, and the client feed additionally filters `expiresAt > now` so
- * the at-most-10-minute gap between deadline and sweep never shows a dead
+ * finalizeMomentDraft (./integrity.js) stamps every EXPIRING published
+ * Voice Moment with `expiresAt = createdAt + availability` — the
+ * operator-chosen availability window, 24 hours by default. Expiry
+ * enforcement is two-layer by design: this schedule is the SERVER truth
+ * that actually retires the document, and the client feed additionally
+ * filters `expiresAt > now` (missing = permanent = visible) so the
+ * at-most-10-minute gap between deadline and sweep never shows a dead
  * Moment to anybody. Neither layer alone is the feature — without this
  * sweep "expiry" would be a frontend pretence a modified client ignores;
  * without the client filter every Moment would linger publicly for up to
@@ -41,13 +43,17 @@ const MAX_EXPIRED_MOMENT_SCAN = 200;
  * refuses NEW likes and comments with a clean failed-precondition. Deletion
  * remains the only path that queues storage cleanup.
  *
- * A LEGACY MOMENT WITH NO `expiresAt` IS SKIPPED, DELIBERATELY. Firestore
- * range filters never match a document missing the filtered field, so the
- * pre-expiry documents production still holds are invisible to the query
- * below. That is the intended contract: the client treats a missing
- * `expiresAt` as already expired and hides it, while the server leaves the
- * document untouched for its author. Nothing here backfills deadlines onto
- * documents that were published under different product rules.
+ * A MOMENT WITH NO `expiresAt` IS SKIPPED, DELIBERATELY — THAT IS WHAT
+ * "PERMANENT" MEANS. finalizeMomentDraft's operator-chosen availability
+ * (2026-08, amending ADR-101) writes no deadline at all for a "permanent"
+ * publish, and the legacy pre-expiry documents production still holds
+ * share the exact same shape. Both mean published-until-deleted: the
+ * client shows them with no countdown, the active cap counts them, and
+ * this sweep must never touch them. Firestore range filters never match a
+ * document missing the filtered field, so they are structurally invisible
+ * to the query below — and the per-document transaction independently
+ * refuses a null deadline besides. Nothing here backfills deadlines onto
+ * documents published without one.
  *
  * WHY `expiresAt <= now` RATHER THAN AN AGE HEURISTIC. The deadline was
  * written by a transaction that derived it from the same createdAt the

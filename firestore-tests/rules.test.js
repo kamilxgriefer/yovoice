@@ -1182,6 +1182,16 @@ async function main() {
     }));
   });
 
+  await check("SECURITY: the author cannot strip expiresAt to make a story permanent", async () => {
+    // Operator-chosen availability (2026-08) makes a MISSING expiresAt mean
+    // "permanent — published until deleted", so deleting the field is now the
+    // exact same attack as extending it: a self-granted upgrade from a
+    // 24-hour story to a forever one. `affectedKeys()` counts a removed key
+    // as affected, which is what refuses this; the pin keeps it that way.
+    const ref = doc(host.firestore(), "voiceMoments/moment-expiry");
+    await assertFails(updateDoc(ref, { expiresAt: deleteField() }));
+  });
+
   await check("regression: the author can still edit the caption on an expiring Moment", async () => {
     const ref = doc(host.firestore(), "voiceMoments/moment-expiry");
     await assertSucceeds(updateDoc(ref, { caption: "Owner edit before expiry" }));

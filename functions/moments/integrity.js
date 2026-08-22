@@ -35,31 +35,55 @@ const DEFAULT_LIMITS = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------
-// 24-hour story expiry (2026-08).
+// Story expiry (2026-08) with operator-chosen availability (2026-08, later;
+// amends ADR-101).
 //
-// Every published Voice Moment carries `expiresAt = createdAt + 24h`,
+// A published Voice Moment carries `expiresAt = createdAt + availability`,
 // stamped by finalizeMomentDraft inside the publish transaction. The
-// deadline anchors on the STORED createdAt — the reserve transaction's
-// request time — rather than on the finalize request's clock, because the
-// client-side contract derives chain order and countdowns from the exact
-// equality of the two fields; deriving each from its own request would let
-// them drift by the upload duration. Enforcement is two-layer:
+// availability is the caller's `availabilityHours` — exactly one of
+// MOMENT_AVAILABILITY_HOURS, defaulting to 24 when absent (the original
+// contract, byte for byte) — or the literal string "permanent", which
+// writes NO expiresAt field at all: null-or-missing expiresAt MEANS a
+// Moment that stays published until its author deletes it, everywhere
+// (client filters, the sweep, and the active cap alike). The deadline
+// anchors on the STORED createdAt — the reserve transaction's request time
+// — rather than on the finalize request's clock, because the client-side
+// contract derives chain order and countdowns from the exact equality of
+// the two fields; deriving each from its own request would let them drift
+// by the upload duration. Enforcement is two-layer:
 // expireVoiceMomentsSchedule (functions/moments/expiry.js) flips passed
 // deadlines to `status: "expired"` every 10 minutes, and the client feed
-// filters `expiresAt > now` so the sweep gap never shows a dead Moment.
+// filters on the deadline so the sweep gap never shows a dead Moment.
 //
 // MAX_ACTIVE_MOMENTS caps how many simultaneously live (published, not yet
-// expired) Moments one author may hold — the story-chain length the product
-// is designed around. ACTIVE_MOMENT_SCAN_LIMIT bounds the cap's counting
-// query; active Moments are at most 24 hours old and reserves are
-// rate-limited to 5 per 10 minutes, so a live story pushed past the newest
-// 100 author documents requires a deliberate draft flood — and the only
-// failure direction is an UNDER-count, which lets a determined flooder
+// expired — permanent counts, forever) Moments one author may hold — the
+// story-shelf size the product is designed around. ACTIVE_MOMENT_SCAN_LIMIT
+// bounds the cap's counting query over the author's newest documents.
+// Reserves are rate-limited to 5 per 10 minutes, so pushing a live story
+// past the newest 100 author documents requires a deliberate, sustained
+// draft flood (a permanent Moment CAN be arbitrarily old, but every
+// non-live document above it in the scan was flood-manufactured) — and the
+// only failure direction is an UNDER-count, which lets a determined flooder
 // briefly exceed the cap rather than ever locking an honest author out.
 // ---------------------------------------------------------------------------
-const MOMENT_TTL_MS = 24 * 60 * 60_000;
+const HOUR_MS = 60 * 60_000;
+const MOMENT_TTL_MS = 24 * HOUR_MS;
+const MOMENT_AVAILABILITY_HOURS = Object.freeze([24, 72, 168, 720]);
+const PERMANENT_AVAILABILITY = "permanent";
 const MAX_ACTIVE_MOMENTS = 10;
 const ACTIVE_MOMENT_SCAN_LIMIT = 100;
+
+/// The operator-chosen availability of a finalize request. Strict on
+/// purpose: a whitelisted hour count or the exact string "permanent" —
+/// not null, not "24", not an arbitrary number of hours. Absent defaults
+/// to 24, which is precisely the deployed behaviour, so pre-availability
+/// clients keep publishing 24-hour stories without changing a byte.
+function momentAvailability(value) {
+  if (value === undefined) return 24;
+  if (value === PERMANENT_AVAILABILITY) return PERMANENT_AVAILABILITY;
+  if (MOMENT_AVAILABILITY_HOURS.includes(value)) return value;
+  return fail("invalid-argument", "availabilityHours is invalid.");
+}
 
 // ---------------------------------------------------------------------------
 // Content reports
@@ -240,9 +264,11 @@ function validateMoment(snapshot, momentId, {
     "updatedAt",
   ];
   // `expiresAt` is additive (2026-08): finalizeMomentDraft stamps it on
-  // every new publish, but production still holds pre-expiry documents
-  // without it. Optional here so the legacy shape stays canonical; when the
-  // key is present it must be a real timestamp (checked below).
+  // every EXPIRING publish, while a "permanent" publish (operator-chosen
+  // availability, amending ADR-101) deliberately writes none — and
+  // production also still holds legacy pre-expiry documents without it.
+  // Optional here so both no-deadline shapes stay canonical; when the key
+  // is present it must be a real timestamp (checked below).
   const hasExpiresAt = Object.prototype.hasOwnProperty.call(data, "expiresAt");
   if (hasExpiresAt) {
     expectedKeys.push("expiresAt");
@@ -596,12 +622,13 @@ function createMomentIntegrityService({
       // ACTIVE-STORY CAP. Counted inside the transaction so the count and
       // the reservation commit or abort together, and counted in MEMORY
       // over a bounded newest-first scan rather than in the query — the
-      // filter is `isPublished && expiresAt > now`, and `now` moves, so no
-      // index can serve it directly. The query itself needs the deployed
-      // (authorId ASC, createdAt DESC) composite — the same one the
-      // client's story-chain reads use. A refusal aborts the transaction,
-      // so a capped attempt consumes neither the ledger nor rate budget:
-      // the identical requestId succeeds once a slot frees.
+      // filter is `isPublished && (expiresAt missing || expiresAt > now)`,
+      // and `now` moves while missing fields never match a range filter,
+      // so no index can serve it directly. The query itself needs the
+      // deployed (authorId ASC, createdAt DESC) composite — the same one
+      // the client's story-chain reads use. A refusal aborts the
+      // transaction, so a capped attempt consumes neither the ledger nor
+      // rate budget: the identical requestId succeeds once a slot frees.
       const authoredMoments = await transaction.get(
         db.collection("voiceMoments")
           .where("authorId", "==", auth.uid)
@@ -612,9 +639,15 @@ function createMomentIntegrityService({
       for (const candidate of authoredMoments.docs) {
         const candidateData = candidate.data() ?? {};
         const candidateExpiresAtMs = timestampMillis(candidateData.expiresAt);
+        // Active means published and not yet past a deadline — and a
+        // published Moment with NO deadline is the "permanent"
+        // availability (the shape legacy pre-expiry documents share),
+        // which stays live until its author deletes it. It occupies a cap
+        // slot for as long as it exists: the honest reading of "10
+        // simultaneously active", and deletion is the documented exit.
         if (candidateData.isPublished === true &&
-            candidateExpiresAtMs !== null &&
-            candidateExpiresAtMs > timing.nowMs) {
+            (candidateExpiresAtMs === null ||
+              candidateExpiresAtMs > timing.nowMs)) {
           activeCount += 1;
         }
       }
@@ -677,7 +710,7 @@ function createMomentIntegrityService({
     const auth = requireActor(request);
     const data = requireExactInput(
       request.data,
-      ["momentId", "objectGeneration", "requestId"],
+      ["availabilityHours", "momentId", "objectGeneration", "requestId"],
       ["momentId", "objectGeneration", "requestId"],
     );
     const momentId = requireId(data.momentId, "momentId");
@@ -689,7 +722,22 @@ function createMomentIntegrityService({
     if (!/^[0-9]{1,30}$/u.test(objectGeneration)) {
       fail("invalid-argument", "objectGeneration is invalid.");
     }
+    const availability = momentAvailability(data.availabilityHours);
+    // WHY THE DEFAULT STAYS OUT OF THE HASH (the reportIdentityInput
+    // reasoning, applied here). finalizeMomentDraft is deployed and live:
+    // every publish already ledgered hashed exactly
+    // `{ momentId, objectGeneration }`, and clients retry a finalize with
+    // the same requestId expecting a replay. Folding a default
+    // `availabilityHours: 24` in unconditionally would re-key all of those
+    // ledgers — the next retry would stop replaying and start answering
+    // already-exists. So the default (absent OR an explicit 24 — they are
+    // the same request) keeps the deployed hash, while a non-default
+    // availability joins it precisely so the same requestId carrying a
+    // DIFFERENT duration is a different request: it is refused with
+    // already-exists rather than silently replaying the original deadline
+    // as if the new one had taken effect.
     const input = { momentId, objectGeneration };
+    if (availability !== 24) input.availabilityHours = availability;
     const identity = operationIdentity("moment.finalize", auth.uid, requestId, input);
     const timing = time();
     const preflight = await beginStoragePreflight({
@@ -748,26 +796,32 @@ function createMomentIntegrityService({
           momentData.audioUrl !== null || momentData.mediaGeneration !== null) {
         fail("permission-denied", "Only the canonical draft author can publish it.");
       }
-      // The 24h deadline anchors on the STORED createdAt (the reserve
+      // The deadline anchors on the STORED createdAt (the reserve
       // transaction's request time), not on this request's clock: the
       // contract the client builds chains and countdowns on is the exact
-      // equality `expiresAt == createdAt + 24h`, and validateMoment above
-      // has already proven createdAt is a real timestamp. On replay the
-      // ledger short-circuits before this write, so the deadline never
-      // moves after first publish.
-      transaction.update(momentRef, {
+      // equality `expiresAt == createdAt + availability`, and
+      // validateMoment above has already proven createdAt is a real
+      // timestamp. On replay the ledger short-circuits before this write,
+      // so the deadline never moves after first publish. A "permanent"
+      // publish writes NO expiresAt field at all — absence, not null, not
+      // a far-future date, is what the sweep's range filter and every
+      // client surface read as "stays until the author deletes it".
+      const publishUpdate = {
         audioUrl: downloadUrl,
         isPublished: true,
         status: "published",
         mediaGeneration: media.generation,
         mediaSize: media.size,
         mediaContentType: media.contentType,
-        expiresAt: Timestamp.fromMillis(
-          timestampMillis(momentData.createdAt) + MOMENT_TTL_MS,
-        ),
         publishedAt: timing.now,
         updatedAt: timing.now,
-      });
+      };
+      if (availability !== PERMANENT_AVAILABILITY) {
+        publishUpdate.expiresAt = Timestamp.fromMillis(
+          timestampMillis(momentData.createdAt) + availability * HOUR_MS,
+        );
+      }
+      transaction.update(momentRef, publishUpdate);
       const result = { momentId, published: true };
       transaction.create(ledgerRef, ledgerData({
         kind: "moment.finalize",
@@ -2019,7 +2073,9 @@ module.exports = {
   ACTIVE_MOMENT_SCAN_LIMIT,
   DEFAULT_LIMITS,
   MAX_ACTIVE_MOMENTS,
+  MOMENT_AVAILABILITY_HOURS,
   MOMENT_TTL_MS,
+  PERMANENT_AVAILABILITY,
   canonicalCommentId,
   canonicalMomentId,
   createBucketStorageAdapter,

@@ -32,13 +32,18 @@ class VoiceMoment {
   final DateTime? createdAt;
 
   /// When this Moment stops being publicly alive. Written by
-  /// `finalizeMomentDraft` as `createdAt + 24h`; enforced server-side by
-  /// the expiry sweeper AND client-side by [isActiveAt] so the sweep gap
-  /// (up to 10 minutes) never surfaces a dead Moment.
+  /// `finalizeMomentDraft` as `createdAt + availabilityHours` (24 by
+  /// default; 24/72/168/720 are the whitelisted choices); enforced
+  /// server-side by the expiry sweeper AND client-side by [isActiveAt] so
+  /// the sweep gap (up to 10 minutes) never surfaces a dead Moment.
   ///
-  /// `null` means a legacy document published before expiry existed. Per
-  /// the expiry contract those are treated as ALREADY EXPIRED by every
-  /// feed and chain — never as immortal.
+  /// `null` means PERMANENT — the author chose "Keep until deleted", so
+  /// finalize wrote no deadline at all and the sweeper never touches it
+  /// (its range filter cannot match an absent field). This AMENDS
+  /// ADR-101, which read null as legacy-expired: the operator asked for a
+  /// keep-until-deleted option, and the only null-expiry documents in
+  /// production are legacy ones the operator owns, so null now means
+  /// "never expires" on every surface. Deletion is the author's exit.
   final DateTime? expiresAt;
   final int schemaVersion;
   final String status;
@@ -46,6 +51,10 @@ class VoiceMoment {
 
   bool get isCanonicalPublished =>
       schemaVersion == 2 && status == 'published' && isPublished && !isDeleted;
+
+  /// True when this Moment never expires: the author chose
+  /// "Keep until deleted", so `finalizeMomentDraft` wrote no `expiresAt`.
+  bool get isPermanent => expiresAt == null;
 
   /// Whether this Moment may be surfaced in a feed, strip or chain at
   /// [now].
@@ -55,14 +64,16 @@ class VoiceMoment {
   ///  * never deleted, never a draft (`isPublished` is the server's word);
   ///  * never `status == 'expired'` — the sweeper's mark is final even if
   ///    the timestamps somehow disagree;
-  ///  * `expiresAt` must exist and still be in the future. A missing
-  ///    `expiresAt` is a pre-expiry legacy document and reads as expired,
-  ///    NOT as never-expiring — the fail-closed direction.
+  ///  * a present `expiresAt` must still be in the future; a MISSING
+  ///    `expiresAt` means PERMANENT and always passes. This deliberately
+  ///    reverses ADR-101's null=legacy-hidden rule (see [expiresAt]):
+  ///    "keep until deleted" is expressed as no deadline, and the sweeper
+  ///    already skips documents without the field.
   bool isActiveAt(DateTime now) {
     if (!isPublished || isDeleted) return false;
     if (status == 'expired') return false;
     final expiry = expiresAt;
-    return expiry != null && expiry.isAfter(now);
+    return expiry == null || expiry.isAfter(now);
   }
 
   factory VoiceMoment.fromFirestore(

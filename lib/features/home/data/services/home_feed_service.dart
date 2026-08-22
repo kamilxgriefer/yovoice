@@ -67,9 +67,11 @@ class HomeFeedService {
       final allowedAuthors = <String>{_uid, ...friendIds, ...followingIds};
       // Expiry is enforced client-side on every surface this stream feeds
       // (Home strips, the social feed, the Following filter): a Moment
-      // past its `expiresAt` — or a legacy document with none — must not
-      // render during the sweeper's ≤10-minute gap. `isActiveAt` is the
-      // single definition of "still alive".
+      // past its `expiresAt` must not render during the sweeper's
+      // ≤10-minute gap. A document with NO `expiresAt` is PERMANENT under
+      // the amended availability contract ("keep until deleted") and
+      // stays live. `isActiveAt` is the single definition of "still
+      // alive".
       final now = DateTime.now();
       final filtered = moments
           .where(
@@ -118,15 +120,15 @@ class HomeFeedService {
           .where('isPublished', isEqualTo: true)
           // Ordered NEWEST-FIRST, deliberately. Without an orderBy this
           // limit(40) returned the 40 LOWEST DOCUMENT IDS among published
-          // docs — an arbitrary slice. Legacy pre-expiry documents keep
-          // isPublished forever (the sweeper skips a missing expiresAt), so
-          // they would permanently squat the window while the client-side
-          // expiry filter hides them, and a friend's genuinely live Moment
-          // whose id sorts late would silently never reach Home or the
-          // Following feed. Freshest-first makes the window exactly the 40
-          // most recent — live moments always in, squatters aged out. The
-          // (isPublished ASC, createdAt DESC) composite this needs is
-          // deployed and query-proved.
+          // docs — an arbitrary slice — so a friend's genuinely live
+          // Moment whose id sorts late would silently never reach Home or
+          // the Following feed. Freshest-first makes the window exactly
+          // the 40 most recent. Note that under the amended availability
+          // contract a permanent Moment ("keep until deleted", no
+          // expiresAt) legitimately occupies the window until it ages out
+          // of the 40 or its author deletes it — that is the product
+          // behaviour, not squatting. The (isPublished ASC, createdAt
+          // DESC) composite this needs is deployed and query-proved.
           .orderBy('createdAt', descending: true)
           .limit(limit)
           .snapshots()

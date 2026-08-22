@@ -821,8 +821,12 @@ void main() {
       }
     }
 
-    testWidgets('renders my Moments and my circle\'s as rows — mine without '
-        'a report menu, theirs with one', (tester) async {
+    testWidgets('renders my Moments and my circle\'s as rows — mine with '
+        'Delete in the menu, theirs with Report', (tester) async {
+      // ADAPTED with the availability amendment: every row now carries an
+      // overflow menu (Details for all), and its ownership half changed —
+      // Delete on my own rows (the author's exit, the ONLY one for a
+      // permanent Moment), Report only on someone else's.
       final moments = await seeded([
         _moment('mine-1', author: _me, likes: 1, comments: 1,
             age: const Duration(hours: 1)),
@@ -842,10 +846,34 @@ void main() {
           reason: '$id should have a row',
         );
       }
-      // Report never points at your own Moment; it always accompanies
-      // someone else's.
-      expect(find.byKey(const ValueKey('moment-row-menu-mine-1')), findsNothing);
-      expect(find.byKey(const ValueKey('moment-row-menu-theirs')), findsOneWidget);
+
+      // My own row: Delete offered, Report absent.
+      await tester.tap(find.byKey(const ValueKey('moment-row-menu-mine-1')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('moment-row-delete-mine-1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('moment-row-report-mine-1')),
+        findsNothing,
+      );
+      await tester.tapAt(Offset.zero); // dismiss the menu
+      await tester.pumpAndSettle();
+
+      // Someone else's row: Report offered, Delete absent.
+      await tester.tap(find.byKey(const ValueKey('moment-row-menu-theirs')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('moment-row-report-theirs')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('moment-row-delete-theirs')),
+        findsNothing,
+      );
+      await tester.tapAt(Offset.zero);
+      await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
     });
 

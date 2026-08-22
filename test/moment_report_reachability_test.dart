@@ -232,14 +232,26 @@ void main() {
       });
     });
 
-    testWidgets('your own Moment\'s row carries no report menu at all', (
+    testWidgets('your own Moment\'s row offers Delete, never Report', (
       tester,
     ) async {
+      // ADAPTED with the availability amendment: the own-row overflow
+      // menu now exists (it carries Details and the author's Delete —
+      // the only exit a permanent Moment has), but Report stays for
+      // OTHERS' Moments only.
       final functions = _RecordingFunctions();
       await pumpFeed(tester, functions: functions, author: viewerUid);
 
       expect(find.byKey(const ValueKey('moment-row-v1')), findsOneWidget);
-      expect(find.byKey(const ValueKey('moment-row-menu-v1')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('moment-row-menu-v1')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('moment-row-delete-v1')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('moment-row-report-v1')), findsNothing);
+      expect(find.text('Report'), findsNothing);
     });
 
     testWidgets('the story viewer offers Report beside Like and Comment, '

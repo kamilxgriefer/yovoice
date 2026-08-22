@@ -8,6 +8,7 @@ import 'package:record/record.dart' show Amplitude;
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/features/moments/data/models/moment_availability.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dart';
@@ -117,6 +118,13 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
   final List<double> _meter = List<double>.filled(_meterBarCount, 0);
 
   RecordedAudio? _recording;
+
+  /// How long the published Moment stays live. Defaults to 24 hours —
+  /// exactly today's behaviour — and is sent to the server as
+  /// `availabilityHours` only when the author picks something else.
+  /// Voice replies have no expiry of their own, so the selector never
+  /// renders for them.
+  MomentAvailability _availability = MomentAvailability.fallback;
 
   /// Keeps the primary action reachable: a null `onPressed` drops focus to
   /// the route scope, which is how the retry became unreachable after a
@@ -490,6 +498,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
         durationSeconds: _durationSeconds,
         caption: _captionController.text,
         replyToMomentId: widget.replyToMomentId,
+        availability: _availability,
       );
     } catch (error) {
       if (!mounted) return;
@@ -512,14 +521,15 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
               ? (error.message?.trim().isNotEmpty == true
                     ? error.message!.trim()
                     : 'You have reached the limit of active Moments. '
-                          'Moments expire 24 hours after posting — one '
-                          'must expire before you can publish another.')
+                          'A slot frees up when one of your Moments '
+                          'reaches the end of its availability — or when '
+                          'you delete one.')
               : intentionalOrFriendly(
                   error,
                   fallback: 'Your Voice Moment could not be published.',
                 ),
           action: capRefusal
-              ? 'Your recording is kept — publish it once a Moment expires.'
+              ? 'Your recording is kept — publish it once a slot frees up.'
               : 'Your recording is still here — try publishing again.',
           cause: error,
         ),
@@ -823,6 +833,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
               _phase == VoiceMomentRecordingPhase.publishing) ...[
             const SizedBox(height: 24),
             _captionField(),
+            if (!_isReply) ...[
+              const SizedBox(height: 16),
+              _availabilitySelector(),
+            ],
             const SizedBox(height: 12),
             _actions(stacked: stackActions),
           ],
@@ -839,6 +853,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _captionField(),
+            if (!_isReply) ...[
+              const SizedBox(height: 16),
+              _availabilitySelector(),
+            ],
             const SizedBox(height: 12),
             _actions(stacked: false),
           ],
@@ -1378,6 +1396,50 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
     );
   }
 
+  /// "Available for": the operator-chosen lifetime of the Moment. The
+  /// five options ARE the server's whitelist — 24h (default), 3, 7 and 30
+  /// days, or keep-until-deleted — and the server re-validates whatever
+  /// is sent. Wrapping chips, so a 320-pt phone and a 2x text scale slide
+  /// to more rows instead of overflowing.
+  Widget _availabilitySelector() {
+    final publishing = _phase == VoiceMomentRecordingPhase.publishing;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Available for',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 13.5,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          _availability == MomentAvailability.permanent
+              ? 'Stays in the feed until you delete it.'
+              : 'Disappears automatically when the time is up.',
+          style: const TextStyle(color: _muted, fontSize: 12, height: 1.35),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final option in MomentAvailability.values)
+              _AvailabilityChip(
+                key: ValueKey('availability-${option.name}'),
+                label: option.label,
+                selected: _availability == option,
+                enabled: !publishing,
+                onTap: () => setState(() => _availability = option),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
   /// Activation is disabled while publishing; focusability is not.
   ///
   /// A null `onPressed` makes the framework drop focus to the route scope,
@@ -1450,6 +1512,88 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
         const SizedBox(width: 12),
         Expanded(child: publish),
       ],
+    );
+  }
+}
+
+/// One availability choice, selected reads violet — the same selected
+/// grammar the feed's filter chips use, with a real 44-pt target.
+class _AvailabilityChip extends StatelessWidget {
+  const _AvailabilityChip({
+    required this.label,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+    super.key,
+  });
+
+  final String label;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: 'Available for $label',
+      child: Material(
+        color: selected
+            ? AppColors.primary
+            : AppColors.background.withValues(alpha: .55),
+        borderRadius: BorderRadius.circular(999),
+        child: InkWell(
+          onTap: enabled ? onTap : null,
+          borderRadius: BorderRadius.circular(999),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 44),
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: selected
+                    ? AppColors.primary
+                    : AppColors.border.withValues(alpha: enabled ? 1 : .5),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  label == MomentAvailability.permanent.label
+                      ? Icons.all_inclusive_rounded
+                      : Icons.schedule_rounded,
+                  size: 15,
+                  color: selected
+                      ? AppColors.textPrimary
+                      : AppColors.textSecondary,
+                ),
+                const SizedBox(width: 6),
+                // Flexible: at a 2x text scale the longest label is a
+                // hair wider than a 360-pt phone's content column, and a
+                // chip must squeeze (ellipsize) rather than overflow.
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: selected
+                          ? AppColors.textPrimary
+                          : (enabled
+                                ? AppColors.textSecondary
+                                : AppColors.textHint),
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -28,10 +28,11 @@ import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
 /// One fixed reading of "now" for the whole file, so every fixture's
 /// `createdAt`/`expiresAt` relation to the clock is stable for the life
-/// of a run. Every live fixture sits 2 hours into its 24-hour life —
-/// the shape `finalizeMomentDraft` really writes — because since the
-/// expiry contract landed, a Moment with no future `expiresAt` is
-/// (correctly) filtered out of every feed before it can render.
+/// of a run. Every timed fixture sits 2 hours into a 24-hour life — the
+/// shape `finalizeMomentDraft` writes for the default availability. A
+/// fixture WITHOUT `expiresAt` is PERMANENT under the amended
+/// availability contract ("keep until deleted") and renders like any
+/// live Moment; a PAST `expiresAt` is still filtered out everywhere.
 final DateTime _anchor = DateTime.now();
 final DateTime _created = _anchor.subtract(const Duration(hours: 2));
 final DateTime _expires = _created.add(const Duration(hours: 24));
@@ -48,8 +49,11 @@ VoiceMoment _moment(
   String status = 'published',
   DateTime? expiresAt,
 
-  /// A pre-expiry legacy document: no `expiresAt` at all. Reads as
-  /// already expired per the contract, never as immortal.
+  /// No `expiresAt` at all. Under the AMENDED availability contract
+  /// (operator-chosen availability; "keep until deleted") this means
+  /// PERMANENT — visible and never expiring. It used to read as
+  /// legacy-expired under ADR-101; that direction was deliberately
+  /// reversed.
   bool withoutExpiry = false,
 }) {
   return VoiceMoment(
@@ -245,8 +249,9 @@ void main() {
   });
 
   group('safety and playability filter', () {
-    test('drops deleted, unplayable, blocked, expired and expiry-less — '
-        'and says which is which', () {
+    test('drops deleted, unplayable, blocked and expired — and keeps a '
+        'PERMANENT (expiry-less) Moment, per the amended availability '
+        'contract', () {
       final result = MomentDiscoveryService.filterPlayable(
         [
           _moment('ok'),
@@ -254,27 +259,31 @@ void main() {
           _moment('draft', audioUrl: null),
           _moment('blank', audioUrl: '   '),
           _moment('blocked', author: 'villain'),
-          // The two halves of the expiry claim: a deadline in the past,
-          // and no deadline at all — BOTH must read as dead, because a
-          // legacy document treated as immortal would outlive every
-          // Moment published under the 24-hour contract.
+          // A deadline in the past reads as dead. NO deadline at all is
+          // the "keep until deleted" choice and reads as PERMANENT —
+          // this ADAPTS the ADR-101-era pin that read null as
+          // legacy-expired: the operator asked for a keep-until-deleted
+          // option, finalizeMomentDraft expresses it by writing no
+          // expiresAt, and the only null-expiry documents in production
+          // are legacy ones the operator owns. Deletion is the author's
+          // exit for these.
           _moment(
             'dead',
             expiresAt: _anchor.subtract(const Duration(minutes: 1)),
           ),
-          _moment('clockless', withoutExpiry: true),
+          _moment('forever', withoutExpiry: true),
         ],
         blockedAuthorIds: {'villain'},
         now: _anchor,
       );
 
-      expect(result.kept.map((m) => m.id), ['ok']);
+      expect(result.kept.map((m) => m.id), ['ok', 'forever']);
       expect(result.drops['gone'], MomentDropReason.deleted);
       expect(result.drops['draft'], MomentDropReason.unplayable);
       expect(result.drops['blank'], MomentDropReason.unplayable);
       expect(result.drops['blocked'], MomentDropReason.blockedAuthor);
       expect(result.drops['dead'], MomentDropReason.expired);
-      expect(result.drops['clockless'], MomentDropReason.expired);
+      expect(result.drops.containsKey('forever'), isFalse);
     });
 
     test('expiry is exclusive: a Moment whose expiresAt IS now is already '
@@ -363,8 +372,11 @@ void main() {
       expect(feed.moments.map((m) => m.id), ['live']);
     });
 
-    test('expired and expiry-less documents never enter the feed, and are '
-        'recorded as expired drops', () async {
+    test('expired documents never enter the feed and are recorded as '
+        'expired drops; an expiry-less document is PERMANENT and stays', () async {
+      // ADAPTED for the amended availability contract: a document with no
+      // expiresAt used to be dropped as legacy-expired (ADR-101); it now
+      // means "keep until deleted" and must surface like any live Moment.
       final harness = build();
       await harness.db.collection('voiceMoments').doc('live').set(_doc('live'));
       await harness.db
@@ -380,13 +392,13 @@ void main() {
           );
       await harness.db
           .collection('voiceMoments')
-          .doc('clockless')
-          .set(_doc('clockless', author: 'c', withoutExpiry: true));
+          .doc('forever')
+          .set(_doc('forever', author: 'c', withoutExpiry: true));
 
       final feed = await harness.service.loadDiscoveryFeed(seed: 1);
-      expect(feed.moments.map((m) => m.id), ['live']);
+      expect(feed.moments.map((m) => m.id).toSet(), {'live', 'forever'});
       expect(feed.drops['dead'], MomentDropReason.expired);
-      expect(feed.drops['clockless'], MomentDropReason.expired);
+      expect(feed.drops.containsKey('forever'), isFalse);
       // All three WERE fetched: the empty-state arithmetic depends on
       // the distinction between "not published" and "published but dead".
       expect(feed.fetchedCount, 3);
@@ -572,8 +584,8 @@ void main() {
     });
 
     testWidgets('an all-EXPIRED corpus is the third distinct empty state: '
-        'not "nobody posted", not "pipeline broken" — just the 24-hour '
-        'life doing its job, with the recorder offered', (tester) async {
+        'not "nobody posted", not "pipeline broken" — just chosen '
+        'availability doing its job, with the recorder offered', (tester) async {
       await tester.pumpWidget(
         host(
           MomentsScreen(
@@ -595,7 +607,9 @@ void main() {
       expect(find.text('Nothing live right now'), findsOneWidget);
       expect(find.text('No Voice Moments yet'), findsNothing);
       expect(find.text('Nothing playable right now'), findsNothing);
-      expect(find.textContaining('expired'), findsOneWidget);
+      // ADAPTED with the availability amendment: the copy names the end
+      // of the CHOSEN availability window, not a fixed 24-hour life.
+      expect(find.textContaining('chosen availability'), findsOneWidget);
       expect(
         find.widgetWithText(FilledButton, 'Record a Moment'),
         findsOneWidget,

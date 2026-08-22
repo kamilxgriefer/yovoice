@@ -17,6 +17,7 @@ import 'package:yovoice/features/moments/data/services/moment_discovery_service.
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
+import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_sheet.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels.dart';
@@ -56,10 +57,11 @@ const double _tabletWidth = 600;
 /// inline comment thread.
 ///
 /// Every number rendered is a document's real counter, every timestamp
-/// label is derived from a real timestamp, and every Moment shown has a
-/// live `expiresAt` in the future — the client half of the 24-hour expiry
-/// contract. There are no view counts anywhere: no server-side counter
-/// exists, so none is printed.
+/// label is derived from a real timestamp, and every Moment shown is
+/// live — either inside its chosen availability window (`expiresAt` in
+/// the future) or permanent (no `expiresAt` at all, the author's
+/// "keep until deleted" choice). There are no view counts anywhere: no
+/// server-side counter exists, so none is printed.
 class MomentsFeedView extends StatefulWidget {
   const MomentsFeedView({
     required this.onRecord,
@@ -71,6 +73,7 @@ class MomentsFeedView extends StatefulWidget {
     this.contentReportService,
     this.auth,
     this.isVisible,
+    this.onOpenDetail,
     this.playerFactory,
     super.key,
   });
@@ -87,6 +90,12 @@ class MomentsFeedView extends StatefulWidget {
   /// False while the shell shows another tab: playback must stop rather
   /// than continue from an invisible IndexedStack child.
   final ValueListenable<bool>? isVisible;
+
+  /// How this surface opens a Moment's full detail page. The shell passes
+  /// a route that keeps the bottom navigation visible (Moments stays the
+  /// active tab); when nothing is passed the feed pushes the plain
+  /// [MomentDetailScreen] route, which carries its own Back control.
+  final void Function(VoiceMoment moment)? onOpenDetail;
 
   @visibleForTesting
   final AudioPlayer Function()? playerFactory;
@@ -168,7 +177,21 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       _moments = widget.momentService ?? MomentService();
       _mineSubscription = _moments!.watchMyMoments().listen(
         (moments) {
-          if (mounted) setState(() => _mineData = moments);
+          if (!mounted) return;
+          setState(() {
+            // A previously-seen own Moment that vanished from the stream
+            // was deleted — from this feed's own controls, the story
+            // viewer, or the detail screen. The Discover pool is a
+            // one-shot load, so without this prune a deleted own Moment
+            // would keep rendering until the next manual reload.
+            final surviving = moments.map((m) => m.id).toSet();
+            final removed = _mineData
+                .map((m) => m.id)
+                .where((id) => !surviving.contains(id))
+                .toSet();
+            _mineData = moments;
+            if (removed.isNotEmpty) _pruneFromPool(removed);
+          });
         },
         onError: (Object _) {
           // Own Moments are additive to the personal slice; when this
@@ -399,6 +422,18 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
     );
   }
 
+  /// What the story viewer reports after the author deletes a link of the
+  /// chain in place: the feed drops it immediately.
+  void _handleDeletedElsewhere(VoiceMoment moment) {
+    if (!mounted) return;
+    setState(() {
+      _pruneFromPool({moment.id});
+      _mineData = _mineData
+          .where((mine) => mine.id != moment.id)
+          .toList(growable: false);
+    });
+  }
+
   Future<void> _openChain(MomentChain chain) async {
     await _stopPanelPlayback();
     if (!mounted) return;
@@ -411,6 +446,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       viewsService: _views,
       contentReportService: widget.contentReportService,
       auth: widget.auth,
+      onOpenDetail: _openDetail,
+      onDeleted: _handleDeletedElsewhere,
       playerFactory: widget.playerFactory,
     );
   }
@@ -455,6 +492,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
               viewsService: _views,
               contentReportService: widget.contentReportService,
               auth: widget.auth,
+              onOpenDetail: _openDetail,
+              onDeleted: _handleDeletedElsewhere,
               playerFactory: widget.playerFactory,
             ),
           );
@@ -493,6 +532,128 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
           'Moment attached. ${moment.authorName} is not told who reported '
           'it.',
     );
+  }
+
+  /// Removes [ids] from the one-shot discovery pool so a deleted Moment
+  /// disappears immediately instead of surviving until the next reload.
+  /// `fetchedCount` shrinks with it, so the empty-state copy stays honest
+  /// when the last Moment goes.
+  void _pruneFromPool(Set<String> ids) {
+    final result = _result;
+    if (result == null) return;
+    final before = result.moments.length;
+    final kept = result.moments
+        .where((moment) => !ids.contains(moment.id))
+        .toList(growable: false);
+    if (kept.length == before) return;
+    _result = MomentDiscoveryFeed(
+      moments: kept,
+      fetchedCount: (result.fetchedCount - (before - kept.length)).clamp(
+        0,
+        result.fetchedCount,
+      ),
+      drops: result.drops,
+      seed: result.seed,
+      poolExhausted: result.poolExhausted,
+    );
+    if (_selectedId != null && ids.contains(_selectedId)) _selectedId = null;
+    if (_playingId != null && ids.contains(_playingId)) {
+      unawaited(_stopPanelPlayback());
+    }
+  }
+
+  /// Opens the full detail page for [moment]. The shell's route keeps the
+  /// bottom navigation visible with Moments active; the fallback plain
+  /// route carries its own Back control.
+  void _openDetail(VoiceMoment moment) {
+    unawaited(_stopPanelPlayback());
+    final open = widget.onOpenDetail;
+    if (open != null) {
+      open(moment);
+      return;
+    }
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => MomentDetailScreen(
+            moment: moment,
+            momentService: _moments,
+            feedService: _feed,
+            viewsService: _views,
+            contentReportService: widget.contentReportService,
+            auth: widget.auth,
+            playerFactory: widget.playerFactory,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The author's exit — the ONLY exit a permanent Moment has. Destructive
+  /// confirmation, the existing [MomentService.deleteMoment], immediate
+  /// local removal on success, an honest error and an unchanged feed on
+  /// failure.
+  Future<void> _confirmDelete(VoiceMoment moment) async {
+    final service = _moments;
+    if (service == null) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AppColors.surfaceLight,
+        title: const Text(
+          'Delete this moment?',
+          style: TextStyle(color: AppColors.textPrimary),
+        ),
+        content: const Text(
+          'This cannot be undone.',
+          style: TextStyle(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('moment-delete-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('moment-delete-confirm'),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await service.deleteMoment(moment);
+    } catch (_) {
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text('The Moment could not be deleted. Try again.'),
+          ),
+        );
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _pruneFromPool({moment.id});
+      _mineData = _mineData
+          .where((mine) => mine.id != moment.id)
+          .toList(growable: false);
+    });
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Voice Moment deleted.'),
+        ),
+      );
   }
 
   // ------------------------------------------------------------- ordering
@@ -593,7 +754,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
         title: 'No Voice Moments yet',
         body:
             'Nobody has published one. Be the first — record up to 60 '
-            'seconds. Every Moment lives for 24 hours.',
+            'seconds and choose how long it stays.',
         actionLabel: 'Record a Moment',
         onAction: widget.onRecord,
       );
@@ -609,13 +770,18 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
             reason == MomentDropReason.blockedAuthor,
       );
       return _EmptyState(
-        icon: expiredOnly ? Icons.timer_off_outlined : Icons.error_outline_rounded,
-        title: expiredOnly ? 'Nothing live right now' : 'Nothing playable right now',
+        icon: expiredOnly
+            ? Icons.timer_off_outlined
+            : Icons.error_outline_rounded,
+        title: expiredOnly
+            ? 'Nothing live right now'
+            : 'Nothing playable right now',
         body: expiredOnly
             ? '${result.fetchedCount} published '
                   '${result.fetchedCount == 1 ? 'Moment has' : 'Moments have'} '
-                  'expired — every Moment lives for 24 hours. Record a new '
-                  'one to bring the feed back.'
+                  'reached the end of ${result.fetchedCount == 1 ? 'its' : 'their'} '
+                  'chosen availability. Record a new one to bring the feed '
+                  'back.'
             : '${result.fetchedCount} published '
                   '${result.fetchedCount == 1 ? 'Moment' : 'Moments'} could '
                   'not be played back. This is usually temporary.',
@@ -630,10 +796,9 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
     final list = ordered.map(_withLive).toList(growable: false);
     final chains = _chainsFor(list);
     final featured = _filter == MomentsFilter.discover
-        ? MomentDiscoveryService.rankByEngagement(ordered)
-              .take(4)
-              .map(_withLive)
-              .toList(growable: false)
+        ? MomentDiscoveryService.rankByEngagement(
+            ordered,
+          ).take(4).map(_withLive).toList(growable: false)
         : const <VoiceMoment>[];
 
     final feed = _FeedColumn(
@@ -649,14 +814,18 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       moments: list,
       selectedId: wide ? (_selectedId ?? list.first.id) : null,
       currentUserId: _uid,
-      footer: _PoolFooter(
-        total: list.length,
-        moreExists: result.poolExhausted,
-      ),
+      footer: _PoolFooter(total: list.length, moreExists: result.poolExhausted),
       onOpenChain: (chain) => unawaited(_openChain(chain)),
       onTapMoment: (moment) => _select(moment, wide: wide),
       onPlayMoment: (moment) => _select(moment, wide: wide, play: true),
+      onOpenDetail: _openDetail,
       onReport: (moment) => unawaited(_report(moment)),
+      onDelete: (moment) => unawaited(_confirmDelete(moment)),
+      // "View all" is a real destination: the same pool in pure
+      // engagement order — the Most engaged chip.
+      onViewAllFeatured: featured.isEmpty
+          ? null
+          : () => _setFilter(MomentsFilter.mostEngaged),
     );
 
     if (!wide) return feed;
@@ -731,7 +900,10 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       onOpenChain: (chain) => unawaited(_openChain(chain)),
       onTapMoment: (moment) => _select(moment, wide: wide),
       onPlayMoment: (moment) => _select(moment, wide: wide, play: true),
+      onOpenDetail: _openDetail,
       onReport: (moment) => unawaited(_report(moment)),
+      onDelete: (moment) => unawaited(_confirmDelete(moment)),
+      onViewAllFeatured: null,
     );
 
     if (!wide || list.isEmpty) return feed;
@@ -744,6 +916,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
 
   Widget _withDetail(Widget feed, VoiceMoment selected) {
     final uid = _uid;
+    final isOwn = uid.isNotEmpty && uid == selected.authorId;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -760,10 +933,12 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
             feedService: _feed,
             momentService: _moments,
             currentUserId: uid,
-            canReport: uid.isNotEmpty && uid != selected.authorId,
+            canReport: uid.isNotEmpty && !isOwn,
+            isOwn: isOwn,
             onTogglePlay: () => unawaited(_togglePanelPlay(selected)),
             onSeek: (target) => unawaited(_seekPanel(selected, target)),
             onReport: () => unawaited(_report(selected)),
+            onDelete: () => unawaited(_confirmDelete(selected)),
             onOpenThread: () => unawaited(_openComments(selected)),
           ),
         ),
@@ -856,11 +1031,14 @@ class _FilterChip extends StatelessWidget {
       selected: selected,
       label: label,
       child: Material(
-        color: selected ? AppColors.primary : AppColors.surface.withValues(alpha: .55),
-        borderRadius: BorderRadius.circular(14),
+        color: selected
+            ? AppColors.primary
+            : AppColors.surface.withValues(alpha: .55),
+        // Full pills, matching the mockup's chip grammar.
+        borderRadius: BorderRadius.circular(999),
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(999),
           child: Container(
             constraints: const BoxConstraints(minHeight: 44),
             padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -912,7 +1090,10 @@ class _FeedColumn extends StatelessWidget {
     required this.onOpenChain,
     required this.onTapMoment,
     required this.onPlayMoment,
+    required this.onOpenDetail,
     required this.onReport,
+    required this.onDelete,
+    required this.onViewAllFeatured,
   });
 
   final bool compact;
@@ -928,7 +1109,10 @@ class _FeedColumn extends StatelessWidget {
   final ValueChanged<MomentChain> onOpenChain;
   final ValueChanged<VoiceMoment> onTapMoment;
   final ValueChanged<VoiceMoment> onPlayMoment;
+  final ValueChanged<VoiceMoment> onOpenDetail;
   final ValueChanged<VoiceMoment> onReport;
+  final ValueChanged<VoiceMoment> onDelete;
+  final VoidCallback? onViewAllFeatured;
 
   @override
   Widget build(BuildContext context) {
@@ -945,15 +1129,28 @@ class _FeedColumn extends StatelessWidget {
           const SizedBox(height: 18),
         ],
         if (featured.isNotEmpty) ...[
-          const _SectionTitle('Featured'),
+          _SectionTitle(
+            'Featured Moments',
+            trailing: onViewAllFeatured == null
+                ? null
+                : TextButton(
+                    key: const ValueKey('moments-featured-view-all'),
+                    onPressed: onViewAllFeatured,
+                    child: const Text(
+                      'View all',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+          ),
           SizedBox(
-            // 172 at 1x, grown with the text scale (capped at 1.6, the same
-            // cap the dock captions use): at 2x the fixed height left the
+            // 210 at 1x, grown with the text scale (capped at 1.6, the same
+            // cap the dock captions use): at 2x a fixed height left the
             // caption's render box shorter than one line, so its second line
             // — the one carrying the ellipsis — was clipped away entirely
             // and the first line's descenders were cut mid-glyph.
             height:
-                172 *
+                210 *
                 MediaQuery.textScalerOf(
                   context,
                 ).clamp(maxScaleFactor: 1.6).scale(14) /
@@ -978,11 +1175,12 @@ class _FeedColumn extends StatelessWidget {
             key: ValueKey('moment-row-${moment.id}'),
             moment: moment,
             selected: selectedId == moment.id,
-            isOwn:
-                currentUserId.isNotEmpty && moment.authorId == currentUserId,
+            isOwn: currentUserId.isNotEmpty && moment.authorId == currentUserId,
             onTap: () => onTapMoment(moment),
             onPlay: () => onPlayMoment(moment),
+            onOpenDetail: () => onOpenDetail(moment),
             onReport: () => onReport(moment),
+            onDelete: () => onDelete(moment),
           ),
         if (footer != null) ...[const SizedBox(height: 14), footer!],
       ],
@@ -1140,8 +1338,14 @@ class _ChainCircle extends StatelessWidget {
   }
 }
 
-/// A featured card: audio-first — waveform art over a violet gradient,
-/// never a stock image and never an invented statistic.
+/// A featured card in the mockup's grammar: a big cover area with the
+/// duration badge top-left and the violet play circle over it, then
+/// title, author and the metrics row.
+///
+/// Audio-first on purpose — the cover is waveform art over a violet
+/// gradient, never a stock image (Moments have no cover images), and the
+/// metrics are the document's real like and comment counters only (no
+/// play counter exists in the schema, so none is printed).
 class _FeaturedCard extends StatelessWidget {
   const _FeaturedCard({
     required this.moment,
@@ -1165,128 +1369,186 @@ class _FeaturedCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
         child: Container(
-          width: 250,
-          padding: const EdgeInsets.all(14),
+          width: 236,
+          clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                AppColors.primary.withValues(alpha: .38),
-                AppColors.surface.withValues(alpha: .85),
-              ],
-            ),
+            color: AppColors.surface.withValues(alpha: .6),
             border: Border.all(color: AppColors.primary.withValues(alpha: .35)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  UserAvatar(
-                    radius: 15,
-                    photoUrl: moment.authorPhotoUrl,
-                    displayName: moment.authorName,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      moment.authorName,
+              // The cover: gradient + waveform art, play circle centred,
+              // duration badge top-left — the audio-first stand-in for
+              // the mockup's image cover.
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            AppColors.primary.withValues(alpha: .55),
+                            AppColors.secondary.withValues(alpha: .3),
+                            AppColors.surface,
+                          ],
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      child: Center(
+                        child: StoryWaveform(progress: 0, height: 34),
+                      ),
+                    ),
+                    Center(
+                      child: Semantics(
+                        button: true,
+                        label: 'Play this featured Moment',
+                        child: Material(
+                          color: AppColors.primary,
+                          shape: const CircleBorder(),
+                          child: InkWell(
+                            key: ValueKey('moment-featured-play-${moment.id}'),
+                            onTap: onPlay,
+                            customBorder: const CircleBorder(),
+                            child: const SizedBox(
+                              width: 44,
+                              height: 44,
+                              child: Icon(
+                                Icons.play_arrow_rounded,
+                                size: 26,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (moment.durationSeconds > 0)
+                      Positioned(
+                        left: 8,
+                        top: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.black.withValues(alpha: .55),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            moment.durationLabel,
+                            style: const TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      moment.caption.trim().isEmpty
+                          ? 'Voice Moment'
+                          : moment.caption,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: AppColors.textPrimary,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                  InkWell(
-                    onTap: onPlay,
-                    customBorder: const CircleBorder(),
-                    child: Container(
-                      width: 34,
-                      height: 34,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: AppColors.primary,
-                      ),
-                      child: const Icon(
-                        Icons.play_arrow_rounded,
-                        size: 20,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Expanded(
-                child: Text(
-                  moment.caption,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 13,
-                    height: 1.35,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              StoryWaveform(progress: 0, height: 26),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  if (moment.likeCount > 0) ...[
-                    const Icon(
-                      Icons.favorite_rounded,
-                      size: 12,
-                      color: AppColors.secondary,
-                    ),
-                    const SizedBox(width: 3),
-                    Text(
-                      '${moment.likeCount}',
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 11,
+                        fontSize: 13,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                  ],
-                  if (age.isNotEmpty)
+                    const SizedBox(height: 2),
                     Text(
-                      age,
+                      moment.authorName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: AppColors.textHint,
-                        fontSize: 11,
+                        color: AppColors.textSecondary,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                  // Expanded, not Spacer + Flexible: two flex children
-                  // SPLIT the leftover width, which starved the expiry
-                  // label into "Expires in …" even on a wide desktop.
-                  // Right-aligned inside all the remaining room, it only
-                  // ellipsizes when the room genuinely runs out. The fixed
-                  // gap in front is the floor that stops "3h ago" touching
-                  // it at 2x text, where the flex slack reaches zero.
-                  if (expiry != null) const SizedBox(width: 10),
-                  if (expiry != null)
-                    Expanded(
-                      child: Text(
-                        expiry,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.right,
-                        style: const TextStyle(
-                          color: AppColors.warning,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        if (moment.likeCount > 0) ...[
+                          const Icon(
+                            Icons.favorite_rounded,
+                            size: 12,
+                            color: AppColors.secondary,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            '${moment.likeCount}',
+                            style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                        if (moment.commentCount > 0) ...[
+                          const Icon(
+                            Icons.mode_comment_rounded,
+                            size: 11,
+                            color: AppColors.textSecondary,
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            '${moment.commentCount}',
+                            style: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                        // The trailing label is flexible: at a 2x text
+                        // scale the fixed 210-pt card cannot carry it at
+                        // natural width, and ellipsis beats an overflow
+                        // stripe. Exactly ONE trailing fact renders — the
+                        // expiry when a deadline exists (rendered whole,
+                        // where age beside it truncated it to "Expires
+                        // i…" even at 1x), otherwise the age. A permanent
+                        // Moment has no deadline, so it shows its age.
+                        Expanded(
+                          child: Text(
+                            expiry ?? age,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              color: expiry != null
+                                  ? AppColors.warning
+                                  : AppColors.textHint,
+                              fontSize: 11,
+                              fontWeight: expiry != null
+                                  ? FontWeight.w700
+                                  : FontWeight.w400,
+                            ),
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                ],
+                  ],
+                ),
               ),
             ],
           ),
@@ -1296,8 +1558,10 @@ class _FeaturedCard extends StatelessWidget {
   }
 }
 
-/// One list row: avatar, play, waveform, caption, author, real counters,
-/// age and expiry — and the overflow menu carrying Report.
+/// One list row: avatar, play, waveform, caption (tap it for the detail
+/// page), author, real counters, a right column with duration and age —
+/// and the overflow menu carrying Details plus Report on others' Moments
+/// or Delete on the caller's own.
 class _MomentRow extends StatelessWidget {
   const _MomentRow({
     required this.moment,
@@ -1305,7 +1569,9 @@ class _MomentRow extends StatelessWidget {
     required this.isOwn,
     required this.onTap,
     required this.onPlay,
+    required this.onOpenDetail,
     required this.onReport,
+    required this.onDelete,
     super.key,
   });
 
@@ -1314,14 +1580,22 @@ class _MomentRow extends StatelessWidget {
   final bool isOwn;
   final VoidCallback onTap;
   final VoidCallback onPlay;
+  final VoidCallback onOpenDetail;
   final VoidCallback onReport;
+  final VoidCallback onDelete;
 
   bool get _uploading => !moment.isPublished;
 
   @override
   Widget build(BuildContext context) {
     final age = momentRelativeAge(moment.createdAt);
-    final expiry = momentExpiryLabel(moment.expiresAt);
+    // The author sees their Moment's real availability — including
+    // "Stays until deleted" for a permanent one. Everyone else sees a
+    // countdown only when a deadline actually exists.
+    final expiry = isOwn && moment.isPublished
+        ? momentAvailabilityLabel(moment.expiresAt)
+        : momentExpiryLabel(moment.expiresAt);
+    final permanent = moment.isPermanent;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Semantics(
@@ -1377,16 +1651,30 @@ class _MomentRow extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          moment.caption.trim().isEmpty
-                              ? 'Voice Moment'
-                              : moment.caption,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: AppColors.textPrimary,
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w700,
+                        // The title is its own tap target: the row body
+                        // still opens the quick sheet/panel, the title
+                        // goes to the full detail page.
+                        GestureDetector(
+                          key: ValueKey('moment-row-title-${moment.id}'),
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _uploading ? null : onOpenDetail,
+                          child: Semantics(
+                            button: !_uploading,
+                            label:
+                                'Open details of the Moment by '
+                                '${moment.authorName}',
+                            child: Text(
+                              moment.caption.trim().isEmpty
+                                  ? 'Voice Moment'
+                                  : moment.caption,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                           ),
                         ),
                         const SizedBox(height: 3),
@@ -1427,105 +1715,172 @@ class _MomentRow extends StatelessWidget {
                                   fontSize: 11.5,
                                 ),
                               )
-                            else ...[
-                              if (age.isNotEmpty)
-                                Text(
-                                  age,
-                                  style: const TextStyle(
-                                    color: AppColors.textHint,
-                                    fontSize: 11.5,
-                                  ),
+                            else if (expiry != null)
+                              Text(
+                                expiry,
+                                style: TextStyle(
+                                  // A permanent Moment's label is a calm
+                                  // fact, not a warning-coloured countdown.
+                                  color: permanent
+                                      ? AppColors.textHint
+                                      : AppColors.warning,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w700,
                                 ),
-                              if (moment.durationSeconds > 0)
-                                Text(
-                                  moment.durationLabel,
-                                  style: const TextStyle(
-                                    color: AppColors.textHint,
-                                    fontSize: 11.5,
-                                  ),
-                                ),
-                              if (expiry != null)
-                                Text(
-                                  expiry,
-                                  style: const TextStyle(
-                                    color: AppColors.warning,
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                            ],
+                              ),
                           ],
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(width: 6),
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      if (moment.likeCount > 0)
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.favorite_rounded,
-                              size: 12,
-                              color: AppColors.secondary,
+                  // Bounded, because every sibling of the Expanded centre
+                  // is fixed-width: at a 2x text scale an unconstrained
+                  // "0:45 · 2h ago" is wider than the slack a 390-pt
+                  // phone has, and the row must squeeze (ellipsize)
+                  // rather than overflow.
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 96),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        // The mockup's right column: duration, then age.
+                        if (!_uploading && moment.durationSeconds > 0)
+                          Text(
+                            moment.durationLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.textHint,
+                              fontSize: 11,
                             ),
-                            const SizedBox(width: 3),
-                            Text(
-                              '${moment.likeCount}',
-                              style: const TextStyle(
-                                color: AppColors.textSecondary,
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w700,
-                              ),
+                          ),
+                        if (!_uploading && age.isNotEmpty)
+                          Text(
+                            age,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.textHint,
+                              fontSize: 11,
                             ),
-                          ],
-                        ),
-                      if (moment.commentCount > 0)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.mode_comment_rounded,
-                                size: 11,
-                                color: AppColors.textSecondary,
-                              ),
-                              const SizedBox(width: 3),
-                              Text(
-                                '${moment.commentCount}',
-                                style: const TextStyle(
-                                  color: AppColors.textSecondary,
-                                  fontSize: 11.5,
-                                  fontWeight: FontWeight.w700,
+                          ),
+                        if (moment.likeCount > 0)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.favorite_rounded,
+                                  size: 12,
+                                  color: AppColors.secondary,
                                 ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  '${moment.likeCount}',
+                                  style: const TextStyle(
+                                    color: AppColors.textSecondary,
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        if (moment.commentCount > 0)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.mode_comment_rounded,
+                                  size: 11,
+                                  color: AppColors.textSecondary,
+                                ),
+                                const SizedBox(width: 3),
+                                Text(
+                                  '${moment.commentCount}',
+                                  style: const TextStyle(
+                                    color: AppColors.textSecondary,
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  PopupMenuButton<String>(
+                    key: ValueKey('moment-row-menu-${moment.id}'),
+                    tooltip: 'More',
+                    color: AppColors.surfaceLight,
+                    icon: const Icon(
+                      Icons.more_vert_rounded,
+                      size: 20,
+                      color: AppColors.textSecondary,
+                    ),
+                    onSelected: (value) {
+                      if (value == 'details') onOpenDetail();
+                      if (value == 'report') onReport();
+                      if (value == 'delete') onDelete();
+                    },
+                    itemBuilder: (context) => [
+                      // No Details while the OWN draft is still uploading:
+                      // the detail page's gone-check reads any unpublished
+                      // doc as "reached the end of its availability", which
+                      // would tell an author mid-upload their brand-new
+                      // Moment was deleted.
+                      if (!_uploading)
+                        const PopupMenuItem<String>(
+                          value: 'details',
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.info_outline_rounded,
+                                size: 18,
+                                color: AppColors.textSecondary,
+                              ),
+                              SizedBox(width: 8),
+                              Text(
+                                'Details',
+                                style: TextStyle(color: AppColors.textPrimary),
                               ),
                             ],
                           ),
                         ),
-                    ],
-                  ),
-                  if (!isOwn)
-                    PopupMenuButton<String>(
-                      key: ValueKey('moment-row-menu-${moment.id}'),
-                      tooltip: 'More',
-                      color: AppColors.surfaceLight,
-                      icon: const Icon(
-                        Icons.more_vert_rounded,
-                        size: 20,
-                        color: AppColors.textSecondary,
-                      ),
-                      onSelected: (value) {
-                        if (value == 'report') onReport();
-                      },
-                      itemBuilder: (context) => const [
+                      // Delete on OWN Moments only — the author's exit,
+                      // and for a permanent Moment the only one. Report
+                      // only on others': reporting yourself is not a real
+                      // intent.
+                      if (isOwn)
                         PopupMenuItem<String>(
+                          key: ValueKey('moment-row-delete-${moment.id}'),
+                          value: 'delete',
+                          child: const Row(
+                            children: [
+                              Icon(
+                                Icons.delete_outline_rounded,
+                                size: 18,
+                                color: AppColors.error,
+                              ),
+                              SizedBox(width: 8),
+                              Text(
+                                'Delete',
+                                style: TextStyle(color: AppColors.error),
+                              ),
+                            ],
+                          ),
+                        )
+                      else
+                        PopupMenuItem<String>(
+                          key: ValueKey('moment-row-report-${moment.id}'),
                           value: 'report',
-                          child: Row(
+                          child: const Row(
                             children: [
                               Icon(
                                 Icons.flag_outlined,
@@ -1535,17 +1890,13 @@ class _MomentRow extends StatelessWidget {
                               SizedBox(width: 8),
                               Text(
                                 'Report',
-                                style: TextStyle(
-                                  color: AppColors.textPrimary,
-                                ),
+                                style: TextStyle(color: AppColors.textPrimary),
                               ),
                             ],
                           ),
                         ),
-                      ],
-                    )
-                  else
-                    const SizedBox(width: 8),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -1586,22 +1937,41 @@ class _PoolFooter extends StatelessWidget {
 }
 
 class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.text);
+  const _SectionTitle(this.text, {this.trailing});
 
   final String text;
 
+  /// An optional action on the heading row — "View all" on the featured
+  /// rail. Squeezes (ellipsis) before the title does at large text scales.
+  final Widget? trailing;
+
   @override
   Widget build(BuildContext context) {
+    final title = Text(
+      text,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(
+        color: AppColors.textPrimary,
+        fontSize: 16,
+        fontWeight: FontWeight.w800,
+      ),
+    );
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: Text(
-        text,
-        style: const TextStyle(
-          color: AppColors.textPrimary,
-          fontSize: 16,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
+      child: trailing == null
+          ? title
+          : Row(
+              children: [
+                Expanded(child: title),
+                // NOT Flexible: a loose flex child next to an Expanded
+                // SPLITS the free space, which parked "View all" in the
+                // middle of a desktop row. Inflexible, it takes its
+                // intrinsic width at the row's end and the title absorbs
+                // (and ellipsizes over) everything else.
+                trailing!,
+              ],
+            ),
     );
   }
 }
@@ -1624,6 +1994,8 @@ class MomentDetailPanel extends StatefulWidget {
     required this.onSeek,
     required this.onReport,
     required this.onOpenThread,
+    this.isOwn = false,
+    this.onDelete,
     super.key,
   });
 
@@ -1640,6 +2012,12 @@ class MomentDetailPanel extends StatefulWidget {
   final ValueChanged<Duration> onSeek;
   final VoidCallback onReport;
   final VoidCallback onOpenThread;
+
+  /// True when the panel shows the caller's own Moment: the availability
+  /// line appears ("Stays until deleted" for a permanent one) and the
+  /// Delete action joins the row.
+  final bool isOwn;
+  final VoidCallback? onDelete;
 
   @override
   State<MomentDetailPanel> createState() => _MomentDetailPanelState();
@@ -1661,10 +2039,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
     if (text.isEmpty || service == null || _sending) return;
     setState(() => _sending = true);
     try {
-      await service.createTextComment(
-        momentId: widget.moment.id,
-        text: text,
-      );
+      await service.createTextComment(momentId: widget.moment.id, text: text);
       _composer.clear();
     } catch (error) {
       if (!mounted) return;
@@ -1694,7 +2069,11 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
   Widget build(BuildContext context) {
     final moment = widget.moment;
     final age = momentRelativeAge(moment.createdAt);
-    final expiry = momentExpiryLabel(moment.expiresAt);
+    // The author sees the availability fact even for a permanent Moment
+    // ("Stays until deleted"); everyone else only sees a real countdown.
+    final expiry = widget.isOwn
+        ? momentAvailabilityLabel(moment.expiresAt)
+        : momentExpiryLabel(moment.expiresAt);
     final totalSeconds = widget.duration?.inSeconds ?? moment.durationSeconds;
     final hasTotal = totalSeconds > 0;
     final progress = hasTotal
@@ -1727,8 +2106,7 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                           displayName: moment.authorName,
                           photoUrl: moment.authorPhotoUrl,
                         ),
-                        semanticLabel:
-                            'Open profile for ${moment.authorName}',
+                        semanticLabel: 'Open profile for ${moment.authorName}',
                         tooltip: 'Open ${moment.authorName}\'s profile',
                         circular: true,
                         child: UserAvatar(
@@ -1775,11 +2153,13 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                                 if (expiry != null)
                                   Text(
                                     expiry,
-                                    key: const ValueKey(
-                                      'detail-expiry-label',
-                                    ),
-                                    style: const TextStyle(
-                                      color: AppColors.warning,
+                                    key: const ValueKey('detail-expiry-label'),
+                                    style: TextStyle(
+                                      // A permanent Moment's label is a
+                                      // calm fact, not a countdown.
+                                      color: moment.isPermanent
+                                          ? AppColors.textHint
+                                          : AppColors.warning,
                                       fontSize: 12,
                                       fontWeight: FontWeight.w700,
                                     ),
@@ -1899,8 +2279,10 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                     moment: moment,
                     feedService: widget.feedService,
                     canReport: widget.canReport,
+                    canDelete: widget.isOwn && widget.onDelete != null,
                     onShare: () => unawaited(_share()),
                     onReport: widget.onReport,
+                    onDelete: widget.onDelete,
                   ),
                   const SizedBox(height: 16),
                   const Divider(color: AppColors.divider, height: 1),
@@ -1977,8 +2359,9 @@ class _MomentDetailPanelState extends State<MomentDetailPanel> {
                 const SizedBox(width: 8),
                 IconButton.filled(
                   key: const ValueKey('detail-comment-send'),
-                  onPressed:
-                      _sending || widget.momentService == null ? null : _send,
+                  onPressed: _sending || widget.momentService == null
+                      ? null
+                      : _send,
                   style: IconButton.styleFrom(
                     backgroundColor: AppColors.primary,
                   ),
@@ -2007,15 +2390,22 @@ class _DetailActions extends StatelessWidget {
     required this.moment,
     required this.feedService,
     required this.canReport,
+    required this.canDelete,
     required this.onShare,
     required this.onReport,
+    required this.onDelete,
   });
 
   final VoiceMoment moment;
   final HomeFeedService? feedService;
   final bool canReport;
+
+  /// Own Moments only: the author's exit, and for a permanent Moment the
+  /// only one.
+  final bool canDelete;
   final VoidCallback onShare;
   final VoidCallback onReport;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -2045,8 +2435,9 @@ class _DetailActions extends StatelessWidget {
                     : Icons.favorite_border_rounded,
                 label: moment.likeCount == 0 ? 'Like' : '${moment.likeCount}',
                 active: liked,
-                semanticLabel:
-                    liked ? 'Unlike this Moment' : 'Like this Moment',
+                semanticLabel: liked
+                    ? 'Unlike this Moment'
+                    : 'Like this Moment',
                 onTap: () => unawaited(_toggle(context, service)),
               );
             },
@@ -2067,6 +2458,16 @@ class _DetailActions extends StatelessWidget {
             active: false,
             semanticLabel: 'Report this Voice Moment',
             onTap: onReport,
+          ),
+        if (canDelete)
+          _SmallChip(
+            key: ValueKey('detail-delete-${moment.id}'),
+            icon: Icons.delete_outline_rounded,
+            label: 'Delete',
+            active: false,
+            destructive: true,
+            semanticLabel: 'Delete this Voice Moment',
+            onTap: onDelete,
           ),
       ],
     );
@@ -2095,6 +2496,7 @@ class _SmallChip extends StatelessWidget {
     required this.label,
     required this.active,
     required this.onTap,
+    this.destructive = false,
     this.semanticLabel,
     super.key,
   });
@@ -2102,11 +2504,18 @@ class _SmallChip extends StatelessWidget {
   final IconData icon;
   final String label;
   final bool active;
+
+  /// Delete wears the error tint so a destructive action never looks
+  /// like one more neutral chip.
+  final bool destructive;
   final VoidCallback? onTap;
   final String? semanticLabel;
 
   @override
   Widget build(BuildContext context) {
+    final tint = destructive
+        ? AppColors.error
+        : (active ? AppColors.secondary : AppColors.textSecondary);
     return Semantics(
       button: onTap != null,
       label: semanticLabel ?? label,
@@ -2122,19 +2531,17 @@ class _SmallChip extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  icon,
-                  size: 19,
-                  color: active ? AppColors.secondary : AppColors.textSecondary,
-                ),
+                Icon(icon, size: 19, color: tint),
                 const SizedBox(width: 7),
                 Flexible(
                   child: Text(
                     label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppColors.textSecondary,
+                    style: TextStyle(
+                      color: destructive
+                          ? AppColors.error
+                          : AppColors.textSecondary,
                       fontSize: 12.5,
                       fontWeight: FontWeight.w700,
                     ),
@@ -2285,15 +2692,14 @@ class _LoadingState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget bone(double width, double height, [double radius = 10]) =>
-        Container(
-          width: width,
-          height: height,
-          decoration: BoxDecoration(
-            color: AppColors.surfaceLight.withValues(alpha: .6),
-            borderRadius: BorderRadius.circular(radius),
-          ),
-        );
+    Widget bone(double width, double height, [double radius = 10]) => Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: AppColors.surfaceLight.withValues(alpha: .6),
+        borderRadius: BorderRadius.circular(radius),
+      ),
+    );
 
     return ListView(
       key: const ValueKey('moments-discovery-loading'),

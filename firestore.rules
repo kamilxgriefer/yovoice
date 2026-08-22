@@ -3388,12 +3388,14 @@ service cloud.firestore {
     match /voiceMoments/{momentId} {
       allow read: if isSignedIn();
       // `expiresAt` is server authority: finalizeMomentDraft stamps it
-      // `createdAt + 24h` inside the publish transaction, and
-      // expireVoiceMomentsSchedule retires the Moment when it passes. A
-      // client-supplied deadline on create would be a story that outlives
-      // 24 hours by construction, so the legacy client create path may
-      // carry anything EXCEPT one. Legacy clients never send the field, so
-      // this refuses only forgeries.
+      // from the author's chosen availability (24h/3d/7d/30d — ADR-103;
+      // 'permanent' writes NO field, and a MISSING expiresAt now means
+      // PERMANENT everywhere the client filters). That amendment makes
+      // this ban sharper, not looser: a client-created doc can never
+      // carry a deadline, and since it also cannot omit one "as
+      // permanent" through the server path, any client-set expiry —
+      // including a forged absence — stays a forgery. Legacy clients
+      // never send the field, so this refuses only forgeries.
       allow create: if isVerified() &&
           canCommunicate() &&
           request.resource.data.authorId == request.auth.uid &&
@@ -3406,13 +3408,15 @@ service cloud.firestore {
       // or a plain +1 for a new comment.
       //
       // The author branch pins createdAt and expiresAt immutable: createdAt
-      // orders the author's story chain and expiresAt is the 24-hour
-      // deadline, so a writable pair would let an author re-order their own
-      // chain or extend their own story indefinitely. `affectedKeys()` (not
-      // hasAny-on-values) is the right gate here — an omitted field is
-      // simply unchanged, which is exactly the invariant. Server writes go
-      // through the Admin SDK and bypass rules, so finalize can still stamp
-      // the deadline.
+      // orders the author's story chain and expiresAt is the availability
+      // deadline the author chose at publish (ADR-103). A writable pair
+      // would let an author re-order their own chain, extend their story,
+      // or — the sharpest attack under the amendment — STRIP the field to
+      // self-grant permanence, since a missing expiresAt now means
+      // permanent. `affectedKeys()` (not hasAny-on-values) is the right
+      // gate: it refuses add, change, and removal alike, and an omitted
+      // field is simply unchanged. Server writes go through the Admin SDK
+      // and bypass rules, so finalize can still stamp the deadline.
       allow update: if isSignedIn() &&
           (
             (

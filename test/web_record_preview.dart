@@ -27,6 +27,7 @@ import 'package:record/record.dart' show Amplitude, AudioEncoder, RecordConfig;
 import 'package:web/web.dart' as web;
 
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/moments/data/models/moment_availability.dart';
 import 'package:yovoice/features/moments/data/services/audio_capture/audio_capture.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
@@ -329,6 +330,7 @@ class _PreviewMomentService implements MomentService {
     required int durationSeconds,
     required String caption,
     String? replyToMomentId,
+    MomentAvailability availability = MomentAvailability.fallback,
   }) async {
     if (gate != null) await gate!.future;
     if (failure != null) throw failure!;

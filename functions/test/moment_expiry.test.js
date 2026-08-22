@@ -1,10 +1,12 @@
-// The scheduled sweep that retires a Voice Moment once its 24 hours are up.
+// The scheduled sweep that retires a Voice Moment once its deadline is up.
 //
 // The two properties worth more than all the others: it must EXPIRE a
 // published Moment whose deadline has passed while changing nothing else on
 // the document, and it must NEVER touch a Moment that is still inside its
-// 24 hours, has no deadline at all (legacy), or stopped being a published
-// Moment between the scan and the write. Every test below is one of those.
+// availability window, has no deadline at all (permanent availability, and
+// the legacy pre-expiry documents that share the shape), or stopped being a
+// published Moment between the scan and the write. Every test below is one
+// of those.
 
 const assert = require("node:assert/strict");
 const { test, beforeEach, describe } = require("node:test");
@@ -154,10 +156,13 @@ describe("voice moment expiry sweep", () => {
     assert.equal(moment.status, "published");
   });
 
-  test("ANTI-TRAP: a legacy Moment with no expiresAt is skipped, not expired", async () => {
-    // Production still holds published Moments from before expiry existed.
-    // A range filter never matches a document missing the field, so they
-    // are invisible to the sweep — the client filter is what hides them.
+  test("ANTI-TRAP: a Moment with no expiresAt is skipped, not expired", async () => {
+    // No deadline now MEANS permanent (operator-chosen availability,
+    // 2026-08, amending ADR-101): finalizeMomentDraft writes no expiresAt
+    // for a "permanent" publish, and the legacy pre-expiry documents share
+    // the exact same shape. Both stay published until their author deletes
+    // them. A range filter never matches a document missing the field, so
+    // they are structurally invisible to the sweep.
     const momentId = `${P}legacy`;
     const legacy = publishedMoment(momentId);
     delete legacy.expiresAt;
@@ -170,6 +175,33 @@ describe("voice moment expiry sweep", () => {
     const moment = (await readMoment(momentId)).data();
     assert.equal(moment.isPublished, true);
     assert.equal(moment.status, "published");
+  });
+
+  test("ANTI-TRAP: even handed a permanent Moment directly, the flip refuses it", async () => {
+    // The query above can never surface a document without expiresAt, but
+    // the per-document transaction is a defence of its own: a caller (or a
+    // future refactor) that hands expireMomentIfStillPastDeadline a
+    // permanent Moment's reference must get "changed", never a retirement.
+    // Permanent means published-until-deleted; no code path may age it out.
+    const momentId = `${P}permanent`;
+    const permanent = publishedMoment(momentId);
+    delete permanent.expiresAt;
+    await db.doc(`voiceMoments/${momentId}`).set(permanent);
+
+    const outcome = await expireMomentIfStillPastDeadline(
+      db.doc(`voiceMoments/${momentId}`),
+      now(),
+    );
+
+    assert.equal(outcome, "changed");
+    const moment = (await readMoment(momentId)).data();
+    assert.equal(moment.isPublished, true);
+    assert.equal(moment.status, "published");
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(moment, "expiresAt"),
+      false,
+      "no deadline was backfilled",
+    );
   });
 
   test("drafts, deleted and already-expired Moments are not candidates", async () => {

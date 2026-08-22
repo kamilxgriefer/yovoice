@@ -35,6 +35,8 @@ Future<void> showMomentStoryViewer(
   MomentViewsService? viewsService,
   ContentReportService? contentReportService,
   FirebaseAuth? auth,
+  void Function(VoiceMoment moment)? onOpenDetail,
+  void Function(VoiceMoment moment)? onDeleted,
   AudioPlayer Function()? playerFactory,
 }) async {
   final viewer = MomentStoryViewer(
@@ -45,6 +47,8 @@ Future<void> showMomentStoryViewer(
     viewsService: viewsService,
     contentReportService: contentReportService,
     auth: auth,
+    onOpenDetail: onOpenDetail,
+    onDeleted: onDeleted,
     playerFactory: playerFactory,
   );
 
@@ -103,6 +107,8 @@ class MomentStoryViewer extends StatefulWidget {
     this.viewsService,
     this.contentReportService,
     this.auth,
+    this.onOpenDetail,
+    this.onDeleted,
     this.playerFactory,
     this.autoPlay = true,
     super.key,
@@ -126,8 +132,18 @@ class MomentStoryViewer extends StatefulWidget {
   final ContentReportService? contentReportService;
 
   /// Injection seam for the viewer's identity — report is hidden on your
-  /// own Moment and for a signed-out viewer.
+  /// own Moment and for a signed-out viewer; delete appears ONLY on your
+  /// own.
   final FirebaseAuth? auth;
+
+  /// The details affordance: closes the viewer, then opens the Moment's
+  /// full detail page — so Back from the detail page lands on the feed,
+  /// not on a stale viewer. Absent, the affordance is not rendered.
+  final void Function(VoiceMoment moment)? onOpenDetail;
+
+  /// Told after the author deletes a Moment from inside the viewer, so
+  /// the surface underneath can drop the row immediately.
+  final void Function(VoiceMoment moment)? onDeleted;
 
   @visibleForTesting
   final AudioPlayer Function()? playerFactory;
@@ -149,11 +165,20 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
   MomentService? _moments;
   HomeFeedService? _feed;
 
-  late int _index = widget.initialIndex.clamp(0, widget.chain.length - 1);
+  /// The chain as THIS viewer shows it. A local copy on purpose: when the
+  /// author deletes a link mid-story, the remaining links keep playing —
+  /// the immutable [MomentChain] the caller handed over cannot express
+  /// that.
+  late final List<VoiceMoment> _chainMoments = List<VoiceMoment>.of(
+    widget.chain.moments,
+  );
+
+  late int _index = widget.initialIndex.clamp(0, _chainMoments.length - 1);
   bool _isPlaying = false;
   Duration _position = Duration.zero;
   Duration? _duration;
   String? _playbackError;
+  bool _deleting = false;
 
   String get _uid {
     try {
@@ -163,7 +188,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
     }
   }
 
-  VoiceMoment get _current => widget.chain.moments[_index];
+  VoiceMoment get _current => _chainMoments[_index];
 
   @override
   void initState() {
@@ -237,7 +262,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
   /// been told in full, and an inert surface pretending to still play is
   /// worse than returning to the feed.
   void _advanceAfterCompletion() {
-    if (_index < widget.chain.length - 1) {
+    if (_index < _chainMoments.length - 1) {
       unawaited(_goTo(_index + 1, play: true));
     } else {
       setState(() {
@@ -310,7 +335,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
   }
 
   Future<void> _goTo(int index, {required bool play}) async {
-    if (index < 0 || index >= widget.chain.length) return;
+    if (index < 0 || index >= _chainMoments.length) return;
     final player = _player;
     if (player != null) {
       try {
@@ -356,6 +381,115 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
     );
   }
 
+  /// Closes the viewer FIRST, then opens the detail page, so Back from
+  /// the detail page lands on the feed rather than a stale viewer.
+  Future<void> _openDetails(VoiceMoment moment) async {
+    final open = widget.onOpenDetail;
+    if (open == null) return;
+    final player = _player;
+    if (player != null) {
+      try {
+        await player.stop();
+      } catch (_) {
+        // Stopping a player that never started is not a fault.
+      }
+    }
+    if (!mounted) return;
+    await Navigator.of(context).maybePop();
+    open(moment);
+  }
+
+  /// Deletes the CURRENT Moment — own Moments only (the control never
+  /// renders otherwise, and [MomentService.deleteMoment] re-checks).
+  /// The remaining links keep the story alive; deleting the last one
+  /// closes the viewer.
+  Future<void> _deleteCurrent(VoiceMoment moment) async {
+    final service = _moments;
+    if (service == null || _deleting) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final navigator = Navigator.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AppColors.surfaceLight,
+        title: const Text(
+          'Delete this moment?',
+          style: TextStyle(color: AppColors.textPrimary),
+        ),
+        content: const Text(
+          'This cannot be undone.',
+          style: TextStyle(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('story-delete-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('story-delete-confirm'),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _deleting = true);
+    try {
+      final player = _player;
+      if (player != null) {
+        try {
+          await player.stop();
+        } catch (_) {
+          // Nothing was playing.
+        }
+      }
+      await service.deleteMoment(moment);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _deleting = false);
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text('The Moment could not be deleted. Try again.'),
+          ),
+        );
+      return;
+    }
+
+    widget.onDeleted?.call(moment);
+    if (!mounted) return;
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Voice Moment deleted.'),
+        ),
+      );
+
+    final index = _chainMoments.indexWhere((m) => m.id == moment.id);
+    if (index >= 0) _chainMoments.removeAt(index);
+    if (_chainMoments.isEmpty) {
+      await navigator.maybePop();
+      return;
+    }
+    setState(() {
+      _deleting = false;
+      _index = _index.clamp(0, _chainMoments.length - 1);
+      _isPlaying = false;
+      _position = Duration.zero;
+      _duration = null;
+      _playbackError = null;
+    });
+    if (widget.autoPlay) await _play(_current);
+  }
+
   double _fillFor(int barIndex, VoiceMoment current) {
     if (barIndex < _index) return 1;
     if (barIndex > _index) return 0;
@@ -388,7 +522,11 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
 
   @override
   Widget build(BuildContext context) {
-    final chain = widget.chain;
+    // Deleting the last link empties the local chain and schedules the
+    // pop; the route can still rebuild for a frame while the transition
+    // runs, and there is no Moment left to draw.
+    if (_chainMoments.isEmpty) return const SizedBox.shrink();
+
     final loaded = _current;
     final uid = _uid;
     final live = _moments?.watchMoment(loaded.id);
@@ -406,6 +544,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
               (snapshot.hasData && snapshot.data!.id == loaded.id)
               ? snapshot.data!
               : loaded;
+          final isOwn = uid.isNotEmpty && uid == moment.authorId;
           return SafeArea(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -414,14 +553,18 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
                   padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
                   child: _ProgressBars(
                     key: const ValueKey('story-progress-bars'),
-                    count: chain.length,
+                    count: _chainMoments.length,
                     fillFor: (i) => _fillFor(i, moment),
                   ),
                 ),
                 _StoryHeader(
                   moment: moment,
+                  isOwn: isOwn,
                   position: _index,
-                  total: chain.length,
+                  total: _chainMoments.length,
+                  onOpenDetail: widget.onOpenDetail == null
+                      ? null
+                      : () => unawaited(_openDetails(moment)),
                   onClose: () => Navigator.of(context).maybePop(),
                 ),
                 Expanded(
@@ -437,7 +580,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
                             _goTo(_index - 1, play: widget.autoPlay),
                           )
                         : null,
-                    onNextZone: _index < chain.length - 1
+                    onNextZone: _index < _chainMoments.length - 1
                         ? () => unawaited(
                             _goTo(_index + 1, play: widget.autoPlay),
                           )
@@ -447,14 +590,16 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
                 _StoryActions(
                   moment: moment,
                   feedService: _feed,
-                  canReport: uid.isNotEmpty && uid != moment.authorId,
+                  canReport: uid.isNotEmpty && !isOwn,
+                  canDelete: isOwn && !_deleting,
                   onComments: () => unawaited(_openComments(moment)),
                   onReport: () => unawaited(_report(moment)),
+                  onDelete: () => unawaited(_deleteCurrent(moment)),
                   onPrevious: _index > 0
                       ? () =>
                             unawaited(_goTo(_index - 1, play: widget.autoPlay))
                       : null,
-                  onNext: _index < chain.length - 1
+                  onNext: _index < _chainMoments.length - 1
                       ? () =>
                             unawaited(_goTo(_index + 1, play: widget.autoPlay))
                       : null,
@@ -517,20 +662,32 @@ class _ProgressBars extends StatelessWidget {
 class _StoryHeader extends StatelessWidget {
   const _StoryHeader({
     required this.moment,
+    required this.isOwn,
     required this.position,
     required this.total,
+    required this.onOpenDetail,
     required this.onClose,
   });
 
   final VoiceMoment moment;
+
+  /// The author sees the availability fact even for a permanent Moment
+  /// ("Stays until deleted"); everyone else only a real countdown.
+  final bool isOwn;
   final int position;
   final int total;
+
+  /// Opens the full detail page. Not rendered when the caller offers no
+  /// destination.
+  final VoidCallback? onOpenDetail;
   final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
     final age = momentRelativeAge(moment.createdAt);
-    final expiry = momentExpiryLabel(moment.expiresAt);
+    final expiry = isOwn
+        ? momentAvailabilityLabel(moment.expiresAt)
+        : momentExpiryLabel(moment.expiresAt);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 10, 6, 4),
@@ -579,8 +736,12 @@ class _StoryHeader extends StatelessWidget {
                     if (expiry != null)
                       Text(
                         expiry,
-                        style: const TextStyle(
-                          color: AppColors.warning,
+                        style: TextStyle(
+                          // A permanent Moment's label is a calm fact,
+                          // not a warning-coloured countdown.
+                          color: moment.isPermanent
+                              ? AppColors.textHint
+                              : AppColors.warning,
                           fontSize: 11.5,
                           fontWeight: FontWeight.w700,
                         ),
@@ -600,6 +761,16 @@ class _StoryHeader extends StatelessWidget {
               fontWeight: FontWeight.w700,
             ),
           ),
+          if (onOpenDetail != null)
+            IconButton(
+              key: const ValueKey('story-open-detail'),
+              onPressed: onOpenDetail,
+              tooltip: 'Moment details',
+              icon: const Icon(
+                Icons.info_outline_rounded,
+                color: AppColors.textSecondary,
+              ),
+            ),
           IconButton(
             key: const ValueKey('story-close'),
             onPressed: onClose,
@@ -796,16 +967,18 @@ class StoryWaveform extends StatelessWidget {
   }
 }
 
-/// Like, comment, report — the existing services, real counts — plus the
-/// visible previous/next controls that keep the chain reachable without
-/// gestures or a keyboard.
+/// Like, comment, report on others' Moments, delete on the caller's own
+/// — the existing services, real counts — plus the visible previous/next
+/// controls that keep the chain reachable without gestures or a keyboard.
 class _StoryActions extends StatelessWidget {
   const _StoryActions({
     required this.moment,
     required this.feedService,
     required this.canReport,
+    required this.canDelete,
     required this.onComments,
     required this.onReport,
+    required this.onDelete,
     required this.onPrevious,
     required this.onNext,
   });
@@ -813,8 +986,13 @@ class _StoryActions extends StatelessWidget {
   final VoiceMoment moment;
   final HomeFeedService? feedService;
   final bool canReport;
+
+  /// Own Moments only: the author's exit, and for a permanent Moment the
+  /// only one.
+  final bool canDelete;
   final VoidCallback onComments;
   final VoidCallback onReport;
+  final VoidCallback onDelete;
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
 
@@ -909,6 +1087,19 @@ class _StoryActions extends StatelessWidget {
                       Icons.flag_outlined,
                       size: 20,
                       color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+                if (canDelete) ...[
+                  const SizedBox(width: 6),
+                  IconButton(
+                    key: ValueKey('story-delete-${moment.id}'),
+                    onPressed: onDelete,
+                    tooltip: 'Delete this Voice Moment',
+                    icon: const Icon(
+                      Icons.delete_outline_rounded,
+                      size: 20,
+                      color: AppColors.error,
                     ),
                   ),
                 ],

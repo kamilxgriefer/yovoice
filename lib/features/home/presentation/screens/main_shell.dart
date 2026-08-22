@@ -19,6 +19,7 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
+import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/sponsored_card.dart';
@@ -173,7 +174,11 @@ class _MainShellState extends State<MainShell>
       return const NotificationsScreen(isRootTab: true);
     }
     if (index == _momentsSlot) {
-      return MomentsScreen(isRootTab: true, isVisible: _momentsVisible);
+      return MomentsScreen(
+        isRootTab: true,
+        isVisible: _momentsVisible,
+        onOpenDetail: (moment) => unawaited(_openMomentDetail(moment)),
+      );
     }
     final destination = _slotDestinations[index];
     if (destination == null) return const SizedBox.shrink();
@@ -842,7 +847,40 @@ class _MainShellState extends State<MainShell>
       if (mine.isNotEmpty) await _openMoment(mine.first);
       return;
     }
-    await showMomentStoryViewer(context, chain: chains.first);
+    await showMomentStoryViewer(
+      context,
+      chain: chains.first,
+      onOpenDetail: (moment) => unawaited(_openMomentDetail(moment)),
+    );
+  }
+
+  /// The ONE way a Moment's full detail page opens from the shell: hosted
+  /// over the persistent navigation chrome, so on mobile the bottom dock
+  /// stays visible with Moments active while reading a Moment — the same
+  /// re-hosting contract every More destination already uses. The detail
+  /// screen draws its own Back control, which pops this route straight
+  /// back to wherever it was opened from.
+  Future<void> _openMomentDetail(VoiceMoment moment) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => MoreDestinationHost(
+          body: MomentDetailScreen(moment: moment),
+          selectedIndex: _momentsSlot,
+          unreadConversationCount: _unreadConversationCount,
+          unreadNotificationCount: _unreadNotificationCount,
+          activeDesktopItem: DesktopNavItem.moments,
+          onDestinationSelected: _onDestinationSelected,
+          onVoicePressed: _openVoiceAction,
+          onMorePressed: _openMoreMenu,
+          onDesktopNavSelected: (item) =>
+              unawaited(_onDesktopNavSelected(item)),
+          onCreateRoom: () => unawaited(_openCreateRoom()),
+          onCreateMoment: _openCreateMoment,
+          onOpenProfile: () => unawaited(_openProfile()),
+          onOpenProfileSettings: () => unawaited(_openProfileSettings()),
+        ),
+      ),
+    );
   }
 
   Widget _tabContent({
@@ -1710,6 +1748,12 @@ class _VoiceActionButton extends StatelessWidget {
     // Integrated into the dock (slightly raised) instead of hovering
     // over it. When a live room connection exists, a ring appears — the
     // dock itself tells you you're on air.
+    //
+    // The face of the button is the YO Voice logo in a circular glowing
+    // branded anchor — the same asset the desktop sidebar's wordmark
+    // renders, with the dock's violet glow as the halo. Same action as
+    // always: the voice sheet (Moment or Room). The waveform glyph stays
+    // as the fallback for an asset that cannot load.
     return ListenableBuilder(
       listenable: VoiceCallService.instance,
       builder: (context, _) {
@@ -1732,22 +1776,21 @@ class _VoiceActionButton extends StatelessWidget {
                   onTap: onPressed,
                   customBorder: const CircleBorder(),
                   child: Container(
-                    width: 56,
-                    height: 56,
+                    width: 58,
+                    height: 58,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       gradient: const LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: [
-                          Color(0xFFC73AFF),
-                          Color(0xFF981DFF),
-                          Color(0xFF6A00FF),
-                        ],
+                        colors: [Color(0xFF2B1440), Color(0xFF150B24)],
                       ),
-                      border: live
-                          ? Border.all(color: const Color(0xFFFF3F72), width: 2)
-                          : null,
+                      border: Border.all(
+                        color: live
+                            ? const Color(0xFFFF3F72)
+                            : _MainShellState._primary.withValues(alpha: .55),
+                        width: 2,
+                      ),
                       boxShadow: const [
                         BoxShadow(
                           color: Color(0x779D20FF),
@@ -1757,7 +1800,16 @@ class _VoiceActionButton extends StatelessWidget {
                         ),
                       ],
                     ),
-                    child: const Center(child: _WaveformIcon(compact: true)),
+                    child: Center(
+                      child: Image.asset(
+                        'assets/images/logo.png',
+                        key: const ValueKey('dock-logo'),
+                        width: 34,
+                        height: 34,
+                        errorBuilder: (_, __, ___) =>
+                            const _WaveformIcon(compact: true),
+                      ),
+                    ),
                   ),
                 ),
               ),

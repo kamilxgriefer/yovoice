@@ -664,8 +664,11 @@ void main() {
         caption: 'Expired yesterday',
         age: const Duration(days: 2),
       );
-      // In the circle but a pre-expiry legacy document with no expiresAt
-      // at all — reads as expired, never as immortal.
+      // In the circle with no expiresAt at all — PERMANENT under the
+      // amended availability contract ("keep until deleted"), so it MUST
+      // render. This ADAPTS the ADR-101-era pin that read a missing
+      // expiresAt as legacy-expired; that direction was deliberately
+      // reversed when operator-chosen availability shipped.
       await seedFollowing('creator-3', 'Celina');
       await seedMoment(
         id: 'm5',
@@ -685,11 +688,11 @@ void main() {
       expect(find.text('Marek'), findsOneWidget);
       // Nobody outside friends/following/self may appear.
       expect(find.text('Nobody'), findsNothing);
-      // Nobody whose Moment is dead may appear either: a past expiresAt
-      // and a missing expiresAt both read as expired. (Both authors are
-      // followed and would otherwise be shown.)
+      // A Moment past its expiresAt stays dead and off Home. A Moment
+      // with NO expiresAt is permanent and shows — the amended
+      // availability contract, not a regression.
       expect(find.text('Bartek'), findsNothing);
-      expect(find.text('Celina'), findsNothing);
+      expect(find.text('Celina'), findsOneWidget);
       // Real state only: fresh Moments read "New", older ones show their
       // real duration.
       expect(find.text('New'), findsWidgets);

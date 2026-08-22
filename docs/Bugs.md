@@ -902,6 +902,20 @@ permission flags).
 
 ## UI
 
+- **FIXED PRE-DEPLOY 2026-08-22 (ADR-103 review) — deleting your own Moment
+  failed on any Moment somebody else had engaged with.** The client swept
+  the comments/likes subcollections directly, but rules only let each
+  engager delete their own docs — permission-denied mid-batch, and under
+  the availability amendment deletion is the ONLY exit for a permanent
+  Moment. Now routed through the deployed deleteMoment callable (wiring
+  pinned by test). Also closed from the same review: own uploading drafts
+  offered a Details page that claimed the Moment "reached the end of its
+  availability"; the detail header could show "Comments (1)" directly above
+  "Be the first to comment." on counter drift; stale 24h-era rules
+  comments. OPEN, deferred by the brief: availability cannot be changed
+  after publishing; dock "Moments" label ellipsizes at the 320pt floor and
+  the feed error state prints a raw exception line (both pre-existing).
+
 - **FIXED AND DEPLOYED 2026-08-22 (ADR-102) — Mute on the live-room bar
   could navigate into the room.** Root cause: the whole bar was one parent
   InkWell(onTap: return-to-room); Flutter forwards taps THROUGH a disabled

@@ -5,6 +5,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
+import 'package:yovoice/features/moments/data/models/moment_availability.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 
@@ -100,6 +101,82 @@ class MomentService {
         .map(VoiceMoment.fromFirestore);
   }
 
+  /// Like [watchMoment], but a missing document emits `null` instead of
+  /// nothing.
+  ///
+  /// For the detail screen, which must tell "this Moment is live" apart
+  /// from "this Moment was deleted while you were looking at it" — the
+  /// filtered stream above cannot express the second, and a surface that
+  /// keeps rendering a deleted Moment forever is showing something that
+  /// no longer exists.
+  Stream<VoiceMoment?> watchMomentOrMissing(String momentId) {
+    return _moments
+        .doc(momentId)
+        .snapshots()
+        .map(
+          (document) =>
+              document.exists ? VoiceMoment.fromFirestore(document) : null,
+        );
+  }
+
+  /// Up to [limit] uids that liked this Moment, most recent first.
+  ///
+  /// Reads the real `voiceMoments/{id}/likes/{uid}` documents — readable
+  /// by any signed-in account per the deployed rules (`allow read: if
+  /// isSignedIn()`), which is what makes the detail screen's
+  /// "Top reactions" row honest rather than invented. The caller resolves
+  /// display identities separately (public profile projection),
+  /// best-effort per liker.
+  Future<List<String>> likerIds(String momentId, {int limit = 5}) async {
+    final snapshot = await _moments
+        .doc(momentId)
+        .collection('likes')
+        .orderBy('createdAt', descending: true)
+        .limit(limit)
+        .get();
+    return snapshot.docs.map((doc) => doc.id).toList(growable: false);
+  }
+
+  /// The identities behind [likerIds], best-effort.
+  ///
+  /// Each liker's display identity comes from the server-owned
+  /// `publicProfiles/{uid}` projection — the same source every other
+  /// foreign-profile surface reads. A profile the deployed rules refuse
+  /// (private visibility, a block either way) or that no longer exists is
+  /// SKIPPED, never invented: the like itself stays counted in the "+N"
+  /// remainder the caller derives from `likeCount`.
+  Future<List<MomentReactor>> topReactions(
+    String momentId, {
+    int limit = 5,
+  }) async {
+    final ids = await likerIds(momentId, limit: limit);
+    final reactors = <MomentReactor>[];
+    for (final uid in ids) {
+      try {
+        final profile = await _firestore
+            .collection('publicProfiles')
+            .doc(uid)
+            .get();
+        if (!profile.exists) continue;
+        final data = profile.data();
+        final name = (data?['displayName'] as String?)?.trim();
+        reactors.add(
+          MomentReactor(
+            uid: uid,
+            displayName: name == null || name.isEmpty
+                ? 'YO Voice user'
+                : name,
+            photoUrl: (data?['photoUrl'] as String?)?.trim(),
+          ),
+        );
+      } catch (_) {
+        // Unreadable profile: the like is real, the identity is not ours
+        // to show.
+      }
+    }
+    return reactors;
+  }
+
   /// The signed-in user's own Voice Moments, published and unpublished
   /// (drafts still uploading or that failed to finish publishing).
   Stream<List<VoiceMoment>> watchMyMoments() {
@@ -143,11 +220,19 @@ class MomentService {
   /// passes the native Blob the browser produced. Everything below — the draft
   /// reservation, the object metadata the Storage rules check, the
   /// finalize call, and the legacy fallback — is identical either way.
+  /// [availability] names how long the Moment stays live — one of the
+  /// server's whitelisted choices (24h default, 3/7/30 days, or
+  /// permanent). It travels to `finalizeMomentDraft` as
+  /// `availabilityHours`; the server validates it and stamps (or, for
+  /// permanent, omits) `expiresAt`. The default sends nothing, which the
+  /// server reads as 24 hours — today's behaviour, byte for byte.
+  /// Ignored for voice replies, which have no expiry of their own.
   Future<String> publishRecordedMoment({
     required RecordedAudio audio,
     required int durationSeconds,
     required String caption,
     String? replyToMomentId,
+    MomentAvailability availability = MomentAvailability.fallback,
   }) async {
     final user = _auth.currentUser;
     if (user == null) {
@@ -183,11 +268,12 @@ class MomentService {
           caption: normalizedCaption,
           durationSeconds: durationSeconds,
           replyToMomentId: normalizedReplyToMomentId,
+          availability: availability,
         )) {
       throw StateError(
-        'Publishing already started with a different caption, duration, or '
-        'reply target. Restore the original details to retry this recording, '
-        'or record again to publish the new version.',
+        'Publishing already started with a different caption, duration, '
+        'availability, or reply target. Restore the original details to '
+        'retry this recording, or record again to publish the new version.',
       );
     }
 
@@ -211,6 +297,7 @@ class MomentService {
         caption: normalizedCaption,
         durationSeconds: durationSeconds,
         replyToMomentId: normalizedReplyToMomentId,
+        availability: availability,
       ),
     );
 
@@ -275,6 +362,11 @@ class MomentService {
         'momentId': momentId,
         'objectGeneration': objectGeneration,
         'requestId': pending.requestId,
+        // Additive and omitted for the default: an absent field means 24
+        // hours server-side, so the default publish stays byte-identical
+        // to every pre-availability client.
+        if (!availability.isServerDefault)
+          'availabilityHours': availability.wireValue,
       });
 
       _pendingMomentPublishes.remove(audio);
@@ -287,16 +379,18 @@ class MomentService {
 
     // NO LEGACY FALLBACK ANY MORE — a loud refusal instead, deliberately.
     //
-    // The direct-write fallback predates the 24-hour story contract. Under
+    // The direct-write fallback predates the story-expiry contract. Under
     // it, only finalizeMomentDraft can stamp `expiresAt` (the create rule
     // BANS the field on client writes, so a forged expiry is impossible),
-    // which means a fallback-published Moment would carry none — and a
-    // Moment with no expiry is treated as expired on every surface, so it
-    // would be INVISIBLE FOREVER, including to its own author, with no
-    // self-heal. Publishing into permanent invisibility while reporting
-    // success is strictly worse than failing with the truth. The recording
-    // itself is retained by the pending-publish map, so a retry when the
-    // server is reachable loses nothing.
+    // which means a fallback-published Moment would carry none. Under the
+    // amended availability contract a missing expiresAt means PERMANENT —
+    // so the fallback would silently grant every offline publish a
+    // forever lifetime the author never chose, bypassing both the
+    // whitelist and the server's active-Moment cap accounting. Publishing
+    // with the wrong contract while reporting success is strictly worse
+    // than failing with the truth. The recording itself is retained by
+    // the pending-publish map, so a retry when the server is reachable
+    // loses nothing.
     throw StateError(
       'Publishing needs the YO Voice server right now and it could not be '
       'reached. Your recording is kept — try again in a moment.',
@@ -547,28 +641,28 @@ class MomentService {
       throw StateError('You can only delete your own Voice Moments.');
     }
 
-    final momentReference = _moments.doc(moment.id);
-
-    // Remove uploaded voice replies before deleting their Firestore records.
-    final comments = await momentReference.collection('comments').get();
-    for (final comment in comments.docs) {
-      final storagePath = (comment.data()['storagePath'] as String?)?.trim();
-      if (storagePath != null && storagePath.isNotEmpty) {
-        await _storage.ref(storagePath).delete().catchError((_) {});
-      }
+    // THE CALLABLE, NEVER A CLIENT-SIDE SWEEP. The previous version batch
+    // deleted the comments and likes subcollections directly — but the
+    // deployed rules only let each COMMENT AUTHOR delete their own comment
+    // and each LIKER their own like, so deleting any Moment somebody else
+    // had engaged with failed permission-denied halfway through the batch.
+    // The delete then broke on exactly the Moments that matter — and under
+    // the availability amendment it is the ONLY exit for a permanent
+    // Moment. The deployed `deleteMoment` callable performs the canonical
+    // cleanup server-side (children, media, counters, audit) with the same
+    // author-only authorization enforced where it cannot be bypassed.
+    final functions = _functions;
+    if (functions == null) {
+      throw StateError(
+        'Deleting needs the YO Voice server right now and it could not be '
+        'reached. Try again in a moment.',
+      );
     }
-
-    await _deleteCollection(momentReference.collection('comments'));
-    await _deleteCollection(momentReference.collection('likes'));
-
-    final momentSnapshot = await momentReference.get();
-    final storagePath = (momentSnapshot.data()?['storagePath'] as String?)
-        ?.trim();
-    if (storagePath != null && storagePath.isNotEmpty) {
-      await _storage.ref(storagePath).delete().catchError((_) {});
-    }
-
-    await momentReference.delete();
+    final callable = functions.httpsCallable('deleteMoment');
+    await callable.call<Map<Object?, Object?>>({
+      'momentId': moment.id,
+      'requestId': _newRequestId(),
+    });
   }
 
   Future<({String displayName, String? photoUrl})> _identity(User user) async {
@@ -587,23 +681,20 @@ class MomentService {
 
   CollectionReference<Map<String, dynamic>> _commentsFor(String momentId) =>
       _moments.doc(momentId).collection('comments');
+}
 
-  Future<void> _deleteCollection(
-    CollectionReference<Map<String, dynamic>> collection,
-  ) async {
-    while (true) {
-      final snapshot = await collection.limit(400).get();
-      if (snapshot.docs.isEmpty) {
-        return;
-      }
+/// One person who liked a Moment — the detail screen's "Top reactions"
+/// row renders REAL likers resolved from voiceMoments/{id}/likes.
+class MomentReactor {
+  const MomentReactor({
+    required this.uid,
+    required this.displayName,
+    required this.photoUrl,
+  });
 
-      final batch = _firestore.batch();
-      for (final document in snapshot.docs) {
-        batch.delete(document.reference);
-      }
-      await batch.commit();
-    }
-  }
+  final String uid;
+  final String displayName;
+  final String? photoUrl;
 }
 
 /// One comment under a Voice Moment, exactly as stored — no field is
@@ -657,12 +748,14 @@ class _PendingMomentPublish {
     required this.caption,
     required this.durationSeconds,
     required this.replyToMomentId,
+    required this.availability,
   });
 
   final String requestId;
   final String caption;
   final int durationSeconds;
   final String? replyToMomentId;
+  final MomentAvailability availability;
   String? momentId;
   String? storagePath;
   String? objectGeneration;
@@ -671,8 +764,10 @@ class _PendingMomentPublish {
     required String caption,
     required int durationSeconds,
     required String? replyToMomentId,
+    required MomentAvailability availability,
   }) =>
       this.caption == caption &&
       this.durationSeconds == durationSeconds &&
-      this.replyToMomentId == replyToMomentId;
+      this.replyToMomentId == replyToMomentId &&
+      this.availability == availability;
 }

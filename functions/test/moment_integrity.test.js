@@ -204,6 +204,7 @@ async function publish(service, {
   caption = "Canonical Moment",
   durationSeconds = 12,
   generation = "1001",
+  availabilityHours = undefined,
 } = {}) {
   const reserved = await service.reserveMomentDraft(request(uid, {
     caption,
@@ -219,6 +220,9 @@ async function publish(service, {
     momentId: reserved.momentId,
     objectGeneration: generation,
     requestId: finalizeRequestId,
+    // Absent by default on purpose: most of this suite publishes exactly the
+    // way pre-availability clients do, which must stay the 24-hour story.
+    ...(availabilityHours === undefined ? {} : { availabilityHours }),
   }));
   return reserved;
 }
@@ -1807,4 +1811,286 @@ test("a legacy published Moment without expiresAt stays canonical and likeable",
     })),
     (error) => error.code === "data-loss",
   );
+});
+
+// ---------------------------------------------------------------------------
+// Operator-chosen availability (2026-08, amends the 24h contract above).
+//
+// finalizeMomentDraft accepts an OPTIONAL `availabilityHours`: exactly one of
+// 24 / 72 / 168 / 720 stamps `expiresAt = createdAt + hours`, the literal
+// string "permanent" writes NO expiresAt field at all, absent defaults to 24
+// (the deployed behaviour, byte for byte), and anything else is
+// invalid-argument. Null expiresAt now MEANS permanent — visible until the
+// author deletes it — so a permanent Moment occupies an active-cap slot
+// forever and only deletion frees it. The whitelist numbers below are the
+// contract's numbers on purpose; they must not silently follow a constant.
+// ---------------------------------------------------------------------------
+
+const HOUR_MS = 60 * 60 * 1000;
+
+test("each whitelisted availability stamps exactly createdAt + hours", async () => {
+  const service = momentService({
+    uploadReserve: { maxEvents: 100, windowMs: 60_000 },
+    finalize: { maxEvents: 100, windowMs: 60_000 },
+  });
+  for (const hours of [24, 72, 168, 720]) {
+    const reserved = await service.reserveMomentDraft(request(A, {
+      caption: `Available ${hours}h`,
+      durationSeconds: 6,
+      requestId: `avail-r-${hours}`,
+    }));
+    const reservedAtMs = nowMs;
+    // Finalize minutes after reserve: the deadline must anchor on the
+    // STORED createdAt, exactly as the 24-hour contract already requires.
+    nowMs += 5 * 60_000;
+    storage.put(reserved.storagePath, {
+      authorId: A,
+      momentId: reserved.momentId,
+      generation: `9${hours}`,
+    });
+    const finalized = await service.finalizeMomentDraft(request(A, {
+      availabilityHours: hours,
+      momentId: reserved.momentId,
+      objectGeneration: `9${hours}`,
+      requestId: `avail-f-${hours}`,
+    }));
+    assert.equal(finalized.published, true);
+    const moment = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
+    assert.equal(moment.createdAt.toMillis(), reservedAtMs);
+    assert.equal(
+      moment.expiresAt.toMillis() - moment.createdAt.toMillis(),
+      hours * HOUR_MS,
+      `expiresAt is exactly createdAt + ${hours}h`,
+    );
+  }
+});
+
+test("'permanent' publishes with no expiresAt field written at all", async () => {
+  const service = momentService();
+  const reserved = await service.reserveMomentDraft(request(A, {
+    caption: "Keep until deleted",
+    durationSeconds: 9,
+    requestId: "perm-r-0001",
+  }));
+  storage.put(reserved.storagePath, {
+    authorId: A,
+    momentId: reserved.momentId,
+    generation: "91001",
+  });
+  const finalized = await service.finalizeMomentDraft(request(A, {
+    availabilityHours: "permanent",
+    momentId: reserved.momentId,
+    objectGeneration: "91001",
+    requestId: "perm-f-0001",
+  }));
+  assert.equal(finalized.published, true);
+
+  const moment = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
+  // The key itself must be ABSENT — not null, not a far-future timestamp.
+  // Null-vs-absent is load-bearing: the sweeper's range filter skips missing
+  // fields, and every client surface reads a missing deadline as permanent.
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(moment, "expiresAt"),
+    false,
+    "a permanent Moment carries no expiresAt key",
+  );
+  assert.equal(moment.isPublished, true);
+  assert.equal(moment.status, "published");
+
+  // And it is a first-class published Moment: engageable like any other.
+  const liked = await service.setMomentLike(request(B, {
+    liked: true,
+    momentId: reserved.momentId,
+    requestId: "perm-like-01",
+  }));
+  assert.equal(liked.likeCount, 1);
+});
+
+test("every availabilityHours outside the strict whitelist is refused", async () => {
+  const service = momentService();
+  const reserved = await service.reserveMomentDraft(request(A, {
+    caption: "Never publishes",
+    durationSeconds: 7,
+    requestId: "avail-bad-r-01",
+  }));
+  storage.put(reserved.storagePath, {
+    authorId: A,
+    momentId: reserved.momentId,
+    generation: "92001",
+  });
+  const invalid = [
+    48, 0, -24, 23.5, 1, 8760, Number.NaN,
+    "24", "720", "Permanent", "PERMANENT", "forever",
+    null, true, false, [24], { hours: 24 },
+  ];
+  for (const [index, value] of invalid.entries()) {
+    await assert.rejects(
+      service.finalizeMomentDraft(request(A, {
+        availabilityHours: value,
+        momentId: reserved.momentId,
+        objectGeneration: "92001",
+        requestId: `avail-bad-f-${String(index).padStart(2, "0")}`,
+      })),
+      (error) => error.code === "invalid-argument",
+      `must refuse availabilityHours: ${JSON.stringify(value)}`,
+    );
+  }
+  // Refused before any transaction: the draft never published.
+  const moment = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
+  assert.equal(moment.isPublished, false);
+  assert.equal(moment.status, "uploading");
+});
+
+test("absent and explicit 24 share the deployed operation identity", async () => {
+  // REGRESSION PIN, the same reasoning as the content-report hash pin above.
+  // finalizeMomentDraft is deployed and live: every publish already ledgered
+  // hashed exactly { momentId, objectGeneration }. The default availability
+  // must keep that hash — otherwise a pre-availability client's retry of an
+  // already-published finalize stops replaying and starts answering
+  // already-exists. And an explicit 24 IS the default, so it must hash
+  // identically too rather than becoming a "different request" that refuses
+  // its own replay.
+  const service = momentService();
+  const reserved = await service.reserveMomentDraft(request(A, {
+    caption: "Hash pinned",
+    durationSeconds: 5,
+    requestId: "avail-hash-r-01",
+  }));
+  storage.put(reserved.storagePath, {
+    authorId: A,
+    momentId: reserved.momentId,
+    generation: "94001",
+  });
+  const finalized = await service.finalizeMomentDraft(request(A, {
+    momentId: reserved.momentId,
+    objectGeneration: "94001",
+    requestId: "avail-hash-f-01",
+  }));
+  const identity = operationIdentity("moment.finalize", A, "avail-hash-f-01", {
+    momentId: reserved.momentId,
+    objectGeneration: "94001",
+  });
+  const ledger = await db.doc(`integrityOperationLedgers/${identity.id}`).get();
+  assert.equal(ledger.exists, true);
+  assert.equal(ledger.data().inputHash, identity.inputHash);
+
+  // A retry that names the default explicitly is the SAME request: replay.
+  assert.deepEqual(
+    await service.finalizeMomentDraft(request(A, {
+      availabilityHours: 24,
+      momentId: reserved.momentId,
+      objectGeneration: "94001",
+      requestId: "avail-hash-f-01",
+    })),
+    finalized,
+  );
+  const moment = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
+  assert.equal(
+    moment.expiresAt.toMillis() - moment.createdAt.toMillis(),
+    DAY_MS,
+    "the default availability is still exactly 24 hours",
+  );
+});
+
+test("a finalize retry with a different availability is refused, never silently replayed", async () => {
+  const service = momentService();
+  const reserved = await service.reserveMomentDraft(request(A, {
+    caption: "Seventy-two hours",
+    durationSeconds: 8,
+    requestId: "avail-replay-r-01",
+  }));
+  storage.put(reserved.storagePath, {
+    authorId: A,
+    momentId: reserved.momentId,
+    generation: "95001",
+  });
+  const finalized = await service.finalizeMomentDraft(request(A, {
+    availabilityHours: 72,
+    momentId: reserved.momentId,
+    objectGeneration: "95001",
+    requestId: "avail-replay-f-01",
+  }));
+
+  // Same requestId, same value: an honest retry replays the stored result.
+  assert.deepEqual(
+    await service.finalizeMomentDraft(request(A, {
+      availabilityHours: 72,
+      momentId: reserved.momentId,
+      objectGeneration: "95001",
+      requestId: "avail-replay-f-01",
+    })),
+    finalized,
+  );
+
+  // Same requestId, DIFFERENT availability: a different request wearing a
+  // used id. It must answer already-exists — silently returning the stored
+  // result would let a caller believe the new duration took effect.
+  for (const changed of [168, "permanent", undefined]) {
+    await assert.rejects(
+      service.finalizeMomentDraft(request(A, {
+        momentId: reserved.momentId,
+        objectGeneration: "95001",
+        requestId: "avail-replay-f-01",
+        ...(changed === undefined ? {} : { availabilityHours: changed }),
+      })),
+      (error) => error.code === "already-exists",
+      `a changed availability (${JSON.stringify(changed)}) must not replay`,
+    );
+  }
+
+  // The document kept the original 72-hour deadline through all of it.
+  const moment = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
+  assert.equal(
+    moment.expiresAt.toMillis() - moment.createdAt.toMillis(),
+    72 * HOUR_MS,
+  );
+});
+
+test("permanent Moments hold active-cap slots forever and free them only on delete", async () => {
+  const service = momentService({
+    uploadReserve: { maxEvents: 100, windowMs: 60_000 },
+    finalize: { maxEvents: 100, windowMs: 60_000 },
+    delete: { maxEvents: 100, windowMs: 60_000 },
+  });
+  const permanentIds = [];
+  for (let index = 0; index < 10; index += 1) {
+    const suffix = String(index).padStart(2, "0");
+    const reserved = await publish(service, {
+      uid: A,
+      reserveRequestId: `permcap-r-${suffix}`,
+      finalizeRequestId: `permcap-f-${suffix}`,
+      generation: `86${suffix}`,
+      availabilityHours: "permanent",
+    });
+    permanentIds.push(reserved.momentId);
+  }
+
+  // A year on, every 24-hour story would be long gone — the ten permanent
+  // ones still occupy every slot, because "active" honestly includes a
+  // published Moment with no deadline.
+  nowMs += 365 * DAY_MS;
+  await assert.rejects(
+    service.reserveMomentDraft(request(A, {
+      caption: "Eleventh permanent",
+      durationSeconds: 5,
+      requestId: "permcap-r-10",
+    })),
+    (error) => error.code === "resource-exhausted" &&
+      /10 active/u.test(error.message),
+    "ten permanent Moments still fill the cap a year later",
+  );
+
+  // Deletion is the author's only exit from a permanent Moment, and it
+  // frees the slot immediately — and the refused reserve consumed neither
+  // ledger nor rate budget, so the very same requestId succeeds now.
+  await service.deleteMoment(request(A, {
+    momentId: permanentIds[0],
+    requestId: "permcap-del-01",
+  }));
+  const eleventh = await service.reserveMomentDraft(request(A, {
+    caption: "Eleventh permanent",
+    durationSeconds: 5,
+    requestId: "permcap-r-10",
+  }));
+  assert.equal(eleventh.created, true);
 });

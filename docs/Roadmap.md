@@ -36,6 +36,18 @@ someone decide what to pick up next.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it)
 > for why that distinction is the whole point of this wave.
 
+- **Mobile Moments 1:1 to the mockup: feed, detail screen, YO-logo nav,
+  author-chosen availability, delete-own** (2026-08-22, ADR-103, DEPLOYED —
+  functions then hosting, byte-verified): availabilityHours whitelist
+  24h/3d/7d/30d/permanent (missing expiresAt now MEANS permanent — the
+  deliberate ADR-101 reversal), replay-safe ledger hash, cap counts
+  permanent forever and frees on delete; delete routed through the
+  deleteMoment callable after review caught the client-side sweep breaking
+  on foreign engagement; new MomentDetailScreen with REAL likers as "Top
+  reactions"; bottom-nav center is the YO logo. Flutter → 1177; functions →
+  775; rules → 485 (untouched file, one new strip-the-field pin). Reviews:
+  security PASS, visual PASS, principal FIX_FIRST fully closed pre-deploy.
+
 - **The active-room mini-player is rebuilt to the reference mockups**
   (2026-08-22, ADR-102, DEPLOYED — hosting, byte-verified): desktop
   four-zone dock and mobile card with live latest-chat preview (limit(1)),
