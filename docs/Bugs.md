@@ -1816,6 +1816,25 @@ permission flags).
 
 ## Infrastructure
 
+- **RESOLVED 2026-08-20 — `firestore.indexes.json` had drifted BEHIND
+  production: the deployed `clubs.clubId` single-field exemption was never
+  backported, so the next index deploy would have deleted it and bricked
+  club deletion.** `adminDeleteClub` sweeps the `users/{uid}/clubs`
+  projections with `db.collectionGroup("clubs").where("clubId", "==",
+  clubId)` (`functions/admin/clubs.js:1005`), which requires a
+  COLLECTION_GROUP-scope exemption on `clubs.clubId`. The repo file listed
+  overrides for `rooms.roomId`, `participants.userId`, `roomMembers.userId`
+  and `invites.inviteeId` but not this one; production (checked via
+  `firebase firestore:indexes`, 2026-08-20) already HAS it — evidently
+  console-created and never committed. Club deletion therefore works today,
+  but `firebase deploy --only firestore:indexes` offers to delete live
+  indexes the file omits (`--force` deletes silently), after which the
+  sweep's `.get()` would throw `FAILED_PRECONDITION` after
+  `deletionInProgress: true` is set — a retryable state no retry could ever
+  complete. Exemption backported; the full live config was diffed against
+  the file and now matches exactly. The emulator does not enforce
+  single-field exemptions, so no test could see any of this. See
+  [ADR-096](Decisions.md#adr-096-firestoreindexesjson-mirrors-the-deployed-index-state-exactly--a-console-created-exemption-is-backported-to-the-repo-the-day-it-is-found).
 - **OPEN — App Store/Google Play Premium checkout is not operational.** The
   entitlement model, admin grant and access gates exist, but no IAP client or
   store receipt-verification adapter is configured; `verifyPurchase`
