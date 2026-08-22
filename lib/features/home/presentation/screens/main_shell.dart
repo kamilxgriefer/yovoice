@@ -1787,8 +1787,10 @@ class _VoiceActionButton extends StatelessWidget {
           excludeSemantics: true,
           child: Center(
             child: Transform.translate(
-              // 8-16px per the spec: the mark floats above the icon row.
-              offset: const Offset(0, -12),
+              // -5, down from the spec-guide -12: the operator looked at
+              // the shipped bar and called the mark too high. A slight
+              // float stays; the eye wins over the guide.
+              offset: const Offset(0, -5),
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
