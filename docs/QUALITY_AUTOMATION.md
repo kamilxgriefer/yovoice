@@ -87,3 +87,11 @@ A concise Polish description:
 
 When suite counts change, use the measured figures in
 [`TESTING.md`](TESTING.md) rather than copying an old number from this page.
+
+## Validating automation changes
+
+Product work in this solo repository normally lands directly on `main`, but a
+change to `.github/workflows` should be exercised once through a pull request.
+That is the only honest way to prove the `pull_request` trigger, read-only token
+permissions and all three independent quality workflows behave as documented;
+a successful push run cannot validate a PR-only execution path.
