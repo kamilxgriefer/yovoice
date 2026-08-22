@@ -6214,3 +6214,128 @@ that the browser insists is not active.
   the eight new cases in `functions/test/admin_room_listing.test.js` prove
   the *semantics* and prove nothing about the index. The index claim rests
   on the two production reads above, not on the suite.
+## ADR-105: A direct message is written only by the server, and an unsendable one waits in a bounded local outbox
+
+*(Renumbered 082 → 105 when this branch was merged on 2026-08-22. It had
+sat unmerged while `main` moved 36 commits ahead and independently used
+082 for the reachability decision. Inbound links elsewhere in the docs
+were updated in the same merge.)*
+
+
+**Status**: Accepted
+**Date**: 2026-08-19
+
+### Context
+
+`conversations/{conversationId}/messages/{messageId}` allowed a client to
+create a message document. The rule checked `isVerified()`, that the caller
+was a participant and the sender id matched, that the pair was not blocked,
+and — added shortly before this — the recipient's `messagePrivacy`.
+
+It did not check whether the SENDER was still allowed to speak.
+`isVerified()` reads `request.auth.token.email_verified`: a token claim that
+says an email was confirmed once, and nothing about account standing. The
+authoritative status lives in `users/{uid}.banned|disabled` and
+`restrictions/{uid}` (a staff `communicationMute`), which `canCommunicate()`
+reads and which the conversation-root rule directly above already required.
+
+The gap was reachable. `sendDirectMessage` does call `activeProfile()` and
+`assertNotRestricted()` — but inside the callable, and
+`message_service.dart`'s `_sendTextMessageDirectly` wrote the message
+document straight from the client whenever `_tryCallable` reported the
+callable absent. On that path the rule was the only backstop, and it did not
+enforce the sanction. **A banned or communication-muted account kept full
+direct messaging by taking the fallback**, along with a bypass of the rate
+limiter and the idempotency ledger.
+
+### Decision
+
+`allow create: if false` on the message subcollection. `sendDirectMessage`
+is the sole writer. The client keeps a bounded, persisted outbox
+(`lib/features/messages/data/services/message_outbox.dart`) with Pending /
+Retrying / Failed states, retries each entry under its original `requestId`,
+and drains when connectivity returns. `_sendTextMessageDirectly` is deleted.
+
+### Reasoning
+
+The obvious fix — add `canCommunicate()` to the rule — was implemented,
+tested, and **abandoned on evidence**. It exceeds Firestore's per-request
+document access-call budget. Measured against the emulator (the run below
+was taken at `b123aec`, before the club chat pass added 43 more checks; the
+counts differ from today's table for that reason, the finding does not):
+
+- pure `b123aec`: 403 rules checks green, friends-mode send allowed;
+- with `canCommunicate()` added: 408 passed / 1 failed, the failure being
+  `SECURITY DM PRIVACY: friends requires both canonical guard halves` with
+  `Service call error. Function: [exists]` on the second friendship guard;
+- synthetic `exists()` probes on the same path: **+1 access call passes,
+  +2 fails** — exactly one call of headroom;
+- the mute check alone (1 call, a single `exists` on a usually-absent
+  document, which short-circuits) fits; `isActiveAccount()` (3 calls) does
+  not; full `canCommunicate()` (4) does not.
+
+An exhausted rule does not skip the check. It errors, and an error denies —
+so the "fix" broke legitimate sends. Consolidating the rule's five redundant
+re-reads of the conversation document, collapsing `accountIsActive()` to a
+single `get`, and collapsing `canonicalFriendshipGuard`'s seven access calls
+to one were each tried; none freed enough.
+
+That leaves a choice between shipping a partial gate — closing the mute
+bypass while leaving banned and disabled accounts able to send — and moving
+the write behind something that can afford every check. A rule that can only
+afford some of its authorization is not the right place for any of it, and a
+sanction enforced against two of three states is one a moderator cannot
+reason about. The callable already performs all of it, plus the rate limit
+and the ledger.
+
+The cost is losing the fallback, and that cost is only acceptable because
+the message is not lost with it. `requestId` was already part of the
+callable's contract and already recorded in a server-side idempotency ledger
+(`operationIdentity` / `assertLedgerReplay`), so a persisted queue that
+reuses the id makes retries safe for free — including the case that
+motivates the whole design, where the server committed the write and the
+response was lost.
+
+The queue is bounded (50) because an unbounded one turns a long offline
+stretch into unbounded local storage and a reconnect burst the server's own
+rate limiter would reject, converting a queue into a pile of permanent
+failures. It refuses at capacity rather than evicting an unsent message,
+and evicts FAILED entries first to make room. Retries stop after 6 attempts;
+a retry loop that never gives up is how a permanently-broken send becomes a
+permanent battery and quota drain. Refusals are never retried — a refusal
+repeated on a timer is just a slower refusal, and for the moderation
+refusals this path exists to honour, retrying would be an attempt to wear
+the server down.
+
+### Consequences
+
+- A sanctioned account cannot send a direct message by any client path.
+  Enforcement is uniform: one writer, all checks.
+- Sending is no longer synchronous with delivery. `sendTextMessage` returns
+  once the message is queued; a refusal still throws, a transient failure
+  does not. `MessageService.outbox` exposes the queue and a `changes` stream
+  so a chat view can render Pending / Retrying / Failed. **No UI consumes it
+  yet** — the states exist and are covered by tests, but nothing renders
+  them, so a queued message currently looks sent. That is the next piece of
+  work and is tracked in Roadmap.
+- `canDirectMessage` and `canonicalFollowingEdge` in `firestore.rules` are
+  no longer referenced by any rule. They are kept, annotated as such, with a
+  pointer to `functions/messaging/direct_integrity.js` where privacy is
+  actually enforced — a reader must not mistake them for live enforcement.
+  `conversationBlocked` is likewise now unused by the create path.
+- The legacy `notificationService:` injection no longer produces a
+  notification on send. It never should have: the
+  `conversations/{id}/messages/{id}` trigger in
+  `functions/notifications/activity.js` derives the notification from the
+  committed message and sets `bellSuppressed` from the recipient's own
+  friends document. `notification_routing_test.dart` now drives that path
+  the way the server does.
+- `connectivity_plus` becomes a direct dependency. It was already resolved
+  transitively and pinned in `dependency_overrides`, so this names what the
+  code imports and changes no resolution.
+- Deploying the rules and the app in either order is safe in one direction
+  only: **rules first strands old installs' fallback sends** (they will see
+  `permission-denied` with no queue to catch them), while **app first** is
+  clean — the new client stops writing directly before the rule forbids it.
+  Ship the app first, or accept that installs older than this release lose
+  the fallback without the outbox that replaces it.

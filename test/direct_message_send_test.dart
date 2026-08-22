@@ -3,10 +3,11 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
-import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 
 /// Sending a direct message has TWO paths and they must leave the same
 /// single thing behind.
@@ -20,6 +21,10 @@ import 'package:yovoice/features/notifications/data/services/notification_servic
 /// reachable, and every assertion here is about what ends up in Firestore
 /// rather than about whether a callable was invoked.
 void main() {
+  // The outbox persists through SharedPreferences, whose backing store is
+  // static. Without a per-test reset one test's queue leaks into the next.
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   const senderId = 'sender-uid';
   const recipientId = 'recipient-uid';
   const conversationId = 'recipient-uid_sender-uid';
@@ -101,6 +106,7 @@ void main() {
   }
 
   setUp(() async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
     db = FakeFirebaseFirestore();
     await seedCanonicalConversation();
   });
@@ -234,198 +240,420 @@ void main() {
   });
 
   group('the callable is unavailable', () {
-    test('the fallback leaves exactly one message, one unread increment '
-        'and one conversation summary', () async {
+    // Until ADR-082 this group asserted that the client wrote the message
+    // to Firestore itself. That fallback is gone: it skipped every
+    // server-side moderation check at once — activeProfile,
+    // assertNotRestricted, assertNotBlocked, the recipient's messagePrivacy
+    // and the rate limiter all live inside the callable — so a banned or
+    // communication-muted account kept full direct messaging by taking it.
+    // The rules now refuse a client-authored message document outright.
+    //
+    // What replaces it is the whole point: the message must not be lost.
+    // These cases assert it is queued, retried under its ORIGINAL requestId,
+    // and delivered exactly once.
+
+    test('nothing is written to Firestore and the message is queued '
+        'instead', () async {
+      final outbox = MessageOutbox(
+        preferences: null,
+        capacity: 8,
+        // Zeroed so a flush in the same tick is due. The backoff
+        // itself is proven in its own case below.
+        baseBackoff: Duration.zero,
+        maxBackoff: Duration.zero,
+      );
       final service = MessageService(
         firestore: db,
         auth: authFor(senderId),
         functions: _UnavailableFunctions('unimplemented'),
+        outbox: outbox,
       );
 
       await service.sendTextMessage(
         conversationId: conversationId,
         recipientId: recipientId,
-        text: 'the callable is gone',
+        text: 'queued not lost',
       );
 
-      final docs = await messageDocs();
-      expect(docs, hasLength(1));
-      expect(docs.single.data()['content'], 'the callable is gone');
-      expect(docs.single.data()['senderId'], senderId);
-      expect(docs.single.data()['readBy'], [senderId]);
+      expect(
+        await messageDocs(),
+        isEmpty,
+        reason: 'the client must never author a message document',
+      );
+      expect(await unreadFor(recipientId), 0);
 
-      expect(await unreadFor(recipientId), 1);
-      expect(await unreadFor(senderId), 0);
-
-      final conversation = await conversationDoc();
-      expect(conversation['lastMessage'], 'the callable is gone');
-      expect(conversation['lastMessageSenderId'], senderId);
-      expect(conversation['lastMessageId'], docs.single.id);
-      expect(conversation['lastMessageSequence'], 1);
-      expect(conversation['archivedBy'], isEmpty);
-      final typing = conversation['typing'] as Map;
-      expect((typing[senderId] as Map)['isTyping'], isFalse);
+      final queued = outbox.unsent;
+      expect(queued, hasLength(1));
+      expect(queued.single.text, 'queued not lost');
+      expect(queued.single.conversationId, conversationId);
+      expect(queued.single.state, OutboxState.retrying);
+      expect(queued.single.attempts, 1);
     });
 
-    test('the fallback writes the CANONICAL message shape, so the server '
-        'can still edit, delete, react to and reply to it', () async {
-      final service = MessageService(
+    test('the queued message is delivered when the callable comes back, '
+        'exactly once and under its original requestId', () async {
+      final outbox = MessageOutbox(
+        preferences: null,
+        capacity: 8,
+        // Zeroed so a flush in the same tick is due. The backoff
+        // itself is proven in its own case below.
+        baseBackoff: Duration.zero,
+        maxBackoff: Duration.zero,
+      );
+      final unavailable = MessageService(
         firestore: db,
         auth: authFor(senderId),
         functions: _UnavailableFunctions('unimplemented'),
+        outbox: outbox,
       );
 
-      await service.sendTextMessage(
+      await unavailable.sendTextMessage(
         conversationId: conversationId,
         recipientId: recipientId,
-        text: 'canonical please',
+        text: 'survives the outage',
       );
+      final queuedRequestId = outbox.unsent.single.requestId;
 
-      final data = (await messageDocs()).single.data();
+      // Same outbox, a service whose callable now answers.
+      final server = _ServerSendFunctions(db, senderId: senderId);
+      final restored = MessageService(
+        firestore: db,
+        auth: authFor(senderId),
+        functions: server,
+        outbox: outbox,
+      );
+      await restored.flushOutbox();
+
+      final docs = await messageDocs();
+      expect(docs, hasLength(1), reason: 'delivered exactly once');
+      expect(docs.single.data()['content'], 'survives the outage');
       expect(
-        data.keys.toSet(),
+        docs.single.data().keys.toSet(),
         canonicalMessageKeys,
-        reason: 'validateMessage() compares an EXACT key set; a fallback '
-            'that writes 14 of the 16 keys is the same latent defect as '
-            '_publishRecordedMomentLegacy',
+        reason: 'a queued-then-retried message is still a SERVER-written '
+            'message, so it carries the exact key set validateMessage '
+            'demands — queueing changes when it is sent, not what is sent',
       );
-      expect(data['schemaVersion'], 2);
-      expect(data['sequence'], 1);
-      expect(data['type'], 'text');
-      expect(data['isDeleted'], isFalse);
-      expect(data['mediaUrl'], isNull);
-      expect(data['durationSeconds'], isNull);
-      expect(data['editedAt'], isNull);
-      expect(data['reactions'], isEmpty);
-      expect(data['replyToMessageId'], isNull);
-      expect(data['replyToSenderId'], isNull);
-      expect(data['replyToContent'], isNull);
-    });
+      expect(await unreadFor(recipientId), 1);
+      expect(outbox.entries, isEmpty, reason: 'a delivered message leaves');
 
-    test('the fallback advances the sequence monotonically', () async {
-      final service = MessageService(
-        firestore: db,
-        auth: authFor(senderId),
-        functions: _UnavailableFunctions('unimplemented'),
-      );
-
-      await service.sendTextMessage(
-        conversationId: conversationId,
-        recipientId: recipientId,
-        text: 'one',
-      );
-      await service.sendTextMessage(
-        conversationId: conversationId,
-        recipientId: recipientId,
-        text: 'two',
-      );
-
-      final docs = await messageDocs();
-      expect(docs, hasLength(2));
       expect(
-        docs.map((doc) => doc.data()['sequence']).toSet(),
-        {1, 2},
+        server.payloads.single['requestId'],
+        queuedRequestId,
+        reason: 'the retry MUST reuse the id the message was queued with — '
+            'the callable ledger keys on it, so a fresh id would turn a '
+            'lost response into a duplicate message',
       );
-      expect(await unreadFor(recipientId), 2);
-      expect((await conversationDoc())['lastMessageSequence'], 2);
     });
 
-    test('a fallback reply keeps the full reply linkage the server '
-        'validates', () async {
+    test('a retry of a send that actually landed is deduplicated rather '
+        'than duplicated', () async {
+      // The nastiest real case: the server committed the write and the
+      // response was lost. The entry is still queued, so it retries — and
+      // must be recognised as a replay.
+      final outbox = MessageOutbox(
+        preferences: null,
+        capacity: 8,
+        // Zeroed so a flush in the same tick is due. The backoff
+        // itself is proven in its own case below.
+        baseBackoff: Duration.zero,
+        maxBackoff: Duration.zero,
+      );
+      final server = _ServerSendFunctions(db, senderId: senderId);
       final service = MessageService(
         firestore: db,
         auth: authFor(senderId),
-        functions: _UnavailableFunctions('unimplemented'),
+        functions: _LosesTheResponse(server),
+        outbox: outbox,
       );
 
       await service.sendTextMessage(
         conversationId: conversationId,
         recipientId: recipientId,
-        text: 'the original',
+        text: 'landed but unacknowledged',
       );
-      final original = Message.fromFirestore((await messageDocs()).single);
 
-      await service.sendTextMessage(
+      // The message really is in Firestore, and the entry really is still
+      // queued — the client cannot tell the difference from a failure.
+      expect(await messageDocs(), hasLength(1));
+      expect(outbox.unsent, hasLength(1));
+      final requestId = outbox.unsent.single.requestId;
+
+      // The retry reaches a server that recognises the ledger entry.
+      final replaying = MessageService(
+        firestore: db,
+        auth: authFor(senderId),
+        functions: _LedgerAwareFunctions(server, seen: {requestId}),
+        outbox: outbox,
+      );
+      await replaying.flushOutbox();
+
+      expect(
+        await messageDocs(),
+        hasLength(1),
+        reason: 'the replay must not write a second message',
+      );
+      expect(outbox.entries, isEmpty);
+    });
+
+    test('a reply keeps its reply target through the queue', () async {
+      await db
+          .collection('conversations')
+          .doc(conversationId)
+          .collection('messages')
+          .doc('m_target')
+          .set({
+            'senderId': recipientId,
+            'content': 'the original',
+            'isDeleted': false,
+          });
+
+      final outbox = MessageOutbox(
+        preferences: null,
+        capacity: 8,
+        // Zeroed so a flush in the same tick is due. The backoff
+        // itself is proven in its own case below.
+        baseBackoff: Duration.zero,
+        maxBackoff: Duration.zero,
+      );
+      final unavailable = MessageService(
+        firestore: db,
+        auth: authFor(senderId),
+        functions: _UnavailableFunctions('unimplemented'),
+        outbox: outbox,
+      );
+
+      await unavailable.sendTextMessage(
         conversationId: conversationId,
         recipientId: recipientId,
         text: 'the reply',
-        replyTo: original,
+        replyTo: Message(
+          id: 'm_target',
+          conversationId: conversationId,
+          senderId: recipientId,
+          type: MessageType.text,
+          content: 'the original',
+          sentAt: DateTime.utc(2026, 3, 1, 11, 30),
+          readBy: const [recipientId],
+          reactions: const <String, String>{},
+        ),
       );
 
-      final docs = await messageDocs();
-      expect(docs, hasLength(2));
-      final reply = docs
-          .firstWhere((doc) => doc.data()['content'] == 'the reply')
-          .data();
-      expect(reply.keys.toSet(), canonicalMessageKeys);
-      expect(reply['replyToMessageId'], original.id);
-      expect(reply['replyToSenderId'], senderId);
-      expect(reply['replyToContent'], 'the original');
-      expect(await unreadFor(recipientId), 2);
+      expect(outbox.unsent.single.replyToMessageId, 'm_target');
+
+      final server = _ServerSendFunctions(db, senderId: senderId);
+      await MessageService(
+        firestore: db,
+        auth: authFor(senderId),
+        functions: server,
+        outbox: outbox,
+      ).flushOutbox();
+
+      expect(server.payloads.single['replyToMessageId'], 'm_target');
+      final sent = (await messageDocs())
+          .firstWhere((entry) => entry.id != 'm_target');
+      expect(sent.data()['replyToMessageId'], 'm_target');
+      expect(sent.data()['replyToSenderId'], recipientId);
     });
 
-    test('a fallback reply to a very long message truncates the preview '
-        'to the 240 characters the server accepts', () async {
+    test('messages leave the queue in the order they were written', () async {
+      final outbox = MessageOutbox(
+        preferences: null,
+        capacity: 8,
+        // Zeroed so a flush in the same tick is due. The backoff
+        // itself is proven in its own case below.
+        baseBackoff: Duration.zero,
+        maxBackoff: Duration.zero,
+      );
+      final unavailable = MessageService(
+        firestore: db,
+        auth: authFor(senderId),
+        functions: _UnavailableFunctions('unimplemented'),
+        outbox: outbox,
+      );
+
+      for (final text in ['first', 'second', 'third']) {
+        await unavailable.sendTextMessage(
+          conversationId: conversationId,
+          recipientId: recipientId,
+          text: text,
+        );
+      }
+      expect(outbox.unsent, hasLength(3));
+
+      final server = _ServerSendFunctions(db, senderId: senderId);
+      await MessageService(
+        firestore: db,
+        auth: authFor(senderId),
+        functions: server,
+        outbox: outbox,
+      ).flushOutbox();
+
+      expect(
+        server.payloads.map((payload) => payload['text']).toList(),
+        ['first', 'second', 'third'],
+        reason: 'a conversation that arrives out of order is not the same '
+            'conversation',
+      );
+      expect(outbox.entries, isEmpty);
+    });
+
+    test('a failed attempt waits out its backoff instead of hammering '
+        'the server', () async {
+      // The zeroed backoff used above is a testing convenience; this is the
+      // case that proves the real one defers. A retry loop with no delay
+      // turns one unreachable server into a denial-of-service from every
+      // client that was mid-send.
+      final outbox = MessageOutbox(
+        preferences: null,
+        capacity: 8,
+        baseBackoff: const Duration(minutes: 1),
+        maxBackoff: const Duration(minutes: 5),
+      );
+      final unavailable = _UnavailableFunctions('unimplemented');
+      final service = MessageService(
+        firestore: db,
+        auth: authFor(senderId),
+        functions: unavailable,
+        outbox: outbox,
+      );
+
+      await service.sendTextMessage(
+        conversationId: conversationId,
+        recipientId: recipientId,
+        text: 'not yet',
+      );
+      final queued = outbox.unsent.single;
+      expect(queued.state, OutboxState.retrying);
+      expect(queued.attempts, 1);
+      expect(queued.nextAttemptAt, isNotNull);
+      expect(queued.nextAttemptAt!.isAfter(DateTime.now()), isTrue);
+
+      expect(
+        outbox.due(),
+        isEmpty,
+        reason: 'nothing is due until the backoff elapses',
+      );
+
+      // A flush now is a no-op: the entry stays, untouched, at one attempt.
+      final server = _ServerSendFunctions(db, senderId: senderId);
+      await MessageService(
+        firestore: db,
+        auth: authFor(senderId),
+        functions: server,
+        outbox: outbox,
+      ).flushOutbox();
+
+      expect(server.payloads, isEmpty);
+      expect(outbox.unsent.single.attempts, 1);
+    });
+
+    test('the queue is bounded — it refuses rather than growing without '
+        'limit', () async {
+      final outbox = MessageOutbox(preferences: null, capacity: 2);
       final service = MessageService(
         firestore: db,
         auth: authFor(senderId),
         functions: _UnavailableFunctions('unimplemented'),
+        outbox: outbox,
       );
 
-      final long = 'a very long original message. ' * 40;
-      expect(long.length, greaterThan(240));
+      for (final text in ['one', 'two']) {
+        await service.sendTextMessage(
+          conversationId: conversationId,
+          recipientId: recipientId,
+          text: text,
+        );
+      }
 
-      await service.sendTextMessage(
-        conversationId: conversationId,
-        recipientId: recipientId,
-        text: long,
+      await expectLater(
+        service.sendTextMessage(
+          conversationId: conversationId,
+          recipientId: recipientId,
+          text: 'over the limit',
+        ),
+        throwsA(isA<OutboxFullException>()),
+        reason: 'an unbounded queue turns a long outage into unbounded '
+            'storage and a rate-limit burst on reconnect; refusing while '
+            'the person can still see what they typed is the honest failure',
       );
-      final original = Message.fromFirestore((await messageDocs()).single);
-
-      await service.sendTextMessage(
-        conversationId: conversationId,
-        recipientId: recipientId,
-        text: 'short reply',
-        replyTo: original,
-      );
-
-      final reply = (await messageDocs())
-          .firstWhere((doc) => doc.data()['content'] == 'short reply')
-          .data();
-      expect(
-        (reply['replyToContent'] as String).length,
-        240,
-        reason: 'validateMessage rejects replyToContent longer than 240',
-      );
-      expect(
-        reply['replyToContent'],
-        long.substring(0, 240),
-      );
+      expect(outbox.entries, hasLength(2));
+      expect(await messageDocs(), isEmpty);
     });
 
-    test('the legacy notification path still sends exactly one message '
-        'and one increment', () async {
-      // The `notificationService:` injection is what every other suite
-      // uses; it must land on the same single write as the callable path.
+    test('retrying gives up after a bounded number of attempts and the '
+        'message becomes Failed, not silently dropped', () async {
+      final outbox = MessageOutbox(
+        preferences: null,
+        capacity: 8,
+        maxAttempts: 3,
+        baseBackoff: Duration.zero,
+        maxBackoff: Duration.zero,
+      );
       final service = MessageService(
         firestore: db,
         auth: authFor(senderId),
-        notificationService: NotificationService(
-          firestore: db,
-          auth: authFor(senderId),
-        ),
+        functions: _UnavailableFunctions('unimplemented'),
+        outbox: outbox,
       );
 
       await service.sendTextMessage(
         conversationId: conversationId,
         recipientId: recipientId,
-        text: 'legacy path',
+        text: 'never lands',
       );
+      for (var attempt = 0; attempt < 5; attempt++) {
+        await service.flushOutbox();
+      }
 
-      final docs = await messageDocs();
-      expect(docs, hasLength(1));
-      expect(docs.single.data().keys.toSet(), canonicalMessageKeys);
-      expect(await unreadFor(recipientId), 1);
+      expect(outbox.unsent, isEmpty);
+      expect(outbox.failed, hasLength(1));
+      final failed = outbox.failed.single;
+      expect(failed.state, OutboxState.failed);
+      expect(failed.attempts, 3);
+      expect(
+        failed.text,
+        'never lands',
+        reason: 'a failed message still holds what was written, so it can '
+            'be retried by hand or copied out',
+      );
+    });
+
+    test('a message the automatic loop gave up on can be retried by hand, '
+        'keeping its original requestId', () async {
+      final outbox = MessageOutbox(
+        preferences: null,
+        capacity: 8,
+        maxAttempts: 1,
+        baseBackoff: Duration.zero,
+        maxBackoff: Duration.zero,
+      );
+      final service = MessageService(
+        firestore: db,
+        auth: authFor(senderId),
+        functions: _UnavailableFunctions('unimplemented'),
+        outbox: outbox,
+      );
+      await service.sendTextMessage(
+        conversationId: conversationId,
+        recipientId: recipientId,
+        text: 'retry me',
+      );
+      expect(outbox.failed, hasLength(1));
+      final originalRequestId = outbox.failed.single.requestId;
+
+      final server = _ServerSendFunctions(db, senderId: senderId);
+      final restored = MessageService(
+        firestore: db,
+        auth: authFor(senderId),
+        functions: server,
+        outbox: outbox,
+      );
+      await restored.retryFailedMessage(outbox.failed.single.id);
+
+      expect(await messageDocs(), hasLength(1));
+      expect(server.payloads.single['requestId'], originalRequestId);
+      expect(outbox.entries, isEmpty);
     });
   });
 
@@ -667,6 +895,59 @@ class _SilentSuccessFunctions implements FirebaseFunctions {
 /// callable is not deployed — the only reason the client fallback exists.
 /// With `not-found` it means the deployed server refused, which is a very
 /// different thing and must NOT fall back (ADR-062).
+/// Commits the write the way the real server would, then loses the response.
+///
+/// This is the failure the idempotency ledger exists for: the client cannot
+/// distinguish "never arrived" from "arrived and the acknowledgement was
+/// dropped", so it retries — and a retry that wrote a second message would
+/// be worse than the failure it was recovering from.
+class _LosesTheResponse implements FirebaseFunctions {
+  _LosesTheResponse(this.inner);
+
+  final _ServerSendFunctions inner;
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((parameters) async {
+        await inner.httpsCallable(name).call(parameters);
+        throw FirebaseFunctionsException(
+          code: 'unavailable',
+          message: 'The response never arrived.',
+        );
+      });
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// A server that remembers which requestIds it has already committed.
+///
+/// Mirrors `assertLedgerReplay` in
+/// `functions/messaging/direct_integrity.js`: a repeat of a known requestId
+/// returns the original outcome instead of writing again.
+class _LedgerAwareFunctions implements FirebaseFunctions {
+  _LedgerAwareFunctions(this.inner, {required this.seen});
+
+  final _ServerSendFunctions inner;
+  final Set<String> seen;
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((parameters) async {
+        final payload = Map<String, dynamic>.from(parameters as Map);
+        final requestId = payload['requestId'] as String;
+        if (seen.contains(requestId)) {
+          // Replay: acknowledged, nothing written.
+          return <String, Object?>{'replayed': true};
+        }
+        seen.add(requestId);
+        return (await inner.httpsCallable(name).call(parameters)).data;
+      });
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 class _UnavailableFunctions implements FirebaseFunctions {
   _UnavailableFunctions(this.code, {this.message = 'The callable is unavailable.'});
 

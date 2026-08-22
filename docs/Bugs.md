@@ -100,6 +100,32 @@ about things that are broken, risky, or need verification.
   production needs two real accounts. **Half of this is not fixable from the
   client at all** — see the process-death entry under Data integrity. See
   [ADR-090](Decisions.md#adr-090-session-cleanup-converges-on-authservicesignout-because-a-write-the-rules-authorize-by-session-cannot-live-after-the-session-ends).
+- **FIXED IN SOURCE 2026-08-19 — a banned or communication-muted account
+  could still send direct messages through the client fallback.**
+  `conversations/{id}/messages/{id}` create checked `isVerified()` — a token
+  claim that says an email was confirmed once, and nothing about account
+  standing — but never the sender's `users/{uid}.banned|disabled` or
+  `restrictions/{uid}` communicationMute. The server's `activeProfile()` and
+  `assertNotRestricted()` run *inside* `sendDirectMessage`, while
+  `_sendTextMessageDirectly` wrote the message document straight from the
+  client whenever the callable was unreachable, so on that path the rule was
+  the only backstop and it did not enforce the sanction. The same bypass
+  skipped the per-sender rate limit and the idempotency ledger.
+
+  Adding the missing check to the rule was implemented and then abandoned on
+  measurement: it exceeds Firestore's per-request document access-call
+  budget (the friends-privacy path had exactly one call of headroom; a
+  complete sender-status check needs four), and an exhausted rule errors
+  rather than skipping — which denies, breaking legitimate sends. The rule
+  is now `allow create: if false`; `sendDirectMessage` is the sole writer.
+  A bounded local outbox with Pending / Retrying / Failed states retries
+  unsent messages under their original `requestId` when connectivity
+  returns, so removing the fallback does not lose a message. See ADR-082.
+
+  Verified: rules **446/446**, Flutter **881/881**, `flutter analyze` clean.
+  Not yet deployed — rules deploys are manual, and the app should ship
+  before the rule so installs older than this release are not left writing
+  into a denial with no queue to catch them.
 
 - **FIXED IN SOURCE 2026-08-18 — live rooms wasted desktop space and left a
   detached chat bubble behind after chat closed.** Community, Podcast, Club

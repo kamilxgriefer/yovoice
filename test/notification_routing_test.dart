@@ -3,6 +3,7 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
@@ -110,6 +111,15 @@ void main() {
         .set({'uid': senderUid, 'displayName': 'Sender'});
   }
 
+  /// Delivers a direct message the way the BACKEND does.
+  ///
+  /// Since ADR-082 the client writes neither the message document nor its
+  /// notification: `sendDirectMessage` writes the message, and the
+  /// `conversations/{id}/messages/{id}` trigger in
+  /// `functions/notifications/activity.js` derives the notification from it,
+  /// setting `bellSuppressed` from whether the RECIPIENT has the sender as a
+  /// friend. This mirrors both writes so the routing rules below stay
+  /// covered on the client surfaces that render them.
   Future<String> sendDm(String text) async {
     final messages = senderMessages();
     final conversationId = await messages.openOrCreateConversation(
@@ -118,10 +128,55 @@ void main() {
       otherEmail: '$recipientUid@yovoice.app',
       otherPhotoUrl: '',
     );
-    await messages.sendTextMessage(
-      conversationId: conversationId,
+    final conversation = db.collection('conversations').doc(conversationId);
+    final snapshot = await conversation.get();
+    final sequence =
+        ((snapshot.data()?['lastMessageSequence'] as num?)?.toInt() ?? 0) + 1;
+    final messageId = 'm_server_$sequence';
+    final now = Timestamp.now();
+
+    await conversation.collection('messages').doc(messageId).set({
+      'schemaVersion': 2,
+      'sequence': sequence,
+      'conversationId': conversationId,
+      'senderId': senderUid,
+      'type': 'text',
+      'content': text,
+      'mediaUrl': null,
+      'durationSeconds': null,
+      'sentAt': now,
+      'readBy': [senderUid],
+      'reactions': <String, String>{},
+      'isDeleted': false,
+      'editedAt': null,
+      'replyToMessageId': null,
+      'replyToSenderId': null,
+      'replyToContent': null,
+    });
+    await conversation.update({
+      'lastMessage': text,
+      'lastMessageId': messageId,
+      'lastMessageSequence': sequence,
+      'lastMessageType': 'text',
+      'lastMessageSenderId': senderUid,
+      'updatedAt': now,
+      'unreadCounts.$senderUid': 0,
+      'unreadCounts.$recipientUid': FieldValue.increment(1),
+    });
+
+    // The trigger's own rule: suppressed exactly when the recipient counts
+    // the sender as a friend.
+    final friendship = await db
+        .collection('users')
+        .doc(recipientUid)
+        .collection('friends')
+        .doc(senderUid)
+        .get();
+    await senderNotifications().notify(
       recipientId: recipientUid,
-      text: text,
+      type: NotificationType.directMessage,
+      targetId: conversationId,
+      suppressBell: friendship.exists,
     );
     return conversationId;
   }
@@ -251,10 +306,20 @@ void main() {
 
   // --- Hardening: suppression authority + query-window immunity ---
 
-  test('5. denied suppression fails toward VISIBLE: when the backend '
-      'rejects a suppressed write, the record is retried unsuppressed '
-      'so the recipient still gets it (and its push)', () async {
-    await makeFriends(); // sender-side says "friend"…
+  test('5. the client writes no notification of its own when sending — '
+      'suppression is the backend\'s decision', () async {
+    // This case asserted a CLIENT-side "fail toward visible" retry until
+    // ADR-082: the old direct-write fallback called notify() itself, and
+    // retried unsuppressed when the rules rejected a suppressed write.
+    // Both halves are gone. `sendDirectMessage` writes the message, and the
+    // trigger in functions/notifications/activity.js derives the
+    // notification through the Admin SDK — which is not subject to the rule
+    // that made the retry necessary, so suppression is decided once, from
+    // the recipient's own friends document.
+    //
+    // What must stay true on this side is that sending writes NOTHING
+    // locally: not the message, not the notification.
+    await makeFriends();
     final probe = _DenySuppressedNotifications(
       firestore: db,
       auth: authFor(senderUid, 'Sender'),
@@ -263,6 +328,7 @@ void main() {
       firestore: db,
       auth: authFor(senderUid, 'Sender'),
       notificationService: probe,
+      outbox: MessageOutbox(preferences: null, capacity: 4),
     );
     final conversationId = await messages.openOrCreateConversation(
       otherUserId: recipientUid,
@@ -276,12 +342,24 @@ void main() {
       text: 'asymmetric friendship',
     );
 
-    // First attempt suppressed, retry visible.
-    expect(probe.suppressBellCalls, [true, false]);
-    final raw = await rawNotificationDocs();
-    expect(raw, hasLength(1));
-    expect(raw.single['bellSuppressed'], isFalse);
-    expect(await recipientNotifications().watchUnreadCount().first, 1);
+    expect(
+      probe.suppressBellCalls,
+      isEmpty,
+      reason: 'the client no longer decides suppression, or writes the '
+          'notification at all',
+    );
+    expect(await rawNotificationDocs(), isEmpty);
+    final messageDocs = await db
+        .collection('conversations')
+        .doc(conversationId)
+        .collection('messages')
+        .get();
+    expect(messageDocs.docs, isEmpty);
+    expect(
+      messages.outbox.unsent,
+      hasLength(1),
+      reason: 'and the message is queued rather than lost',
+    );
   });
 
   test('6. a flood of suppressed carrier docs cannot crowd legitimate '

@@ -268,6 +268,33 @@ someone decide what to pick up next.
   (item 0q below). **UNVERIFIED**: presence actually flipping in production
   needs two real accounts. See
   [ADR-090](Decisions.md#adr-090-session-cleanup-converges-on-authservicesignout-because-a-write-the-rules-authorize-by-session-cannot-live-after-the-session-ends).
+- **Direct messages became server-only, and an unsendable one now waits in
+  a bounded outbox** (2026-08-19, this revision — NOT YET DEPLOYED):
+  `conversations/{id}/messages/{id}` create checked `isVerified()` but never
+  the sender's account standing, so a banned or communication-muted account
+  kept full direct messaging through `_sendTextMessageDirectly`, the client
+  fallback that ran whenever `sendDirectMessage` was unreachable — bypassing
+  the rate limit and idempotency ledger with it. Adding the missing check to
+  the rule was measured against the emulator and **does not fit** in
+  Firestore's per-request access-call budget, so the rule is now
+  `allow create: if false` and the callable is the sole writer. The fallback
+  is replaced by `MessageOutbox`: a bounded (50), persisted queue with
+  Pending / Retrying / Failed states that retries under the original
+  `requestId` — which the server ledger deduplicates — and drains when
+  connectivity returns. See ADR-105. Release gates: Flutter **881/881**,
+  Firestore rules **446/446**, `flutter analyze` clean. Storage,
+  family-media and Cloud Functions untouched.
+
+  **Deploy the app before the rules.** The reverse order strands installs
+  older than this release: their fallback sends will be denied with no queue
+  to catch them.
+
+  **Follow-up, not yet built:** no UI renders the outbox. `MessageService.outbox`
+  exposes the queue and a `changes` stream, and the states are covered by
+  tests, but a queued message currently looks sent in the chat. Surfacing
+  Pending / Retrying / Failed on the message bubble — with a manual retry
+  and discard affordance, across mobile, tablet and desktop — is the next
+  piece of work.
 
 - **The 2026-08-18 production-regression wave: room callables, friend
   lists, legacy DM roots, missing indexes** (2026-08-18, `3f28462` →

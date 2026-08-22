@@ -3,16 +3,17 @@ import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/services.dart' show ServicesBinding;
 import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
-import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 
 class ChatPresence {
@@ -89,17 +90,34 @@ class MessageService {
     NotificationService? notificationService,
     FirebaseFunctions? functions,
     FirebaseStorage? storage,
+    MessageOutbox? outbox,
+    Connectivity? connectivity,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
        _legacyNotificationService = notificationService,
        _functionsOverride = functions,
-       _storageOverride = storage;
+       _storageOverride = storage,
+       _outboxOverride = outbox,
+       _connectivityOverride = connectivity;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final NotificationService? _legacyNotificationService;
   final FirebaseFunctions? _functionsOverride;
   final FirebaseStorage? _storageOverride;
+  final MessageOutbox? _outboxOverride;
+  final Connectivity? _connectivityOverride;
+  MessageOutbox? _outbox;
+  StreamSubscription<Object?>? _connectivitySubscription;
+  Timer? _drainTimer;
+  bool _draining = false;
+
+  /// The queue of messages written but not yet accepted by the server.
+  ///
+  /// Exposed so a chat view can render pending, retrying and failed messages
+  /// — the whole point of queueing rather than dropping is that someone can
+  /// see what has not gone out yet.
+  MessageOutbox get outbox => _outbox ??= _outboxOverride ?? MessageOutbox();
   final Map<String, _PendingDirectAttachment> _pendingImageAttachments = {};
   final Expando<Map<String, _PendingDirectAttachment>>
   _pendingVoiceAttachments = Expando('directVoiceAttachments');
@@ -123,9 +141,6 @@ class MessageService {
 
   CollectionReference<Map<String, dynamic>> get _conversations =>
       _firestore.collection('conversations');
-
-  CollectionReference<Map<String, dynamic>> get _users =>
-      _firestore.collection('users');
 
   CollectionReference<Map<String, dynamic>> get _socialPresence =>
       _firestore.collection('socialPresence');
@@ -394,45 +409,251 @@ class MessageService {
     return conversationId;
   }
 
+  /// Sends a direct message through `sendDirectMessage`, queueing it in the
+  /// local outbox if the callable cannot be reached.
+  ///
+  /// There is deliberately NO client-direct Firestore write here, and the
+  /// rules refuse one (`conversations/{id}/messages/{id}` is
+  /// `allow create: if false`). Every moderation check that matters —
+  /// `activeProfile`, `assertNotRestricted`, `assertNotBlocked`, the
+  /// recipient's `messagePrivacy` and the rate limiter — runs inside the
+  /// callable. A fallback that wrote the message itself did not merely skip
+  /// one check; it skipped all of them, which is how a banned or
+  /// communication-muted account kept full direct messaging (ADR-105).
+  ///
+  /// "The callable is unavailable" must not mean losing what someone wrote,
+  /// so the message is queued FIRST and only then attempted. A transient
+  /// failure leaves it in the outbox to be retried when connectivity
+  /// returns; a refusal marks it failed and rethrows so the person finds
+  /// out. Either way the text survives the failure.
   Future<void> sendTextMessage({
     required String conversationId,
     required String recipientId,
     required String text,
     Message? replyTo,
   }) async {
-    final currentUserId = _currentUserId;
     final trimmed = text.trim();
 
     if (trimmed.isEmpty) {
       return;
     }
 
-    final called = await _tryCallable('sendDirectMessage', {
-      'conversationId': conversationId,
-      'text': trimmed,
-      'requestId': _newRequestId(),
-      'replyToMessageId': replyTo?.id,
-    });
-
-    if (called) {
-      // The callable is authoritative and has already performed the whole
-      // send inside one server transaction: it created the canonical
-      // message document and updated the conversation summary, the unread
-      // counts and the typing state. Anything written from here would be a
-      // SECOND message document under an auto-id and a SECOND
-      // `unreadCounts.<recipient>` increment. The client write below is the
-      // fallback for when the callable does not answer — never a follow-up
-      // to when it does.
-      return;
-    }
-
-    await _sendTextMessageDirectly(
+    // Queued before the first attempt, not after a failure: a process death
+    // mid-send would otherwise lose the message in the one window where it
+    // exists nowhere but memory.
+    final entry = await outbox.enqueue(
       conversationId: conversationId,
       recipientId: recipientId,
-      senderId: currentUserId,
       text: trimmed,
-      replyTo: replyTo,
+      replyToMessageId: replyTo?.id,
     );
+
+    _listenForConnectivity();
+    await _attemptDelivery(entry, rethrowRefusal: true);
+  }
+
+  /// Attempts one outbox entry.
+  ///
+  /// Returns true when the message is gone from the queue because it landed.
+  /// `rethrowRefusal` is set for the interactive send so a refusal surfaces
+  /// immediately in the UI, and cleared for background draining, where there
+  /// is no call site to throw at.
+  Future<bool> _attemptDelivery(
+    OutboxEntry entry, {
+    bool rethrowRefusal = false,
+  }) async {
+    final functions = _functions;
+
+    if (functions == null) {
+      // No Firebase app at all. Transient by definition — the queue waits.
+      await outbox.markRetry(entry.id, 'The messaging service is unavailable.');
+      return false;
+    }
+
+    try {
+      await functions.httpsCallable('sendDirectMessage').call({
+        'conversationId': entry.conversationId,
+        'text': entry.text,
+        // The SAME requestId on every attempt. The callable's idempotency
+        // ledger keys on it, so a retry of a request that actually landed is
+        // recognised as a replay instead of writing a second message.
+        'requestId': entry.requestId,
+        'replyToMessageId': entry.replyToMessageId,
+      });
+      await outbox.markSent(entry.id);
+      return true;
+    } catch (error) {
+      if (_isRetryable(error)) {
+        await outbox.markRetry(entry.id, _describeError(error));
+        _scheduleDrain();
+        return false;
+      }
+      await outbox.markFailed(entry.id, _describeError(error));
+      if (rethrowRefusal) {
+        rethrow;
+      }
+      return false;
+    }
+  }
+
+  /// Whether a failure is worth trying again with identical input.
+  ///
+  /// The default is NOT to retry. A refusal repeated on a timer is just a
+  /// slower refusal, and for the moderation refusals this path exists to
+  /// honour — blocked, restricted, privacy — retrying would be an attempt to
+  /// wear the server down. Only genuine transport failures and a genuinely
+  /// absent callable qualify.
+  bool _isRetryable(Object error) {
+    if (_isCallableUnavailable(error)) {
+      return true;
+    }
+    if (error is FirebaseFunctionsException) {
+      return const {
+        'unavailable',
+        'deadline-exceeded',
+        'internal',
+        'aborted',
+        'cancelled',
+      }.contains(error.code);
+    }
+    // A raw socket/DNS failure never reaches a FirebaseFunctionsException.
+    return error is TimeoutException;
+  }
+
+  String _describeError(Object error) {
+    if (error is FirebaseFunctionsException) {
+      final message = error.message;
+      return message == null || message.isEmpty ? error.code : message;
+    }
+    return error.toString();
+  }
+
+  /// Subscribes to connectivity changes so a queue drains the moment the
+  /// network comes back, rather than on the next thing the person types.
+  ///
+  /// Idempotent and lazy: a service that never sends never subscribes, and
+  /// previews with no platform channels degrade to timer-driven retries
+  /// rather than throwing.
+  void _listenForConnectivity() {
+    if (_connectivitySubscription != null) {
+      return;
+    }
+    // A platform EventChannel throws from inside its own onListen when no
+    // binding exists, which lands ASYNCHRONOUSLY and escapes the try below.
+    // Unit tests and previews run without one, so check before subscribing
+    // rather than trying to catch it afterwards.
+    if (_connectivityOverride == null && !_platformChannelsAvailable) {
+      return;
+    }
+    try {
+      final connectivity = _connectivityOverride ?? Connectivity();
+      _connectivitySubscription = connectivity.onConnectivityChanged.listen((
+        result,
+      ) {
+        final offline = result.isEmpty || result.every(_isNoNetwork);
+        if (!offline) {
+          unawaited(flushOutbox());
+        }
+      }, onError: (_) {});
+    } catch (_) {
+      // No connectivity plugin available (unit tests, previews). The backoff
+      // timer still drives retries; this listener only makes them prompt.
+    }
+  }
+
+  bool _isNoNetwork(Object? result) =>
+      result is ConnectivityResult && result == ConnectivityResult.none;
+
+  /// Whether platform channels can be used at all.
+  ///
+  /// False in plain unit tests and previews. The outbox still retries on its
+  /// backoff timer there; only the prompt connectivity-triggered drain is
+  /// unavailable.
+  static bool get _platformChannelsAvailable {
+    try {
+      ServicesBinding.instance;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _scheduleDrain() {
+    if (_drainTimer?.isActive ?? false) {
+      return;
+    }
+    final pending = outbox.unsent;
+    if (pending.isEmpty) {
+      return;
+    }
+    final now = DateTime.now();
+    // Wake for the soonest due entry, with a floor so a burst of failures
+    // cannot spin the timer.
+    var delay = const Duration(seconds: 30);
+    for (final entry in pending) {
+      final next = entry.nextAttemptAt;
+      if (next == null) {
+        delay = const Duration(seconds: 1);
+        break;
+      }
+      final until = next.difference(now);
+      if (until < delay) {
+        delay = until;
+      }
+    }
+    if (delay < const Duration(seconds: 1)) {
+      delay = const Duration(seconds: 1);
+    }
+    _drainTimer = Timer(delay, () {
+      unawaited(flushOutbox());
+    });
+  }
+
+  /// Attempts every queued message that is due, oldest first.
+  ///
+  /// Ordering is strict and sequential: direct messages must arrive in the
+  /// order they were written, so one entry's failure stops the drain rather
+  /// than letting a later message overtake an earlier one.
+  Future<void> flushOutbox() async {
+    if (_draining) {
+      return;
+    }
+    _draining = true;
+    try {
+      await outbox.load();
+      for (final entry in outbox.due()) {
+        final delivered = await _attemptDelivery(entry);
+        if (!delivered) {
+          break;
+        }
+      }
+    } finally {
+      _draining = false;
+    }
+    _scheduleDrain();
+  }
+
+  /// Retries a message the automatic loop gave up on.
+  ///
+  /// Keeps the original requestId, so a manual retry of a send that secretly
+  /// succeeded is still deduplicated by the server ledger.
+  Future<void> retryFailedMessage(String entryId) async {
+    final entry = await outbox.retryNow(entryId);
+    if (entry == null) {
+      return;
+    }
+    await _attemptDelivery(entry, rethrowRefusal: true);
+  }
+
+  /// Drops a queued message the person no longer wants sent.
+  Future<void> discardQueuedMessage(String entryId) => outbox.discard(entryId);
+
+  /// Releases the connectivity subscription and retry timer.
+  Future<void> dispose() async {
+    await _connectivitySubscription?.cancel();
+    _connectivitySubscription = null;
+    _drainTimer?.cancel();
+    _drainTimer = null;
   }
 
   /// Sends an image through the server-reserved private attachment flow.
@@ -747,114 +968,6 @@ class MessageService {
     throw lastError ?? StateError('The attachment could not be published.');
   }
 
-  /// The client-side send, used when `sendDirectMessage` is unavailable
-  /// (no Firebase app, or the callable is not deployed) and by the
-  /// previews/tests that inject a [NotificationService].
-  ///
-  /// Deliberately mirrors what the callable leaves behind, key for key:
-  /// `functions/messaging/direct_integrity.js`'s `validateMessage` demands
-  /// an EXACT key set, so a message written without `schemaVersion` and
-  /// `sequence` is one the server can never edit, delete, react to or be
-  /// replied to again ("The direct message schema is not canonical").
-  /// `sequence` has to be derived from the conversation, hence a
-  /// transaction rather than a batch.
-  Future<void> _sendTextMessageDirectly({
-    required String conversationId,
-    required String recipientId,
-    required String senderId,
-    required String text,
-    required Message? replyTo,
-  }) async {
-    final legacyNotifications = _legacyNotificationService;
-    bool suppressBell = false;
-    if (legacyNotifications != null) {
-      suppressBell =
-          (await _users
-                  .doc(recipientId)
-                  .collection('friends')
-                  .doc(senderId)
-                  .get())
-              .exists;
-    }
-
-    final conversation = _conversations.doc(conversationId);
-    final message = conversation.collection('messages').doc();
-    final now = Timestamp.now();
-
-    await _firestore.runTransaction((transaction) async {
-      final snapshot = await transaction.get(conversation);
-      final previous =
-          (snapshot.data()?['lastMessageSequence'] as num?)?.toInt() ?? 0;
-      final sequence = previous < 0 ? 1 : previous + 1;
-
-      transaction.set(message, {
-        'schemaVersion': 2,
-        'sequence': sequence,
-        'conversationId': conversationId,
-        'senderId': senderId,
-        'type': MessageType.text.name,
-        'content': text,
-        'mediaUrl': null,
-        'durationSeconds': null,
-        'sentAt': now,
-        'readBy': [senderId],
-        'reactions': <String, String>{},
-        'isDeleted': false,
-        'editedAt': null,
-        'replyToMessageId': replyTo?.id,
-        'replyToSenderId': replyTo?.senderId,
-        'replyToContent': replyTo == null
-            ? null
-            : replyTo.isDeleted
-            ? 'Message deleted'
-            : _replyPreview(replyTo.previewText()),
-      });
-
-      transaction.update(conversation, {
-        'lastMessage': text,
-        'lastMessageId': message.id,
-        'lastMessageSequence': sequence,
-        'lastMessageType': MessageType.text.name,
-        'lastMessageSenderId': senderId,
-        'updatedAt': now,
-        'archivedBy': <String>[],
-        'unreadCounts.$senderId': 0,
-        'unreadCounts.$recipientId': FieldValue.increment(1),
-        'typing.$senderId.isTyping': false,
-        'typing.$senderId.updatedAt': now,
-      });
-    });
-
-    if (legacyNotifications == null) {
-      return;
-    }
-
-    final type = replyTo?.senderId == recipientId
-        ? NotificationType.reply
-        : NotificationType.directMessage;
-
-    try {
-      await legacyNotifications.notify(
-        recipientId: recipientId,
-        type: type,
-        targetId: conversationId,
-        suppressBell: suppressBell,
-      );
-    } catch (error) {
-      // Fail toward VISIBLE: a rejected bell suppression must not cost the
-      // recipient the record that carries the push.
-      if (!suppressBell) {
-        debugPrint('MessageService legacy notification failed: $error');
-        return;
-      }
-      await legacyNotifications.notify(
-        recipientId: recipientId,
-        type: type,
-        targetId: conversationId,
-      );
-    }
-  }
-
   Future<void> editMessage({
     required String conversationId,
     required String messageId,
@@ -1068,12 +1181,6 @@ class MessageService {
       'archivedBy': FieldValue.arrayRemove([userId]),
     });
   }
-
-  /// The server caps `replyToContent` at 240 characters and rejects the
-  /// whole message as non-canonical past it, so the fallback truncates the
-  /// same way rather than writing a reply that can never be edited again.
-  static String _replyPreview(String value) =>
-      value.length <= 240 ? value : value.substring(0, 240);
 
   static String buildConversationId(String firstId, String secondId) {
     final ids = [firstId, secondId]..sort();
