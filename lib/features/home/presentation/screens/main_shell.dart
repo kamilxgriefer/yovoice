@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
@@ -1743,17 +1745,29 @@ class _VoiceActionButton extends StatelessWidget {
 
   final VoidCallback onPressed;
 
+  /// The operator's responsive size guide, verbatim: 54-58 / 60-64 / 64-68.
+  static double _logoSizeFor(double width) {
+    if (width < 360) return 56;
+    if (width < 400) return 62;
+    return 66;
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Integrated into the dock (slightly raised) instead of hovering
-    // over it. When a live room connection exists, a ring appears — the
-    // dock itself tells you you're on air.
+    // THE STANDALONE LOGO, NO CIRCLE. The previous face was the logo
+    // inside a 58pt gradient disc with a ring and a circular BoxShadow —
+    // exactly what the operator's before/after spec removes: no circular
+    // background, no border ring, no filled shape, no disc. What remains
+    // is the transparent brand mark itself, larger, floating slightly
+    // above the dock, with a glow that follows the LOGO'S SILHOUETTE — a
+    // blurred copy of the same asset rendered behind it (logo-glow.png
+    // was inspected and rejected: it has no alpha channel, so it would
+    // paint its baked background). The waveform glyph stays as the
+    // fallback for an asset that cannot load.
     //
-    // The face of the button is the YO Voice logo in a circular glowing
-    // branded anchor — the same asset the desktop sidebar's wordmark
-    // renders, with the dock's violet glow as the halo. Same action as
-    // always: the voice sheet (Moment or Room). The waveform glyph stays
-    // as the fallback for an asset that cannot load.
+    // Liveness kept, circle-free: the ring used to say "on air" — now the
+    // silhouette glow warms to the live red and the accessible label says
+    // it, so the state survives without any circular decoration.
     return ListenableBuilder(
       listenable: VoiceCallService.instance,
       builder: (context, _) {
@@ -1762,52 +1776,71 @@ class _VoiceActionButton extends StatelessWidget {
             voice.roomId != null &&
             voice.status != VoiceCallStatus.disconnected &&
             voice.status != VoiceCallStatus.failed;
+        final size = _logoSizeFor(MediaQuery.sizeOf(context).width);
+        final glow = live
+            ? const Color(0xFFFF3F72)
+            : _MainShellState._primary;
 
         return Semantics(
           button: true,
           label: live ? 'Voice — live in a room' : 'Use your voice',
+          excludeSemantics: true,
           child: Center(
             child: Transform.translate(
-              offset: const Offset(0, -9),
+              // 8-16px per the spec: the mark floats above the icon row.
+              offset: const Offset(0, -12),
               child: Material(
                 color: Colors.transparent,
-                shape: const CircleBorder(),
                 child: InkWell(
                   onTap: onPressed,
-                  customBorder: const CircleBorder(),
-                  child: Container(
-                    width: 58,
-                    height: 58,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [Color(0xFF2B1440), Color(0xFF150B24)],
-                      ),
-                      border: Border.all(
-                        color: live
-                            ? const Color(0xFFFF3F72)
-                            : _MainShellState._primary.withValues(alpha: .55),
-                        width: 2,
-                      ),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x779D20FF),
-                          blurRadius: 22,
-                          spreadRadius: 1,
-                          offset: Offset(0, 6),
-                        ),
-                      ],
-                    ),
+                  // The interactive wrapper paints NOTHING: no splash, no
+                  // highlight, no hover surface — the logo is the visible
+                  // element and the 72pt box below is the invisible tap
+                  // target (the spec's 68-76 range). Keyboard activation
+                  // (Enter/Space) comes with InkWell itself.
+                  splashFactory: NoSplash.splashFactory,
+                  highlightColor: Colors.transparent,
+                  hoverColor: Colors.transparent,
+                  focusColor: Colors.transparent,
+                  child: SizedBox(
+                    width: 72,
+                    height: 72,
                     child: Center(
-                      child: Image.asset(
-                        'assets/images/logo.png',
-                        key: const ValueKey('dock-logo'),
-                        width: 34,
-                        height: 34,
-                        errorBuilder: (_, __, ___) =>
-                            const _WaveformIcon(compact: true),
+                      child: SizedBox(
+                        width: size,
+                        height: size,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          clipBehavior: Clip.none,
+                          children: [
+                            // The silhouette glow: the same mark, blurred
+                            // and tinted, never a circular shadow.
+                            ImageFiltered(
+                              imageFilter: ui.ImageFilter.blur(
+                                sigmaX: 10,
+                                sigmaY: 10,
+                              ),
+                              child: Image.asset(
+                                'assets/images/logo.png',
+                                width: size,
+                                height: size,
+                                color: glow.withValues(
+                                  alpha: live ? .85 : .6,
+                                ),
+                                errorBuilder: (_, __, ___) =>
+                                    const SizedBox.shrink(),
+                              ),
+                            ),
+                            Image.asset(
+                              'assets/images/logo.png',
+                              key: const ValueKey('dock-logo'),
+                              width: size,
+                              height: size,
+                              errorBuilder: (_, __, ___) =>
+                                  const _WaveformIcon(compact: true),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -1820,7 +1853,6 @@ class _VoiceActionButton extends StatelessWidget {
     );
   }
 }
-
 class _WaveformIcon extends StatelessWidget {
   const _WaveformIcon({this.compact = false});
 

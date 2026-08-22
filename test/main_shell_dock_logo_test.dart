@@ -165,4 +165,72 @@ void main() {
     expect(selected, 0);
     semantics.dispose();
   });
+
+  // THE CIRCLE IS GONE — the operator's before/after spec. These pins make
+  // a circular container around the mark unrepresentable in a green suite:
+  // any ancestor of the logo carrying a circle shape (BoxDecoration or
+  // CircleBorder) fails the test.
+  testWidgets('no circular decoration wraps the standalone dock logo', (
+    tester,
+  ) async {
+    final semantics = await _pumpHost(
+      tester,
+      body: const SizedBox.shrink(),
+      selectedIndex: 0,
+      onVoicePressed: () {},
+    );
+    final logo = find.byKey(const ValueKey('dock-logo'));
+    expect(logo, findsOneWidget);
+
+    bool circular(Widget w) {
+      if (w is Container) {
+        final d = w.decoration;
+        if (d is BoxDecoration && d.shape == BoxShape.circle) return true;
+        if (d is ShapeDecoration && d.shape is CircleBorder) return true;
+      }
+      if (w is Material && w.shape is CircleBorder) return true;
+      if (w is DecoratedBox) {
+        final d = w.decoration;
+        if (d is BoxDecoration && d.shape == BoxShape.circle) return true;
+      }
+      return false;
+    }
+
+    expect(
+      tester
+          .widgetList(
+            find.ancestor(
+              of: logo,
+              matching: find.byWidgetPredicate(circular),
+            ),
+          )
+          .toList(),
+      isEmpty,
+      reason: 'the mark must be standalone — no disc, ring or circular '
+          'container may wrap it',
+    );
+    semantics.dispose();
+  });
+
+  testWidgets('the logo follows the responsive size guide and never clips '
+      'at the 320 floor', (tester) async {
+    final semantics = await _pumpHost(
+      tester,
+      body: const SizedBox.shrink(),
+      selectedIndex: 0,
+      onVoicePressed: () {},
+    );
+    tester.view.physicalSize = const Size(320, 700);
+    await tester.pump();
+    final small = tester.getSize(find.byKey(const ValueKey('dock-logo')));
+    expect(small.width, inInclusiveRange(54, 58));
+    expect(tester.takeException(), isNull);
+
+    tester.view.physicalSize = const Size(430, 900);
+    await tester.pump();
+    final large = tester.getSize(find.byKey(const ValueKey('dock-logo')));
+    expect(large.width, inInclusiveRange(64, 68));
+    semantics.dispose();
+  });
+
 }

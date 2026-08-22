@@ -902,6 +902,16 @@ permission flags).
 
 ## UI
 
+- **FIXED AND DEPLOYED 2026-08-22 — the bottom-nav center logo lost its
+  circle.** Per the operator's before/after spec: the 58pt gradient disc,
+  border ring and circular BoxShadow are gone; the standalone transparent
+  mark renders at the spec's responsive sizes (56/62/66 for 320-/360-/400+),
+  floats 12px above the row inside an invisible 72pt tap target, and glows
+  along its own silhouette (a blurred tinted copy of the same asset —
+  logo-glow.png was rejected: no alpha channel, baked background). The
+  live-in-a-room state warms the glow to the live red instead of drawing a
+  ring. Pinned by tests that fail on ANY circular ancestor of the mark.
+
 - **FIXED PRE-DEPLOY 2026-08-22 (ADR-103 review) — deleting your own Moment
   failed on any Moment somebody else had engaged with.** The client swept
   the comments/likes subcollections directly, but rules only let each
