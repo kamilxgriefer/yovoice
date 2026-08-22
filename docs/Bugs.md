@@ -325,6 +325,22 @@ permission flags).
   tests, 0 failures, on a clean emulator; the three new no-status cases were
   each confirmed to FAIL against the reinstated query. **Not deployed** — this
   is a Cloud Functions change only, no rules, index, client or Storage change.
+- **FIXED IN SOURCE 2026-08-20, NOT DEPLOYED — `adminDeleteClub` left
+  `activeVoiceSessions/{uid}/rooms/{roomId}` mirrors behind forever.** The
+  per-room teardown loop in `functions/admin/clubs.js` called
+  `liveKitControl.endRoom`, `cleanupRoomMedia` and
+  `deleteDocumentRecursively` for each of the club's rooms but never
+  `deleteActiveVoiceSessionsForRoom(roomDocument.id)` — unlike
+  `setClubModerationStatus` in the same file, which has always cleared the
+  mirrors right after `endRoom`. The mirrors live in a separate top-level
+  collection, so recursive room deletion never touches them, and nothing
+  else expires them: every voice session active at admin-deletion time
+  became a permanent orphan. Fixed by adding the call after `endRoom` in
+  the loop; the "admin Club deletion lifecycle" test in
+  `functions/test/club_membership_security.test.js` now seeds two session
+  mirrors — one with a participant row and one without (the
+  collection-group sweep path) — and proves both are gone, and fails
+  without the fix (verified by reverting it).
 
 - **FIXED IN SOURCE 2026-08-19, NOT DEPLOYED — extra fields on a room message
   silently dropped the sender's achievement credit.**

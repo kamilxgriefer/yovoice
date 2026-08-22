@@ -669,6 +669,18 @@ describe("admin Club deletion lifecycle", () => {
         .collection("participants").doc(IDS.target).set({
           userId: IDS.target,
         }),
+      // Two session mirrors: one whose participant row exists (target) and
+      // one whose row is already gone (equal) — the latter is only found by
+      // the collection-group sweep inside deleteActiveVoiceSessionsForRoom.
+      ...[IDS.target, IDS.equal].map((uid) =>
+        db.collection("activeVoiceSessions").doc(uid)
+          .collection("rooms").doc(roomId).set({
+            userId: uid,
+            roomId,
+            participantIdentity: uid,
+            expiresAt: Timestamp.fromMillis(Date.now() + 300_000),
+          }),
+      ),
     ]);
 
     const result = await runAdminDelete(
@@ -707,6 +719,14 @@ describe("admin Club deletion lifecycle", () => {
     assert.equal(ownerProjection.exists, false);
     assert.equal(memberProjection.exists, false);
     assert.equal(ghostProjection.exists, false);
+    for (const uid of [IDS.target, IDS.equal]) {
+      assert.equal(
+        (await db.collection("activeVoiceSessions").doc(uid)
+          .collection("rooms").doc(roomId).get()).exists,
+        false,
+        `activeVoiceSessions mirror for ${uid} must be swept`,
+      );
+    }
     assert.equal(
       (await db.collection("clubMarketingConsents").doc(clubId).get()).exists,
       false,
