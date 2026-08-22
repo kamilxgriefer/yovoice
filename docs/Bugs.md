@@ -902,6 +902,18 @@ permission flags).
 
 ## UI
 
+- **FIXED AND DEPLOYED 2026-08-22 (ADR-102) — Mute on the live-room bar
+  could navigate into the room.** Root cause: the whole bar was one parent
+  InkWell(onTap: return-to-room); Flutter forwards taps THROUGH a disabled
+  child, and Mute disables briefly on every toggle — so a tap in that
+  window (or in inter-icon padding) navigated. Rebuilt as isolated targets;
+  a disabled Mute now consumes the tap. Also fixed pre-release from review:
+  the mobile expanded-chat sheet outlived a remotely-ended room with a live
+  composer; "End room" overclaimed for persistent-room hosts (the server
+  ends those on empty roster — label now follows the tap's real effect);
+  Expand chat measured 26px tall (now a 44pt floor); tile labels announced
+  twice to screen readers; preview overline contrast 4.41:1.
+
 - **OPEN (Voice Moments stories, 2026-08-22)** — known edges shipped with
   ADR-101, deliberately: (1) playback through the row sheet / MomentCard
   does not write the viewed-mark, so a chain fully heard there keeps its

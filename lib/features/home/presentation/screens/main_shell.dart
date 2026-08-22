@@ -987,7 +987,11 @@ class _MainShellState extends State<MainShell>
                 ],
               ),
             ),
-            const RoomMiniBar(),
+            // Desktop: the floating dock is the bottom-most element, so it
+            // owns the bottom viewport inset itself (mobile Safari / iPad
+            // home indicator). The mobile mounts sit above the bottom
+            // navigation, which already consumes that inset.
+            const SafeArea(top: false, child: RoomMiniBar()),
           ],
         ),
       );
@@ -1186,7 +1190,9 @@ class MoreDestinationHost extends StatelessWidget {
                 ],
               ),
             ),
-            const RoomMiniBar(),
+            // Same contract as the primary desktop shell: the dock is the
+            // bottom-most element here, so it owns the bottom inset.
+            const SafeArea(top: false, child: RoomMiniBar()),
           ],
         ),
       );

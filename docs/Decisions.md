@@ -6044,3 +6044,38 @@ before functions would publish author-invisible Moments for the window.
 Known open edges (Bugs.md): sheet/card playback does not yet mark viewed
 (chain rings can stay "unviewed" after listening through the sheet); the
 website's `?moment=` links to expired Moments land on an unpublished doc.
+
+## ADR-102: The active-room mini-player — isolated tap targets, one session, session-local "new"
+
+**Context.** The persistent live-room bar wrapped everything in a single
+`InkWell(onTap: return-to-room)` with IconButtons inside. Flutter forwards a
+tap THROUGH a disabled button to its parent, and Mute is briefly disabled on
+every toggle (`muteChangeInProgress`/coordinator busy) — so pressing Mute in
+that window NAVIGATED INTO THE ROOM, as did taps in the padding between
+icons. The operator reported exactly this, and asked for a full mini-player
+rebuild to reference mockups (desktop dock + mobile card, live chat preview,
+expand-in-place, isolated controls).
+
+**Decision.** `ActiveRoomMiniPlayer` (one controller; desktop/mobile are
+layout variants) with NO parent-wide tap: room-info navigates, Mute toggles
+(a disabled Mute CONSUMES the tap), Expand opens the reused `RoomChatPanel`
+(desktop: anchored overlay popover with FocusScope/Escape/announcement;
+mobile: draggable sheet that the session's death now dismisses), Return
+navigates, Leave/End leaves via `RoomService.leaveRoom` (ADR-091). The
+destructive label says **"End room" only when the tap genuinely ends the
+session now** (temporary-room host); a persistent-room or lounge host reads
+"Leave room", because the server ends those on an empty roster — the label
+follows what the tap does, while the chat surface still receives TRUE host
+status for moderation. The collapsed preview subscribes to `limit(1)` on the
+newest message; "N new" is a SESSION-LOCAL counter (arrivals while
+collapsed; reset on expand/return) — the backend has no per-user room-chat
+read state and none is faked.
+
+**Consequences.** 18 regression tests pin the navigation-isolation matrix
+(including the disabled-Mute repro that failed RED against the old bar).
+The three reviews ran pre-deploy; the a11y FIX_FIRST items (26px Expand
+target → 44pt floor, duplicate merged tile labels → excludeSemantics,
+4.41:1 preview labels → lifted, popover Escape/focus/announce) and the
+principal's sheet-outlives-room and End-overclaim findings were all fixed
+before release. Known limits, recorded: the in-player 1.6x text clamp;
+real mobile-Safari insets and AT behaviour unverified headlessly.

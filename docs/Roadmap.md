@@ -36,6 +36,15 @@ someone decide what to pick up next.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it)
 > for why that distinction is the whole point of this wave.
 
+- **The active-room mini-player is rebuilt to the reference mockups**
+  (2026-08-22, ADR-102, DEPLOYED — hosting, byte-verified): desktop
+  four-zone dock and mobile card with live latest-chat preview (limit(1)),
+  expand-in-place chat reusing RoomChatPanel, session-local "N new", and
+  the navigation bugs fixed at the root — a disabled Mute used to forward
+  its tap to the bar's parent InkWell and NAVIGATE INTO THE ROOM. Flutter
+  suite → 1132 (18-test isolation matrix, bug reproduced RED first). Three
+  pre-deploy reviews; every high/medium fixed before release.
+
 - **Voice Moments are 24-hour audio stories** (2026-08-22, ADR-101,
   DEPLOYED — indexes/rules/functions/hosting in that order): many Moments
   per author consumed as story chains (viewer with progress bars, "1 of 3",

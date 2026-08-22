@@ -351,6 +351,25 @@ class RoomService {
     }
   }
 
+  /// The newest chat message alone, for the mini player's collapsed
+  /// preview. `limit(1)` on the same single-field `createdAt` ordering the
+  /// full history uses, so a surface that only ever shows one line never
+  /// pays for a hundred documents. Emits null while the room has no
+  /// messages (or the latest was deleted and none remain).
+  Stream<RoomMessage?> watchLatestRoomMessage(String roomId) {
+    return _rooms
+        .doc(roomId)
+        .collection('messages')
+        .orderBy('createdAt', descending: true)
+        .limit(1)
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs.isEmpty
+              ? null
+              : RoomMessage.fromFirestore(snapshot.docs.first),
+        );
+  }
+
   Stream<List<RoomMessage>> watchRoomMessages(String roomId) {
     return _rooms
         .doc(roomId)
