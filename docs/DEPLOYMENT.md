@@ -752,7 +752,7 @@ remains pending (see the section below), and the DM server-only change from
 `claude/silly-hugle-e8a52c` touches `firestore.rules`, which was NOT deployed
 here. Rules in production still predate that merge.
 
-### BLOCKED 2026-08-23: server-only Direct Message rules — audited, verified, NOT deployed
+### RELEASED 2026-08-23T18:53:33Z: server-only Direct Message rules
 
 `firestore.rules` in `main` makes DM creation server-only
 (`conversations/{id}/messages/{id}` → `allow create: if false`). It was audited
@@ -831,8 +831,71 @@ byte-identical to `git show e399867:firestore.rules`. Restore with
 commit. Note the asymmetry that makes the gate matter: the rules change is
 instantly reversible, but a message a user believed they sent is not.
 
-**Nothing was deployed in this task.** No Hosting, Functions, indexes, Storage
-rules or Remote Config.
+**DEPLOYED.** The blocker below was closed on 2026-08-23 and the rules shipped.
+
+| | |
+|---|---|
+| Command | `firebase deploy --only firestore:rules --project yovoice-ec54a` |
+| Commit | `57ac1e87aab650a981bb1fa1b0620d82037de10b` |
+| Ruleset before | `8178e94d-f20b-46be-bdc4-c92005ea86a6` |
+| Ruleset after | `9257845f-a355-4f3f-80eb-4b51e47b47e9` (released 18:53:33Z) |
+| Live source | sha256 `dd0857906500ff33` — **byte-identical** to `git show 57ac1e8:firestore.rules`, read back from the Rules API |
+| Delta on the live ruleset | 2 hunks; **0** changes to `read`/`update`/`delete` |
+
+**How the stale-client gate was closed — by code, not by traffic.** The
+observation window was empty (zero new DMs since 2026-08-22T13:04:28Z), so
+"no legacy writes appeared" proved nothing on its own and was not used as
+evidence. What closed it:
+
+1. Web is the only client surface — no store build exists, and the website has
+   no DM capability.
+2. **No caching service worker has ever been registered by this app.**
+   `serviceWorkerSettings` has never appeared in `web/` in any commit, no
+   historical `web/index.html` references a service worker, and a live browser
+   at `app.yovoice.app` reports `serviceWorkers: 0` and `caches: []`.
+3. `cache-control: no-cache` on `main.dart.js`, confirmed live.
+4. Therefore a hard refresh **must** fetch current bytes — there is no
+   mechanism that could keep old JavaScript alive.
+5. The served bundle contains `_sendTextMessageDirectly` **zero** times.
+6. Therefore a refreshed client is structurally incapable of a direct DM
+   write, and the maintainer confirmed every test account was refreshed.
+
+**Token revocation was deliberately NOT performed.** Revoking refresh tokens
+forces re-authentication but does **not** force a JavaScript reload — the page
+keeps running whatever bundle it already has. Against a stale-code risk it
+would be theatre, and it would have inconvenienced the accounts for nothing.
+
+**Post-deploy verification, and its limits, stated plainly.** Confirmed:
+ruleset id changed; live source byte-identical to the commit; delta is
+create-only; `sendDirectMessage` still ACTIVE; zero `PERMISSION_DENIED` or
+`failed-precondition` in Cloud Functions logs; zero new client-written
+documents. The 485-case rules suite validated exactly these bytes before
+release.
+
+**NOT verified by the deploying session: the positive path.** Sending,
+receiving, opening a conversation and read-state changes were not exercised,
+because that needs authenticated test-account credentials and none were
+requested or used. The structural reason this is low-risk rather than unknown:
+`sendDirectMessage` writes through the **Admin SDK**
+(`direct_integrity.js:1` → `firebase-admin/firestore`), which bypasses
+Security Rules entirely, so `allow create: if false` cannot reach the
+callable's writes. A human smoke test of send/receive is still the honest
+closing step.
+
+**Rollback, prepared and unused.** Previous ruleset
+`8178e94d-f20b-46be-bdc4-c92005ea86a6`, source byte-identical to
+`git show e399867:firestore.rules` (sha256 `0ce4b5fd10567cc5`). Restore by
+deploying rules from `e399867`. Note the asymmetry: the rules change reverses
+in seconds, but a message a user believed they sent does not come back.
+
+**Only Firestore rules were deployed.** No Hosting, Functions, indexes,
+Storage rules or Remote Config. `sweepStrandedLiveRoomsSchedule` remains
+pending and untouched.
+
+---
+
+**The pre-deployment audit that gated this release is retained below.**
+
 
 ### Pending release: `sweepStrandedLiveRoomsSchedule`
 

@@ -1033,9 +1033,9 @@ someone decide what to pick up next.
 
 ## In Progress
 
-### Server-only Direct Message Firestore rules — audited, blocked on one gate
+### ~~Server-only Direct Message Firestore rules~~ DEPLOYED 2026-08-23
 
-- **Status**: **In `main`, verified, NOT deployed (2026-08-23).** The rules
+- **Status**: **DEPLOYED 2026-08-23T18:53:33Z** (ruleset `9257845f-…`, commit `57ac1e8`, live source byte-verified against the commit). Rules only — no Hosting, Functions, indexes or Storage. The rules
   delta is exactly one authorization — `conversations/{id}/messages/{id}`
   `allow create` becomes `if false`; `read`, `update` and `delete` are
   byte-identical to the deployed ruleset. Every automated gate passes (rules
