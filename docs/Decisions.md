@@ -6500,13 +6500,26 @@ always going to ship.
 
 **Decision.** `main` is unprotected. Commit and push straight to it.
 
-- The `Protect main` ruleset (id `21232425`) is **deleted**, not disabled.
-  `gh api repos/kamilxgriefer/yovoice/rulesets` returns `[]` and
-  `…/branches/main/protection` returns 404.
-- `.github/rulesets/main-protection.json` is **deleted**. A versioned
-  "how to restore protection" recipe is precisely what a future agent
-  re-imports while trying to be helpful, so the recipe is gone rather than
-  left as a loaded gun.
+- The ruleset keeps only what protects against **destructive Git**:
+  `deletion`, `non_fast_forward` and `required_linear_history`. The
+  `pull_request` and `required_status_checks` rules — the two that make a
+  direct push impossible — are gone. `bypass_actors` is empty, so nobody,
+  administrator included, is exempt.
+- `.github/rulesets/main-protection.json` is **kept** and now states exactly
+  that policy, so the intent is reviewable in the repo and re-appliable with
+  one command.
+
+  > **CORRECTED 2026-08-24.** The first version of this ADR deleted both the
+  > live ruleset (id `21232425`) and the versioned file outright, on the
+  > reasoning that a "how to restore protection" recipe is what a future
+  > agent re-imports while trying to be helpful. That threw out the
+  > force-push and deletion guards along with the pull-request requirement,
+  > which was more than the decision called for — "no mandatory review" and
+  > "no protection from destructive Git" are different things. A replacement
+  > ruleset (id `21243097`) with the three rules above was created and the
+  > file restored. The re-import concern is handled by wording instead: the
+  > file and `CLAUDE.md` both say in the imperative that a `pull_request`
+  > rule must not be added back.
 - Agents do not open pull requests unless the maintainer asks in that session,
   and do not re-add protection. `CLAUDE.md` says so in the imperative and
   names this ADR.
@@ -6537,9 +6550,10 @@ briefly-red `main` costs a follow-up commit, not an outage.
 **Consequences.** ADR-002 is reinstated, not superseded; this entry records
 why the one-day detour happened and why it was reversed, so the question is
 not reopened by rediscovering the same reasoning. `docs/BRANCH_PROTECTION.md`
-now documents the *absence* of protection and is kept — deliberately — rather
-than deleted, because a file that says "there is no PR requirement, do not add
-one" is a stronger signal to a future session than a missing file.
+now documents what `main` still refuses (deletion, force push, non-linear
+history) and what it no longer requires (a pull request), and is kept —
+deliberately — because a file that says "there is no PR requirement, do not
+add one" is a stronger signal to a future session than a missing file.
 `docs/DEVELOPMENT_WORKFLOW.md` and `docs/CONTRIBUTING.md` needed no change:
 the first never stopped documenting direct-to-main (the two docs had silently
 contradicted each other for a day), and the second describes what would change

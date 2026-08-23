@@ -16,6 +16,15 @@ process polls the repository every second.
 | Dependabot | Weekly | Flutter/Dart packages, Cloud Functions packages, Firebase rules-test packages, Playwright packages and GitHub Actions are checked for maintainable version updates. |
 | Production Hosting release | Explicit manual dispatch after verification | The same verified revision is rebuilt, packaged and deployed through the protected `production` environment. A normal push never publishes production Hosting by itself. Firestore rules, indexes, Storage rules and Cloud Functions remain deliberate manual releases. |
 
+**How to read the `pull request` column.** The normal solo-maintainer workflow
+is a **direct push to `main`** — that is the trigger these workflows fire on in
+day-to-day use ([ADR-108](Decisions.md#adr-108-main-is-unprotected-again--a-solo-repository-pays-the-pull-request-tax-for-a-review-that-never-happens)).
+The `pull_request` triggers are retained and fully supported, but they exist
+for the optional paths: Dependabot's dependency branches, and the occasional
+review branch the maintainer asks for. A pull request is never required, and
+an agent must not open one to get these checks to run — a push runs the same
+three workflows.
+
 ## Failure evidence
 
 The pipeline is designed to leave useful evidence rather than only a red icon:

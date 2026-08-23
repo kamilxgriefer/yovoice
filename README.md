@@ -4,7 +4,7 @@
 [![Flutter web browser smoke](https://github.com/kamilxgriefer/yovoice/actions/workflows/browser-smoke.yml/badge.svg?branch=main)](https://github.com/kamilxgriefer/yovoice/actions/workflows/browser-smoke.yml)
 [![CodeQL](https://github.com/kamilxgriefer/yovoice/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/kamilxgriefer/yovoice/actions/workflows/codeql.yml)
 [![Dependabot](https://img.shields.io/badge/Dependabot-enabled-025E8C?logo=dependabot&logoColor=white)](https://github.com/kamilxgriefer/yovoice/network/updates)
-[![Branch policy](https://img.shields.io/badge/main-PR%20%2B%20required%20checks-6f42c1?logo=github&logoColor=white)](docs/BRANCH_PROTECTION.md)
+[![Branch policy](https://img.shields.io/badge/main-direct%20push%20%2B%20CI-6f42c1?logo=github&logoColor=white)](docs/BRANCH_PROTECTION.md)
 
 > **Speak. Connect. Be heard.**
 
@@ -95,8 +95,9 @@ matrix, limitations and ready-to-use CV wording.
 
 ## 🔐 Change workflow and the release boundary
 
-This is a solo-maintained repository and `main` is deliberately **not**
-protected. The delivery path is:
+This is a solo-maintained repository. `main` takes direct pushes — there is no
+pull-request step — while still refusing the operations that lose work. The
+delivery path is:
 
 ```text
 local verification (flutter analyze + flutter test + emulator suites)
@@ -105,13 +106,22 @@ local verification (flutter analyze + flutter test + emulator suites)
 → verify_and_build + Playwright + CodeQL run automatically
 ```
 
-No feature branch, no pull request, no approval step. The reasoning, and the
-trade it makes, are in
-[`docs/BRANCH_PROTECTION.md`](docs/BRANCH_PROTECTION.md) and
+No feature branch, no pull request, no approval step. Direct pushes are
+intentional because one person maintains this repository and an author cannot
+independently approve their own pull request. The reasoning, and the trade it
+makes, are in [`docs/BRANCH_PROTECTION.md`](docs/BRANCH_PROTECTION.md) and
 [ADR-108](docs/Decisions.md#adr-108-main-is-unprotected-again--a-solo-repository-pays-the-pull-request-tax-for-a-review-that-never-happens).
-The honest cost: CI now reports **after** `main` moves instead of blocking a
-merge, so the local run before pushing is the real gate. Never push on a failed
-run, and never force-push `main`.
+
+**Still enforced on `main`, by an active GitHub ruleset:** force pushes are
+blocked, deleting the branch is blocked, and history must stay linear. What was
+removed is the *mandatory pull request* and the *blocking status checks* — not
+the protection against destructive Git.
+
+**The honest cost:** CI now validates the revision **after** it reaches `main`
+rather than blocking a merge, so a bad push lands and is found minutes later.
+The local run before pushing is therefore the real gate. Never push on a failed
+run. A red `main` must be corrected immediately with a follow-up commit, never
+ignored. GitHub Actions, Playwright, CodeQL and Dependabot all remain active.
 
 Dependabot still opens dependency pull requests — that is dependency
 monitoring, and it stays. A pull request in this repository means "a bot

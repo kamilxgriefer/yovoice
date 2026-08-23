@@ -23,8 +23,41 @@ authorization layer (see
 Commit and push straight to `main` — no feature branches, no PRs, by
 default. This is a deliberate choice for a solo project, not an
 oversight; see [ADR-002](Decisions.md#adr-002-git-workflow-push-straight-to-main-no-prs)
+and [ADR-108](Decisions.md#adr-108-main-is-unprotected-again--a-solo-repository-pays-the-pull-request-tax-for-a-review-that-never-happens)
 for the reasoning and what changes the moment a second contributor joins
 (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+
+The whole loop, in order:
+
+1. **Synchronize** — `git pull --ff-only origin main`. Never start on a
+   stale tree.
+2. **Read before writing** — the architecture and security docs relevant to
+   what you are about to touch. For anything near `firestore.rules`,
+   [SECURITY.md](SECURITY.md) is not optional.
+3. **Implement** one focused change. Resist bundling unrelated work into
+   the same commit; the diff is the only review this repository gets.
+4. **Update the records** — [Roadmap.md](Roadmap.md),
+   [Decisions.md](Decisions.md) and [Bugs.md](Bugs.md) when the change
+   warrants it.
+5. **Verify locally** — `flutter analyze`, `flutter test`, and the emulator
+   suites for any rules, index or Cloud Functions change. This is the real
+   gate: CI runs *after* the push and cannot stop a bad one.
+6. **Look at UI changes.** A green suite proves code health, not that a
+   screen renders. Visual claims need visual proof.
+7. **Commit** on `main` with a message that explains *why*.
+8. **Push** — `git push origin main`. Never `--force`, never
+   `--force-with-lease`; the ruleset rejects both anyway.
+9. **Watch GitHub Actions** on the pushed revision —
+   `gh run list --branch main --limit 3`.
+10. **Fix a red pipeline immediately** with a follow-up commit. Do not
+    stack new work on a broken `main`, and do not leave a known failure
+    unreported.
+
+A pull request stays available for the cases that genuinely earn one — an
+external reviewer, a risky migration, or the maintainer asking — but it is
+never the default and is never opened automatically. Details, including
+exactly what the ruleset still blocks, are in
+[BRANCH_PROTECTION.md](BRANCH_PROTECTION.md).
 
 Before a change big enough to be risky — a schema change, a rules
 rewrite, a large refactor — take a backup first: a local git tag or

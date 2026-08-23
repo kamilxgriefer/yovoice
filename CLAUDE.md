@@ -101,26 +101,39 @@ version:
 
 ## Project-specific conventions already established
 
-- **Git workflow**: **commit and push straight to `main`.** No feature
-  branch, no pull request, no waiting for a human. This is the deliberate
-  choice for a solo repository — see
+- **Git workflow — YO Voice is solo-maintained; work directly on `main`.**
+  No feature branch, no pull request, no waiting for a human. See
   [ADR-002](docs/Decisions.md#adr-002-git-workflow-push-straight-to-main-no-prs)
   and [ADR-108](docs/Decisions.md#adr-108-main-is-unprotected-again--a-solo-repository-pays-the-pull-request-tax-for-a-review-that-never-happens).
-  **Do not open a pull request unless the maintainer asks for one in that
-  session**, and do not restore branch protection or re-add a ruleset;
-  `main` is deliberately unprotected and there is no ruleset recipe in the
-  repo to re-import.
-  *(A protected-main policy existed briefly on 2026-08-23 and was reversed
-  the next day. If you find a doc that still mandates pull requests, that
-  doc is stale — fix it rather than following it.)*
-  Because nothing on the server blocks a bad push any more, **the local gate
-  is the gate**: `flutter analyze` and `flutter test` must be green *before*
-  you push, plus the emulator suites for any backend change. Never push on a
-  failed run and never force-push `main`. CI still runs automatically on
-  every push to `main` — it now reports after the fact rather than blocking,
-  which is exactly why the local run matters more, not less.
-  Before a risky change — schema, rules, a large refactor — snapshot `main`
-  with a local tag or branch first.
+  *(A protected-main policy existed briefly on 2026-08-23 and was reversed.
+  If you find a doc that still mandates pull requests, that doc is stale —
+  fix it rather than following it.)*
+  The loop is:
+  1. `git pull --ff-only origin main` before editing.
+  2. **Inspect and preserve any existing uncommitted work** — never
+     `git reset --hard`, never `git clean`, never discard automatically.
+     Ask before touching files that overlap with someone else's changes.
+  3. Implement a focused change.
+  4. Run the relevant verification (see the gate below) — **before** pushing.
+  5. Commit with a clear conventional-commit message explaining *why*.
+  6. `git push origin main`.
+  7. Watch GitHub Actions on the pushed revision, and **correct a failed run
+     immediately with a follow-up commit** rather than leaving `main` red.
+  Never force-push, never rewrite published history, never delete `main` —
+  an active ruleset blocks all three, with no bypass for anyone.
+  **Never create a pull request automatically**; only when the maintainer
+  asks, an external reviewer is involved, or a risky migration genuinely
+  needs isolated review. Do not add a pull-request or required-status-check
+  rule to `.github/rulesets/main-protection.json`.
+  **CI validates after the push, not before** — it cannot block a bad commit,
+  which is precisely why the local run is the real gate. Never push on a
+  failed run.
+  **Deployment is separate from source control.** Pushing to `main` ships
+  nothing to users. Never deploy Hosting, Cloud Functions, Firestore Rules,
+  indexes or Storage Rules unless explicitly asked.
+  A **visual** change still needs real visual verification, and a **Firebase
+  authorization** change still needs emulator-backed tests — direct push
+  relaxes the branch policy, not the quality bar.
 - **Verification gate**: `flutter analyze` must be clean before considering
   Dart work done. For UI changes, verify in the iOS Simulator when possible.
 - **Visual claims need visual proof.** `flutter analyze`, `flutter test`,
