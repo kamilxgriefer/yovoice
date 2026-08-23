@@ -43,7 +43,7 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
-import 'package:yovoice/features/home/presentation/widgets/desktop/sidebar_clock.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/timezone_world_map_card.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
@@ -1224,7 +1224,7 @@ void main() {
                   child: Column(
                     children: [
                       const Spacer(),
-                      SidebarClock(
+                      TimezoneWorldMapCard(
                         source: ClockSource(
                           now: () => DateTime(2026, 8, 21, 21, 42),
                         ),

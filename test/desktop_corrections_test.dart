@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:yovoice/features/home/presentation/widgets/desktop/sidebar_clock.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/timezone_world_map_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/sponsored_card.dart';
 
 /// Focused coverage for the desktop corrections. Every test here uses
@@ -10,18 +10,28 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/sponsored_car
 /// harness did.
 void main() {
   group('sidebar clock', () {
-    Widget host(SidebarClock clock) => MaterialApp(
-      home: Scaffold(
-        body: Align(alignment: Alignment.topLeft, child: clock),
-      ),
-    );
+    /// 24-hour is forced here because these cases assert on "18:42".
+    /// The card now honours the platform's clock preference rather than
+    /// hard-coding 24-hour — the same fix message_bubble.dart,
+    /// edit_profile_screen.dart and club_chat_screen.dart each needed —
+    /// and a test MediaQuery defaults `alwaysUse24HourFormat` to false.
+    /// The 12-hour path has its own case at the end of this group.
+    Widget host(TimezoneWorldMapCard clock, {bool use24Hour = true}) =>
+        MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(alwaysUse24HourFormat: use24Hour),
+            child: Scaffold(
+              body: Align(alignment: Alignment.topLeft, child: clock),
+            ),
+          ),
+        );
 
     testWidgets('renders the supplied time and the resolved zone label', (
       tester,
     ) async {
       await tester.pumpWidget(
         host(
-          SidebarClock(
+          TimezoneWorldMapCard(
             source: ClockSource(
               now: () => DateTime(2026, 8, 12, 18, 42, 30),
               zoneLabel: () => 'CEST',
@@ -41,7 +51,7 @@ void main() {
       var current = DateTime(2026, 8, 12, 18, 42, 30);
       await tester.pumpWidget(
         host(
-          SidebarClock(
+          TimezoneWorldMapCard(
             source: ClockSource(now: () => current, zoneLabel: () => 'UTC'),
           ),
         ),
@@ -66,7 +76,7 @@ void main() {
     testWidgets('the timer is disposed with the widget', (tester) async {
       await tester.pumpWidget(
         host(
-          SidebarClock(
+          TimezoneWorldMapCard(
             source: ClockSource(
               now: () => DateTime(2026, 8, 12, 9, 5),
               zoneLabel: () => 'UTC',
@@ -74,7 +84,9 @@ void main() {
           ),
         ),
       );
-      final state = tester.state<SidebarClockState>(find.byType(SidebarClock));
+      final state = tester.state<TimezoneWorldMapCardState>(
+        find.byType(TimezoneWorldMapCard),
+      );
       expect(state.hasActiveTimer, isTrue);
 
       await tester.pumpWidget(const MaterialApp(home: SizedBox()));
@@ -87,7 +99,7 @@ void main() {
       var current = DateTime(2026, 8, 12, 18, 42, 10);
       await tester.pumpWidget(
         host(
-          SidebarClock(
+          TimezoneWorldMapCard(
             source: ClockSource(now: () => current, zoneLabel: () => 'UTC'),
           ),
         ),
@@ -123,11 +135,88 @@ void main() {
       );
       // The formatter itself is the part that must be right.
       expect(ClockSource.utcOffsetLabel(const Duration(hours: 2)), 'UTC+02:00');
+
       expect(
         ClockSource.utcOffsetLabel(const Duration(hours: -5, minutes: -30)),
         'UTC-05:30',
       );
       expect(source.label(), isNotEmpty);
+    });
+
+    testWidgets('a 12-hour-clock locale is honoured rather than overridden', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        host(
+          TimezoneWorldMapCard(
+            source: ClockSource(
+              now: () => DateTime(2026, 8, 12, 18, 42, 30),
+              zoneLabel: () => 'CEST',
+            ),
+          ),
+          use24Hour: false,
+        ),
+      );
+      expect(find.text('6:42 PM'), findsOneWidget);
+      expect(find.text('18:42'), findsNothing);
+    });
+
+    testWidgets('an IANA zone yields a city and a region, and NEVER a '
+        'country the app does not know', (tester) async {
+      await tester.pumpWidget(
+        host(
+          TimezoneWorldMapCard(
+            source: ClockSource(
+              now: () => DateTime(2026, 8, 12, 18, 42, 30),
+              ianaName: () => 'Europe/Warsaw',
+            ),
+          ),
+        ),
+      );
+      expect(find.text('Warsaw'), findsOneWidget);
+      expect(find.text('Europe'), findsOneWidget);
+      // The app holds no country data for this user; inventing "Poland"
+      // from a timezone is exactly what this feature must not do.
+      expect(find.text('Poland'), findsNothing);
+    });
+
+    testWidgets('with NO IANA zone the card degrades to the UTC offset and '
+        'still names no place', (tester) async {
+      await tester.pumpWidget(
+        host(
+          TimezoneWorldMapCard(
+            source: ClockSource(
+              now: () => DateTime.utc(2026, 8, 12, 18, 42, 30),
+              ianaName: () => null,
+            ),
+          ),
+        ),
+      );
+      // Two UTC+00:00 renders would mean the fallback label and the chip
+      // are duplicating each other; the primary label must fall through
+      // to the offset exactly once alongside the chip.
+      expect(find.textContaining('UTC+00:00'), findsWidgets);
+      expect(find.text('Europe'), findsNothing);
+    });
+
+    testWidgets('the semantic label carries the time and zone as TEXT, so '
+        'the map is never the only carrier', (tester) async {
+      final handle = tester.ensureSemantics();
+      await tester.pumpWidget(
+        host(
+          TimezoneWorldMapCard(
+            source: ClockSource(
+              now: () => DateTime(2026, 8, 12, 18, 42, 30),
+              ianaName: () => 'Europe/Warsaw',
+            ),
+          ),
+        ),
+      );
+      expect(
+        find.bySemanticsLabel(RegExp(r'Local time .*Warsaw.*Europe.*UTC')),
+        findsOneWidget,
+      );
+      handle.dispose();
     });
   });
 
