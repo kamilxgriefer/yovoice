@@ -1033,6 +1033,32 @@ someone decide what to pick up next.
 
 ## In Progress
 
+### Server-only Direct Message Firestore rules — audited, blocked on one gate
+
+- **Status**: **In `main`, verified, NOT deployed (2026-08-23).** The rules
+  delta is exactly one authorization — `conversations/{id}/messages/{id}`
+  `allow create` becomes `if false`; `read`, `update` and `delete` are
+  byte-identical to the deployed ruleset. Every automated gate passes (rules
+  485, storage 52, family-media 11, functions 783, Flutter 1208, analyze
+  clean), the production callable is ACTIVE, the served web bundle contains no
+  direct-write path, the website has no DM capability, and no store client
+  exists.
+- **Blocker**: stale browser sessions. A tab or PWA loaded before the
+  2026-08-23 Hosting release still carries the pre-migration direct-write
+  fallback, and nothing forces a reload. The failure would be loud and
+  self-healing rather than silent, and the population is probably empty — but
+  "probably empty" is not PROVEN SAFE, which is the bar for a production rules
+  change.
+- **Closure**: ask the ~4 maintainer-owned test accounts to hard-reload, or
+  revoke their refresh tokens, or extend the observation window and confirm no
+  new 14-field client-written documents appear. Any one is sufficient. Full
+  evidence and the pre-staged rollback are in
+  [DEPLOYMENT.md](DEPLOYMENT.md).
+- **Priority**: High — it closes a real authorization gap, and the remaining
+  work is confirmation rather than engineering.
+
+
+
 ### App-wide theme migration
 
 - **Status**: In progress — the root System/Dark/Light Beta switch and shared

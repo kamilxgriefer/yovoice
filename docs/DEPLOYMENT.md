@@ -752,6 +752,88 @@ remains pending (see the section below), and the DM server-only change from
 `claude/silly-hugle-e8a52c` touches `firestore.rules`, which was NOT deployed
 here. Rules in production still predate that merge.
 
+### BLOCKED 2026-08-23: server-only Direct Message rules — audited, verified, NOT deployed
+
+`firestore.rules` in `main` makes DM creation server-only
+(`conversations/{id}/messages/{id}` → `allow create: if false`). It was audited
+for production deployment and **deliberately not deployed**. One gate did not
+reach PROVEN SAFE.
+
+**The delta is exactly one authorization.** The deployed ruleset was read from
+the live project (ruleset `8178e94d-f20b-46be-bdc4-c92005ea86a6`, released
+2026-08-22T12:17:28Z) and is byte-identical to `git show e399867:firestore.rules`.
+`diff` against `main` is two hunks: one comment-only, one the `create` rule.
+The `update`, `read` and `delete` rules are **byte-identical** — no secondary
+operation changes.
+
+**What passed.**
+
+| Gate | Result |
+|---|---|
+| Firestore rules suite (against the NEW rules) | 485 passed / 0 failed |
+| Storage rules | 52 / 0 |
+| Cross-service family media | 11 / 0 |
+| Cloud Functions | 783 / 0 |
+| `flutter analyze` | clean |
+| `flutter test` | 1208 passed |
+| Production callable | `sendDirectMessage` ACTIVE, v2, `europe-west1`; all 10 DM callables ACTIVE |
+| Served web bundle | sha256 `c293968a…`, contains `sendDirectMessage`, contains `_sendTextMessageDirectly` **0 times** |
+| Website (`yovoice-website`) | zero `collection(` across all 78 commits and all branches; 4 doc paths, none DM |
+| Store clients | none exist — Roadmap: "*Not started — no published iOS/Android builds exist yet*"; 0 releases, 0 version tags, no mobile CI job |
+| Secondary ops (edit / delete / react / markRead) | field sets checked against the update allowlist — all four PASS |
+| Callable sender identity | `senderId: auth.uid`; a client-supplied `senderId` is **rejected** by `requireExactInput`, not merely overridden |
+
+**The blocker: stale browser sessions.** A tab or installed PWA loaded before
+the 2026-08-23 Hosting release runs a build that still contains the
+direct-write fallback. Nothing in the product forces a reload, Firebase Auth
+refreshes tokens indefinitely, and there is no `minimumVersion`, `forceUpdate`
+or kill-switch anywhere in `lib/`, `functions/`, `web/` or `firestore.rules`.
+
+Production shows that fallback firing for real: on 2026-08-18 one account sent
+via the callable at 20:46:15 and then wrote three DM documents **directly** at
+20:49:07 / 20:49:11 / 20:49:24. Those documents are the legacy 14-field shape
+(the server writes 16, adding `schemaVersion` and `sequence`).
+
+**Two corrections to the first audit pass, both material:**
+
+1. An audit agent read those 2026-08-18 writes as proof the *current* client
+   falls back. It is not. `d5909bf` — the commit that removed
+   `_sendTextMessageDirectly` — is dated **2026-08-19**, a day later. Those
+   writes are the pre-migration client behaving as designed at the time. The
+   currently served bundle contains that symbol **zero** times.
+2. The same pass called the failure mode "silent". It is not, for the case
+   that matters: `chat_screen.dart:242` catches the error and shows it, and
+   `_controller.clear()` runs only on success, so the text survives. The old
+   client at `7308fff` has the same handling. A stale tab would fail
+   **loudly** and recover on reload (`cache-control: no-cache` is set on
+   `main.dart.js`, confirmed live).
+
+**Why it is still not deployed.** "Small, visible and self-healing" is not the
+same as proven. The population of stale sessions is unmeasured, and the
+project bar for a production rules change is PROVEN SAFE.
+
+**How to close it — any one of these is sufficient:**
+
+1. **Ask the testers to hard-reload.** Production holds 5 conversations, 62
+   lifetime messages and roughly 4 active accounts, all maintainer-owned test
+   accounts. Direct confirmation is stronger than any inference available here
+   and takes minutes.
+2. **Revoke refresh tokens** for those accounts, forcing a fresh load.
+3. **Observe.** Since 2026-08-18T20:49:24Z every DM has been server-written —
+   four consecutive messages across four days. Extend that window and re-run
+   the enumeration; a stated quiet period with zero 14-field documents bounds
+   the risk empirically.
+
+**Rollback, pre-staged and unused.** Prior ruleset:
+`projects/yovoice-ec54a/rulesets/8178e94d-f20b-46be-bdc4-c92005ea86a6`, source
+byte-identical to `git show e399867:firestore.rules`. Restore with
+`firebase deploy --only firestore:rules --project yovoice-ec54a` from that
+commit. Note the asymmetry that makes the gate matter: the rules change is
+instantly reversible, but a message a user believed they sent is not.
+
+**Nothing was deployed in this task.** No Hosting, Functions, indexes, Storage
+rules or Remote Config.
+
 ### Pending release: `sweepStrandedLiveRoomsSchedule`
 
 The scheduled repair for a room left `isLive: true` with an empty

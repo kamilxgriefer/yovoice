@@ -20,6 +20,33 @@ about things that are broken, risky, or need verification.
 
 ## Security
 
+- **OPEN, pre-existing, found while auditing the DM rules — the conversation
+  ROOT update rule pins only `participantIds`.** `firestore.rules:2132` lets
+  any participant rewrite `lastMessage`, `participantNames` and — the part
+  that matters — **the other party's `unreadCounts` and `readSequences`**.
+  That is the same forgery class the create-rule comment cites as the reason
+  the root is server-owned: the root is create-locked but not field-locked.
+  This is **already deployed** and is not a regression of the pending
+  server-only DM change, which ships the root rule unchanged. Closing it needs
+  a field allowlist pinning the caller's own keys, plus emulator cases for
+  cross-participant counter writes.
+
+- **OPEN — the message outbox has no user interface.** `MessageOutbox` queues
+  a send when the callable is unreachable and retries it, but
+  `retryFailedMessage`, `discardQueuedMessage` and `.outbox` have **zero
+  callers** anywhere in `lib/` outside the service itself. The immediate send
+  error IS shown (`chat_screen.dart:242` catches it and preserves the typed
+  text), so a first failure is visible — but everything after that, including
+  a permanent failure after the retry budget, is invisible. Independent of the
+  rules decision; worth its own ticket.
+
+- **OPEN, noted not fixed — `enforceAppCheck: false` on the Stage B callables,
+  including `sendDirectMessage`.** App Check is supported but not enforced
+  (`stage_b_functions.js:24`, default `enforceUserAppCheck = false`; asserted
+  by `stage_b_bindings.test.js:138`). Pre-existing posture, unchanged by any
+  pending work, and a deliberate separate decision rather than an oversight to
+  fix in passing.
+
 - **FIXED IN SOURCE 2026-08-22, NOT DEPLOYED — the desktop rail's navigation
   column could sit scrolled, clipping the Home tile under the wordmark.** The
   rail itself never moved with the page (it is a `Row` child inside an
