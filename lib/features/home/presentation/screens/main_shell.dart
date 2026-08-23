@@ -1132,6 +1132,10 @@ class _DesktopRightColumn extends StatelessWidget {
     return SizedBox(
       width: 344,
       child: ListView(
+        // Third claimant on the ambient primary controller, alongside the
+        // rail and the Home feed — same reasoning as
+        // desktop_home.dart's feed: it owns its position explicitly.
+        primary: false,
         padding: const EdgeInsets.fromLTRB(6, 20, 20, 20),
         children: [child],
       ),

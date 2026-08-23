@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
-import 'package:yovoice/features/home/presentation/widgets/desktop/sidebar_clock.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/timezone_world_map_card.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
@@ -48,7 +48,33 @@ enum DesktopNavItem {
   more,
 }
 
-class DesktopSidebar extends StatelessWidget {
+/// THE RAIL IS A FIXED SURFACE. It is a `Row` child inside an `Expanded`
+/// inside the shell's `Column` (main_shell.dart), so nothing above it can
+/// translate it — and the browser document cannot scroll either, because
+/// `flutter_bootstrap.js` initializes with no `hostElement` and the engine
+/// pins `<body>` to `position: fixed; overflow: hidden`.
+///
+/// What DID move was the nav column's own scroll view, and the cause was
+/// measured rather than guessed: the rail's fixed chrome plus the six
+/// destinations, two Create buttons and More demand more height than the
+/// rail gets once the window is short OR the mini player is mounted. At
+/// 1440x768 `maxScrollExtent` is 0; at 720 it is 40; at 620 it is 82. Past
+/// that threshold a wheel gesture with the pointer over the rail scrolls
+/// it and it STAYS scrolled — which is what clips the Home tile under the
+/// wordmark.
+///
+/// Two hypotheses were tested and REJECTED rather than carried:
+///  * a shared `PrimaryScrollController` does NOT couple two scrollables —
+///    each `Scrollable` keeps its own `ScrollPosition`, verified by driving
+///    one and measuring the other (delta 0.0). It does still put two
+///    positions on one controller, which `Scrollbar` asserts against — the
+///    bug this file's sibling already hit and documented at
+///    desktop_home.dart:478. That is closed below on principle, not as the
+///    cause.
+///  * macOS `BouncingScrollPhysics` does NOT rubber-band at zero extent:
+///    a held pointer drag AND a trackpad pan-zoom both left `pixels` at
+///    0.0. No physics override is warranted, so none is added.
+class DesktopSidebar extends StatefulWidget {
   const DesktopSidebar({
     required this.active,
     required this.unreadConversationCount,
@@ -98,122 +124,158 @@ class DesktopSidebar extends StatelessWidget {
   static const Color _accentTint = Color(0xFFD3A5FF);
 
   @override
+  State<DesktopSidebar> createState() => _DesktopSidebarState();
+}
+
+class _DesktopSidebarState extends State<DesktopSidebar> {
+  /// The rail's OWN scroll position, never the ambient primary one.
+  ///
+  /// `primary: false` is what actually severs the inheritance; the
+  /// controller is what makes the ownership legible and assertable — a
+  /// test can read `position.maxScrollExtent` and pin "the rail does not
+  /// scroll at this height" instead of inferring it from pixels on screen.
+  /// Same pattern, same reason, as `_RosterListState` in desktop_home.dart.
+  final ScrollController _railScroll = ScrollController();
+
+  @override
+  void dispose() {
+    _railScroll.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
-    return Container(
-      width: width,
-      padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        border: Border(right: BorderSide(color: colors.outlineVariant)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Pinned header: identity left, the bell right. The bell is
-          // the single notifications entry point at desktop width.
-          Row(
-            children: [
-              const Expanded(child: _Wordmark()),
-              _BellButton(
-                count: unreadNotificationCount,
-                active: active == DesktopNavItem.notifications,
-                label: copy.notifications,
-                unreadWord: copy.text('unread', 'nieprzeczytane'),
-                onTap: () => onSelect(DesktopNavItem.notifications),
-              ),
-            ],
+    // ONE measurement of the rail's true height, taken here because this
+    // is the only place that has it. The window is the wrong number:
+    // RoomMiniBar (~118 px with a live room) and the verification banner
+    // (~38 px) both shrink the rail without changing the window, and the
+    // card's own slot inside the Column is vertically unbounded.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final railHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : null;
+        return Container(
+          width: DesktopSidebar.width,
+          padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
+          decoration: BoxDecoration(
+            color: colors.surface,
+            border: Border(right: BorderSide(color: colors.outlineVariant)),
           ),
-          const SizedBox(height: 18),
-          // The rail must survive short desktop windows (a 1280x620
-          // laptop): six destinations, two create actions and the More
-          // row overflow a fixed column, so this block scrolls while the
-          // header, clock and profile card stay pinned.
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Pinned header: identity left, the bell right. The bell is
+              // the single notifications entry point at desktop width.
+              Row(
                 children: [
-                  _NavTile(
-                    item: DesktopNavItem.home,
-                    icon: Icons.home_rounded,
-                    label: copy.home,
-                    active: active == DesktopNavItem.home,
-                    onTap: onSelect,
-                  ),
-                  // Moments sits directly above Discover: the rail is
-                  // where the two coexist, and a discovery surface for
-                  // voice belongs ahead of a discovery surface for rooms.
-                  _NavTile(
-                    item: DesktopNavItem.moments,
-                    icon: Icons.graphic_eq_rounded,
-                    label: copy.moments,
-                    active: active == DesktopNavItem.moments,
-                    onTap: onSelect,
-                  ),
-                  _NavTile(
-                    item: DesktopNavItem.discover,
-                    icon: Icons.explore_outlined,
-                    label: copy.discover,
-                    active: active == DesktopNavItem.discover,
-                    onTap: onSelect,
-                  ),
-                  _NavTile(
-                    item: DesktopNavItem.findCreators,
-                    icon: Icons.person_search_outlined,
-                    label: copy.findCreators,
-                    active: active == DesktopNavItem.findCreators,
-                    onTap: onSelect,
-                  ),
-                  _NavTile(
-                    item: DesktopNavItem.chats,
-                    icon: Icons.chat_bubble_outline_rounded,
-                    label: copy.chats,
-                    badge: unreadConversationCount,
-                    active: active == DesktopNavItem.chats,
-                    onTap: onSelect,
-                  ),
-                  _NavTile(
-                    item: DesktopNavItem.friends,
-                    icon: Icons.people_alt_outlined,
-                    label: copy.friends,
-                    active: active == DesktopNavItem.friends,
-                    onTap: onSelect,
-                  ),
-                  const SizedBox(height: 16),
-                  _SectionLabel(copy.text('CREATE', 'TWORZENIE')),
-                  _CreateRoomButton(onTap: onCreateRoom),
-                  const SizedBox(height: 8),
-                  _CreateMomentButton(onTap: onCreateMoment),
-                  const SizedBox(height: 16),
-                  _SectionLabel(copy.text('MORE', 'WIĘCEJ')),
-                  _NavTile(
-                    key: moreItemKey,
-                    item: DesktopNavItem.more,
-                    icon: Icons.more_horiz_rounded,
-                    label: copy.more,
-                    active: active == DesktopNavItem.more,
-                    trailingChevron: true,
-                    onTap: onSelect,
+                  const Expanded(child: _Wordmark()),
+                  _BellButton(
+                    count: widget.unreadNotificationCount,
+                    active: widget.active == DesktopNavItem.notifications,
+                    label: copy.notifications,
+                    unreadWord: copy.text('unread', 'nieprzeczytane'),
+                    onTap: () => widget.onSelect(DesktopNavItem.notifications),
                   ),
                 ],
               ),
-            ),
+              const SizedBox(height: 18),
+              // The rail must survive short desktop windows (a 1280x620
+              // laptop): six destinations, two create actions and the More
+              // row overflow a fixed column, so this block scrolls while the
+              // header, clock and profile card stay pinned.
+              Expanded(
+                child: SingleChildScrollView(
+                  controller: _railScroll,
+                  primary: false,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _NavTile(
+                        item: DesktopNavItem.home,
+                        icon: Icons.home_rounded,
+                        label: copy.home,
+                        active: widget.active == DesktopNavItem.home,
+                        onTap: widget.onSelect,
+                      ),
+                      // Moments sits directly above Discover: the rail is
+                      // where the two coexist, and a discovery surface for
+                      // voice belongs ahead of a discovery surface for rooms.
+                      _NavTile(
+                        item: DesktopNavItem.moments,
+                        icon: Icons.graphic_eq_rounded,
+                        label: copy.moments,
+                        active: widget.active == DesktopNavItem.moments,
+                        onTap: widget.onSelect,
+                      ),
+                      _NavTile(
+                        item: DesktopNavItem.discover,
+                        icon: Icons.explore_outlined,
+                        label: copy.discover,
+                        active: widget.active == DesktopNavItem.discover,
+                        onTap: widget.onSelect,
+                      ),
+                      _NavTile(
+                        item: DesktopNavItem.findCreators,
+                        icon: Icons.person_search_outlined,
+                        label: copy.findCreators,
+                        active: widget.active == DesktopNavItem.findCreators,
+                        onTap: widget.onSelect,
+                      ),
+                      _NavTile(
+                        item: DesktopNavItem.chats,
+                        icon: Icons.chat_bubble_outline_rounded,
+                        label: copy.chats,
+                        badge: widget.unreadConversationCount,
+                        active: widget.active == DesktopNavItem.chats,
+                        onTap: widget.onSelect,
+                      ),
+                      _NavTile(
+                        item: DesktopNavItem.friends,
+                        icon: Icons.people_alt_outlined,
+                        label: copy.friends,
+                        active: widget.active == DesktopNavItem.friends,
+                        onTap: widget.onSelect,
+                      ),
+                      const SizedBox(height: 16),
+                      _SectionLabel(copy.text('CREATE', 'TWORZENIE')),
+                      _CreateRoomButton(onTap: widget.onCreateRoom),
+                      const SizedBox(height: 8),
+                      _CreateMomentButton(onTap: widget.onCreateMoment),
+                      const SizedBox(height: 16),
+                      _SectionLabel(copy.text('MORE', 'WIĘCEJ')),
+                      _NavTile(
+                        key: widget.moreItemKey,
+                        item: DesktopNavItem.more,
+                        icon: Icons.more_horiz_rounded,
+                        label: copy.more,
+                        active: widget.active == DesktopNavItem.more,
+                        trailingChevron: true,
+                        onTap: widget.onSelect,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // The timezone card uses the space the rail already leaves above
+              // the profile card. It sits OUTSIDE the scrolling nav column, so
+              // it cannot push navigation off-screen at short heights, and the
+              // profile card stays anchored to the bottom. It REPLACES the
+              // plain clock block that used to live here — there is exactly one
+              // local time in the rail, not two.
+              TimezoneWorldMapCard(railHeight: railHeight),
+              const SizedBox(height: 6),
+              _ProfileCard(
+                profileService: widget.profileService,
+                onTap: widget.onOpenProfile,
+                onSettings: widget.onOpenProfileSettings,
+              ),
+            ],
           ),
-          // The clock uses the space the rail already leaves above the
-          // profile card. It sits OUTSIDE the scrolling nav column, so it
-          // cannot push navigation off-screen at short heights, and the
-          // profile card stays anchored to the bottom.
-          const SidebarClock(),
-          const SizedBox(height: 4),
-          _ProfileCard(
-            profileService: profileService,
-            onTap: onOpenProfile,
-            onSettings: onOpenProfileSettings,
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

@@ -9,6 +9,7 @@ import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
+import 'package:yovoice/features/home/presentation/widgets/desktop/timezone_world_map_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/followed_creators_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
@@ -39,6 +40,253 @@ void main() {
   }
 
   group('DesktopSidebar', () {
+    DesktopSidebar rail({DesktopNavItem? active = DesktopNavItem.home}) =>
+        DesktopSidebar(
+          active: active,
+          unreadConversationCount: 0,
+          unreadNotificationCount: 0,
+          onSelect: (_) {},
+          onCreateRoom: () {},
+          onCreateMoment: () {},
+          onOpenProfile: () {},
+          onOpenProfileSettings: () {},
+        );
+
+    /// The rail's own scroll view — the thing that actually moved.
+    Finder railScrollable() => find
+        .descendant(
+          of: find.byType(DesktopSidebar),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+
+    /// The shell's real desktop composition, minus Firebase. `MainShell`
+    /// itself is not pumpable — `const MainShell()` takes no injectable
+    /// dependencies and its state constructs MessageService, RoomService,
+    /// AuthService and FirebaseAuth.instance directly — so the coupling
+    /// test reproduces the composition rather than mounting the shell.
+    Widget desktopShell({required Widget content}) => MaterialApp(
+      home: Scaffold(
+        body: Column(
+          children: [
+            Expanded(
+              child: Row(
+                children: [
+                  rail(),
+                  Expanded(child: content),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    /// THE REGRESSION THIS GROUP EXISTS FOR.
+    ///
+    /// Scrolling the main content must not move the rail by one pixel.
+    /// Asserted on the rail's ScrollPosition rather than on a widget's
+    /// screen coordinates: a position of 0 proves the rail did not scroll
+    /// even if some future layout change moves the tile for an unrelated
+    /// reason, and it is the number the fix actually controls.
+    testWidgets('scrolling the main content does not move the rail', (
+      tester,
+    ) async {
+      useDesktopWindow(tester, size: const Size(1440, 900));
+      await tester.pumpWidget(
+        desktopShell(
+          content: ListView(
+            key: const ValueKey('content'),
+            children: [
+              for (var i = 0; i < 80; i++)
+                SizedBox(height: 60, child: Text('content-row-$i')),
+            ],
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final railPosition = tester.state<ScrollableState>(railScrollable());
+      final wordmarkBefore = tester.getTopLeft(find.text('YO Voice'));
+      final navBefore = tester.getTopLeft(find.text('Moments'));
+
+      await tester.drag(find.text('content-row-2'), const Offset(0, -900));
+      await tester.pump();
+
+      expect(
+        railPosition.position.pixels,
+        0,
+        reason: 'the rail must not scroll when the page scrolls',
+      );
+      expect(tester.getTopLeft(find.text('YO Voice')), wordmarkBefore);
+      expect(tester.getTopLeft(find.text('Moments')), navBefore);
+    });
+
+    /// "Fixed", not merely "decoupled": at a normal desktop height the
+    /// rail has nothing to scroll at all, so no gesture anywhere can move
+    /// it. This is the assertion that would have caught the original bug,
+    /// which was the rail overflowing and then being scrolled by a wheel
+    /// that happened to be over it.
+    testWidgets('at normal desktop heights the rail has no scroll extent', (
+      tester,
+    ) async {
+      for (final height in <double>[1080, 900, 800, 768]) {
+        useDesktopWindow(tester, size: Size(1440, height));
+        await tester.pumpWidget(desktopShell(content: const SizedBox.expand()));
+        await tester.pump();
+        expect(
+          tester
+              .state<ScrollableState>(railScrollable())
+              .position
+              .maxScrollExtent,
+          0,
+          reason: 'the rail must not overflow at ${height}px',
+        );
+        expect(tester.takeException(), isNull);
+      }
+    });
+
+    /// The rail never claims the ambient primary controller, so it cannot
+    /// collide with the feed's position on a target where `shouldInherit`
+    /// is true (an Android tablet in landscape reaches the desktop rail).
+    ///
+    /// An EXPLICIT probe controller is installed rather than reading
+    /// `PrimaryScrollController.maybeOf`: that returns null in this
+    /// harness, which made an earlier version of this test pass whether
+    /// or not the fix was present. The probe cannot be vacuous — the
+    /// first assertion fails if the ambient controller is missing.
+    testWidgets('the rail owns its scroll position on a mobile-gate target', (
+      tester,
+    ) async {
+      useDesktopWindow(tester, size: const Size(1440, 620));
+      final probe = ScrollController();
+      addTearDown(probe.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(platform: TargetPlatform.android),
+          home: Scaffold(
+            body: PrimaryScrollController(
+              controller: probe,
+              child: Row(
+                children: [
+                  rail(),
+                  const Expanded(child: SizedBox.expand()),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // The gate really is open on this target — otherwise the assertion
+      // below would prove nothing. 620px also guarantees the rail has a
+      // real scroll extent, so it WOULD attach if it were allowed to.
+      expect(
+        PrimaryScrollController.shouldInherit(
+          tester.element(railScrollable()),
+          Axis.vertical,
+        ),
+        isTrue,
+        reason: 'this target must have the primary-inheritance gate OPEN',
+      );
+      expect(
+        tester
+            .state<ScrollableState>(railScrollable())
+            .position
+            .maxScrollExtent,
+        greaterThan(0),
+        reason: 'the rail must be scrollable here, or nothing is proven',
+      );
+      expect(
+        probe.positions,
+        isEmpty,
+        reason: 'the rail must not attach to the ambient primary controller',
+      );
+    });
+
+    /// EDIT B, pinned. The map tier reads the RAIL's height, not the
+    /// window's. A 900px window whose rail is squeezed to 700px by the
+    /// mini player must drop the map — the old `MediaQuery.height >= 700`
+    /// gate kept it, which is precisely the state where the rail starves.
+    testWidgets('the map tier follows the rail height, not the window', (
+      tester,
+    ) async {
+      useDesktopWindow(tester, size: const Size(1440, 900));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      rail(),
+                      const Expanded(child: SizedBox()),
+                    ],
+                  ),
+                ),
+                // Stands in for RoomMiniBar: it shortens the rail without
+                // changing the window height at all.
+                const SizedBox(height: 220),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('sidebar-clock-map')),
+        findsNothing,
+        reason: 'a 900px WINDOW with a 680px RAIL must not keep the map',
+      );
+      // The information itself never yields — only the decoration does.
+      expect(find.byType(TimezoneWorldMapCard), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    /// Short-height contract: the safety valve still exists (the rail
+    /// genuinely cannot fit at 620), the pinned bottom pair survives, and
+    /// nothing overflows.
+    testWidgets('a short window scrolls ONLY the nav column and keeps the '
+        'timezone card and profile card pinned', (tester) async {
+      useDesktopWindow(tester, size: const Size(1440, 620));
+      await tester.pumpWidget(desktopShell(content: const SizedBox.expand()));
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      final position = tester.state<ScrollableState>(railScrollable()).position;
+      expect(
+        position.maxScrollExtent,
+        greaterThan(0),
+        reason: 'the nav column is the safety valve at short heights',
+      );
+
+      // The pinned pair sits OUTSIDE that scroll view, so scrolling the
+      // nav column must not move either of them.
+      final cardBefore = tester.getTopLeft(find.byType(TimezoneWorldMapCard));
+      await tester.drag(railScrollable(), const Offset(0, -200));
+      await tester.pump();
+      expect(position.pixels, greaterThan(0), reason: 'the nav DID scroll');
+      expect(tester.getTopLeft(find.byType(TimezoneWorldMapCard)), cardBefore);
+    });
+
+    /// The map is the part that yields on a starved rail; the time and the
+    /// zone never do.
+    testWidgets('the timezone card drops its map on a short rail but keeps '
+        'the time and zone', (tester) async {
+      useDesktopWindow(tester, size: const Size(1440, 620));
+      await tester.pumpWidget(desktopShell(content: const SizedBox.expand()));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('sidebar-clock-map')), findsNothing);
+      expect(find.byType(TimezoneWorldMapCard), findsOneWidget);
+
+      useDesktopWindow(tester, size: const Size(1440, 1000));
+      await tester.pumpWidget(desktopShell(content: const SizedBox.expand()));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('sidebar-clock-map')), findsOneWidget);
+    });
+
     testWidgets('shows exactly the six primary destinations and NO '
         'Profile/Moments/Clubs/Creator Studio rail items', (tester) async {
       useDesktopWindow(tester);
@@ -565,76 +813,79 @@ void main() {
   });
 
   group('VoiceTrendingCard', () {
-    testWidgets('the live rooms section renders REAL live rooms with a Live pill; '
-        'and no longer carries a second people-discovery list', (tester) async {
-      final db = FakeFirebaseFirestore();
-      for (final entry in [
-        ('Late Night Confessions', 'Real stories, live now'),
-        ('Friday Freestyle', 'The room is warming up'),
-      ].indexed) {
-        await db.collection('rooms').doc('room-${entry.$1}').set({
-          'hostId': 'host',
-          'hostName': 'Host',
-          'name': entry.$2.$1,
-          'description': entry.$2.$2,
-          'category': 'talk',
-          'visibility': 'public',
-          'language': 'English',
-          'participantCount': 4,
-          'memberCount': 0,
-          'isLive': true,
-          'roomType': 'community',
-          'status': 'active',
-          'experience': 'community',
-          'createdAt': Timestamp.now(),
-        });
-      }
+    testWidgets(
+      'the live rooms section renders REAL live rooms with a Live pill; '
+      'and no longer carries a second people-discovery list',
+      (tester) async {
+        final db = FakeFirebaseFirestore();
+        for (final entry in [
+          ('Late Night Confessions', 'Real stories, live now'),
+          ('Friday Freestyle', 'The room is warming up'),
+        ].indexed) {
+          await db.collection('rooms').doc('room-${entry.$1}').set({
+            'hostId': 'host',
+            'hostName': 'Host',
+            'name': entry.$2.$1,
+            'description': entry.$2.$2,
+            'category': 'talk',
+            'visibility': 'public',
+            'language': 'English',
+            'participantCount': 4,
+            'memberCount': 0,
+            'isLive': true,
+            'roomType': 'community',
+            'status': 'active',
+            'experience': 'community',
+            'createdAt': Timestamp.now(),
+          });
+        }
 
-      final rooms = RoomService(
-        firestore: db,
-        auth: MockFirebaseAuth(
-          signedIn: true,
-          mockUser: MockUser(uid: 'me', email: 'me@yovoice.app'),
-        ),
-      );
+        final rooms = RoomService(
+          firestore: db,
+          auth: MockFirebaseAuth(
+            signedIn: true,
+            mockUser: MockUser(uid: 'me', email: 'me@yovoice.app'),
+          ),
+        );
 
-      VoiceRoom? opened;
-      await tester.pumpWidget(
-        host(
-          SizedBox(
-            width: 344,
-            child: VoiceTrendingCard(
-              roomService: rooms,
-              onOpenRoom: (room) => opened = room,
-              onSeeAll: () {},
-              onSeeAllRooms: () {},
+        VoiceRoom? opened;
+        await tester.pumpWidget(
+          host(
+            SizedBox(
+              width: 344,
+              child: VoiceTrendingCard(
+                roomService: rooms,
+                onOpenRoom: (room) => opened = room,
+                onSeeAll: () {},
+                onSeeAllRooms: () {},
+              ),
             ),
           ),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 60));
+        );
+        await tester.pump(const Duration(milliseconds: 60));
 
-      expect(find.text('Voice Trending'), findsOneWidget);
-      // The section listing live ROOMS is labelled as live rooms. It was
-      // headed "Trending Moments" while containing no Moments at all —
-      // the mislabel that made "View all → Discover" look like a routing
-      // bug when the routing matched the content and the heading did not.
-      expect(find.text('Live rooms'), findsOneWidget);
-      expect(find.text('Trending Moments'), findsNothing);
-      expect(find.text('Most liked Moments'), findsOneWidget);
-      expect(find.text('Late Night Confessions'), findsOneWidget);
-      expect(find.text('Real stories, live now'), findsOneWidget);
-      expect(find.text('Live'), findsNWidgets(2));
-      // People discovery lives in the top people rail and in Top
-      // creators now; a third copy inside Voice Trending was the
-      // duplication this redesign removed.
-      expect(find.text('People to Follow'), findsNothing);
-      expect(find.text('View all'), findsOneWidget);
+        expect(find.text('Voice Trending'), findsOneWidget);
+        // The section listing live ROOMS is labelled as live rooms. It was
+        // headed "Trending Moments" while containing no Moments at all —
+        // the mislabel that made "View all → Discover" look like a routing
+        // bug when the routing matched the content and the heading did not.
+        expect(find.text('Live rooms'), findsOneWidget);
+        expect(find.text('Trending Moments'), findsNothing);
+        expect(find.text('Most liked Moments'), findsOneWidget);
+        expect(find.text('Late Night Confessions'), findsOneWidget);
+        expect(find.text('Real stories, live now'), findsOneWidget);
+        expect(find.text('Live'), findsNWidgets(2));
+        // People discovery lives in the top people rail and in Top
+        // creators now; a third copy inside Voice Trending was the
+        // duplication this redesign removed.
+        expect(find.text('People to Follow'), findsNothing);
+        expect(find.text('View all'), findsOneWidget);
 
-      await tester.tap(find.text('Late Night Confessions'));
-      await tester.pump();
-      expect(opened?.name, 'Late Night Confessions');
-    });
+        await tester.tap(find.text('Late Night Confessions'));
+        await tester.pump();
+        expect(opened?.name, 'Late Night Confessions');
+      },
+    );
   });
 
   group('Voice Trending states', () {

@@ -15,6 +15,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trending_card.dart';
@@ -42,7 +43,11 @@ class _DesktopPreviewApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(brightness: Brightness.dark, useMaterial3: true),
+      // The REAL app theme, not an approximation. The rail's card chrome
+      // is drawn from `colorScheme.surface`/`onSurface`/`outlineVariant`,
+      // so a stand-in ThemeData would render colours production never
+      // shows — which defeats the point of a visual harness.
+      theme: AppTheme.darkTheme,
       home: const _DesktopPreviewHome(),
     );
   }
@@ -98,15 +103,34 @@ class _DesktopPreviewHomeState extends State<_DesktopPreviewHome> {
 
 /// Stands in for the real Home content, which this harness deliberately
 /// does not render (it needs a signed-in session).
+///
+/// SCROLLABLE ON PURPOSE. The rail's contract is "the page scrolls, the
+/// rail does not", and a static placeholder cannot demonstrate it — which
+/// is how the rail shipped with a scroll bug nobody could see here. This
+/// list is long enough to scroll at any supported desktop height.
 class _CenterPlaceholder extends StatelessWidget {
   const _CenterPlaceholder();
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Text(
-        'Home content (real HomeScreen in the app)',
-        style: TextStyle(color: AppColors.textHint, fontSize: 13),
+    return ListView.builder(
+      primary: false,
+      padding: const EdgeInsets.fromLTRB(24, 18, 20, 28),
+      itemCount: 40,
+      itemBuilder: (context, index) => Container(
+        height: 96,
+        margin: const EdgeInsets.only(bottom: 16),
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 18),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          color: Colors.white.withValues(alpha: .035),
+          border: Border.all(color: const Color(0xFF2B233F)),
+        ),
+        child: Text(
+          'Home content row ${index + 1} — scroll me; the rail must not move',
+          style: TextStyle(color: AppColors.textHint, fontSize: 13),
+        ),
       ),
     );
   }

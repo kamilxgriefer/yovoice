@@ -36,6 +36,25 @@ someone decide what to pick up next.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it)
 > for why that distinction is the whole point of this wave.
 
+- **The desktop rail is pinned, and its clock becomes a timezone world-map
+  card** (2026-08-22, ADR-107, SOURCE ONLY — no deploy): the rail owns its
+  scroll position explicitly (`controller` + `primary: false`, matching the
+  Home feed and the 344px right rail), and the map tier now sizes from the
+  RAIL's height via a `LayoutBuilder` in the rail rather than
+  `MediaQuery.height`, which could not see `RoomMiniBar` or the verification
+  banner shrinking it. The reported "sidebar scrolls with the page" was
+  measured, not guessed: the rail's `maxScrollExtent` is 0 at 1440x768, 40 at
+  720, 82 at 620, and past that a wheel over the rail scrolls it and it stays
+  scrolled. **Two plausible causes were tested and REJECTED** — a shared
+  `PrimaryScrollController` does not couple scrollables (delta 0.0), and
+  macOS bouncing physics does not rubber-band at zero extent (held drag and
+  trackpad pan-zoom both 0.0). `SidebarClock` becomes `TimezoneWorldMapCard`,
+  keeping its painter and minute-boundary timer and gaining card chrome, a
+  UTC-offset pill, an IANA city/region line and a day/night tint; detection
+  is privacy-shaped and stores nothing. Flutter suite 1198 -> 1208; the new
+  coupling test was confirmed to fail with the fix removed. Visually verified
+  in a real browser at 1440x900 and 1366x700.
+
 - **Mobile Moments 1:1 to the mockup: feed, detail screen, YO-logo nav,
   author-chosen availability, delete-own** (2026-08-22, ADR-103, DEPLOYED —
   functions then hosting, byte-verified): availabilityHours whitelist

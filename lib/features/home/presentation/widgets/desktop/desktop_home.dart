@@ -236,6 +236,18 @@ class _DesktopHomeState extends State<DesktopHome> {
             const gap = SizedBox(height: 26);
 
             return ListView(
+              // The feed owns its own position and never claims the
+              // ambient primary controller. Two bare vertical scrollables
+              // under one PrimaryScrollController do NOT scroll together
+              // — each keeps its own ScrollPosition — but they DO put two
+              // positions on one controller, which `Scrollbar` asserts
+              // against and `controller.offset` throws on. This file hit
+              // exactly that once already (see _RosterListState below).
+              // On desktop targets `shouldInherit` is false anyway; this
+              // makes it true on every target, including an Android
+              // tablet in landscape, which is the one form factor that
+              // reaches the desktop rail with the mobile gate open.
+              primary: false,
               padding: const EdgeInsets.fromLTRB(24, 18, 20, 28),
               children: [
                 _GreetingHeader(profile: _profile),
