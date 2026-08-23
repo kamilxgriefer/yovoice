@@ -717,6 +717,41 @@ The real fix is the same unexported webhook that would repair
 LiveKit's own `participant_left` / `participant_connection_aborted`
 events, which the SFU emits on a crash.
 
+### RELEASED 2026-08-23: the fixed desktop rail and the timezone world-map card
+
+**Hosting only.** No Cloud Functions, Firestore rules, index or Storage change
+was part of this release — the change is entirely client-side
+([ADR-107](Decisions.md#adr-107-the-desktop-rail-owns-its-scroll-position-and-sizes-its-decoration-from-the-rail-not-the-window)).
+
+| Artifact | Command | Verification |
+|---|---|---|
+| Flutter web | `gh workflow run firebase-hosting-merge.yml --ref main -f deploy_hosting=true` | `verify_and_build: success`, `deploy_hosting: success` (run `32655096468`) |
+
+**Verified by fingerprinting the served bytes, not the deploy log.** The
+repository's own standing rule — a green deploy means the upload succeeded,
+nothing more:
+
+| | before | after |
+|---|---|---|
+| `https://app.yovoice.app/main.dart.js` | 6,060,653 B, sha256 `1ee69af6…` | 6,091,200 B, sha256 `c293968af468f1ae` |
+| `resolvedOptions` (the new timezone reader) | **0** | **1** |
+| `Intl.DateTimeFormat` binding | **0** | **1** |
+
+`cmp` reports the served artifact is byte-identical to the locally built
+release. The before-column is what production had been serving since the
+2026-08-20 wave, which is how this release was found to be needed at all.
+
+**Why this needed a deploy at all, stated plainly:** the fix had been sitting
+in `main` since `7308fff` with CI green, and the Roadmap entry said
+"SOURCE ONLY". Source being correct is not the same as users having it — the
+gap is invisible in every console and shows up only when the served bytes are
+fingerprinted.
+
+**Not deployed, and unchanged by this release:** `sweepStrandedLiveRoomsSchedule`
+remains pending (see the section below), and the DM server-only change from
+`claude/silly-hugle-e8a52c` touches `firestore.rules`, which was NOT deployed
+here. Rules in production still predate that merge.
+
 ### Pending release: `sweepStrandedLiveRoomsSchedule`
 
 The scheduled repair for a room left `isLive: true` with an empty

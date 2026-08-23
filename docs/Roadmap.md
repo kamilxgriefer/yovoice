@@ -37,7 +37,7 @@ someone decide what to pick up next.
 > for why that distinction is the whole point of this wave.
 
 - **The desktop rail is pinned, and its clock becomes a timezone world-map
-  card** (2026-08-22, ADR-107, SOURCE ONLY — no deploy): the rail owns its
+  card** (2026-08-22, ADR-107, **DEPLOYED 2026-08-23** — Hosting, byte-verified): the rail owns its
   scroll position explicitly (`controller` + `primary: false`, matching the
   Home feed and the 344px right rail), and the map tier now sizes from the
   RAIL's height via a `LayoutBuilder` in the rail rather than
@@ -53,7 +53,14 @@ someone decide what to pick up next.
   UTC-offset pill, an IANA city/region line and a day/night tint; detection
   is privacy-shaped and stores nothing. Flutter suite 1198 -> 1208; the new
   coupling test was confirmed to fail with the fix removed. Visually verified
-  in a real browser at 1440x900 and 1366x700.
+  in a real browser at 1440x900 and 1366x700. **Released to production on
+  2026-08-23** by manual `workflow_dispatch` with `deploy_hosting: true`;
+  verified by fingerprinting the SERVED bytes rather than trusting the deploy
+  log — `https://app.yovoice.app/main.dart.js` is now byte-identical to the
+  local release build (sha256 `c293968af468f1ae`, 6,091,200 bytes) and
+  contains the `Intl.DateTimeFormat` binding, where the previously served
+  artifact (`1ee69af6…`, 6,060,653 bytes) contained neither it nor
+  `resolvedOptions`.
 
 - **Mobile Moments 1:1 to the mockup: feed, detail screen, YO-logo nav,
   author-chosen availability, delete-own** (2026-08-22, ADR-103, DEPLOYED —
