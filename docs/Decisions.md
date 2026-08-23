@@ -6481,3 +6481,73 @@ and right Home columns to scroll as one surface. They remain two independent
 scrollables, which is the approved composition (`useRightRail`, a fixed
 344 px rail) and merging them would be the redesign the same brief forbids.
 Raise it as its own change if the preference is firm.
+
+## ADR-108: `main` is unprotected again — a solo repository pays the pull-request tax for a review that never happens
+
+**Context.** On 2026-08-23 a `Protect main` ruleset was activated and
+[ADR-002](#adr-002-git-workflow-push-straight-to-main-no-prs) was declared
+superseded: every change had to go through a focused branch, a pull request,
+three required checks and a squash merge. That policy lasted one day and
+produced exactly one delivery through it (PR #20).
+
+The reversal is not "protection turned out to be worthless". It is that the
+protection was buying a review step **that does not exist here**. The ruleset
+required zero approvals, because an author cannot approve their own pull
+request and this repository has one author. What remained was ceremony:
+branch, push branch, open PR, wait ~8 minutes for `verify_and_build`, squash,
+pull, delete branch — for a change one person wrote, verified locally and was
+always going to ship.
+
+**Decision.** `main` is unprotected. Commit and push straight to it.
+
+- The `Protect main` ruleset (id `21232425`) is **deleted**, not disabled.
+  `gh api repos/kamilxgriefer/yovoice/rulesets` returns `[]` and
+  `…/branches/main/protection` returns 404.
+- `.github/rulesets/main-protection.json` is **deleted**. A versioned
+  "how to restore protection" recipe is precisely what a future agent
+  re-imports while trying to be helpful, so the recipe is gone rather than
+  left as a loaded gun.
+- Agents do not open pull requests unless the maintainer asks in that session,
+  and do not re-add protection. `CLAUDE.md` says so in the imperative and
+  names this ADR.
+- **CI is untouched.** `verify_and_build`, `Playwright against release web
+  build` and `CodeQL` already declared `push: branches: [main]` alongside
+  `pull_request:`, so they keep running automatically on every direct push.
+  No workflow file needed editing — verified by reading the `on:` blocks
+  rather than assumed.
+- Dependabot keeps opening dependency pull requests. That is dependency
+  monitoring, not a review gate on the maintainer's own work.
+
+**Reasoning.** The pull-request workflow moved CI from "reports on `main`" to
+"blocks a merge". That is a genuine improvement *when a human reviews the
+diff*. With no reviewer, the same checks run either way and the only thing the
+gate adds is latency between writing a change and having it on `main` — plus a
+standing invitation for an agent to spend a turn on branch bookkeeping instead
+of the work.
+
+What the trade actually costs is worth stating plainly rather than
+minimising: **CI now reports after `main` has already moved.** A broken push
+lands on `main` and is discovered minutes later. The mitigation is that the
+local gate becomes the real gate — `flutter analyze`, `flutter test` and the
+emulator suites must be green *before* the push, not after — and that `main`
+is recoverable because force-push is not used and risky work is preceded by a
+tag snapshot. For a repository whose production deploys are all manual, a
+briefly-red `main` costs a follow-up commit, not an outage.
+
+**Consequences.** ADR-002 is reinstated, not superseded; this entry records
+why the one-day detour happened and why it was reversed, so the question is
+not reopened by rediscovering the same reasoning. `docs/BRANCH_PROTECTION.md`
+now documents the *absence* of protection and is kept — deliberately — rather
+than deleted, because a file that says "there is no PR requirement, do not add
+one" is a stronger signal to a future session than a missing file.
+`docs/DEVELOPMENT_WORKFLOW.md` and `docs/CONTRIBUTING.md` needed no change:
+the first never stopped documenting direct-to-main (the two docs had silently
+contradicted each other for a day), and the second describes what would change
+if a second contributor joined, which is still true and is still the trigger
+for reinstating protection.
+
+**The release boundary is unchanged and is unaffected.** Production Hosting
+deploys only on `workflow_dispatch` with `deploy_hosting: true`; rules,
+indexes and Functions deploy by hand. Pushing to `main` ships nothing to
+users, which is what makes an unprotected default branch an acceptable trade
+here and would not make it one in a repository that auto-deploys.

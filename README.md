@@ -50,10 +50,8 @@ it:
   Rules principles and current security model;
 - [`docs/QUALITY_AUTOMATION.md`](docs/QUALITY_AUTOMATION.md) — CI, browser
   automation, SAST, dependency monitoring and portfolio evidence;
-- [`docs/BRANCH_PROTECTION.md`](docs/BRANCH_PROTECTION.md) — protected-`main`
-  workflow, required checks and the solo-maintainer policy;
-- [`.github/rulesets/main-protection.json`](.github/rulesets/main-protection.json)
-  — importable GitHub ruleset for the default branch.
+- [`docs/BRANCH_PROTECTION.md`](docs/BRANCH_PROTECTION.md) — why `main` is
+  deliberately unprotected, and what the local gate has to cover instead.
 
 ## 🧱 Technology stack
 
@@ -95,35 +93,36 @@ boundary.
 See [`docs/QUALITY_AUTOMATION.md`](docs/QUALITY_AUTOMATION.md) for the trigger
 matrix, limitations and ready-to-use CV wording.
 
-## 🔐 Protected change workflow
+## 🔐 Change workflow and the release boundary
 
-The repository's intended delivery path is:
+This is a solo-maintained repository and `main` is deliberately **not**
+protected. The delivery path is:
 
 ```text
-focused branch
-→ pull request
-→ verify_and_build + Playwright + CodeQL
-→ resolve review conversations
-→ squash merge
-→ main
+local verification (flutter analyze + flutter test + emulator suites)
+→ commit
+→ push straight to main
+→ verify_and_build + Playwright + CodeQL run automatically
 ```
 
-The versioned ruleset requires the pull-request branch to be current with
-`main`, keeps history linear, allows squash merge only, and blocks force pushes
-and deletion of the default branch. Required checks are:
+No feature branch, no pull request, no approval step. The reasoning, and the
+trade it makes, are in
+[`docs/BRANCH_PROTECTION.md`](docs/BRANCH_PROTECTION.md) and
+[ADR-108](docs/Decisions.md#adr-108-main-is-unprotected-again--a-solo-repository-pays-the-pull-request-tax-for-a-review-that-never-happens).
+The honest cost: CI now reports **after** `main` moves instead of blocking a
+merge, so the local run before pushing is the real gate. Never push on a failed
+run, and never force-push `main`.
 
-- `verify_and_build`;
-- `Playwright against release web build`;
-- `Analyze JavaScript and TypeScript`.
+Dependabot still opens dependency pull requests — that is dependency
+monitoring, and it stays. A pull request in this repository means "a bot
+proposed a dependency bump", not "the maintainer is waiting for review".
 
-The approval count is intentionally zero because this is a solo-maintained
-repository and an author cannot approve their own pull request. Automated gates
-and unresolved review conversations still block merge. The committed JSON is
-the reproducible policy; actual enforcement is provided by the GitHub ruleset
-when it is set to **Active**.
-
-Full details are documented in
-[`docs/BRANCH_PROTECTION.md`](docs/BRANCH_PROTECTION.md).
+**The release boundary is unchanged and is the one thing still gated.**
+Production Hosting is never published by an ordinary push: the deploy job runs
+only on `workflow_dispatch` with `deploy_hosting: true`. Firestore rules,
+indexes, Storage rules and Cloud Functions are deployed by hand — see
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). Pushing to `main` ships nothing to
+users.
 
 ## 🚀 Development setup
 

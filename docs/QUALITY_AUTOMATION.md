@@ -90,8 +90,17 @@ When suite counts change, use the measured figures in
 
 ## Validating automation changes
 
-Product work in this solo repository normally lands directly on `main`, but a
-change to `.github/workflows` should be exercised once through a pull request.
-That is the only honest way to prove the `pull_request` trigger, read-only token
-permissions and all three independent quality workflows behave as documented;
+Product work in this solo repository lands directly on `main` — there is no
+pull-request step and agents must not introduce one
+([ADR-108](Decisions.md#adr-108-main-is-unprotected-again--a-solo-repository-pays-the-pull-request-tax-for-a-review-that-never-happens)).
+
+A change to `.github/workflows` is the one case where a pull request would buy
+something a direct push cannot: it is the only way to exercise the
+`pull_request` trigger itself. **Prefer `workflow_dispatch`** — all three
+quality workflows declare it, so a manual run proves the job, its permissions
+and its steps without a branch. Open a pull request for this only if the
+maintainer asks for one; the `pull_request` trigger is exercised continuously
+by Dependabot's own pull requests in any case. When one is used deliberately,
+it proves the trigger, read-only token permissions and that all three
+independent quality workflows behave as documented;
 a successful push run cannot validate a PR-only execution path.

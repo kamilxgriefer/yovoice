@@ -101,15 +101,26 @@ version:
 
 ## Project-specific conventions already established
 
-- **Git workflow**: never push directly to `main`. Work on a focused branch
-  and open a pull request into `main`. Merge only after `verify_and_build`,
-  `Playwright against release web build`, and
-  `Analyze JavaScript and TypeScript` are green. Use squash merge so
-  `main` remains linear. This protected-main policy supersedes ADR-002;
-  `.github/rulesets/main-protection.json` is the canonical import recipe and
-  GitHub Settings → Rules remains the enforcement authority. Because this is
-  a solo repository, zero human approvals are required, but unresolved review
-  conversations and all required automated checks still block merge.
+- **Git workflow**: **commit and push straight to `main`.** No feature
+  branch, no pull request, no waiting for a human. This is the deliberate
+  choice for a solo repository — see
+  [ADR-002](docs/Decisions.md#adr-002-git-workflow-push-straight-to-main-no-prs)
+  and [ADR-108](docs/Decisions.md#adr-108-main-is-unprotected-again--a-solo-repository-pays-the-pull-request-tax-for-a-review-that-never-happens).
+  **Do not open a pull request unless the maintainer asks for one in that
+  session**, and do not restore branch protection or re-add a ruleset;
+  `main` is deliberately unprotected and there is no ruleset recipe in the
+  repo to re-import.
+  *(A protected-main policy existed briefly on 2026-08-23 and was reversed
+  the next day. If you find a doc that still mandates pull requests, that
+  doc is stale — fix it rather than following it.)*
+  Because nothing on the server blocks a bad push any more, **the local gate
+  is the gate**: `flutter analyze` and `flutter test` must be green *before*
+  you push, plus the emulator suites for any backend change. Never push on a
+  failed run and never force-push `main`. CI still runs automatically on
+  every push to `main` — it now reports after the fact rather than blocking,
+  which is exactly why the local run matters more, not less.
+  Before a risky change — schema, rules, a large refactor — snapshot `main`
+  with a local tag or branch first.
 - **Verification gate**: `flutter analyze` must be clean before considering
   Dart work done. For UI changes, verify in the iOS Simulator when possible.
 - **Visual claims need visual proof.** `flutter analyze`, `flutter test`,
