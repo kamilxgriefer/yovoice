@@ -6389,3 +6389,95 @@ Index deploys remain a deliberate manual step (`docs/DEPLOYMENT.md`).
 The emulator cannot catch a missing single-field exemption any more than
 a missing composite index, so "the suite is green" remains non-evidence
 for any `collectionGroup()` query — same family as ADR-007 and ADR-082.
+
+## ADR-107: The desktop rail owns its scroll position and sizes its decoration from the RAIL, not the window
+
+**Context.** The rail was reported as "moving with the page". It was not, and
+proving that mattered more than patching it. The rail is a `Row` child inside
+an `Expanded` inside the shell's `Column` (`main_shell.dart`), so nothing
+above it can translate it, and the browser document cannot scroll: read live
+in a running build, `document.scrollingElement.scrollHeight == clientHeight`
+and `body` computes to `position: fixed; overflow: hidden`, because
+`flutter_bootstrap.js` initializes with no `hostElement`.
+
+What moved was the nav column's own `SingleChildScrollView`. The rail's fixed
+chrome plus six destinations, two Create buttons and More demand more height
+than the rail gets once the window is short or `RoomMiniBar` is mounted.
+Measured on the real widget: `maxScrollExtent` is 0 at 1440×768, **40** at
+720, **82** at 620. Past that threshold a wheel gesture with the pointer over
+the rail scrolls it, and it stays scrolled — which is what clipped the Home
+tile under the wordmark in the original report.
+
+**Two plausible causes were tested and rejected**, and they are recorded
+because both are folklore that sounds right:
+
+1. **A shared `PrimaryScrollController` does not couple two scrollables.**
+   Driving one and measuring the other gives a delta of 0.0 — each
+   `Scrollable` keeps its own `ScrollPosition`. What it *does* do is put two
+   positions on one controller, which `Scrollbar` asserts against and
+   `controller.offset` throws on. That is a real defect
+   ([`desktop_home.dart`](../lib/features/home/presentation/widgets/desktop/desktop_home.dart)
+   already hit it once) but it is not this one, and it is only reachable at
+   all on a mobile-platform target at ≥1100 px — an Android tablet in
+   landscape — because `shouldInherit` gates on
+   `automaticallyInheritForPlatforms`, which defaults to the mobile set.
+2. **macOS `BouncingScrollPhysics` does not rubber-band at zero extent.** A
+   held pointer drag and a trackpad pan-zoom both left `pixels` at 0.0. No
+   physics override is warranted, so none was added.
+
+**Decision.** Three parts.
+
+1. The rail is a `StatefulWidget` owning a `ScrollController`, and its nav
+   column declares `controller` + `primary: false`. The Home feed and the
+   344 px right rail declare `primary: false` too — closing the latent
+   two-positions-on-one-controller collision on principle, not as the cause.
+2. The map tier reads the **rail's** height from a `LayoutBuilder` in the
+   rail itself. `MediaQuery.sizeOf(context).height` is the wrong measurement:
+   `RoomMiniBar` (~118 px with a live room) and the verification banner
+   (~38 px) both shrink the rail without changing the window, which is
+   exactly the state the old `>= 700` window gate got wrong. A `LayoutBuilder`
+   inside the card cannot do this — as a non-flex `Column` child its own
+   vertical constraint is `Infinity`, confirmed by probe — so the rail
+   measures once and passes `railHeight` down.
+3. `SidebarClock` becomes `TimezoneWorldMapCard`: the same painter, the same
+   minute-boundary timer, plus card chrome lifted verbatim from the
+   `_ProfileCard` beneath it, a UTC-offset pill, an IANA city/region line and
+   a day/night tint. It **replaces** the clock rather than joining it — there
+   is one local time in the rail, not two.
+
+**Reasoning.** Fixing the symptom (`primary: false` alone) would have left the
+rail still demanding 758 px it does not always have. Fixing only the height
+would have left the controller collision for the next Android-tablet user.
+The card is an extension rather than a new build because the rail already
+shipped a procedural dotted world map with a UTC-offset glow dot; adding a
+second one was the obvious wrong move.
+
+Timezone resolution is **detection-only**, and the privacy posture is
+structural rather than declared: `TimezoneReading` has no latitude, longitude,
+city, country or IP field, because none is collected. `UserProfile` has no
+timezone field, and its `country` is free text typed into a bare
+`TextEditingController`, so nothing stored could have been used. The chain is
+injected label → browser IANA → `DateTime.timeZoneName` → UTC offset. The web
+reader is one isolated conditional-import file following
+`audio_capture_platform.dart`, with the parsing kept in plain Dart so the VM
+test runner can drive it. **`@JS('Intl.DateTimeFormat')` is load-bearing** —
+without it the `external factory` names no global constructor and the reader
+silently returns null; that was found by looking at the running app, in a
+browser whose console answered `Europe/Amsterdam` perfectly well.
+
+**Consequences.** No Firestore, rules, index or Storage change. No
+`web/index.html` change, and that is now evidence-backed rather than assumed.
+The rail is a `StatefulWidget`, so anything constructing it in a test keeps
+working but `tester.widget<DesktopSidebar>` still resolves. `SidebarClock`
+and `SidebarClockState` are renamed; the three call sites and six existing
+clock tests moved with them. The card now honours
+`MediaQuery.alwaysUse24HourFormatOf` instead of hard-coding 24-hour — the
+same fix `message_bubble.dart`, `edit_profile_screen.dart` and
+`club_chat_screen.dart` each needed — so tests asserting `18:42` must supply
+that `MediaQuery`.
+
+**Not done, and stated rather than hidden.** The brief preferred the centre
+and right Home columns to scroll as one surface. They remain two independent
+scrollables, which is the approved composition (`useRightRail`, a fixed
+344 px rail) and merging them would be the redesign the same brief forbids.
+Raise it as its own change if the preference is firm.

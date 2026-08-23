@@ -20,6 +20,37 @@ about things that are broken, risky, or need verification.
 
 ## Security
 
+- **FIXED IN SOURCE 2026-08-22, NOT DEPLOYED — the desktop rail's navigation
+  column could sit scrolled, clipping the Home tile under the wordmark.** The
+  rail itself never moved with the page (it is a `Row` child inside an
+  `Expanded`, and the browser document cannot scroll — `body` computes to
+  `position: fixed; overflow: hidden`), but its own nav `SingleChildScrollView`
+  genuinely overflows once the rail drops below ~730px: `maxScrollExtent` is 0
+  at 1440x768, **40 at 720** and **82 at 620**, and `RoomMiniBar` alone costs
+  ~118px without changing the window height. A wheel gesture with the pointer
+  over the rail then scrolled it and it stayed scrolled. The rail now owns its
+  scroll position (`controller` + `primary: false`) and its decoration sizes
+  from the rail's real height instead of `MediaQuery.height`, which could not
+  see the mini player. Two folk explanations were tested and are false: a
+  shared `PrimaryScrollController` does not couple two scrollables, and macOS
+  bouncing physics does not rubber-band at zero extent. See
+  [ADR-107](Decisions.md#adr-107-the-desktop-rail-owns-its-scroll-position-and-sizes-its-decoration-from-the-rail-not-the-window).
+
+- **FIXED IN SOURCE 2026-08-22 — the desktop rail hard-coded a 24-hour
+  clock.** The same defect `message_bubble.dart`, `edit_profile_screen.dart`
+  and `club_chat_screen.dart` each had to fix: a 12-hour-clock locale was
+  shown "13:04". The timezone card now reads
+  `MediaQuery.alwaysUse24HourFormatOf(context)`. Confirmed live — an `en-GB`
+  browser rendered "1:37 PM".
+
+- **FIXED BEFORE IT SHIPPED 2026-08-22 — the new web timezone reader returned
+  null in every browser.** `external factory` on a bare extension type names
+  no global constructor, so `Intl.DateTimeFormat()` resolved to nothing and
+  the card silently fell back to the platform abbreviation. Found by looking
+  at the running app, in a browser whose own console answered
+  `Europe/Amsterdam`. `@JS('Intl.DateTimeFormat')` is the binding that makes
+  it work and is load-bearing.
+
 - **FIXED IN SOURCE 2026-08-19, NOT DEPLOYED — room chat was the largest
   unguarded client write surface in the product.** The rule checked
   `senderId` and membership and nothing else about the document, so an
