@@ -101,9 +101,15 @@ version:
 
 ## Project-specific conventions already established
 
-- **Git workflow**: push straight to `main`, no feature branches or PRs, in
-  both this repo and `yovoice-website`. Back up first (a local tag/branch
-  snapshot) before a bigger change — see `docs/Decisions.md`.
+- **Git workflow**: never push directly to `main`. Work on a focused branch
+  and open a pull request into `main`. Merge only after `verify_and_build`,
+  `Playwright against release web build`, and
+  `Analyze JavaScript and TypeScript` are green. Use squash merge so
+  `main` remains linear. This protected-main policy supersedes ADR-002;
+  `.github/rulesets/main-protection.json` is the canonical import recipe and
+  GitHub Settings → Rules remains the enforcement authority. Because this is
+  a solo repository, zero human approvals are required, but unresolved review
+  conversations and all required automated checks still block merge.
 - **Verification gate**: `flutter analyze` must be clean before considering
   Dart work done. For UI changes, verify in the iOS Simulator when possible.
 - **Visual claims need visual proof.** `flutter analyze`, `flutter test`,
