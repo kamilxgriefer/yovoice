@@ -17,6 +17,8 @@ responsive product for mobile, web and desktop.
 The repository documents both the product and the engineering decisions behind
 it:
 
+- [`SECURITY.md`](SECURITY.md) — private vulnerability reporting and responsible
+  disclosure policy;
 - [`docs/Vision.md`](docs/Vision.md) — product purpose and quality bar;
 - [`docs/Architecture.md`](docs/Architecture.md) — Flutter, Firebase, Cloud
   Functions and LiveKit system map;
@@ -25,7 +27,8 @@ it:
   its known limits;
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — verified build and controlled
   production-release process;
-- [`docs/SECURITY.md`](docs/SECURITY.md) — authorization and security model;
+- [`docs/SECURITY.md`](docs/SECURITY.md) — authorization architecture, Firebase
+  rules principles and current security model;
 - [`docs/QUALITY_AUTOMATION.md`](docs/QUALITY_AUTOMATION.md) — CI, browser
   automation, SAST, dependency monitoring and portfolio evidence.
 
