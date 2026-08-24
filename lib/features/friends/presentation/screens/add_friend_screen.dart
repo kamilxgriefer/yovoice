@@ -10,7 +10,11 @@ import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 class AddFriendScreen extends StatefulWidget {
-  const AddFriendScreen({this.friendService, this.socialGraphService, super.key});
+  const AddFriendScreen({
+    this.friendService,
+    this.socialGraphService,
+    super.key,
+  });
 
   /// Optional injection seams, matching the established pattern on
   /// ChatScreen and NotificationsScreen: production passes nothing and
@@ -40,18 +44,22 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
   List<FriendUser> _results = const [];
   final Map<String, FriendRelationshipStatus> _relationshipStatuses = {};
   final Set<String> _processingIds = <String>{};
-  final Set<String> _sentSuggestionIds = <String>{};
+  final Map<String, FriendRelationshipStatus> _suggestionStatuses = {};
 
   bool _isSearching = false;
   String? _errorMessage;
-  late final Future<List<SuggestedFriend>> _suggestionsFuture;
+  late Future<List<SuggestedFriend>> _suggestionsFuture;
 
   @override
   void initState() {
     super.initState();
-    _suggestionsFuture = _socialGraphService.getFriendSuggestions().catchError(
-      (_) => const <SuggestedFriend>[],
-    );
+    _suggestionsFuture = _socialGraphService.getFriendSuggestions();
+  }
+
+  void _retrySuggestions() {
+    setState(() {
+      _suggestionsFuture = _socialGraphService.getFriendSuggestions();
+    });
   }
 
   @override
@@ -65,7 +73,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     if (_processingIds.contains(suggestion.uid)) return;
     setState(() => _processingIds.add(suggestion.uid));
     try {
-      await _friendService.sendFriendRequest(
+      final relationship = await _friendService.sendFriendRequest(
         FriendUser(
           id: suggestion.uid,
           displayName: suggestion.displayName,
@@ -76,8 +84,12 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         ),
       );
       if (!mounted) return;
-      setState(() => _sentSuggestionIds.add(suggestion.uid));
-      _showMessage('Friend request sent to ${suggestion.displayName}.');
+      setState(() => _suggestionStatuses[suggestion.uid] = relationship);
+      _showMessage(
+        relationship == FriendRelationshipStatus.friends
+            ? 'You and ${suggestion.displayName} are now friends.'
+            : 'Friend request sent to ${suggestion.displayName}.',
+      );
     } catch (error) {
       if (mounted) _showError(_readableError(error));
     } finally {
@@ -192,15 +204,19 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
         return;
       }
 
-      await _friendService.sendFriendRequest(user);
+      final relationship = await _friendService.sendFriendRequest(user);
 
       if (!mounted) return;
 
       setState(() {
-        _relationshipStatuses[user.id] = FriendRelationshipStatus.requestSent;
+        _relationshipStatuses[user.id] = relationship;
       });
 
-      _showMessage('Friend request sent to ${user.displayName}.');
+      _showMessage(
+        relationship == FriendRelationshipStatus.friends
+            ? 'You and ${user.displayName} are now friends.'
+            : 'Friend request sent to ${user.displayName}.',
+      );
     } catch (error) {
       if (!mounted) return;
 
@@ -489,9 +505,22 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
     return FutureBuilder<List<SuggestedFriend>>(
       future: _suggestionsFuture,
       builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(
+            child: CircularProgressIndicator(strokeWidth: 2.5, color: _primary),
+          );
+        }
+        if (snapshot.hasError) {
+          return _SearchState(
+            icon: Icons.cloud_off_rounded,
+            title: 'Could not load suggestions',
+            subtitle: 'Check your connection and try again.',
+            actionLabel: 'Retry',
+            onAction: _retrySuggestions,
+          );
+        }
         final suggestions = snapshot.data ?? const <SuggestedFriend>[];
-        if (snapshot.connectionState != ConnectionState.done ||
-            suggestions.isEmpty) {
+        if (suggestions.isEmpty) {
           return const _SearchState(
             icon: Icons.person_search_rounded,
             title: 'Find someone you know',
@@ -520,7 +549,7 @@ class _AddFriendScreenState extends State<AddFriendScreen> {
                 child: _SuggestionCard(
                   suggestion: suggestion,
                   isProcessing: _processingIds.contains(suggestion.uid),
-                  sent: _sentSuggestionIds.contains(suggestion.uid),
+                  relationshipStatus: _suggestionStatuses[suggestion.uid],
                   onPressed: () => _addSuggestion(suggestion),
                 ),
               ),
@@ -536,18 +565,21 @@ class _SuggestionCard extends StatelessWidget {
   const _SuggestionCard({
     required this.suggestion,
     required this.isProcessing,
-    required this.sent,
+    required this.relationshipStatus,
     required this.onPressed,
   });
 
   final SuggestedFriend suggestion;
   final bool isProcessing;
-  final bool sent;
+  final FriendRelationshipStatus? relationshipStatus;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
     final hasPhoto = suggestion.photoUrl?.trim().isNotEmpty == true;
+    final isFriend = relationshipStatus == FriendRelationshipStatus.friends;
+    final isSent = relationshipStatus == FriendRelationshipStatus.requestSent;
+    final isComplete = isFriend || isSent;
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -624,16 +656,28 @@ class _SuggestionCard extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           SizedBox(
-            height: 40,
+            height: 44,
             child: FilledButton.icon(
-              onPressed: isProcessing || sent ? null : onPressed,
+              onPressed: isProcessing || isComplete ? null : onPressed,
               style: FilledButton.styleFrom(
-                backgroundColor: sent
+                backgroundColor: isFriend
+                    ? const Color(0xFF26392E)
+                    : isSent
                     ? const Color(0xFF3A2F1D)
                     : const Color(0xFF8A2BE2),
-                disabledBackgroundColor: const Color(0xFF2A2533),
-                foregroundColor: sent ? const Color(0xFFFFC66D) : Colors.white,
-                disabledForegroundColor: sent
+                disabledBackgroundColor: isFriend
+                    ? const Color(0xFF26392E)
+                    : isSent
+                    ? const Color(0xFF3A2F1D)
+                    : const Color(0xFF2A2533),
+                foregroundColor: isFriend
+                    ? const Color(0xFF73D99A)
+                    : isSent
+                    ? const Color(0xFFFFC66D)
+                    : Colors.white,
+                disabledForegroundColor: isFriend
+                    ? const Color(0xFF73D99A)
+                    : isSent
                     ? const Color(0xFFFFC66D)
                     : const Color(0xFF8F8799),
                 padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -651,13 +695,13 @@ class _SuggestionCard extends StatelessWidget {
                       ),
                     )
                   : Icon(
-                      sent
+                      isComplete
                           ? Icons.check_rounded
                           : Icons.person_add_alt_1_rounded,
                       size: 18,
                     ),
               label: Text(
-                sent ? 'Sent' : 'Add',
+                isFriend ? 'Friends' : (isSent ? 'Sent' : 'Add'),
                 style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w800,
@@ -692,6 +736,114 @@ class _UserResultCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final button = _buttonPresentation(relationshipStatus);
+    final identity = Row(
+      children: [
+        _UserAvatar(user: user),
+        const SizedBox(width: 13),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    user.displayName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  UserIdentityBadges(uid: user.id),
+                ],
+              ),
+              if (user.username.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '@${user.username}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _AddFriendScreenState._secondaryText,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+    final primary = FilledButton(
+      onPressed:
+          isProcessing ||
+              relationshipStatus == FriendRelationshipStatus.friends ||
+              relationshipStatus == FriendRelationshipStatus.blocked
+          ? null
+          : onPressed,
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(0, 44),
+        backgroundColor: button.backgroundColor,
+        disabledBackgroundColor: button.disabledBackgroundColor,
+        foregroundColor: button.foregroundColor,
+        disabledForegroundColor: button.disabledForegroundColor,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(13)),
+      ),
+      child: isProcessing
+          ? const SizedBox(
+              width: 17,
+              height: 17,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(button.icon, size: 18),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    button.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+    );
+    final decline =
+        relationshipStatus == FriendRelationshipStatus.requestReceived
+        ? SizedBox(
+            width: 44,
+            height: 44,
+            child: IconButton(
+              onPressed: isProcessing ? null : onDecline,
+              tooltip: 'Decline friend request',
+              style: IconButton.styleFrom(
+                backgroundColor: const Color(0xFF3A2020),
+                disabledBackgroundColor: const Color(0xFF2A2533),
+                foregroundColor: const Color(0xFFE38B8B),
+                disabledForegroundColor: const Color(0xFF8F8799),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(13),
+                ),
+              ),
+              icon: const Icon(Icons.close_rounded, size: 20),
+            ),
+          )
+        : null;
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -700,114 +852,32 @@ class _UserResultCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(19),
         border: Border.all(color: _AddFriendScreenState._border),
       ),
-      child: Row(
-        children: [
-          _UserAvatar(user: user),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Wrap(
-                  spacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      user.displayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    UserIdentityBadges(uid: user.id),
-                  ],
-                ),
-                if (user.username.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    '@${user.username}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: _AddFriendScreenState._secondaryText,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          SizedBox(
-            height: 40,
-            child: FilledButton(
-              onPressed:
-                  isProcessing ||
-                      relationshipStatus == FriendRelationshipStatus.friends ||
-                      relationshipStatus == FriendRelationshipStatus.blocked
-                  ? null
-                  : onPressed,
-              style: FilledButton.styleFrom(
-                backgroundColor: button.backgroundColor,
-                disabledBackgroundColor: button.disabledBackgroundColor,
-                foregroundColor: button.foregroundColor,
-                disabledForegroundColor: button.disabledForegroundColor,
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(13),
-                ),
-              ),
-              child: isProcessing
-                  ? const SizedBox(
-                      width: 17,
-                      height: 17,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(button.icon, size: 18),
-                        const SizedBox(width: 6),
-                        Text(
-                          button.label,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-          ),
-          if (relationshipStatus ==
-              FriendRelationshipStatus.requestReceived) ...[
-            const SizedBox(width: 6),
-            SizedBox(
-              width: 40,
-              height: 40,
-              child: IconButton(
-                onPressed: isProcessing ? null : onDecline,
-                tooltip: 'Decline friend request',
-                style: IconButton.styleFrom(
-                  backgroundColor: const Color(0xFF3A2020),
-                  disabledBackgroundColor: const Color(0xFF2A2533),
-                  foregroundColor: const Color(0xFFE38B8B),
-                  disabledForegroundColor: const Color(0xFF8F8799),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(13),
-                  ),
-                ),
-                icon: const Icon(Icons.close_rounded, size: 20),
-              ),
-            ),
-          ],
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stack =
+              constraints.maxWidth < 360 ||
+              MediaQuery.textScalerOf(context).scale(1) >= 1.5;
+          final actions = Row(
+            children: [
+              Expanded(child: primary),
+              if (decline != null) ...[const SizedBox(width: 8), decline],
+            ],
+          );
+          if (stack) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [identity, const SizedBox(height: 12), actions],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: identity),
+              const SizedBox(width: 10),
+              Flexible(child: primary),
+              if (decline != null) ...[const SizedBox(width: 6), decline],
+            ],
+          );
+        },
       ),
     );
   }
@@ -945,11 +1015,15 @@ class _SearchState extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.subtitle,
+    this.actionLabel,
+    this.onAction,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
+  final String? actionLabel;
+  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -988,6 +1062,18 @@ class _SearchState extends StatelessWidget {
                 height: 1.45,
               ),
             ),
+            if (actionLabel != null && onAction != null) ...[
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: onAction,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(120, 44),
+                  backgroundColor: const Color(0xFF9D20FF),
+                  foregroundColor: Colors.white,
+                ),
+                child: Text(actionLabel!),
+              ),
+            ],
           ],
         ),
       ),

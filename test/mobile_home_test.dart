@@ -112,6 +112,7 @@ void main() {
     VoidCallback? onProfile,
     ValueChanged<Conversation>? onOpenConversation,
     StaffCapabilityService? capabilityService,
+    int unreadNotificationCount = 0,
   }) {
     final firebaseAuth = auth();
     return MobileHome(
@@ -120,6 +121,7 @@ void main() {
       onOpenFindCreators: onFindCreators,
       onOpenFriends: onFriends ?? () {},
       onOpenNotifications: () {},
+      unreadNotificationCount: unreadNotificationCount,
       onOpenProfile: onProfile ?? () {},
       onCreateMoment: onCreateMoment ?? () {},
       onCreateRoom: onCreateRoom ?? () {},
@@ -296,6 +298,20 @@ void main() {
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     expect(opens, 1);
+  });
+
+  testWidgets('mobile bell exposes the unread count and a 44px target', (
+    tester,
+  ) async {
+    usePhone(tester, const Size(390, 844));
+    await tester.pumpWidget(host(buildHome(unreadNotificationCount: 7)));
+    await tester.pump(const Duration(milliseconds: 150));
+
+    final bell = find.bySemanticsLabel('Notifications, 7 unread');
+    expect(bell, findsOneWidget);
+    expect(find.text('7'), findsOneWidget);
+    expect(tester.getSize(bell).width, greaterThanOrEqualTo(44));
+    expect(tester.getSize(bell).height, greaterThanOrEqualTo(44));
   });
 
   testWidgets('no live rooms: compact honest empty states', (tester) async {

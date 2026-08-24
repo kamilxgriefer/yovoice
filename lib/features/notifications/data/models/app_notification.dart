@@ -46,9 +46,8 @@ class AppNotification {
 
   /// Who triggered this notification. Display text is always composed
   /// client-side from (type, actorName[, targetLabel]) rather than trusting
-  /// a sender-supplied body string — firestore.rules only lets the actor
-  /// write structured fields, never free text, so there's nothing here a
-  /// malicious sender could use to phish the recipient with fake content.
+  /// a free-form body string. Notification documents are written only by
+  /// trusted server authorities; Firestore Rules deny every client create.
   final String actorId;
   final String actorName;
   final String? actorPhotoUrl;
@@ -61,16 +60,16 @@ class AppNotification {
   final bool isRead;
   final DateTime? createdAt;
 
-  /// Client-chosen key used to collapse repeat notifications of the same
-  /// kind (e.g. re-inviting the same person to the same club) instead of
-  /// piling up duplicates. Purely advisory — not enforced by rules.
+  /// Server-chosen key used to collapse repeat notifications of the same
+  /// kind instead of piling up duplicates. The exact lifecycle and
+  /// generation semantics are owned by the corresponding server writer.
   final String? dedupeKey;
 
   /// True for records that exist only to carry a push (friend DMs): the
   /// chat surfaces already show that unread state, so the global bell
-  /// feed and its badge skip these instead of duplicating it. Routing is
-  /// decided by the SENDER at write time (see MessageService), not
-  /// filtered cosmetically per screen.
+  /// feed and its badge skip these instead of duplicating it. The trusted
+  /// server-side activity writer decides this at write time; screens do not
+  /// infer or override it cosmetically.
   final bool bellSuppressed;
 
   String get title {

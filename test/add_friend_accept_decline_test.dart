@@ -5,6 +5,7 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/friends/presentation/screens/add_friend_screen.dart';
@@ -55,13 +56,19 @@ void main() {
     PublicIdentityRepository.instance = originalIdentityRepository;
   });
 
-  FriendService buildService() {
+  FriendService buildService({String? sendOutcome}) {
     return FriendService(
       firestore: db,
       auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: meUid)),
       mutationInvoker: (name, data) async {
         calls.add((name: name, data: data));
         await mutationGate?.future;
+        if (name == 'sendFriendRequest') {
+          return <String, dynamic>{
+            'changed': true,
+            'outcome': sendOutcome ?? 'requested',
+          };
+        }
         return const <String, dynamic>{'changed': true};
       },
       searchInvoker: (query, limit) async => [
@@ -70,13 +77,22 @@ void main() {
     );
   }
 
-  Future<void> pumpScreen(WidgetTester tester, FriendService service) async {
+  Future<void> pumpScreen(
+    WidgetTester tester,
+    FriendService service, {
+    TextScaler textScaler = TextScaler.noScaling,
+    SocialGraphService? socialGraphService,
+  }) async {
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData.dark(useMaterial3: true),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+          child: child!,
+        ),
         home: AddFriendScreen(
           friendService: service,
-          socialGraphService: _StubSocialGraphService(),
+          socialGraphService: socialGraphService ?? _StubSocialGraphService(),
         ),
       ),
     );
@@ -90,31 +106,27 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets(
-    'Accept on a received request invokes acceptFriendRequest, '
-    'never sendFriendRequest',
-    (tester) async {
-      await pumpScreen(tester, buildService());
-      await searchForRiley(tester);
+  testWidgets('Accept on a received request invokes acceptFriendRequest, '
+      'never sendFriendRequest', (tester) async {
+    await pumpScreen(tester, buildService());
+    await searchForRiley(tester);
 
-      expect(find.text('Accept'), findsOneWidget);
-      await tester.tap(find.text('Accept'));
-      await tester.pumpAndSettle();
+    expect(find.text('Accept'), findsOneWidget);
+    await tester.tap(find.text('Accept'));
+    await tester.pumpAndSettle();
 
-      expect(calls, hasLength(1));
-      expect(calls.single.name, 'respondToFriendRequest');
-      expect(calls.single.data, {'senderId': otherUid, 'accept': true});
-      expect(
-        calls.where((call) => call.name == 'sendFriendRequest'),
-        isEmpty,
-        reason:
-            'accepting must never route through the reciprocal-send branch',
-      );
+    expect(calls, hasLength(1));
+    expect(calls.single.name, 'respondToFriendRequest');
+    expect(calls.single.data, {'senderId': otherUid, 'accept': true});
+    expect(
+      calls.where((call) => call.name == 'sendFriendRequest'),
+      isEmpty,
+      reason: 'accepting must never route through the reciprocal-send branch',
+    );
 
-      expect(find.text('Friends'), findsOneWidget);
-      expect(find.text('You and Riley are now friends.'), findsOneWidget);
-    },
-  );
+    expect(find.text('Friends'), findsOneWidget);
+    expect(find.text('You and Riley are now friends.'), findsOneWidget);
+  });
 
   testWidgets('the received state shows a decline affordance that invokes '
       'declineFriendRequest', (tester) async {
@@ -146,10 +158,7 @@ void main() {
     await tester.pump();
 
     // Second tap lands on the row's now-disabled controls.
-    await tester.tap(
-      find.byType(FilledButton),
-      warnIfMissed: false,
-    );
+    await tester.tap(find.byType(FilledButton), warnIfMissed: false);
     await tester.tap(
       find.byTooltip('Decline friend request'),
       warnIfMissed: false,
@@ -163,6 +172,108 @@ void main() {
     expect(calls.single.name, 'respondToFriendRequest');
     expect(calls.single.data, {'senderId': otherUid, 'accept': true});
   });
+
+  testWidgets('received actions remain reachable at 320px and 200% text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await pumpScreen(
+      tester,
+      buildService(),
+      textScaler: const TextScaler.linear(2),
+    );
+    await searchForRiley(tester);
+
+    expect(find.text('Accept'), findsOneWidget);
+    expect(find.byTooltip('Decline friend request'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('suggestion failure is honest and Retry loads the list', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 720);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final graph = _RetrySocialGraphService();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(useMaterial3: true),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: AddFriendScreen(
+          friendService: buildService(),
+          socialGraphService: graph,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Could not load suggestions'), findsOneWidget);
+    final retry = find.widgetWithText(FilledButton, 'Retry');
+    expect(retry, findsOneWidget);
+    expect(tester.getSize(retry).height, greaterThanOrEqualTo(44));
+
+    await tester.ensureVisible(retry);
+    await tester.pumpAndSettle();
+    await tester.tap(retry);
+    await tester.pumpAndSettle();
+    expect(find.text('Suggested for you'), findsOneWidget);
+    expect(find.text('Riley'), findsOneWidget);
+    expect(graph.calls, 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('reciprocal suggestion acceptance renders Friends, not Sent', (
+    tester,
+  ) async {
+    await pumpScreen(
+      tester,
+      buildService(sendOutcome: 'accepted'),
+      socialGraphService: _SingleSuggestionGraphService(),
+    );
+
+    expect(find.text('Riley'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.pumpAndSettle();
+
+    expect(calls, hasLength(1));
+    expect(calls.single.name, 'sendFriendRequest');
+    expect(calls.single.data, {'targetUserId': otherUid});
+    expect(find.text('Friends'), findsOneWidget);
+    expect(find.text('Sent'), findsNothing);
+    expect(find.text('You and Riley are now friends.'), findsOneWidget);
+  });
+
+  test('unknown friend-request outcomes fail closed', () async {
+    final service = buildService(sendOutcome: 'unexpected');
+
+    await expectLater(
+      service.sendFriendRequest(
+        const FriendUser(
+          id: otherUid,
+          displayName: 'Riley',
+          email: '',
+          photoUrl: null,
+          isOnline: false,
+          lastSeen: null,
+        ),
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'The friend request returned an invalid response.',
+        ),
+      ),
+    );
+  });
 }
 
 /// Suggestions are not under test; the screen only needs the future to
@@ -171,4 +282,36 @@ class _StubSocialGraphService extends SocialGraphService {
   @override
   Future<List<SuggestedFriend>> getFriendSuggestions({int limit = 10}) async =>
       const <SuggestedFriend>[];
+}
+
+class _SingleSuggestionGraphService extends SocialGraphService {
+  @override
+  Future<List<SuggestedFriend>> getFriendSuggestions({int limit = 10}) async {
+    return const [
+      SuggestedFriend(
+        uid: 'riley-uid',
+        displayName: 'Riley',
+        photoUrl: null,
+        mutualCount: 2,
+      ),
+    ];
+  }
+}
+
+class _RetrySocialGraphService extends SocialGraphService {
+  int calls = 0;
+
+  @override
+  Future<List<SuggestedFriend>> getFriendSuggestions({int limit = 10}) async {
+    calls += 1;
+    if (calls == 1) throw StateError('offline');
+    return const [
+      SuggestedFriend(
+        uid: 'riley-uid',
+        displayName: 'Riley',
+        photoUrl: null,
+        mutualCount: 2,
+      ),
+    ];
+  }
 }

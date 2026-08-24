@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_invite_response_screen.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
-import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
+import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
+import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 
 /// Global navigator handle used purely for notification-tap routing. The
 /// app has no router package — navigation everywhere else is plain
@@ -18,6 +20,16 @@ import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.da
 /// push from, so this is the one place that genuinely needs one.
 final GlobalKey<NavigatorState> notificationNavigatorKey =
     GlobalKey<NavigatorState>();
+
+enum NotificationDestination {
+  friendRequests,
+  profile,
+  clubInvite,
+  club,
+  room,
+  conversation,
+  none,
+}
 
 /// Routes a tapped notification (from a push, or from the in-app
 /// notification center) to its destination screen. Every target is
@@ -28,36 +40,61 @@ final GlobalKey<NavigatorState> notificationNavigatorKey =
 class NotificationRouter {
   const NotificationRouter._();
 
+  static NotificationDestination destinationFor(NotificationType type) =>
+      switch (type) {
+        NotificationType.friendRequest =>
+          NotificationDestination.friendRequests,
+        NotificationType.friendAccepted ||
+        NotificationType.follow => NotificationDestination.profile,
+        NotificationType.clubInvite => NotificationDestination.clubInvite,
+        NotificationType.clubInviteAccepted => NotificationDestination.club,
+        NotificationType.roomInvite ||
+        NotificationType.broadcastInvite ||
+        NotificationType.liveStarted => NotificationDestination.room,
+        NotificationType.directMessage ||
+        NotificationType.mention ||
+        NotificationType.reply => NotificationDestination.conversation,
+        NotificationType.achievementUnlocked ||
+        NotificationType.moderation ||
+        NotificationType.system => NotificationDestination.none,
+      };
+
   static Future<void> route({
     required NotificationType type,
     String? targetId,
     String? actorId,
+    String? notificationId,
   }) async {
     if (FirebaseAuth.instance.currentUser == null) return;
     final navigator = notificationNavigatorKey.currentState;
     if (navigator == null) return;
 
+    if (notificationId?.isNotEmpty == true) {
+      try {
+        await NotificationService().markAsRead(notificationId!);
+      } on Exception catch (error) {
+        debugPrint(
+          'NotificationRouter: could not mark a tapped notification read '
+          '(${error.runtimeType}); routing continues.',
+        );
+      }
+    }
+
     try {
-      switch (type) {
-        case NotificationType.friendRequest:
-        case NotificationType.friendAccepted:
-        case NotificationType.follow:
+      switch (destinationFor(type)) {
+        case NotificationDestination.friendRequests:
+          await _openFriendRequests(navigator);
+        case NotificationDestination.profile:
           await _openProfile(navigator, actorId);
-        case NotificationType.clubInvite:
+        case NotificationDestination.clubInvite:
           await _openClubInvite(navigator, targetId);
-        case NotificationType.clubInviteAccepted:
+        case NotificationDestination.club:
           await _openClub(navigator, targetId);
-        case NotificationType.roomInvite:
-        case NotificationType.broadcastInvite:
-        case NotificationType.liveStarted:
+        case NotificationDestination.room:
           await _openRoom(navigator, targetId);
-        case NotificationType.directMessage:
-        case NotificationType.mention:
-        case NotificationType.reply:
+        case NotificationDestination.conversation:
           await _openConversation(navigator, targetId);
-        case NotificationType.achievementUnlocked:
-        case NotificationType.moderation:
-        case NotificationType.system:
+        case NotificationDestination.none:
           // No dedicated destination yet — landing on the notification
           // center itself (where the tap originated) is enough for these.
           break;
@@ -83,10 +120,21 @@ class NotificationRouter {
         .collection('publicProfiles')
         .doc(userId)
         .get();
-    if (!doc.exists) return;
+    if (!doc.exists || !navigator.mounted) return;
     final friend = FriendUser.fromFirestore(doc);
-    navigator.push(
-      MaterialPageRoute(builder: (_) => FriendProfileScreen(friend: friend)),
+    await showProfilePreview(
+      navigator.context,
+      userId: friend.id,
+      displayName: friend.displayName,
+      photoUrl: friend.photoUrl,
+    );
+  }
+
+  static Future<void> _openFriendRequests(NavigatorState navigator) {
+    return navigator.push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const FriendsScreen(showRequestsInitially: true),
+      ),
     );
   }
 

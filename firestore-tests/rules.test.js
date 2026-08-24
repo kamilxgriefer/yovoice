@@ -997,6 +997,203 @@ async function main() {
     },
   );
 
+  await check(
+    "SECURITY: server follow-generation pointers remain readable but immutable",
+    async () => {
+      const path = "users/attacker-uid/following/host-uid";
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), path), {
+          uid: "host-uid",
+          followedAt: Timestamp.now(),
+          notificationId: "follow_attacker-uid_generation",
+        });
+      });
+      await assertSucceeds(getDoc(doc(attacker.firestore(), path)));
+      await assertFails(
+        updateDoc(doc(attacker.firestore(), path), {
+          notificationId: "follow_attacker-uid_forged",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "following and followers queries accept legacy and generation edges",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await Promise.all([
+          setDoc(doc(db, "users/attacker-uid/following/host-uid"), {
+            uid: "host-uid",
+            followedAt: Timestamp.fromMillis(2),
+          }),
+          setDoc(doc(db, "users/attacker-uid/following/invitee-uid"), {
+            uid: "invitee-uid",
+            followedAt: Timestamp.fromMillis(1),
+            notificationId: "follow_attacker-uid_generation",
+          }),
+          setDoc(doc(db, "users/attacker-uid/followers/host-uid"), {
+            uid: "host-uid",
+            followedAt: Timestamp.fromMillis(2),
+          }),
+          setDoc(doc(db, "users/attacker-uid/followers/invitee-uid"), {
+            uid: "invitee-uid",
+            followedAt: Timestamp.fromMillis(1),
+            notificationId: "follow_invitee-uid_generation",
+          }),
+        ]);
+      });
+      const db = attacker.firestore();
+      for (const collectionName of ["following", "followers"]) {
+        const result = await assertSucceeds(
+          getDocs(
+            query(
+              collection(db, `users/attacker-uid/${collectionName}`),
+              orderBy("followedAt", "desc"),
+              limit(100),
+            ),
+          ),
+        );
+        assert.equal(result.size, 2, collectionName);
+      }
+    },
+  );
+
+  await check(
+    "SECURITY: point reads reject malformed follow pointers and list access is bounded",
+    async () => {
+      const path = "users/attacker-uid/following/host-uid";
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), path), {
+          notificationId: "x".repeat(321),
+        });
+      });
+      await assertFails(getDoc(doc(attacker.firestore(), path)));
+      // Firestore cannot prove per-document schema predicates for an
+      // unconstrained collection query. These rows are Admin-only, so list
+      // disclosure is instead capped to the exact production access pattern.
+      await assertSucceeds(
+        getDocs(
+          query(
+            collection(attacker.firestore(), "users/attacker-uid/following"),
+            orderBy("followedAt", "desc"),
+            limit(100),
+          ),
+        ),
+      );
+      await assertFails(
+        getDocs(
+          query(
+            collection(attacker.firestore(), "users/attacker-uid/following"),
+            orderBy("followedAt", "desc"),
+            limit(101),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "PRIVACY: follow lists inherit profile visibility and block boundaries",
+    async () => {
+      const ownerId = "follow-privacy-owner";
+      const readerId = "follow-privacy-reader";
+      const endpointId = "follow-privacy-endpoint";
+      const owner = testEnv.authenticatedContext(ownerId, {
+        email_verified: true,
+      });
+      const reader = testEnv.authenticatedContext(readerId, {
+        email_verified: true,
+      });
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await Promise.all([
+          setDoc(doc(db, `users/${ownerId}`), {
+            displayName: "Owner",
+            banned: false,
+            profileVisibility: "public",
+          }),
+          setDoc(doc(db, `users/${readerId}`), {
+            displayName: "Reader",
+            banned: false,
+          }),
+          setDoc(doc(db, `users/${endpointId}`), {
+            displayName: "Endpoint",
+            banned: false,
+          }),
+          setDoc(doc(db, `users/${ownerId}/following/${endpointId}`), {
+            uid: endpointId,
+            followedAt: Timestamp.now(),
+          }),
+        ]);
+      });
+
+      const listFor = (context) =>
+        getDocs(
+          query(
+            collection(context.firestore(), `users/${ownerId}/following`),
+            orderBy("followedAt", "desc"),
+            limit(100),
+          ),
+        );
+      const endpointFor = (context) =>
+        getDoc(
+          doc(context.firestore(), `users/${ownerId}/following/${endpointId}`),
+        );
+
+      await assertSucceeds(listFor(reader));
+      await assertSucceeds(endpointFor(reader));
+
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), `users/${ownerId}`), {
+          profileVisibility: "private",
+        });
+      });
+      await assertSucceeds(listFor(owner));
+      await assertFails(listFor(reader));
+      await assertFails(endpointFor(reader));
+
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await updateDoc(doc(db, `users/${ownerId}`), {
+          profileVisibility: "friends",
+        });
+      });
+      await assertFails(listFor(reader));
+
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        for (const [guardOwner, friend] of [
+          [ownerId, readerId],
+          [readerId, ownerId],
+        ]) {
+          await setDoc(
+            doc(db, `friendshipGuards/${guardOwner}/friends/${friend}`),
+            {
+              ownerId: guardOwner,
+              friendId: friend,
+              schemaVersion: 1,
+              establishedAt: Timestamp.now(),
+            },
+          );
+        }
+      });
+      await assertSucceeds(listFor(reader));
+
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(
+          doc(
+            context.firestore(),
+            `users/${ownerId}/blocked/${readerId}`,
+          ),
+          { userId: readerId, createdAt: Timestamp.now() },
+        );
+      });
+      await assertFails(listFor(reader));
+      await assertFails(endpointFor(reader));
+    },
+  );
+
   // --- handRequests (#10) ---
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     await setDoc(doc(ctx.firestore(), "rooms/broadcastRoom"), {

@@ -81,10 +81,14 @@ function exactFollowingEdge(snapshot, targetId) {
   if (!snapshot?.exists) return false;
   const data = snapshot.data() ?? {};
   const keys = Object.keys(data).sort();
-  const expected = ["followedAt", "uid"];
-  return keys.length === expected.length &&
-    keys.every((key, index) => key === expected[index]) &&
-    data.uid === targetId && timestampMillis(data.followedAt) !== null;
+  const allowed = new Set(["followedAt", "notificationId", "uid"]);
+  const pointerIsValid = !("notificationId" in data) ||
+    (typeof data.notificationId === "string" &&
+      data.notificationId.length > 0 && data.notificationId.length <= 320);
+  return keys.length >= 2 && keys.every((key) => allowed.has(key)) &&
+    keys.includes("followedAt") && keys.includes("uid") &&
+    pointerIsValid && data.uid === targetId &&
+    timestampMillis(data.followedAt) !== null;
 }
 
 function exactFriendshipGuard(snapshot, ownerId, friendId) {

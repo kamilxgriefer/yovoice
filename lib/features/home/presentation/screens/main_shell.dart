@@ -221,6 +221,7 @@ class _MainShellState extends State<MainShell>
   /// below are the shell's existing ones; this only changes what Home
   /// renders inside slot 0.
   Widget get _mobileHome => MobileHome(
+    unreadNotificationCount: _unreadNotificationCount,
     onOpenRoom: (room) => unawaited(_openRoom(room)),
     onOpenDiscover: () =>
         unawaited(_openMoreDestination(MoreDestination.discover)),

@@ -119,16 +119,27 @@ function scrubPlan(document, phase) {
     return { kind: "conflict" };
   }
   const keys = Object.keys(data).sort();
+  const notificationId =
+    typeof data.notificationId === "string" &&
+    data.notificationId.length > 0 &&
+    data.notificationId.length <= 320
+      ? data.notificationId
+      : null;
+  const allowedKeys = new Set(["followedAt", "notificationId", "uid"]);
   const exact =
-    keys.length === 2 &&
-    keys[0] === "followedAt" &&
-    keys[1] === "uid" &&
+    keys.length >= 2 &&
+    keys.every((key) => allowedKeys.has(key)) &&
+    (!("notificationId" in data) || notificationId !== null) &&
     data.uid === document.id;
   return exact
     ? null
     : {
         kind: "replace",
-        data: { uid: document.id, followedAt },
+        data: {
+          uid: document.id,
+          followedAt,
+          ...(notificationId ? { notificationId } : {}),
+        },
       };
 }
 

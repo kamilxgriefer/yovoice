@@ -128,14 +128,6 @@ const {
 */
 
 const { onNotificationCreated } = require("./notifications/push");
-// Friend request / acceptance / follow notifications are derived from
-// the authoritative source documents (ADR-041) rather than written by
-// the acting client.
-const {
-  onFriendRequestCreated,
-  onFriendRequestResolved,
-  onFollowerCreated,
-} = require("./notifications/social");
 const {
   onDirectMessageCreated,
   onRoomLiveChanged,
@@ -258,9 +250,6 @@ exports.sweepStrandedLiveRoomsSchedule = sweepStrandedLiveRoomsSchedule;
 */
 
 exports.onNotificationCreated = onNotificationCreated;
-exports.onFriendRequestCreated = onFriendRequestCreated;
-exports.onFriendRequestResolved = onFriendRequestResolved;
-exports.onFollowerCreated = onFollowerCreated;
 exports.onDirectMessageCreated = onDirectMessageCreated;
 exports.onRoomLiveChanged = onRoomLiveChanged;
 exports.sendClubInvite = sendClubInvite;

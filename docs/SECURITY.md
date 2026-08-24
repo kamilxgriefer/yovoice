@@ -311,12 +311,27 @@ an operational one.
 
 **The scrub is a security step with an ordering constraint, not
 cleanup.** It ran after the rules deploy, which was the wrong way round.
-The new rules require a follow edge to carry exactly `['uid','followedAt']`,
+The ADR-054 rules deployed at that cutover required a follow edge to carry
+exactly `['uid','followedAt']`,
 and Firestore evaluates list rules **per document**, denying the entire
 query if any single document fails. So one unscrubbed legacy edge emptied
 a user's whole followers/following list. Any future exact-schema rule has
 the same shape: the data must conform *before* the rule lands, or the
 rule is an outage rather than a boundary.
+
+ADR-114's pending source widening keeps that lesson at the point-read and DM
+authorization boundaries: they accept only the same two fields plus an
+optional bounded, server-owned `notificationId`. Firestore cannot prove an
+exact per-document schema for an unconstrained list query (Rules are not
+filters), so followers/following enumeration first inherits the profile
+owner's `public`/`friends`/`private` visibility and block boundary, is then
+limited to the production `limit(100)` query, and trusts only Admin-written
+edges; public-profile hydration omits inactive identities. Repeating bounded
+queries never bypasses a private profile because every list request rechecks
+that owner-level privacy boundary. The scrub preserves a valid generation
+pointer while removing legacy identity snapshots, and Rules tests exercise
+public, friends-only, private, blocked, ordered-list and strict point-read
+cases.
 
 **The CI credential boundary was deliberately not widened.** A GitHub
 Actions path for the backfill (`4f9ad47`) was dispatched and failed with
@@ -484,25 +499,57 @@ callable. Full reasoning:
 
 ## Social notification integrity
 
-`friendRequest`, `friendAccepted` and `follow` are no longer in the
-client-creatable notification type list. They are written by
-`onFriendRequestCreated`, `onFriendRequestResolved` and
-`onFollowerCreated` through the Admin SDK, from the authoritative source
-documents (ADR-041).
+> **SOURCE ONLY — NOT DEPLOYED (ADR-114).** Production still has the older
+> ADR-041 social trigger writers. The source boundary below becomes current
+> only after the ordered Firestore Rules + Functions rollout and explicit
+> trigger deletion in `docs/DEPLOYMENT.md`.
+
+`friendRequest`, `friendAccepted` and `follow` are not client-creatable.
+Their server-authoritative social callable writes or retires the matching
+notification row inside the same transaction as the graph change (ADR-114).
+The older derived trigger writers from ADR-041 are retired; two writers for
+one deterministic id could resurrect a resolved alert. New social events use
+generation-specific ids, while the push boundary permits a legacy id only for
+a genuine pointer-less old source, deletes it once the source is generation-
+bound, and revalidates the graph source during the compatibility rollout.
+Because push delivery itself is deliberately non-retrying, the post-trigger
+bounded Admin sweep is the durable backstop for a transient compatibility-row
+delete failure; rollout is not complete until its verification plans zero.
 
 What that closes: a client used to be able to write "X accepted your
 friend request" into someone's inbox with no friendship existing
 anywhere. Rules cannot check that — the relationship is a different
 document, and a create rule that reads it still cannot know which side
-accepted. The trigger reads the friendship directly, so the claim is
+accepted. The callable reads the friendship directly, so the claim is
 verified rather than asserted.
 
-Recipient, actor, type and timestamp now all come from the document path
-and the server clock; none is caller-supplied. Only public profile
-fields (display name, photo) enter the payload — a Functions test
+The callable derives actor from verified Auth, validates the target uid from
+its bounded payload, reads current server-owned profiles/graph state, selects
+the type from the mutation outcome and uses the server clock. Only public
+profile fields (display name, photo) enter the notification — a Functions test
 asserts the exact key set and that no email, phone, role or preference
 data appears. Recipients may still only change `isRead`/`readAt`, and
-`fcmTokens` remain owner-scoped.
+`fcmTokens` remain owner-scoped. Sign-out marks the in-memory privacy guard
+and revokes the identity epoch before any await, starts persistence of a
+pending-rotation bit, owner-row deletion and platform-token invalidation
+independently, and bounds every wait so an offline SDK Future cannot trap
+sign-out before those privacy boundaries are issued. Owner-row retirement is
+issued eagerly and repeated after a successfully drained pre-transition
+registration queue, so an already-started token write cannot win after the
+delete and resurrect the previous account's subscription.
+Every cold-start or changed-account binding also forces invalidation before it
+registers, so a direct Auth replacement cannot bypass the explicit sign-out
+path. A monotonic identity epoch and serialized registration queue reject a
+token refresh or delayed write that overlaps sign-out; failed social-profile
+provisioning uses the same cleanup before rolling Auth back.
+Within the running process, a timeout or persistence error cannot permit
+reuse. A stored bit survives restart and blocks the next account until deletion
+or a platform refresh succeeds, and every signed-in cold binding forces the
+same rotation even if that bit was lost. If both the device preference store
+and platform-token deletion fail in the same sign-out, a full restart that
+remains on the signed-out screen cannot prove ownership and the old account may
+still receive push until the next identity binding re-attempts invalidation;
+that narrow interval is logged explicitly rather than hidden.
 
 ## Room and club membership authority (hardened 2026-08-16)
 

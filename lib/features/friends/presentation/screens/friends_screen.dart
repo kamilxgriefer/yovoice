@@ -16,11 +16,20 @@ import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 enum _FriendsFilter { all, online, requests }
 
 class FriendsScreen extends StatefulWidget {
-  const FriendsScreen({this.isRootTab = false, super.key});
+  const FriendsScreen({
+    this.isRootTab = false,
+    this.showRequestsInitially = false,
+    this.friendService,
+    this.messageService,
+    super.key,
+  });
 
   /// True when hosted as the shell's Friends tab — there is nothing to
   /// pop back to, so the header hides its back button.
   final bool isRootTab;
+  final bool showRequestsInitially;
+  final FriendService? friendService;
+  final MessageService? messageService;
 
   @override
   State<FriendsScreen> createState() => _FriendsScreenState();
@@ -33,8 +42,10 @@ class _FriendsScreenState extends State<FriendsScreen> {
   static const Color _muted = Color(0xFF9D95AD);
   static const Color _primary = Color(0xFF9D20FF);
 
-  final FriendService _friendService = FriendService();
-  final MessageService _messageService = MessageService();
+  late final FriendService _friendService =
+      widget.friendService ?? FriendService();
+  late final MessageService _messageService =
+      widget.messageService ?? MessageService();
   final TextEditingController _searchController = TextEditingController();
 
   late final Stream<List<FriendUser>> _friendsStream;
@@ -47,6 +58,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.showRequestsInitially) {
+      _filter = _FriendsFilter.requests;
+    }
     _friendsStream = _friendService.watchFriends();
     _requestsStream = _friendService.watchFriendRequests();
     _searchController.addListener(_handleSearchChanged);
@@ -155,7 +169,10 @@ class _FriendsScreenState extends State<FriendsScreen> {
     } catch (error) {
       if (mounted) {
         _showMessage(
-          error.toString().replaceFirst('Bad state: ', ''),
+          intentionalOrFriendly(
+            error,
+            fallback: 'Could not update this friend request. Try again.',
+          ),
           isError: true,
         );
       }
@@ -498,7 +515,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
           return _EmptyState(
             icon: Icons.cloud_off_rounded,
             title: 'Could not load requests',
-            subtitle: snapshot.error.toString(),
+            subtitle: friendlyErrorMessage(snapshot.error!),
           );
         }
 
@@ -882,28 +899,37 @@ class _FilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: selected
-          ? _FriendsScreenState._primary
-          : _FriendsScreenState._surface,
-      borderRadius: BorderRadius.circular(99),
-      child: InkWell(
-        onTap: onTap,
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      onTap: onTap,
+      excludeSemantics: true,
+      child: Material(
+        color: selected
+            ? _FriendsScreenState._primary
+            : _FriendsScreenState._surface,
         borderRadius: BorderRadius.circular(99),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 9),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(99),
-            border: selected
-                ? null
-                : Border.all(color: _FriendsScreenState._border),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 12,
-              fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(99),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 44),
+            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 9),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(99),
+              border: selected
+                  ? null
+                  : Border.all(color: _FriendsScreenState._border),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+              ),
             ),
           ),
         ),
@@ -929,60 +955,70 @@ class _HeaderButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final semanticLabel = badgeCount > 0
+        ? '$tooltip, $badgeCount pending'
+        : tooltip;
     return Tooltip(
       message: tooltip,
-      child: Material(
-        color: highlighted
-            ? _FriendsScreenState._primary
-            : _FriendsScreenState._surface,
-        borderRadius: BorderRadius.circular(15),
-        child: InkWell(
-          onTap: onTap,
+      excludeFromSemantics: true,
+      child: Semantics(
+        button: true,
+        label: semanticLabel,
+        onTap: onTap,
+        excludeSemantics: true,
+        child: Material(
+          color: highlighted
+              ? _FriendsScreenState._primary
+              : _FriendsScreenState._surface,
           borderRadius: BorderRadius.circular(15),
-          child: Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(15),
-              border: highlighted
-                  ? null
-                  : Border.all(color: _FriendsScreenState._border),
-            ),
-            child: Stack(
-              clipBehavior: Clip.none,
-              alignment: Alignment.center,
-              children: [
-                Icon(icon, color: Colors.white, size: 21),
-                if (badgeCount > 0)
-                  Positioned(
-                    top: -5,
-                    right: -5,
-                    child: Container(
-                      constraints: const BoxConstraints(
-                        minWidth: 20,
-                        minHeight: 20,
-                      ),
-                      alignment: Alignment.center,
-                      padding: const EdgeInsets.symmetric(horizontal: 5),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFF3F72),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: _FriendsScreenState._background,
-                          width: 2,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(15),
+            child: Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(15),
+                border: highlighted
+                    ? null
+                    : Border.all(color: _FriendsScreenState._border),
+              ),
+              child: Stack(
+                clipBehavior: Clip.none,
+                alignment: Alignment.center,
+                children: [
+                  Icon(icon, color: Colors.white, size: 21),
+                  if (badgeCount > 0)
+                    Positioned(
+                      top: -5,
+                      right: -5,
+                      child: Container(
+                        constraints: const BoxConstraints(
+                          minWidth: 20,
+                          minHeight: 20,
                         ),
-                      ),
-                      child: Text(
-                        badgeCount > 99 ? '99+' : '$badgeCount',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w900,
+                        alignment: Alignment.center,
+                        padding: const EdgeInsets.symmetric(horizontal: 5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE51852),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: _FriendsScreenState._background,
+                            width: 2,
+                          ),
+                        ),
+                        child: Text(
+                          badgeCount > 99 ? '99+' : '$badgeCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

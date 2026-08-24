@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -39,6 +40,7 @@ class _RecordingPresenceService extends PresenceService {
   final List<String> offlineWrites = <String>[];
   final List<bool> sessionAliveAtWrite = <bool>[];
   Object? failure;
+  bool neverCompletes = false;
 
   @override
   Future<void> setOfflineForUser(String userId) async {
@@ -47,6 +49,7 @@ class _RecordingPresenceService extends PresenceService {
 
     final thrown = failure;
     if (thrown != null) throw thrown;
+    if (neverCompletes) await Completer<void>().future;
 
     await super.setOfflineForUser(userId);
   }
@@ -60,6 +63,7 @@ class _RecordingDeviceUnregister {
   int calls = 0;
   final List<bool> sessionAliveAtCall = <bool>[];
   Object? failure;
+  bool neverCompletes = false;
 
   Future<void> call() async {
     calls += 1;
@@ -67,16 +71,19 @@ class _RecordingDeviceUnregister {
 
     final thrown = failure;
     if (thrown != null) throw thrown;
+    if (neverCompletes) await Completer<void>().future;
   }
 }
 
 class _Harness {
-  _Harness({String uid = 'user-1'})
-    : auth = MockFirebaseAuth(
-        signedIn: true,
-        mockUser: MockUser(uid: uid, email: 'signed-in@example.com'),
-      ),
-      firestore = FakeFirebaseFirestore() {
+  _Harness({
+    String uid = 'user-1',
+    Duration cleanupTimeout = const Duration(seconds: 10),
+  }) : auth = MockFirebaseAuth(
+         signedIn: true,
+         mockUser: MockUser(uid: uid, email: 'signed-in@example.com'),
+       ),
+       firestore = FakeFirebaseFirestore() {
     presence = _RecordingPresenceService(auth, firestore);
     unregister = _RecordingDeviceUnregister(auth);
     service = AuthService(
@@ -84,6 +91,7 @@ class _Harness {
       firestoreService: FirestoreService(firestore: firestore),
       presenceService: presence,
       unregisterDeviceToken: unregister.call,
+      bestEffortCleanupTimeout: cleanupTimeout,
     );
   }
 
@@ -136,20 +144,23 @@ void main() {
       expect(stored.data()?['presenceUpdatedAt'], isNotNull);
     });
 
-    test('unregisters this device for push while the session is still live', () async {
-      final harness = _Harness();
+    test(
+      'unregisters this device for push while the session is still live',
+      () async {
+        final harness = _Harness();
 
-      await harness.service.signOut();
+        await harness.service.signOut();
 
-      expect(harness.unregister.calls, 1);
-      expect(
-        harness.unregister.sessionAliveAtCall,
-        <bool>[true],
-        reason:
-            'deleting fcmTokens/{token} requires isOwner(uid); skipping it '
-            'leaves the previous account receiving push on a shared device',
-      );
-    });
+        expect(harness.unregister.calls, 1);
+        expect(
+          harness.unregister.sessionAliveAtCall,
+          <bool>[true],
+          reason:
+              'deleting fcmTokens/{token} requires isOwner(uid); skipping it '
+              'leaves the previous account receiving push on a shared device',
+        );
+      },
+    );
 
     test('does no cleanup when nobody is signed in', () async {
       final harness = _Harness();
@@ -188,6 +199,20 @@ void main() {
         <String>['user-1'],
         reason: 'one failing cleanup must not skip the other',
       );
+      expect(harness.auth.currentUser, isNull);
+    });
+
+    test('never-completing cleanup cannot trap sign-out', () async {
+      final harness = _Harness(
+        cleanupTimeout: const Duration(milliseconds: 10),
+      );
+      harness.unregister.neverCompletes = true;
+      harness.presence.neverCompletes = true;
+
+      await harness.service.signOut().timeout(const Duration(seconds: 1));
+
+      expect(harness.unregister.calls, 1);
+      expect(harness.presence.offlineWrites, <String>['user-1']);
       expect(harness.auth.currentUser, isNull);
     });
   });
@@ -263,7 +288,9 @@ void main() {
           reason: '$path is expected to keep a sign-out affordance',
         );
         expect(
-          RegExp(r'AuthService\(\)?\.signOut|_authService\.signOut').hasMatch(source),
+          RegExp(
+            r'AuthService\(\)?\.signOut|_authService\.signOut',
+          ).hasMatch(source),
           isTrue,
           reason: '$path must sign out through AuthService.signOut()',
         );

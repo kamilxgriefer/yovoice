@@ -12,6 +12,7 @@ const { db } = require("../utils/firestore");
 const {
   sendFriendRequest,
   respondToFriendRequest,
+  cancelFriendRequest,
   removeFriend,
   setFollow,
   setUserBlock,
@@ -25,6 +26,7 @@ const {
 
 const runSend = sendFriendRequest.run ?? sendFriendRequest;
 const runRespond = respondToFriendRequest.run ?? respondToFriendRequest;
+const runCancel = cancelFriendRequest.run ?? cancelFriendRequest;
 const runRemove = removeFriend.run ?? removeFriend;
 const runFollow = setFollow.run ?? setFollow;
 const runBlock = setUserBlock.run ?? setUserBlock;
@@ -100,6 +102,20 @@ async function seed(uid, overrides = {}) {
   ]);
 }
 
+async function socialNotifications(uid, type, actorId) {
+  const snapshot = await db.doc(`users/${uid}`).collection("notifications").get();
+  return snapshot.docs.filter((doc) => {
+    const data = doc.data();
+    return data.type === type && data.actorId === actorId;
+  });
+}
+
+async function onlySocialNotification(uid, type, actorId) {
+  const matches = await socialNotifications(uid, type, actorId);
+  assert.equal(matches.length, 1, `${type} notification count`);
+  return matches[0];
+}
+
 beforeEach(async () => {
   await reset();
   await Promise.all([seed(A), seed(B), seed(C)]);
@@ -120,7 +136,7 @@ test("friend request is canonical, atomic and replay-safe", async () => {
   const [incoming, sent, notification] = await Promise.all([
     db.doc(`users/${B}/friendRequests/${A}`).get(),
     db.doc(`users/${A}/sentFriendRequests/${B}`).get(),
-    db.doc(`users/${B}/notifications/friendRequest_${A}`).get(),
+    onlySocialNotification(B, "friendRequest", A),
   ]);
   assert.equal(incoming.data().senderId, A);
   assert.equal(incoming.data().senderName, "Alice Canonical");
@@ -131,6 +147,70 @@ test("friend request is canonical, atomic and replay-safe", async () => {
   assert.equal(notification.data().type, "friendRequest");
   assert.equal(notification.data().isRead, false);
   assert.ok(notification.data().createdAt);
+});
+
+test("first post-upgrade social lifecycle replaces legacy deterministic ids", async () => {
+  const legacyRequest = db.doc(
+    `users/${B}/notifications/friendRequest_${A}`,
+  );
+  await legacyRequest.set({
+    type: "friendRequest",
+    actorId: A,
+    isRead: true,
+  });
+  await runSend(request(A, { targetUserId: B }));
+  assert.equal((await legacyRequest.get()).exists, false);
+  const freshRequest = await onlySocialNotification(B, "friendRequest", A);
+  assert.notEqual(freshRequest.id, `friendRequest_${A}`);
+
+  const legacyAccepted = db.doc(
+    `users/${A}/notifications/friendAccepted_${B}`,
+  );
+  await legacyAccepted.set({
+    type: "friendAccepted",
+    actorId: B,
+    isRead: true,
+  });
+  await runRespond(request(B, { senderId: A, accept: true }));
+  assert.equal((await legacyAccepted.get()).exists, false);
+  const freshAccepted = await onlySocialNotification(A, "friendAccepted", B);
+  assert.notEqual(freshAccepted.id, `friendAccepted_${B}`);
+
+  const legacyFollow = db.doc(`users/${B}/notifications/follow_${A}`);
+  await legacyFollow.set({ type: "follow", actorId: A, isRead: true });
+  await runFollow(request(A, { targetUserId: B, following: true }));
+  assert.equal((await legacyFollow.get()).exists, false);
+  const freshFollow = await onlySocialNotification(B, "follow", A);
+  assert.notEqual(freshFollow.id, `follow_${A}`);
+});
+
+test("simultaneous reciprocal requests converge on one friendship", async () => {
+  const results = await Promise.all([
+    runSend(request(A, { targetUserId: B })),
+    runSend(request(B, { targetUserId: A })),
+  ]);
+  assert.deepEqual(
+    new Set(results.map((result) => result.outcome)),
+    new Set(["requested", "accepted"]),
+  );
+  for (const path of [
+    `users/${A}/friends/${B}`,
+    `users/${B}/friends/${A}`,
+    `friendshipGuards/${A}/friends/${B}`,
+    `friendshipGuards/${B}/friends/${A}`,
+  ]) {
+    assert.equal((await db.doc(path).get()).exists, true, path);
+  }
+  for (const path of [
+    `users/${A}/friendRequests/${B}`,
+    `users/${B}/friendRequests/${A}`,
+    `users/${A}/sentFriendRequests/${B}`,
+    `users/${B}/sentFriendRequests/${A}`,
+  ]) {
+    assert.equal((await db.doc(path).get()).exists, false, path);
+  }
+  assert.equal((await db.doc(`users/${A}`).get()).data().friendCount, 1);
+  assert.equal((await db.doc(`users/${B}`).get()).data().friendCount, 1);
 });
 
 test("only the concrete recipient can accept and the acceptance consumes once", async () => {
@@ -165,7 +245,7 @@ test("only the concrete recipient can accept and the acceptance consumes once", 
       db.doc(`users/${A}/sentFriendRequests/${B}`).get(),
       db.doc(`users/${A}`).get(),
       db.doc(`users/${B}`).get(),
-      db.doc(`users/${A}/notifications/friendAccepted_${B}`).get(),
+      onlySocialNotification(A, "friendAccepted", B),
     ]);
   assert.equal(aFriend.data().userId, B);
   assert.equal(bFriend.data().userId, A);
@@ -196,10 +276,73 @@ test("decline consumes the request without inventing a friendship", async () => 
     false,
   );
   assert.equal((await db.doc(`users/${A}/friends/${B}`).get()).exists, false);
+  assert.equal((await socialNotifications(A, "friendAccepted", B)).length, 0);
+  assert.equal((await socialNotifications(B, "friendRequest", A)).length, 0);
+});
+
+test("cancel retires the recipient alert and a later request is fresh", async () => {
+  await runSend(request(A, { targetUserId: B }));
+  const first = await runCancel(request(A, { targetUserId: B }));
+  const replay = await runCancel(request(A, { targetUserId: B }));
+  assert.equal(first.changed, true);
+  assert.equal(replay.changed, false);
+
+  for (const path of [
+    `users/${B}/friendRequests/${A}`,
+    `users/${A}/sentFriendRequests/${B}`,
+  ]) {
+    assert.equal((await db.doc(path).get()).exists, false, path);
+  }
+  assert.equal((await socialNotifications(B, "friendRequest", A)).length, 0);
+
+  await runSend(request(A, { targetUserId: B }));
+  const fresh = await onlySocialNotification(B, "friendRequest", A);
+  assert.equal(fresh.data().isRead, false);
+});
+
+test("accept retires the actionable request alert", async () => {
+  await runSend(request(A, { targetUserId: B }));
+  await runRespond(request(B, { senderId: A, accept: true }));
+  assert.equal((await socialNotifications(B, "friendRequest", A)).length, 0);
+});
+
+test("resolved request replays repair a stale actionable alert", async () => {
+  await runSend(request(A, { targetUserId: B }));
+  await runRespond(request(B, { senderId: A, accept: true }));
+  const staleRef = db.doc(`users/${B}/notifications/friendRequest_${A}`);
+  await staleRef.set({ type: "friendRequest", actorId: A, isRead: false });
+
+  const acceptedReplay = await runRespond(
+    request(B, { senderId: A, accept: true }),
+  );
+  assert.equal(acceptedReplay.outcome, "alreadyAccepted");
+  assert.equal((await staleRef.get()).exists, false);
+
+  await runRemove(request(A, { targetUserId: B }));
+  await staleRef.set({ type: "friendRequest", actorId: A, isRead: false });
+  const declinedReplay = await runRespond(
+    request(B, { senderId: A, accept: false }),
+  );
+  assert.equal(declinedReplay.outcome, "alreadyResolved");
+  assert.equal((await staleRef.get()).exists, false);
+});
+
+test("a later acceptance uses a fresh notification generation", async () => {
+  await runSend(request(A, { targetUserId: B }));
+  await runRespond(request(B, { senderId: A, accept: true }));
+  const first = await onlySocialNotification(A, "friendAccepted", B);
+
+  await runRemove(request(A, { targetUserId: B }));
   assert.equal(
-    (await db.doc(`users/${A}/notifications/friendAccepted_${B}`).get()).exists,
+    (await db.doc(`users/${A}/notifications/${first.id}`).get()).exists,
     false,
   );
+
+  await runSend(request(A, { targetUserId: B }));
+  await runRespond(request(B, { senderId: A, accept: true }));
+  const generations = await socialNotifications(A, "friendAccepted", B);
+  assert.equal(generations.length, 1);
+  assert.notEqual(generations[0].id, first.id);
 });
 
 test("follow and unfollow maintain paired mirrors and counters under replay", async () => {
@@ -214,15 +357,26 @@ test("follow and unfollow maintain paired mirrors and counters under replay", as
     db.doc(`users/${B}`).get(),
     db.doc(`users/${A}/following/${B}`).get(),
     db.doc(`users/${B}/followers/${A}`).get(),
-    db.doc(`users/${B}/notifications/follow_${A}`).get(),
+    onlySocialNotification(B, "follow", A),
   ]);
   assert.equal(a.data().followingCount, 1);
   assert.equal(b.data().followerCount, 1);
-  assert.deepEqual(Object.keys(following.data()).sort(), ["followedAt", "uid"]);
-  assert.deepEqual(Object.keys(follower.data()).sort(), ["followedAt", "uid"]);
+  assert.deepEqual(Object.keys(following.data()).sort(), [
+    "followedAt",
+    "notificationId",
+    "uid",
+  ]);
+  assert.deepEqual(Object.keys(follower.data()).sort(), [
+    "followedAt",
+    "notificationId",
+    "uid",
+  ]);
   assert.equal(following.data().uid, B);
   assert.equal(follower.data().uid, A);
+  assert.equal(following.data().notificationId, notification.id);
+  assert.equal(follower.data().notificationId, notification.id);
   assert.equal(notification.data().actorName, "Alice Canonical");
+  const firstNotificationId = notification.id;
 
   await runFollow(request(A, { targetUserId: B, following: false }));
   await runFollow(request(A, { targetUserId: B, following: false }));
@@ -236,6 +390,40 @@ test("follow and unfollow maintain paired mirrors and counters under replay", as
   assert.equal(b.data().followerCount, 0);
   assert.equal(following.exists, false);
   assert.equal(follower.exists, false);
+  assert.equal(
+    (await socialNotifications(B, "follow", A)).length,
+    0,
+    "unfollow retires the current activity generation atomically",
+  );
+
+  await runFollow(request(A, { targetUserId: B, following: true }));
+  const secondGeneration = await socialNotifications(B, "follow", A);
+  assert.equal(secondGeneration.length, 1);
+  assert.notEqual(secondGeneration[0].id, firstNotificationId);
+  const secondEdge = await db.doc(`users/${A}/following/${B}`).get();
+  assert.equal(secondEdge.data().notificationId, secondGeneration[0].id);
+});
+
+test("unfollow replay removes a stale activity row without a graph edge", async () => {
+  const notificationRef = db.doc(
+    `users/${B}/notifications/follow_${A}`,
+  );
+  await notificationRef.set({
+    type: "follow",
+    actorId: A,
+    isRead: false,
+  });
+
+  const replay = await runFollow(
+    request(A, { targetUserId: B, following: false }),
+  );
+
+  assert.deepEqual(replay, { changed: false, following: false });
+  assert.equal((await notificationRef.get()).exists, false);
+
+  await runFollow(request(A, { targetUserId: B, following: true }));
+  const fresh = await onlySocialNotification(B, "follow", A);
+  assert.notEqual(fresh.id, `follow_${A}`);
 });
 
 test("blocks and active sanctions fail closed for connection creation", async () => {
@@ -468,6 +656,23 @@ test("blocking atomically severs friendship, follows and pending requests", asyn
   ]) {
     assert.equal((await db.doc(path).get()).exists, false, path);
   }
+  for (const [recipientId, actorId] of [
+    [A, B],
+    [B, A],
+  ]) {
+    for (const type of ["friendRequest", "friendAccepted"]) {
+      assert.equal(
+        (await socialNotifications(recipientId, type, actorId)).length,
+        0,
+        `${recipientId} must not retain ${type} from ${actorId}`,
+      );
+    }
+    assert.equal(
+      (await socialNotifications(recipientId, "follow", actorId)).length,
+      0,
+      "block retires the active follow notification with the edge",
+    );
+  }
 
   await runBlock(request(A, { targetUserId: B, blocked: false }));
   assert.equal((await db.doc(`users/${A}/blocked/${B}`).get()).exists, false);
@@ -557,5 +762,12 @@ test("the complete callable surface is exported for deployment", () => {
     "onClubMemberCreated",
   ]) {
     assert.equal(typeof exports[name], "function", name);
+  }
+  for (const retired of [
+    "onFriendRequestCreated",
+    "onFriendRequestResolved",
+    "onFollowerCreated",
+  ]) {
+    assert.equal(exports[retired], undefined, `${retired} must stay retired`);
   }
 });

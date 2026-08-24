@@ -90,9 +90,19 @@ async function seed() {
   ]);
 }
 
+async function socialNotifications(uid, type, actorId) {
+  const snapshot = await db.doc(`users/${uid}`).collection("notifications").get();
+  return snapshot.docs.filter((doc) => {
+    const data = doc.data();
+    return data.type === type && data.actorId === actorId;
+  });
+}
+
 async function main() {
   await seed();
 
+  // Cancel must retract the actionable alert, and a later request must be
+  // a fresh document create (the push trigger is create-only).
   const requested = await call("sendFriendRequest", ACTOR, {
     targetUserId: TARGET,
   });
@@ -102,6 +112,36 @@ async function main() {
     true,
     "the canonical incoming request must exist",
   );
+  const firstRequestAlerts = await socialNotifications(
+    TARGET,
+    "friendRequest",
+    ACTOR,
+  );
+  assert.equal(firstRequestAlerts.length, 1);
+  assert.equal(firstRequestAlerts[0].data().isRead, false);
+  await call("cancelFriendRequest", ACTOR, { targetUserId: TARGET });
+  for (const path of [
+    `users/${TARGET}/friendRequests/${ACTOR}`,
+    `users/${ACTOR}/sentFriendRequests/${TARGET}`,
+  ]) {
+    assert.equal((await db.doc(path).get()).exists, false, path);
+  }
+  assert.equal(
+    (await socialNotifications(TARGET, "friendRequest", ACTOR)).length,
+    0,
+  );
+
+  await call("sendFriendRequest", ACTOR, { targetUserId: TARGET });
+  await call("respondToFriendRequest", TARGET, {
+    senderId: ACTOR,
+    accept: false,
+  });
+  assert.equal(
+    (await socialNotifications(TARGET, "friendRequest", ACTOR)).length,
+    0,
+  );
+
+  await call("sendFriendRequest", ACTOR, { targetUserId: TARGET });
 
   const accepted = await call("respondToFriendRequest", TARGET, {
     senderId: ACTOR,
@@ -122,6 +162,11 @@ async function main() {
   assert.equal(actorProfile.data().friendCount, 1);
   assert.equal(targetProfile.data().friendCount, 1);
   assert.equal(request.exists, false, "accepted request was not consumed");
+  assert.equal(
+    (await socialNotifications(TARGET, "friendRequest", ACTOR)).length,
+    0,
+    "accepted request alert was not retired",
+  );
 
   const replay = await call("respondToFriendRequest", TARGET, {
     senderId: ACTOR,
@@ -131,9 +176,22 @@ async function main() {
   assert.equal((await db.doc(`users/${ACTOR}`).get()).data().friendCount, 1);
   assert.equal((await db.doc(`users/${TARGET}`).get()).data().friendCount, 1);
 
+  await call("removeFriend", ACTOR, { targetUserId: TARGET });
+  assert.equal(
+    (await db.doc(`users/${ACTOR}/friends/${TARGET}`).get()).exists,
+    false,
+  );
+  assert.equal(
+    (await socialNotifications(ACTOR, "friendAccepted", TARGET)).length,
+    0,
+    "unfriend must retire the previous acceptance activity",
+  );
+  assert.equal((await db.doc(`users/${ACTOR}`).get()).data().friendCount, 0);
+  assert.equal((await db.doc(`users/${TARGET}`).get()).data().friendCount, 0);
+
   console.log(
-    "OK  social callables are reachable and atomically create exactly one "
-      + "friendship with replay-safe counters",
+    "OK  social callables cover send/cancel/decline/accept/replay/unfriend "
+      + "with lifecycle-safe alerts and counters",
   );
 }
 

@@ -222,16 +222,17 @@ class NotificationService {
     await _notificationsFor(_currentUser.uid).doc(notificationId).delete();
   }
 
-  /// Writes a notification into [recipientId]'s subcollection. Only
-  /// structured fields are ever sent — no free-text body — because
-  /// firestore.rules authorizes this purely on actorId == caller and type
-  /// being one of a known set; there is deliberately nothing here a
-  /// malicious actor could use to write deceptive content into someone
-  /// else's notification feed.
+  /// Legacy fixture helper retained while older routing tests are migrated.
+  /// Production Firestore Rules deny every client notification create, so no
+  /// shipping flow may call this method; authoritative writers live in Cloud
+  /// Functions.
   /// [suppressBell] routes the record away from the bell feed/badge while
   /// still writing it — the document is what triggers the push
   /// (onNotificationCreated), so a friend DM keeps its push without
   /// duplicating the chat unread state into the bell.
+  @Deprecated(
+    'Client notification creates are unsupported; use a server writer.',
+  )
   Future<void> notify({
     required String recipientId,
     required NotificationType type,
@@ -340,16 +341,26 @@ class NotificationService {
   Future<void> registerFcmToken(
     String token, {
     required String platform,
+    required String expectedUserId,
   }) async {
-    await _users.doc(_currentUser.uid).collection('fcmTokens').doc(token).set({
+    if (_currentUser.uid != expectedUserId) {
+      throw StateError('The push-token owner changed before registration.');
+    }
+    await _users.doc(expectedUserId).collection('fcmTokens').doc(token).set({
       'platform': platform,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
 
-  Future<void> unregisterFcmToken(String token) async {
+  Future<void> unregisterFcmToken(
+    String token, {
+    required String expectedUserId,
+  }) async {
+    if (_currentUser.uid != expectedUserId) {
+      throw StateError('The push-token owner changed before cleanup.');
+    }
     await _users
-        .doc(_currentUser.uid)
+        .doc(expectedUserId)
         .collection('fcmTokens')
         .doc(token)
         .delete();

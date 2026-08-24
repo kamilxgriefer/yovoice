@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:firebase_auth/firebase_auth.dart';
@@ -36,10 +37,13 @@ class AuthService {
     @visibleForTesting AppleProviderProbe? appleProviderProbe,
     @visibleForTesting PresenceService? presenceService,
     @visibleForTesting DeviceTokenUnregister? unregisterDeviceToken,
+    @visibleForTesting
+    Duration bestEffortCleanupTimeout = const Duration(seconds: 10),
   }) : _firebaseAuth = firebaseAuth ?? FirebaseAuth.instance,
        _firestoreService = firestoreService ?? FirestoreService(),
        _injectedPresenceService = presenceService,
        _injectedUnregisterDeviceToken = unregisterDeviceToken,
+       _bestEffortCleanupTimeout = bestEffortCleanupTimeout,
        _appleSignInFeatureEnabled =
            appleSignInFeatureEnabled ??
            const bool.fromEnvironment(
@@ -62,6 +66,7 @@ class AuthService {
   // that never sign out.
   final PresenceService? _injectedPresenceService;
   final DeviceTokenUnregister? _injectedUnregisterDeviceToken;
+  final Duration _bestEffortCleanupTimeout;
 
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
 
@@ -355,8 +360,10 @@ class AuthService {
     final userId = _firebaseAuth.currentUser?.uid;
 
     if (userId != null) {
-      await _unregisterDeviceTokenBestEffort();
-      await _setOfflineBestEffort(userId);
+      await Future.wait<void>([
+        _unregisterDeviceTokenBestEffort(),
+        _setOfflineBestEffort(userId),
+      ]);
     }
 
     try {
@@ -385,7 +392,13 @@ class AuthService {
       final unregister =
           _injectedUnregisterDeviceToken ??
           PushNotificationService.instance.unregisterCurrentDevice;
-      await unregister();
+      await unregister().timeout(_bestEffortCleanupTimeout);
+    } on TimeoutException {
+      debugPrint(
+        'AuthService.signOut: device-token cleanup exceeded the bounded '
+        'window. Sign-out will continue; push identity remains epoch-blocked '
+        'and the next binding must rotate its token.',
+      );
     } catch (error) {
       debugPrint(
         'AuthService.signOut: could not unregister this device for push '
@@ -398,8 +411,13 @@ class AuthService {
 
   Future<void> _setOfflineBestEffort(String userId) async {
     try {
-      await (_injectedPresenceService ?? PresenceService()).setOfflineForUser(
-        userId,
+      await (_injectedPresenceService ?? PresenceService())
+          .setOfflineForUser(userId)
+          .timeout(_bestEffortCleanupTimeout);
+    } on TimeoutException {
+      debugPrint(
+        'AuthService.signOut: presence cleanup exceeded the bounded window. '
+        'Sign-out will continue; presence will converge on the next session.',
       );
     } catch (error) {
       debugPrint(
@@ -473,6 +491,12 @@ class AuthService {
       // idempotent profile bootstrap. Deleting here caused the visible
       // one-second login followed by an immediate return to Login.
       try {
+        // This is still a real authenticated session: AuthGate may already
+        // have started push binding before profile bootstrap failed. Route the
+        // rollback through the same token privacy boundary as an explicit
+        // sign-out so a half-created social login cannot leave this device
+        // registered to the abandoned account.
+        await _unregisterDeviceTokenBestEffort();
         await _firebaseAuth.signOut();
       } catch (_) {
         // Preserve the original provisioning error below.

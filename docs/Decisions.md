@@ -2511,8 +2511,12 @@ where "I saw no reports of that kind" has to be true.
 
 ## ADR-041: Friend-request, acceptance and follow notifications are derived from their source documents by Firestore triggers, not written by the acting client
 
-**Status**: Accepted
+**Status**: Superseded by ADR-114
 **Date**: 2026-08-12
+
+This section records the historical trigger design. Its trigger smoke was
+retired with ADR-114; current lifecycle coverage lives in
+`functions/test/social_graph_security.test.js` and the callable binding smoke.
 
 ### Context
 
@@ -2605,18 +2609,16 @@ reads the friendship itself.
   retry of the same event. A friendship with no `createdAt` fails closed.
   `blockUser` is already safe without this — it deletes the friendship
   and both request documents in one transaction, so no friendship
-  survives for the trigger to find — and all four cases (decline, block,
-  stale cleanup, genuine acceptance) are exercised through the real
-  exported trigger in `firestore-tests/notifications.smoke.js`.
+  survives for the trigger to find. This trigger-specific coverage was
+  retired with ADR-114.
 - **Deploy order is load-bearing**: the Functions must ship BEFORE the
   rules change. Rules first would leave a window where the client is
   denied and no trigger exists yet. This is written into DEPLOYMENT.md.
 - `FollowService` no longer takes a `NotificationService`; the two test
   call sites that injected one were updated.
-- Client tests for these flows now assert the source documents and the
-  absence of a client-written notification; the notification itself is
-  proven against the real triggers in
-  `firestore-tests/notifications.smoke.js`.
+- Client tests for these flows asserted the source documents and the absence
+  of a client-written notification. ADR-114 replaces the trigger proof with
+  direct callable lifecycle and binding coverage.
 - Notification types still written by clients — club/room invites,
   `directMessage`, `mention`, `reply` — keep the existing path and the
   existing silent-catch weakness. Moving them is the obvious follow-up
@@ -3168,10 +3170,10 @@ FCM notification automatically while their tab is focused.
 
 ### Decision
 
-Create `yovoice_default` as a high-importance, sound-and-vibration-enabled
-Android channel before subscribing to foreground messages. Native foreground
-delivery uses explicit Android and Darwin presentation settings. The server
-payload selects the same channel and default sound/vibration on Android,
+Create a high-importance, sound-and-vibration-enabled Android channel before
+subscribing to foreground messages. Native foreground delivery uses explicit
+Android and Darwin presentation settings. The server payload selects the same
+channel and configured sound/vibration on Android,
 default sound and active interruption on APNs, and icon/badge metadata on web.
 A focused web tab routes the foreground event into one floating in-app banner,
 requests the platform alert sound, and exposes the same deep-link action as a
@@ -3183,6 +3185,11 @@ The Firestore activity record remains the durable source of truth while FCM is
 best-effort presentation. Explicit platform configuration prevents device
 defaults from silently downgrading the experience, and the in-app web banner
 fills the foreground behavior browsers deliberately leave to applications.
+
+**Amended by ADR-076.** The shipping channel is the versioned
+`yovoice_activity_v2`, with the original `yovoice_notification` sound. The
+earlier `yovoice_default`/default-sound names are historical, not an instruction
+for current code or deployment.
 
 ### Consequences
 
@@ -5495,12 +5502,19 @@ on a shared device.
 
 **Decision.** Both cleanups converge into `AuthService.signOut()`,
 immediately **before** `_firebaseAuth.signOut()` — the only place in `lib/`
-where a live session becomes a dead one. Ordering is unregister → presence →
-Google → signOut, each independently try/caught with a named consequence, so
-one failure cannot skip the other and neither can trap a user in a session
-they asked to leave. The two denied writes are **removed rather than
-relocated**: keeping a write the ruleset always rejects is the mistake being
-fixed.
+where a live session becomes a dead one. Presence and token cleanup start
+together while the session is still authorized, are independently bounded and
+report a named consequence, then Google/Firebase sign-out continues. The push
+path synchronously revokes its identity epoch and marks rotation required
+before any fallible await; durable-marker persistence, owner-row deletion and
+platform invalidation then settle independently. One offline or
+never-completing Future therefore cannot skip the other cleanup or trap a user
+in a session they asked to leave. Token-row deletion is issued eagerly and
+repeated after a successfully drained pre-transition registration queue, so an
+already-started registration cannot complete after the delete and resurrect
+the previous account's subscription. The two denied writes are **removed
+rather than relocated**: keeping a write the ruleset always rejects is the
+mistake being fixed.
 
 **Reasoning.** A write authorized by `isSignedIn()`/`isOwner()` has a
 precondition the client controls the timing of, and the signed-out branch is
@@ -6790,3 +6804,92 @@ phone, tablet and desktop.
 No Firebase data, rules, indexes, Functions, schema or dependency changes are
 involved. This is source-only until a separate Hosting release is explicitly
 requested and byte-verified.
+
+## ADR-114: Social graph callables own the notification lifecycle end to end
+
+**Context.** ADR-041 correctly removed social-notification writes from the
+client, but derived them through three asynchronous Firestore triggers while
+the newer social callables also wrote the same deterministic notification
+documents in their graph transactions. Two authorities could overwrite one
+another. A delayed trigger could restore `isRead: false` after a request was
+accepted, declined or cancelled; cancel did not retire its alert at all; and
+reusing a deterministic id meant a later legitimate request, acceptance or
+follow was an update, so the create-only push trigger did not run again.
+
+**Decision.** `sendFriendRequest`, `respondToFriendRequest`,
+`cancelFriendRequest`, `removeFriend`, `setFollow` and `setUserBlock` are the
+single authority for both graph state and its in-app notification row. The
+legacy `onFriendRequestCreated`, `onFriendRequestResolved` and
+`onFollowerCreated` exports are retired. Actionable request alerts are deleted
+atomically on accept, decline and cancel, including idempotent repair replays.
+Every new request, acceptance and follow receives a generation-specific
+notification id; request, friendship and follow mirrors store the ids needed
+for atomic retirement. Unfollow and block retire the active follow activity
+row with the edge, while the next follow gets a different generation. The
+first post-upgrade lifecycle also deletes the retired
+pair-lifetime id, so an existing production row cannot turn the next event into
+an update without `onCreate`. The generic `onNotificationCreated` push trigger
+re-reads the row, requires the same Firestore `createTime`, rejects the retired
+id shape whenever its live source is generation-bound, and revalidates the
+live graph source immediately before FCM. During the ordered cutover, a
+genuine old source with no pointer may still emit its one legacy alert; once a
+pointer exists only the exact generation is accepted. Invalid compatibility
+rows are removed. This materially narrows delayed-event races;
+it does not pretend to eliminate the final source-change-vs-network-send
+TOCTOU inherent in best-effort FCM.
+After the legacy trigger exports are verified absent, a bounded, resumable,
+aggregate-only Admin sweep deletes any retired deterministic ids whose
+best-effort event-time cleanup hit a transient error. It calls the same source
+predicate as push, preserving genuine pointer-less legacy state and deleting
+only source-less or upgraded-source duplicates. Dry-run, apply and a zero-plan
+verification are part of rollout, not optional hygiene.
+
+**Reasoning.** The graph transaction is the only point that can atomically
+decide whether a relationship event exists, allocate a fresh notification
+generation and retire the previous actionable generation. Moving that work to
+the callables removes trigger-order races, while exact source pointers let the
+best-effort push layer reject delayed events without trusting client payloads.
+Backward-compatible legacy predicates and an ordered rollout are necessary
+because Cloud Functions updates are not atomic and the deployed two-field
+follow edge must remain readable throughout the cutover.
+
+On Flutter, a friend-request tap opens the actionable Friends → Requests queue
+rather than a profile that assumes friendship. Accepted/follow activity opens
+the relationship-aware profile preview. Mobile Home receives the same unread
+count as desktop. Friends and blocked-user failures render safe error states,
+missing/private blocked profiles retain a UID-backed Unblock row, the social
+graph callables use `europe-west1`, and Add Friend controls meet the 44 px
+minimum. Sign-out rotates the platform FCM token independently of the
+owner-scoped Firestore delete. The process-local guard is set before the
+fallible durable-marker write; persistence, the owner-row delete, registration
+drain and platform invalidation are all started independently and awaited only
+within bounded windows; owner-row deletion repeats after a successful drain so
+its final operation wins a delayed registration race. When the marker write succeeds it survives process
+death and blocks reuse by the next account until deletion or a platform token
+refresh succeeds. Cold starts and direct account rebindings force rotation too,
+and an identity epoch plus serialized write queue prevents a refresh from
+clearing or re-registering during sign-out. Failed social-profile provisioning
+also enters this cleanup path before its Auth rollback. If both local
+persistence and platform invalidation fail, the running process remains closed;
+after a full restart the signed-out screen cannot prove ownership until the
+next identity binding forces another invalidation attempt. That narrow residual
+interval is explicit.
+
+**Consequences.** No index change. Firestore Rules widen the exact follow-edge
+read schema from `{uid, followedAt}` to `{uid, followedAt, notificationId?}`;
+the pointer is bounded, remains server-write-only and the legacy two-field row
+stays readable. Request mirrors gain an additive server-owned
+`notificationId`; friendship mirrors gain the acceptance id and recipient
+needed for cleanup. The source removes three deployed Functions, so release is
+deliberate: deploy the backward-compatible Rules widening first; deploy the
+compatibility-aware push trigger and four widened DM validators; then deploy
+cleanup consumers before social producers. Verify the two-account journey,
+explicitly delete the three retired trigger Functions, run the source-aware
+sweep to completion, and repeat the final smoke. Hosting follows only after
+backend readiness. The exact staged commands and rollback boundaries live in
+DEPLOYMENT.md.
+Emulator tests cover cancel/decline/accept/replay/unfriend notification
+lifecycle, fresh re-requests/refollows, region/routing contracts, blocked-row
+degradation, mobile badge semantics and 200% request actions. System FCM still
+requires a two-device smoke because delivery beyond the durable notification
+row is best effort. **SOURCE ONLY — NOT DEPLOYED.**

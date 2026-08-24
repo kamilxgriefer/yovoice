@@ -18,6 +18,45 @@ const {
 const FIRESTORE_RULES = path.resolve(__dirname, "../firestore.rules");
 const STORAGE_RULES = path.resolve(__dirname, "../storage.rules");
 
+// Emulator ports are test-harness state, not product behavior. Firebase CLI
+// injects the combined *_EMULATOR_HOST variables; the split variables remain
+// useful for an explicitly managed emulator in CI or a parallel local run.
+function emulatorEndpoint(combinedValue, explicitHost, explicitPort, fallbackPort) {
+  const separator = combinedValue?.lastIndexOf(":") ?? -1;
+  const combinedHost = separator > 0 ? combinedValue.slice(0, separator) : null;
+  const combinedPort = separator > 0 ? combinedValue.slice(separator + 1) : null;
+  return {
+    host: explicitHost ?? combinedHost ?? "127.0.0.1",
+    port: Number(explicitPort ?? combinedPort ?? fallbackPort),
+  };
+}
+
+const firestoreEndpoint = emulatorEndpoint(
+  process.env.FIRESTORE_EMULATOR_HOST,
+  process.env.FIRESTORE_EMULATOR_ADDRESS,
+  process.env.FIRESTORE_EMULATOR_PORT,
+  8080,
+);
+const storageEndpoint = emulatorEndpoint(
+  process.env.FIREBASE_STORAGE_EMULATOR_HOST,
+  process.env.STORAGE_EMULATOR_ADDRESS,
+  process.env.STORAGE_EMULATOR_PORT,
+  9199,
+);
+const EMULATOR_HOST = firestoreEndpoint.host;
+const FIRESTORE_PORT = firestoreEndpoint.port;
+const STORAGE_HOST = storageEndpoint.host;
+const STORAGE_PORT = storageEndpoint.port;
+
+for (const [name, port] of [
+  ["FIRESTORE_EMULATOR_PORT", FIRESTORE_PORT],
+  ["STORAGE_EMULATOR_PORT", STORAGE_PORT],
+]) {
+  if (!Number.isInteger(port) || port <= 0) {
+    throw new Error(`${name} is not a port: ${process.env[name]}`);
+  }
+}
+
 let passed = 0;
 let failed = 0;
 
@@ -319,13 +358,13 @@ async function main() {
     projectId: "demo-yovoice",
     firestore: {
       rules: fs.readFileSync(FIRESTORE_RULES, "utf8"),
-      host: "127.0.0.1",
-      port: 8080,
+      host: EMULATOR_HOST,
+      port: FIRESTORE_PORT,
     },
     storage: {
       rules: fs.readFileSync(STORAGE_RULES, "utf8"),
-      host: "127.0.0.1",
-      port: 9199,
+      host: STORAGE_HOST,
+      port: STORAGE_PORT,
     },
   });
 

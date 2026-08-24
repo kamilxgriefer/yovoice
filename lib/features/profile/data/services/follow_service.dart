@@ -10,9 +10,9 @@ typedef FollowMutationInvoker =
 class FollowService {
   static const int _maxVisibleEdges = 100;
 
-  /// Follow notifications are no longer this service's business: they
-  /// are derived from the `followers` document by onFollowerCreated
-  /// (ADR-041), so there is nothing here to inject.
+  /// Follow notifications are no longer this service's business: the
+  /// server-side social callable owns the graph and matching activity row
+  /// transactionally (ADR-114), so there is nothing here to inject.
   FollowService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,

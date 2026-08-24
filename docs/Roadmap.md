@@ -332,8 +332,10 @@ someone decide what to pick up next.
   same shape of bug across five sign-out entry points with five different
   amounts of cleanup, two of which left the previous account receiving push
   on a shared device. Cleanup converged into `AuthService.signOut()`,
-  immediately before `_firebaseAuth.signOut()`; Settings, Profile and the 2FA
-  path needed no edit at all, which is the convergence working. The tests
+  immediately before `_firebaseAuth.signOut()`; both cleanup operations are
+  independently bounded, and push revokes its identity epoch and starts token
+  invalidation before any offline Future can stall sign-out. Settings, Profile
+  and the 2FA path needed no edit at all, which is the convergence working. The tests
   record `_auth.currentUser != null` at the moment of each write, so a write
   recorded outside a live session is one the deployed ruleset denies — 8 of
   10 fail against the pre-fix code. **Not fixed and not fixable from the
@@ -811,7 +813,8 @@ someone decide what to pick up next.
   built. See
   [ADR-045](Decisions.md#adr-045-one-authoritative-identity-badge-system--owner-guarded-derivation-a-batched-client-repository-and-a-single-family-of-badge-widgets).
 
-- Server-derived social notifications (2026-08-12): friend requests,
+- **SUPERSEDED by ADR-114** — server-derived social notifications
+  (2026-08-12): friend requests,
   acceptances and follows are no longer a best-effort second client
   write. Three Firestore triggers derive them from the authoritative
   documents, with deterministic ids so an at-least-once redelivery
@@ -820,7 +823,9 @@ someone decide what to pick up next.
   end-to-end through the real triggers in the emulator: 13 pipeline
   stages, from the source write to the recipient's bell feed and unread
   badge. 224 Flutter tests, 173 rules tests, 65 Functions tests.
-  **Needs a Functions deploy, then the rules deploy, in that order**
+  This records the historical ADR-041 trigger rollout; those three trigger
+  writers are now retired in source and must follow ADR-114's single-writer
+  rollout instead
   ([ADR-041](Decisions.md#adr-041-friend-request-acceptance-and-follow-notifications-are-derived-from-their-source-documents-by-firestore-triggers-not-written-by-the-acting-client)).
   Web push remains broken for a separate, documented reason, and
   `@mentions` are not started.
@@ -1011,6 +1016,12 @@ someone decide what to pick up next.
   transfer (`2c27c6e`).
 - Friends system — requests, blocking, mutual friends, suggestions
   (`2abda0a`).
+- Friends lifecycle hardening — one transactional notification writer,
+  actionable request deep links, cancel/accept/decline cleanup, replay-safe
+  generation-specific re-requests/refollows, compatibility-row suppression,
+  account-switch FCM token rotation, mobile unread badge, resilient blocked
+  rows and 44 px Add Friend actions (ADR-114).
+  **SOURCE ONLY — NOT DEPLOYED.**
 - Direct messages + club channel chat.
 - Voice Moments — recorded audio posts, likes, comments, voice replies.
 - Achievements/Awards — full 100-title catalog; Level/XP header, category

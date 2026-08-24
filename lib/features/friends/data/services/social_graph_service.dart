@@ -50,7 +50,8 @@ class SocialGraphService {
   // overrides every callable-backed method can be constructed without an
   // initialised Firebase app.
   FirebaseFunctions get _functions =>
-      _functionsOverride ?? FirebaseFunctions.instance;
+      _functionsOverride ??
+      FirebaseFunctions.instanceFor(region: 'europe-west1');
 
   Future<MutualFriendsSummary> getMutualFriends(String targetUserId) async {
     final callable = _functions.httpsCallable('getMutualFriends');

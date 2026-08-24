@@ -57,16 +57,16 @@ functions/
 ├── admin/             Role/room/club moderation, audit log
 ├── badges/            Public badge projection + derivation
 ├── clubs/             Self-service ownership transfer
-├── friends/           Mutual-friends, friend-suggestion logic
+├── friends/           Social graph callables, mutual friends, suggestions
 ├── integrity/         Stage A/B server-authoritative DM/moment actions
 ├── livekit/           Token minting (the one path with real secrets)
 ├── media/, messaging/, moments/, rooms/, profile/, staff/
 ├── moderation/        Report triage, audit trail, Global Chat moderation
-├── notifications/     The Firestore-trigger → FCM push pipeline
+├── notifications/     FCM pipeline + social-source generation validation
 ├── premium/           Entitlements, purchase verification, expiry sweep
-├── stats/             Scheduled public-stats publisher (NOT deployed)
-├── scripts/           Operator migrations (backfill, identity scrub)
-├── test/              45 `*.test.js` files — see TESTING.md
+├── stats/             Scheduled public-stats publisher
+├── scripts/           Operator migrations (backfill, identity/social scrub)
+├── test/              64 `*.test.js` files — see TESTING.md
 ├── utils/             Shared helpers (auth guards, Firestore access)
 └── package.json       Node dependencies — see DEPENDENCIES.md
 ```

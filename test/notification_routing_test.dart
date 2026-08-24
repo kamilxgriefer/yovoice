@@ -7,6 +7,7 @@ import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+import 'package:yovoice/features/notifications/presentation/notification_router.dart';
 
 /// Simulates the rules rejecting a SUPPRESSED write (asymmetric
 /// friendship: sender-side doc exists, recipient-side doesn't) so the
@@ -52,6 +53,20 @@ class _DenySuppressedNotifications extends NotificationService {
 /// non-chat events (friend requests, follows, invites) stay bell
 /// events. Read state clears only its own surface.
 void main() {
+  test('friend request opens the actionable Requests queue', () {
+    expect(
+      NotificationRouter.destinationFor(NotificationType.friendRequest),
+      NotificationDestination.friendRequests,
+    );
+    expect(
+      NotificationRouter.destinationFor(NotificationType.friendAccepted),
+      NotificationDestination.profile,
+    );
+    expect(
+      NotificationRouter.destinationFor(NotificationType.follow),
+      NotificationDestination.profile,
+    );
+  });
   const senderUid = 'sender-uid';
   const recipientUid = 'recipient-uid';
 
@@ -59,11 +74,7 @@ void main() {
 
   MockFirebaseAuth authFor(String uid, String name) => MockFirebaseAuth(
     signedIn: true,
-    mockUser: MockUser(
-      uid: uid,
-      email: '$uid@yovoice.app',
-      displayName: name,
-    ),
+    mockUser: MockUser(uid: uid, email: '$uid@yovoice.app', displayName: name),
   );
 
   MessageService senderMessages() => MessageService(
@@ -345,7 +356,8 @@ void main() {
     expect(
       probe.suppressBellCalls,
       isEmpty,
-      reason: 'the client no longer decides suppression, or writes the '
+      reason:
+          'the client no longer decides suppression, or writes the '
           'notification at all',
     );
     expect(await rawNotificationDocs(), isEmpty);
@@ -415,8 +427,7 @@ void main() {
     final feed = await recipientNotifications()
         .watchNotifications()
         .firstWhere(
-          (emission) =>
-              emission.any((item) => item.id == 'legacy-club-invite'),
+          (emission) => emission.any((item) => item.id == 'legacy-club-invite'),
         )
         .timeout(const Duration(seconds: 5));
     final ids = feed.map((notification) => notification.id).toSet();
@@ -443,8 +454,7 @@ void main() {
   });
 
   test('7. unread bell count stays correct under a carrier flood — it '
-      'counts unread bell-visible records, not a windowed remainder',
-      () async {
+      'counts unread bell-visible records, not a windowed remainder', () async {
     final own = db
         .collection('users')
         .doc(recipientUid)

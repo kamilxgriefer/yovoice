@@ -5,12 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
-import 'package:yovoice/features/notifications/data/models/app_notification.dart';
-import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 
 /// The friend-request notification lifecycle, CLIENT side. Graph mutations
 /// are Cloud Function calls now; this suite pins the exact callable contract
-/// and keeps the in-memory notification rendering/dedupe checks separate.
+/// and verifies that the client never attempts to write notification rows.
 void main() {
   const senderUid = 'alice-uid';
   const acceptorUid = 'bob-uid';
@@ -31,7 +29,12 @@ void main() {
     });
   }
 
-  FriendService serviceFor(String uid, String email, String name) {
+  FriendService serviceFor(
+    String uid,
+    String email,
+    String name, {
+    String sendOutcome = 'requested',
+  }) {
     return FriendService(
       firestore: db,
       auth: MockFirebaseAuth(
@@ -40,6 +43,9 @@ void main() {
       ),
       mutationInvoker: (functionName, data) async {
         calls.add((uid: uid, name: functionName, data: data));
+        if (functionName == 'sendFriendRequest') {
+          return <String, dynamic>{'changed': true, 'outcome': sendOutcome};
+        }
         return const <String, dynamic>{'changed': true};
       },
     );
@@ -86,6 +92,29 @@ void main() {
     },
   );
 
+  test('an idempotent already-pending response remains Request sent', () async {
+    final alice = serviceFor(
+      senderUid,
+      'alice@yovoice.app',
+      'Alice',
+      sendOutcome: 'alreadyPending',
+    );
+
+    final relationship = await alice.sendFriendRequest(
+      const FriendUser(
+        id: acceptorUid,
+        displayName: 'Bob',
+        email: 'bob@yovoice.app',
+        photoUrl: null,
+        isOnline: false,
+        lastSeen: null,
+      ),
+    );
+
+    expect(relationship, FriendRelationshipStatus.requestSent);
+    expect(calls.single.name, 'sendFriendRequest');
+  });
+
   test(
     'accepting delegates sender id and the explicit accept decision',
     () async {
@@ -110,45 +139,6 @@ void main() {
       expect(await notificationsOf(acceptorUid), isEmpty);
     },
   );
-
-  test('a retried acceptance notification cannot duplicate: deterministic '
-      'dedupe doc id keeps the sender feed at exactly one entry', () async {
-    final bobNotifications = NotificationService(
-      firestore: db,
-      auth: MockFirebaseAuth(
-        signedIn: true,
-        mockUser: MockUser(
-          uid: acceptorUid,
-          email: 'bob@yovoice.app',
-          displayName: 'Bob',
-        ),
-      ),
-    );
-
-    // The deterministic id onFriendRequestResolved writes under. The
-    // mechanism is unchanged by ADR-041 — only the writer moved — so
-    // this still pins "a replay lands on the same document".
-    const dedupeKey = 'friendAccepted_$acceptorUid';
-    await bobNotifications.notify(
-      recipientId: senderUid,
-      type: NotificationType.friendAccepted,
-      dedupeKey: dedupeKey,
-    );
-    await bobNotifications.notify(
-      recipientId: senderUid,
-      type: NotificationType.friendAccepted,
-      dedupeKey: dedupeKey,
-    );
-
-    final aliceFeed = await notificationsOf(senderUid);
-    expect(
-      aliceFeed.where((n) => n['type'] == NotificationType.friendAccepted.name),
-      hasLength(1),
-      reason:
-          'the deterministic doc id makes a duplicate physically '
-          'impossible — a retry lands on the same document',
-    );
-  });
 
   test('declining delegates the explicit negative decision', () async {
     final bob = serviceFor(acceptorUid, 'bob@yovoice.app', 'Bob');

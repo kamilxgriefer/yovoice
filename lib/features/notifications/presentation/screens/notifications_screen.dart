@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -142,13 +140,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _openNotification(AppNotification notification) async {
-    if (!notification.isRead) {
-      unawaited(_notificationService.markAsRead(notification.id));
-    }
     await NotificationRouter.route(
       type: notification.type,
       targetId: notification.targetId,
       actorId: notification.actorId,
+      notificationId: notification.id,
     );
   }
 

@@ -155,8 +155,11 @@ about things that are broken, risky, or need verification.
   the ruleset always rejects is the mistake. The FCM token had the same shape
   across five sign-out entry points with five different amounts of cleanup;
   cleanup converged into `AuthService.signOut()` immediately before
-  `_firebaseAuth.signOut()`. **UNVERIFIED**: presence actually flipping in
-  production needs two real accounts. **Half of this is not fixable from the
+  `_firebaseAuth.signOut()`. Both cleanups start while Auth is live, are
+  independently time-bounded, and push revokes its identity epoch plus starts
+  durable-marker/platform-token rotation before any offline Future can stall
+  sign-out. **UNVERIFIED**: presence actually flipping in production needs two
+  real accounts. **Half of this is not fixable from the
   client at all** — see the process-death entry under Data integrity. See
   [ADR-090](Decisions.md#adr-090-session-cleanup-converges-on-authservicesignout-because-a-write-the-rules-authorize-by-session-cannot-live-after-the-session-ends).
 - **FIXED IN SOURCE 2026-08-19 — a banned or communication-muted account
@@ -610,10 +613,12 @@ permission flags).
   friendRequests 6, following 5, followers 5), verified by a re-run
   planning zero further scrubs. Note it was run *after* the rules deploy,
   which was the wrong order and briefly a live defect rather than
-  housekeeping — the new rules require follow edges to carry exactly
-  `['uid','followedAt']`, Firestore denies a list query if any single
+  housekeeping — the ADR-054 deployed rules required follow edges to carry
+  exactly `['uid','followedAt']`, Firestore denies a list query if any single
   document fails the rule, so one legacy five-key edge emptied a user's
-  entire followers/following list. See
+  entire followers/following list. ADR-114 source later preserves that legacy
+  shape while allowing one optional bounded server-owned generation pointer.
+  See
   [DEPLOYMENT.md](DEPLOYMENT.md#private-profile-projection-cutover-strict-order--executed-2026-08-16).
 
 - **FIXED AND DEPLOYED 2026-08-16 — the real Club creation batch was
@@ -688,20 +693,34 @@ permission flags).
   notification permission, Focus/Do Not Disturb and mute settings remain OS
   controls and cannot be overridden by an app.
 
-- **FIXED — friend requests, acceptances and follows could silently
+- **SUPERSEDED — friend requests, acceptances and follows could silently
   produce no notification.** All three were a second client write issued
   after the authoritative write, inside `try { ... } catch (_) {}`. Any
   interruption between the two writes lost the notification permanently
-  and reported nothing. They are now derived from their source documents
-  by `onFriendRequestCreated`, `onFriendRequestResolved` and
-  `onFollowerCreated` (ADR-041), which Cloud Functions retries.
+  and reported nothing. ADR-041 first moved them to derived triggers.
+  ADR-114 supersedes that implementation with the social callable as the
+  single transactional writer, because the trigger and callable later
+  overlapped.
   **Deployed 2026-08-16** — all three appear in `firebase functions:list`.
   *(This bullet read "Needs the Functions deploy to take effect in
   production" until that date.)*
+- **FIXED IN SOURCE — resolved/cancelled friend requests could leave or
+  resurrect an unread alert.** Cancel omitted the notification cleanup and
+  legacy source triggers could overwrite the callable's resolved state. The
+  callable now retires actionable rows atomically on accept/decline/cancel,
+  repairs stale rows on replay, and retires the active lifecycle rows on
+  unfriend/unfollow so later lifecycles receive fresh generation ids.
+  Friend-request taps open Requests with Accept/Decline, the mobile bell shows
+  the unread count, and new lifecycles use generation-specific ids. Push
+  delivery re-checks both document generation and the canonical graph source;
+  retired compatibility ids are removed during rollout (ADR-114).
+  **SOURCE ONLY — NOT DEPLOYED.**
 - **FIXED — clients could forge these three notification types.** A
   client could write "X accepted your friend request" with no friendship
   existing; rules cannot check that. The three types were removed from
-  the client-creatable list, and the trigger reads the friendship itself.
+  the client-creatable list, and the server authority validates the
+  friendship itself. Production still derives this through the deployed
+  triggers; ADR-114 moves the same authority into the graph transaction.
 - **FIXED — web push configuration.** The service worker
   (`web/firebase-messaging-sw.js`) now exists and ships in the build, and
   `getToken()` passes a `vapidKey` from
@@ -716,10 +735,10 @@ permission flags).
   spun while any one was still loading. Loading and fatal errors now
   depend on the activity feed alone; an auxiliary failure degrades to a
   small notice above the feed, which keeps rendering.
-- **OPEN — remaining client-written notification types still fail
-  silently.** Club/room invites and `mention` keep the old best-effort path.
-  Direct messages and replies are now derived by the server from the message
-  document.
+- **OPEN — `mention` has no authoritative writer.** Firestore Rules deny every
+  client notification create. Club/room invites, direct messages and replies
+  use server paths; mention remains an enum/rendering contract without a
+  production writer and must not be described as a client best-effort path.
 
 ## Achievements
 
@@ -1573,7 +1592,8 @@ permission flags).
   Verified live on iOS Simulator and the deployed web app (first-chat
   bootstrap opens cleanly). Regression tests: `test/error_messages_test.dart`,
   rules suite conversation-bootstrap cases.
-- **Fixed (P0, 2026-08-08): friend-request acceptance never notified the
+- **Superseded by ADR-114 (SOURCE ONLY — NOT DEPLOYED). Fixed (P0,
+  2026-08-08): friend-request acceptance never notified the
   original sender.** `notify()`'s dedupe path queried the *recipient's*
   notification subcollection, which rules forbid — the permission-denied
   silently aborted every deduped notify, so the `friendAccepted`
@@ -1586,7 +1606,9 @@ permission flags).
   emulator rules tests and `test/friend_accept_notification_test.dart`;
   a live two-account UI check needs a second signed-in session
   (UNVERIFIED live — no second test-account session was available to
-  this session's tooling).
+  this session's tooling). This paragraph records the historical repair; the
+  current source no longer uses client `notify()`/`markMatchingRead()` for the
+  social lifecycle and instead binds each event to a server-owned generation.
 - **Fixed (P0, 2026-08-08): bottom navigation disappeared on More
   destinations.** Deterministic, not random: `_openMoreDestination`
   pushed full-screen routes that covered the shell. Main More

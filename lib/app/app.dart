@@ -27,6 +27,7 @@ SnackBar buildForegroundNotificationBanner({
   required NotificationType type,
   required String? targetId,
   required String? actorId,
+  String? notificationId,
   double bottomClearance = 104,
 }) {
   final isAchievement = type == NotificationType.achievementUnlocked;
@@ -55,6 +56,7 @@ SnackBar buildForegroundNotificationBanner({
                 type: type,
                 targetId: targetId,
                 actorId: actorId,
+                notificationId: notificationId,
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
@@ -151,6 +153,7 @@ SnackBar buildForegroundNotificationBanner({
         type: type,
         targetId: targetId,
         actorId: actorId,
+        notificationId: notificationId,
       ),
     ),
   );
@@ -258,11 +261,12 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
   void initState() {
     super.initState();
     PushNotificationService.instance.onNotificationTap =
-        (type, targetId, actorId) {
+        (type, targetId, actorId, notificationId) {
           NotificationRouter.route(
             type: type,
             targetId: targetId,
             actorId: actorId,
+            notificationId: notificationId,
           );
         };
     // Foreground banners are stream-driven: any freshly arrived unread
@@ -279,6 +283,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
         type: notification.type,
         targetId: notification.targetId,
         actorId: notification.actorId,
+        notificationId: notification.id,
       ),
     )..start();
     _streamNotifications = streamNotifications;
@@ -291,6 +296,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
             type: type,
             targetId: targetId,
             actorId: actorId,
+            notificationId: notificationId,
           );
         };
   }
@@ -307,6 +313,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
     required NotificationType type,
     required String? targetId,
     required String? actorId,
+    String? notificationId,
   }) {
     unawaited(UiSoundService.instance.play(UiSound.notification));
     final messenger = _messengerKey.currentState;
@@ -329,6 +336,7 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
           type: type,
           targetId: targetId,
           actorId: actorId,
+          notificationId: notificationId,
           bottomClearance: bottomClearance,
         ),
       );

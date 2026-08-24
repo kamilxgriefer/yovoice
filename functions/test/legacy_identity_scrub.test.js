@@ -90,12 +90,14 @@ test("apply scrubs DM, request and follow-edge snapshots exactly", async () => {
     db.doc(`users/${PREFIX}-owner/following/${PREFIX}-target`).set({
       uid: `${PREFIX}-target`,
       followedAt,
+      notificationId: `follow_${PREFIX}-owner_generation`,
       displayName: "Stale target",
       photoUrl: "https://stale.invalid/target.jpg",
     }),
     db.doc(`users/${PREFIX}-target/followers/${PREFIX}-owner`).set({
       uid: `${PREFIX}-owner`,
       followedAt,
+      notificationId: `follow_${PREFIX}-owner_generation`,
       username: "stale-owner",
     }),
   ]);
@@ -125,6 +127,22 @@ test("apply scrubs DM, request and follow-edge snapshots exactly", async () => {
     target: "",
   });
   assert.equal("senderEmail" in request.data(), false);
-  assert.deepEqual(Object.keys(following.data()).sort(), ["followedAt", "uid"]);
-  assert.deepEqual(Object.keys(follower.data()).sort(), ["followedAt", "uid"]);
+  assert.deepEqual(Object.keys(following.data()).sort(), [
+    "followedAt",
+    "notificationId",
+    "uid",
+  ]);
+  assert.deepEqual(Object.keys(follower.data()).sort(), [
+    "followedAt",
+    "notificationId",
+    "uid",
+  ]);
+  assert.equal(
+    following.data().notificationId,
+    `follow_${PREFIX}-owner_generation`,
+  );
+  assert.equal(
+    follower.data().notificationId,
+    `follow_${PREFIX}-owner_generation`,
+  );
 });

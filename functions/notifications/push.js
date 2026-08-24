@@ -4,6 +4,11 @@ const { logger } = require("firebase-functions/v2");
 
 const { db } = require("../utils/firestore");
 const { buildPushMessage } = require("./push_payload");
+const { isCurrentNotificationGeneration } = require("./push_generation");
+const {
+  isLegacySocialNotificationId,
+  socialNotificationSourceIsCurrent: sourceIsCurrent,
+} = require("./social_source");
 const {
   FIRESTORE_CLEANUP_BATCH_SIZE,
   MAX_FCM_TOKEN_DOCUMENT_READS,
@@ -13,7 +18,7 @@ const {
 
 const REGION = "europe-west1";
 
-// One title-builder per client-creatable NotificationType
+// One title-builder per server-created NotificationType
 // (app_notification.dart's `title` getter, mirrored server-side so push
 // copy matches the in-app copy). 'system'/'moderation' are included even
 // though clients can never create them — the Admin SDK bypasses
@@ -63,11 +68,16 @@ async function deleteTokenReferences(references) {
   }
 }
 
-// notification_service.dart writes the Firestore doc directly from the
-// client (see firestore.rules) — there is no Cloud Function in that path.
-// This trigger is what turns "a notification doc exists" into "a push
-// actually goes out," so it has to run for every notification type,
-// client- or Admin-SDK-created.
+async function socialNotificationSourceIsCurrent(args) {
+  return sourceIsCurrent({
+    ...args,
+    firestore: args.firestore ?? db,
+  });
+}
+
+// Authoritative callables/triggers create the Firestore notification row.
+// Rules deny client creates. This trigger turns that durable in-app event
+// into a best-effort push for every supported type.
 exports.onNotificationCreated = onDocumentCreated(
   {
     document: "users/{userId}/notifications/{notificationId}",
@@ -78,6 +88,10 @@ exports.onNotificationCreated = onDocumentCreated(
     if (!snapshot) return;
 
     const notification = snapshot.data();
+    // Firestore onCreate supplies data in production. The local emulator can
+    // still drain an incomplete queued CloudEvent during shutdown; treat that
+    // as a non-event instead of crashing the Functions worker.
+    if (!notification) return;
     const { userId, notificationId } = event.params;
     const type = notification.type;
 
@@ -88,6 +102,33 @@ exports.onNotificationCreated = onDocumentCreated(
     }
 
     try {
+      // Cleanup is an inbox-integrity responsibility, not a push-eligibility
+      // decision. Run it before preferences/token early returns so an opted-
+      // out user or a user with no registered device cannot retain a legacy
+      // duplicate or a source-less actionable row.
+      let currentNotification = await snapshot.ref.get();
+      if (!isCurrentNotificationGeneration(snapshot, currentNotification)) {
+        return;
+      }
+      let currentData = currentNotification.data();
+      if (
+        !(await socialNotificationSourceIsCurrent({
+          recipientId: userId,
+          notificationId,
+          notification: currentData,
+        }))
+      ) {
+        await snapshot.ref
+          .delete({ lastUpdateTime: currentNotification.updateTime })
+          .catch((error) => {
+            logger.info("Skipped stale social notification cleanup", {
+              notificationId,
+              code: error?.code ?? "unknown",
+            });
+          });
+        return;
+      }
+
       const userDoc = await db.collection("users").doc(userId).get();
       const preferences = userDoc.data()?.notificationPreferences || {};
       // Preferences are opt-out: absent/undefined means enabled. Marketing-
@@ -108,8 +149,26 @@ exports.onNotificationCreated = onDocumentCreated(
         .get();
       if (tokensSnap.empty) return;
 
-      const actorName = notification.actorName || "YoVoice user";
-      const title = buildTitle(actorName, notification.targetLabel || null);
+      // Re-check both document generation and exact graph generation as the
+      // final operation before the network send. Cleanup above is durable;
+      // this second read narrows cancel/unfollow-vs-FCM TOCTOU.
+      currentNotification = await snapshot.ref.get();
+      if (!isCurrentNotificationGeneration(snapshot, currentNotification)) {
+        return;
+      }
+      currentData = currentNotification.data();
+      if (
+        !(await socialNotificationSourceIsCurrent({
+          recipientId: userId,
+          notificationId,
+          notification: currentData,
+        }))
+      ) {
+        return;
+      }
+
+      const actorName = currentData.actorName || "YoVoice user";
+      const title = buildTitle(actorName, currentData.targetLabel || null);
       const plan = planTokenDocuments(tokensSnap.docs);
       const delivery = await sendMulticastInChunks({
         tokens: plan.tokens,
@@ -117,8 +176,8 @@ exports.onNotificationCreated = onDocumentCreated(
         buildMessage: (tokens) => buildPushMessage({
           tokens,
           type,
-          targetId: notification.targetId,
-          actorId: notification.actorId,
+          targetId: currentData.targetId,
+          actorId: currentData.actorId,
           notificationId,
           title,
         }),
@@ -159,4 +218,7 @@ exports.onNotificationCreated = onDocumentCreated(
 module.exports = {
   onNotificationCreated: exports.onNotificationCreated,
   deleteTokenReferences,
+  isCurrentNotificationGeneration,
+  isLegacySocialNotificationId,
+  socialNotificationSourceIsCurrent,
 };

@@ -106,4 +106,21 @@ void main() {
     expect(states.last, hasLength(1));
     expect(states.last.single.displayName, 'Dee');
   });
+
+  test(
+    'a block stays visible and unblockable when its profile is missing',
+    () async {
+      await db
+          .collection('users')
+          .doc(meUid)
+          .collection('blocked')
+          .doc('private-uid')
+          .set({'blockedAt': DateTime.now()});
+
+      final blocked = await service.watchBlockedUsers().first;
+      expect(blocked, hasLength(1));
+      expect(blocked.single.id, 'private-uid');
+      expect(blocked.single.displayName, 'Blocked user');
+    },
+  );
 }

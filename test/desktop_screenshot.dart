@@ -31,6 +31,7 @@ import 'package:yovoice/features/creator/presentation/screens/find_creators_scre
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
+import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
@@ -643,6 +644,65 @@ void main() {
     await _settle(tester);
     await _shoot(tester, 'recent-chats-backdrop-1440x300');
   });
+
+  for (final size in const [Size(390, 844), Size(1440, 720)]) {
+    final label =
+        'friends-requests-${size.width.toInt()}x${size.height.toInt()}';
+    testWidgets(label, (tester) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final db = FakeFirebaseFirestore();
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: _me, displayName: 'CeoGriefer'),
+      );
+      await db.collection('users').doc(_me).set({
+        'uid': _me,
+        'displayName': 'CeoGriefer',
+      });
+      for (final (id, name, minutes) in const [
+        ('ola', 'Ola Voice', 2),
+        ('marek', 'Marek Talks', 8),
+      ]) {
+        await db
+            .collection('users')
+            .doc(_me)
+            .collection('friendRequests')
+            .doc(id)
+            .set({
+              'senderId': id,
+              'senderName': name,
+              'senderPhotoUrl': null,
+              'createdAt': Timestamp.fromDate(
+                DateTime(2026, 8, 24, 18).subtract(Duration(minutes: minutes)),
+              ),
+            });
+      }
+      final friends = FriendService(
+        firestore: db,
+        auth: auth,
+        mutationInvoker: (_, __) async => const {'changed': true},
+      );
+
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: _capture,
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.darkTheme,
+            home: FriendsScreen(
+              showRequestsInitially: true,
+              friendService: friends,
+              messageService: MessageService(firestore: db, auth: auth),
+            ),
+          ),
+        ),
+      );
+      await _settle(tester);
+      await _shoot(tester, label);
+    });
+  }
 
   for (final size in const [Size(390, 844), Size(768, 900), Size(1440, 900)]) {
     final label =

@@ -379,11 +379,20 @@ class FriendService {
     return FriendRelationshipStatus.none;
   }
 
-  Future<void> sendFriendRequest(FriendUser receiver) async {
+  Future<FriendRelationshipStatus> sendFriendRequest(
+    FriendUser receiver,
+  ) async {
     if (receiver.id == _currentUser.uid) {
       throw StateError('You cannot add yourself.');
     }
-    await _mutate('sendFriendRequest', {'targetUserId': receiver.id});
+    final result = await _mutate('sendFriendRequest', {
+      'targetUserId': receiver.id,
+    });
+    return switch (result['outcome']) {
+      'accepted' || 'alreadyFriends' => FriendRelationshipStatus.friends,
+      'requested' || 'alreadyPending' => FriendRelationshipStatus.requestSent,
+      _ => throw StateError('The friend request returned an invalid response.'),
+    };
   }
 
   Future<void> cancelFriendRequest(String receiverId) async {
@@ -415,18 +424,32 @@ class FriendService {
         .snapshots()
         .asyncMap((snapshot) async {
           if (snapshot.docs.isEmpty) return const <FriendUser>[];
-          final documents = await Future.wait(
-            snapshot.docs.map((doc) => _publicProfiles.doc(doc.id).get()),
+          final users = await Future.wait(
+            snapshot.docs.map((blockedDoc) async {
+              try {
+                final profile = await _publicProfiles.doc(blockedDoc.id).get();
+                if (profile.exists && profile.data() != null) {
+                  return FriendUser.fromFirestore(profile);
+                }
+              } on FirebaseException {
+                // A private/deleted profile must not make the block itself
+                // disappear. Keeping the uid-backed row preserves Unblock.
+              }
+              return FriendUser(
+                id: blockedDoc.id,
+                displayName: 'Blocked user',
+                email: '',
+                photoUrl: null,
+                isOnline: false,
+                lastSeen: null,
+              );
+            }),
           );
-          return documents
-              .where((doc) => doc.exists && doc.data() != null)
-              .map(FriendUser.fromFirestore)
-              .toList(growable: false)
-            ..sort(
-              (a, b) => a.displayName.toLowerCase().compareTo(
-                b.displayName.toLowerCase(),
-              ),
-            );
+          return users.toList(growable: false)..sort(
+            (a, b) => a.displayName.toLowerCase().compareTo(
+              b.displayName.toLowerCase(),
+            ),
+          );
         });
   }
 

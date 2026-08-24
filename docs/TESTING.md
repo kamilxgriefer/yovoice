@@ -6,7 +6,7 @@ exist; know which one you're relying on before trusting it.
 
 ## Current counts
 
-**As of 2026-08-20.** One table, so there is a single place to correct when
+**As of 2026-08-25.** One table, so there is a single place to correct when
 these move. Every figure is a suite run, not an estimate; file counts are
 `find`. *(The date used to live in the heading; it moved into the body on
 2026-08-20 because three other docs deep-link to this section and every
@@ -14,38 +14,34 @@ correction silently broke all three anchors.)*
 
 | Suite | Command | Count |
 |---|---|---|
-| Firestore rules | `npm --prefix firestore-tests test` | **485** checks |
+| Firestore rules | `npm --prefix firestore-tests test` | **489** checks |
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **52** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
-| Cloud Functions | `npm --prefix functions test` | **783** tests (62 `*.test.js` files) |
-| Flutter | `flutter test` | **1198** tests (114 `*_test.dart` files) |
+| Cloud Functions | `npm --prefix functions test` | **786** tests (64 `*.test.js` files) |
+| Flutter | `flutter test` | **1270** tests (118 `*_test.dart` files) |
 
-**Where these numbers came from.** Rules 485, Functions 783 and Flutter 1198
-were all measured on 2026-08-22, in one pass, on a FRESH emulator started by
-`firebase emulators:exec` — not carried forward from an earlier session. That
-pass was the merge of the four branches that had been left unmerged while
-`main` moved ahead; `flutter analyze` was clean at the same point. The earlier
-figures this row used to carry (rules 466, Functions 699, Flutter 1036) were
-measured at `b0f1062` and are kept in the movement log below as history. The `*.test.js` and
-`*_test.dart` file counts are `find` over the working tree at `b0f1062`, so
-they are exact but do not carry the suite-count breakdown earlier rows had —
-that breakdown is dropped rather than carried forward as a guess. **Storage 52 was re-measured on
-2026-08-22** and is green — and it is now green TWICE IN A ROW against one
+**Where these numbers came from.** Rules 489, Functions 786 and Flutter 1270
+were measured on 2026-08-25 against the exact Friends-notification
+single-writer source revision. Firestore and Functions used fresh emulators;
+the full Flutter run passed in one 1270-test invocation. `flutter analyze` was
+clean on the same source. The 64 Functions and 118 Flutter file counts are
+current `find` results rather than carried-forward estimates. The earlier
+figures this row used to carry (Rules 485, Functions 783/62, Flutter 1198/114)
+are kept in the movement log below as history. **Storage 52 was re-measured on
+2026-08-24** and is green — and it is now green TWICE IN A ROW against one
 emulator, which it was not before (`64ba59a`): the second run used to report
 five failures because `clearStorage()` deleted nothing at all, `listAll()`
 being non-recursive while every object this suite writes lives under a prefix.
-Family-media 11 was last measured 2026-08-17 and was not re-run in this pass;
-`storage.rules` has not changed since `4f27b21`, so that one row is carried
-forward rather than re-verified.
+Family-media 11 was re-measured on 2026-08-24 in the same isolated emulator
+pair.
 
 **A trap worth naming, because it cost a full diagnosis pass.**
-`firestore-tests/storage.test.js` HARDCODES the Firestore emulator at port
-8080 (line 323) and the Storage emulator at 9199 — it does not read
-`FIRESTORE_EMULATOR_HOST`. Storage rules read Firestore state, so if anything
-else already holds 8080 the suite silently talks to that instance instead and
-reports **19 of 52 failing**, all `storage/unauthorized` on the allow-cases
-while every deny-case still passes. That looks exactly like a rules
-regression and is not one. Check the port before believing a red run here.
+`firestore-tests/storage.test.js` used to hardcode Firestore 8080 and Storage
+9199. Storage rules read Firestore state, so an unrelated tunnel on 8080 made
+the suite silently talk to the wrong process and report **19 of 52 failing**,
+all `storage/unauthorized` on allow-cases. The harness now reads the emulator
+host/port variables injected by `emulators:exec`, matching the family-media
+suite, so isolated ports are real isolation rather than documentation only.
 
 > **Correction, 2026-08-16.** These numbers were wrong in several docs for
 > most of a week — TESTING.md claimed 268 rules checks and 43 Storage
@@ -55,6 +51,19 @@ regression and is not one. Check the port before believing a red run here.
 > 268 → 281 (`56e7ea7`) → 295 (`2fc05e5`) → 301 (`952d8e4`) across one
 > session and no doc followed it. If you change a suite, change this table
 > in the same commit.
+
+> **Movement, 2026-08-24 (Friends request and notification lifecycle).** Rules
+> 485 → **489** adds the real following/follower list-query privacy boundary
+> for legacy and generation-bound edges. The stale Functions table was
+> corrected from 783/62 to the measured **786/64**; this wave adds exact
+> notification-generation/source validation, a source-aware retired-
+> notification scrub and its concurrent-rewrite precondition. The stale
+> Flutter table was corrected from 1198/114 to **1270/118**; this wave itself
+> adds two test files plus actionable request routing, accept/decline,
+> retry/reflow, mobile unread badges, blocked-user failure states and
+> cross-account push-token retirement coverage. Storage **52** and
+> family-media **11** were re-run and remain unchanged. Baseline drift is not
+> presented as feature-attributable growth.
 
 > **Movement, 2026-08-17.** Rules 301 → **318** (`c75720a`, the
 > account-status gating; the suite ran 310 passed / 8 failed against the
@@ -219,7 +228,7 @@ close most of it, and they are cheap:
 
 `firestore-tests/` — a standalone Node project running regression and
 attack-scenario checks against `firestore.rules` via
-`@firebase/rules-unit-testing` and the Firestore emulator — **485 checks
+`@firebase/rules-unit-testing` and the Firestore emulator — **489 checks
 passing** — plus `storage.test.js`, the same treatment for `storage.rules`
 against the Storage emulator (52 checks: path ownership, size caps,
 content-type allowlists, read gating, default deny), plus 11 combined
@@ -391,11 +400,11 @@ bounded local outbox instead — see the Flutter section below.
 
 ## Cloud Functions — real coverage, unevenly distributed
 
-`functions/test/` — **699 tests across 56 `*.test.js` files**, run with
+`functions/test/` — **786 tests across 64 `*.test.js` files**, run with
 `node --test test/*.test.js` against the Auth + Firestore emulators, and
 gating the Hosting release in CI like the rules suites do. A separate
-`npm --prefix functions run test:smoke` drives three trigger smoke scripts
-against the Functions emulator.
+`npm --prefix functions run test:smoke` drives two trigger smokes and one
+callable social-graph smoke against the Functions emulator.
 
 **A real trap this suite has already sprung, worth knowing before you add
 to it.** `node --test test/*.test.js` runs the files **concurrently
@@ -417,7 +426,7 @@ absolute count over a collection your file does not exclusively own.
 
 ## Dart tests — real, but narrow
 
-`test/` — **1198 tests across 114 `*_test.dart` files**, green in local
+`test/` — **1270 tests across 118 `*_test.dart` files**, green in local
 verification, grown mostly
 out of real bugs rather than an even coverage discipline. The
 pattern throughout: fake the Firebase backends
@@ -599,13 +608,12 @@ Worth naming plainly rather than leaving implicit:
   functions:list`, the Console's rules version history, or fingerprinting
   the served bytes (see
   [ADR-055](Decisions.md#adr-055-the-2026-08-16-production-cutover--order-the-deploy-by-what-fails-closed-and-verify-by-fingerprinting-served-bytes)).
-- **`voiceMinutes` has no writer at all**, so nothing can test it
-  end-to-end. `receiveLiveKitAchievementWebhook` exists in
-  `functions/achievements/livekit_http.js` but is never exported from
-  `functions/index.js`, so the voice-achievement category and Creator
-  Studio's "Voice time" tile are permanently zero. See
-  [Bugs.md](Bugs.md#achievements).
-- Broad service coverage remains uneven despite the 105 regression files;
+- **`voiceMinutes` has a server writer, but not a real LiveKit end-to-end
+  test.** `receiveLiveKitAchievementWebhook` is exported and its signed-event,
+  accrual and failure contracts are covered against fakes/emulators. No test
+  in this repo has held a real LiveKit connection, so production delivery is
+  still a manual integration claim. See [Bugs.md](Bugs.md#achievements).
+- Broad service coverage remains uneven despite the 118 regression files;
   **live audio in particular has none.** The room *liveness* path gained real
   coverage on 2026-08-20, but audio quality, reconnect, device routing and
   the web microphone permission path are untouched and unretested, and no

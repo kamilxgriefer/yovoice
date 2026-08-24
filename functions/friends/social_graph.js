@@ -1,5 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { createHash } = require("node:crypto");
+const { createHash, randomUUID } = require("node:crypto");
 const {
   FieldPath,
   FieldValue,
@@ -32,6 +32,29 @@ const SOCIAL_MUTATION_MINUTE_LIMIT = 60;
 const SOCIAL_MUTATION_HOUR_LIMIT = 600;
 const QUOTA_MINUTE_MS = 60 * 1000;
 const QUOTA_HOUR_MS = 60 * 60 * 1000;
+
+function newSocialNotificationId(type, actorId) {
+  return `${type}_${actorId}_${randomUUID().replaceAll("-", "")}`;
+}
+
+function storedNotificationId(data, prefix) {
+  const candidate = normalizeText(data?.notificationId, 320);
+  return candidate.startsWith(`${prefix}_`) &&
+    /^[A-Za-z0-9_-]{1,320}$/u.test(candidate)
+    ? candidate
+    : null;
+}
+
+function storedAcceptanceNotification(data, firstUserId, secondUserId) {
+  const recipientId = data?.acceptanceRecipientId;
+  if (![firstUserId, secondUserId].includes(recipientId)) return null;
+  const actorId = recipientId === firstUserId ? secondUserId : firstUserId;
+  const notificationId = storedNotificationId(
+    { notificationId: data?.acceptanceNotificationId },
+    `friendAccepted_${actorId}`,
+  );
+  return notificationId ? { recipientId, notificationId } : null;
+}
 
 function targetIdFrom(request) {
   const targetUserId = normalizeText(
@@ -491,15 +514,31 @@ const sendFriendRequest = onCall(
     const outgoingMirrorRef = sentRequestReference(auth.uid, targetUserId);
     const incomingRef = incomingRequestReference(auth.uid, targetUserId);
     const incomingMirrorRef = sentRequestReference(targetUserId, auth.uid);
+    const requestNotificationId = newSocialNotificationId(
+      "friendRequest",
+      auth.uid,
+    );
     const targetNotificationRef = notificationReference(
+      targetUserId,
+      requestNotificationId,
+    );
+    const legacyTargetNotificationRef = notificationReference(
       targetUserId,
       `friendRequest_${auth.uid}`,
     );
+    const acceptedNotificationId = newSocialNotificationId(
+      "friendAccepted",
+      auth.uid,
+    );
     const acceptedNotificationRef = notificationReference(
+      targetUserId,
+      acceptedNotificationId,
+    );
+    const legacyAcceptedNotificationRef = notificationReference(
       targetUserId,
       `friendAccepted_${auth.uid}`,
     );
-    const actorRequestNotificationRef = notificationReference(
+    const legacyActorRequestNotificationRef = notificationReference(
       auth.uid,
       `friendRequest_${targetUserId}`,
     );
@@ -519,7 +558,6 @@ const sendFriendRequest = onCall(
         outgoing,
         outgoingMirror,
         incoming,
-        actorRequestNotification,
       ] = await transaction.getAll(
         actorRef,
         targetRef,
@@ -534,7 +572,6 @@ const sendFriendRequest = onCall(
         outgoingRef,
         outgoingMirrorRef,
         incomingRef,
-        actorRequestNotificationRef,
       );
       const actor = profileData(actorSnapshot, "Your");
       const target = profileData(targetSnapshot, "The selected");
@@ -569,8 +606,15 @@ const sendFriendRequest = onCall(
         // Heal a legacy missing private mirror without replaying the event or
         // resurrecting a notification the recipient intentionally deleted.
         if (!outgoingMirror.exists) {
+          const existingNotificationId = storedNotificationId(
+            outgoing.data(),
+            `friendRequest_${auth.uid}`,
+          );
           transaction.set(outgoingMirrorRef, {
             receiverId: targetUserId,
+            ...(existingNotificationId
+              ? { notificationId: existingNotificationId }
+              : {}),
             createdAt:
               outgoing.data()?.createdAt ?? FieldValue.serverTimestamp(),
           });
@@ -600,10 +644,14 @@ const sendFriendRequest = onCall(
         );
         transaction.create(myFriendRef, {
           userId: targetUserId,
+          acceptanceNotificationId: acceptedNotificationId,
+          acceptanceRecipientId: targetUserId,
           createdAt: timestamp,
         });
         transaction.create(theirFriendRef, {
           userId: auth.uid,
+          acceptanceNotificationId: acceptedNotificationId,
+          acceptanceRecipientId: targetUserId,
           createdAt: timestamp,
         });
         transaction.create(
@@ -622,21 +670,29 @@ const sendFriendRequest = onCall(
         });
         transaction.delete(incomingRef);
         transaction.delete(incomingMirrorRef);
-        transaction.set(
+        transaction.delete(legacyAcceptedNotificationRef);
+        transaction.create(
           acceptedNotificationRef,
           canonicalNotificationData({
             actorId: auth.uid,
             actorProfile: actor,
             type: "friendAccepted",
-            dedupeKey: `friendAccepted_${auth.uid}`,
+            dedupeKey: acceptedNotificationId,
           }),
         );
-        if (actorRequestNotification.exists) {
-          transaction.update(actorRequestNotificationRef, {
-            isRead: true,
-            readAt: timestamp,
-          });
+        // This row is an actionable request, not permanent activity history.
+        // Removing it prevents a resolved request from lingering in the bell
+        // and makes a later request lifecycle a real document create + push.
+        const incomingNotificationId = storedNotificationId(
+          incoming.data(),
+          `friendRequest_${targetUserId}`,
+        );
+        if (incomingNotificationId) {
+          transaction.delete(
+            notificationReference(auth.uid, incomingNotificationId),
+          );
         }
+        transaction.delete(legacyActorRequestNotificationRef);
         return { outcome: "accepted", changed: true };
       }
 
@@ -666,19 +722,25 @@ const sendFriendRequest = onCall(
         senderId: auth.uid,
         senderName: canonicalName(actor),
         senderPhotoUrl: canonicalPhoto(actor),
+        notificationId: requestNotificationId,
         createdAt: timestamp,
       });
       transaction.create(outgoingMirrorRef, {
         receiverId: targetUserId,
+        notificationId: requestNotificationId,
         createdAt: timestamp,
       });
-      transaction.set(
+      // Legacy rows used one id for the lifetime of a pair. Retire that row,
+      // then create a generation-specific id so the first post-upgrade
+      // lifecycle also produces an onCreate push.
+      transaction.delete(legacyTargetNotificationRef);
+      transaction.create(
         targetNotificationRef,
         canonicalNotificationData({
           actorId: auth.uid,
           actorProfile: actor,
           type: "friendRequest",
-          dedupeKey: `friendRequest_${auth.uid}`,
+          dedupeKey: requestNotificationId,
         }),
       );
       return { outcome: "requested", changed: true };
@@ -715,11 +777,19 @@ const respondToFriendRequest = onCall(
     const senderFriendRef = friendReference(senderId, auth.uid);
     const myGuardRef = friendshipGuardReference(auth.uid, senderId);
     const senderGuardRef = friendshipGuardReference(senderId, auth.uid);
-    const requestNotificationRef = notificationReference(
+    const legacyRequestNotificationRef = notificationReference(
       auth.uid,
       `friendRequest_${senderId}`,
     );
+    const acceptedNotificationId = newSocialNotificationId(
+      "friendAccepted",
+      auth.uid,
+    );
     const acceptedNotificationRef = notificationReference(
+      senderId,
+      acceptedNotificationId,
+    );
+    const legacyAcceptedNotificationRef = notificationReference(
       senderId,
       `friendAccepted_${auth.uid}`,
     );
@@ -737,7 +807,6 @@ const respondToFriendRequest = onCall(
         senderFriend,
         myGuard,
         senderGuard,
-        requestNotification,
       ] = await transaction.getAll(
         actorRef,
         senderRef,
@@ -750,7 +819,6 @@ const respondToFriendRequest = onCall(
         senderFriendRef,
         myGuardRef,
         senderGuardRef,
-        requestNotificationRef,
       );
       const actor = profileData(actorSnapshot, "Your");
 
@@ -762,9 +830,13 @@ const respondToFriendRequest = onCall(
           myGuard.exists &&
           senderGuard.exists
         ) {
+          transaction.delete(legacyRequestNotificationRef);
           return { outcome: "alreadyAccepted", changed: false };
         }
-        if (!accept) return { outcome: "alreadyResolved", changed: false };
+        if (!accept) {
+          transaction.delete(legacyRequestNotificationRef);
+          return { outcome: "alreadyResolved", changed: false };
+        }
         throw new HttpsError(
           "not-found",
           "This friend request is no longer available.",
@@ -781,12 +853,16 @@ const respondToFriendRequest = onCall(
       if (!accept) {
         transaction.delete(requestRef);
         transaction.delete(sentRef);
-        if (requestNotification.exists) {
-          transaction.update(requestNotificationRef, {
-            isRead: true,
-            readAt: timestamp,
-          });
+        const pendingNotificationId = storedNotificationId(
+          pending.data(),
+          `friendRequest_${senderId}`,
+        );
+        if (pendingNotificationId) {
+          transaction.delete(
+            notificationReference(auth.uid, pendingNotificationId),
+          );
         }
+        transaction.delete(legacyRequestNotificationRef);
         return { outcome: "declined", changed: true };
       }
 
@@ -828,10 +904,14 @@ const respondToFriendRequest = onCall(
         );
         transaction.create(myFriendRef, {
           userId: senderId,
+          acceptanceNotificationId: acceptedNotificationId,
+          acceptanceRecipientId: senderId,
           createdAt: timestamp,
         });
         transaction.create(senderFriendRef, {
           userId: auth.uid,
+          acceptanceNotificationId: acceptedNotificationId,
+          acceptanceRecipientId: senderId,
           createdAt: timestamp,
         });
         transaction.create(
@@ -848,24 +928,29 @@ const respondToFriendRequest = onCall(
         transaction.update(senderRef, {
           friendCount: countOf(sender, "friendCount") + 1,
         });
-        transaction.set(
+        transaction.delete(legacyAcceptedNotificationRef);
+        transaction.create(
           acceptedNotificationRef,
           canonicalNotificationData({
             actorId: auth.uid,
             actorProfile: actor,
             type: "friendAccepted",
-            dedupeKey: `friendAccepted_${auth.uid}`,
+            dedupeKey: acceptedNotificationId,
           }),
         );
       }
       transaction.delete(requestRef);
       transaction.delete(sentRef);
-      if (requestNotification.exists) {
-        transaction.update(requestNotificationRef, {
-          isRead: true,
-          readAt: timestamp,
-        });
+      const pendingNotificationId = storedNotificationId(
+        pending.data(),
+        `friendRequest_${senderId}`,
+      );
+      if (pendingNotificationId) {
+        transaction.delete(
+          notificationReference(auth.uid, pendingNotificationId),
+        );
       }
+      transaction.delete(legacyRequestNotificationRef);
       return { outcome: "accepted", changed: !myFriend.exists };
     });
   },
@@ -885,17 +970,40 @@ const cancelFriendRequest = onCall(
     }
     const requestRef = incomingRequestReference(targetUserId, auth.uid);
     const sentRef = sentRequestReference(auth.uid, targetUserId);
+    const legacyRequestNotificationRef = notificationReference(
+      targetUserId,
+      `friendRequest_${auth.uid}`,
+    );
     return db.runTransaction(async (transaction) => {
-      const [pending, sent] = await transaction.getAll(requestRef, sentRef);
-      if (!pending.exists && !sent.exists) return { changed: false };
+      const [pending, sent] = await transaction.getAll(
+        requestRef,
+        sentRef,
+      );
+      if (!pending.exists && !sent.exists) {
+        // A previous partial rollout may have left only the alert behind.
+        // Retire it on replay so the recipient never sees an actionable
+        // request that no longer exists.
+        transaction.delete(legacyRequestNotificationRef);
+        return { changed: false };
+      }
       if (pending.exists && pending.data()?.senderId !== auth.uid) {
         throw new HttpsError(
           "data-loss",
           "The friend request is not canonical.",
         );
       }
+      const requestNotificationId = storedNotificationId(
+        pending.exists ? pending.data() : sent.data(),
+        `friendRequest_${auth.uid}`,
+      );
       transaction.delete(requestRef);
       transaction.delete(sentRef);
+      if (requestNotificationId) {
+        transaction.delete(
+          notificationReference(targetUserId, requestNotificationId),
+        );
+      }
+      transaction.delete(legacyRequestNotificationRef);
       return { changed: true };
     });
   },
@@ -916,6 +1024,14 @@ const removeFriend = onCall(
     const theirFriendRef = friendReference(targetUserId, auth.uid);
     const myGuardRef = friendshipGuardReference(auth.uid, targetUserId);
     const theirGuardRef = friendshipGuardReference(targetUserId, auth.uid);
+    const myAcceptedNotificationRef = notificationReference(
+      auth.uid,
+      `friendAccepted_${targetUserId}`,
+    );
+    const theirAcceptedNotificationRef = notificationReference(
+      targetUserId,
+      `friendAccepted_${auth.uid}`,
+    );
     return db.runTransaction(async (transaction) => {
       const [actorSnapshot, targetSnapshot, mine, theirs, myGuard, theirGuard] =
         await transaction.getAll(
@@ -933,12 +1049,32 @@ const removeFriend = onCall(
         !myGuard.exists &&
         !theirGuard.exists
       ) {
+        // Idempotent replay also repairs a previous partial lifecycle:
+        // no friendship means an old acceptance alert must not survive.
+        transaction.delete(myAcceptedNotificationRef);
+        transaction.delete(theirAcceptedNotificationRef);
         return { changed: false };
       }
       transaction.delete(myFriendRef);
       transaction.delete(theirFriendRef);
       transaction.delete(myGuardRef);
       transaction.delete(theirGuardRef);
+      const acceptance =
+        storedAcceptanceNotification(mine.data(), auth.uid, targetUserId) ??
+        storedAcceptanceNotification(theirs.data(), auth.uid, targetUserId);
+      if (acceptance) {
+        transaction.delete(
+          notificationReference(
+            acceptance.recipientId,
+            acceptance.notificationId,
+          ),
+        );
+      }
+      // Remove only the retired pair-lifetime ids. New acceptance activity
+      // uses a generation-specific id, so a later legitimate re-acceptance
+      // is independently created without rewriting its truthful history.
+      transaction.delete(myAcceptedNotificationRef);
+      transaction.delete(theirAcceptedNotificationRef);
       transaction.update(actorRef, {
         friendCount: Math.max(countOf(actor, "friendCount") - 1, 0),
       });
@@ -978,7 +1114,12 @@ const setFollow = onCall(
     const targetBlockRef = db.doc(`users/${targetUserId}/blocked/${auth.uid}`);
     const followingRef = followingReference(auth.uid, targetUserId);
     const followerRef = followerReference(targetUserId, auth.uid);
+    const followNotificationId = newSocialNotificationId("follow", auth.uid);
     const notificationRef = notificationReference(
+      targetUserId,
+      followNotificationId,
+    );
+    const legacyNotificationRef = notificationReference(
       targetUserId,
       `follow_${auth.uid}`,
     );
@@ -1020,8 +1161,24 @@ const setFollow = onCall(
           // edges. Identity is resolved from publicProfiles at read time.
           const followedAt =
             followingEdge.data()?.followedAt ?? FieldValue.serverTimestamp();
-          transaction.set(followingRef, { uid: targetUserId, followedAt });
-          transaction.set(followerRef, { uid: auth.uid, followedAt });
+          const existingNotificationId = storedNotificationId(
+            followingEdge.data(),
+            `follow_${auth.uid}`,
+          );
+          transaction.set(followingRef, {
+            uid: targetUserId,
+            followedAt,
+            ...(existingNotificationId
+              ? { notificationId: existingNotificationId }
+              : {}),
+          });
+          transaction.set(followerRef, {
+            uid: auth.uid,
+            followedAt,
+            ...(existingNotificationId
+              ? { notificationId: existingNotificationId }
+              : {}),
+          });
           return { changed: false, following: true };
         }
         requireCapacity(
@@ -1033,10 +1190,12 @@ const setFollow = onCall(
         const timestamp = FieldValue.serverTimestamp();
         transaction.create(followingRef, {
           uid: targetUserId,
+          notificationId: followNotificationId,
           followedAt: timestamp,
         });
         transaction.create(followerRef, {
           uid: auth.uid,
+          notificationId: followNotificationId,
           followedAt: timestamp,
         });
         transaction.update(actorRef, {
@@ -1045,21 +1204,38 @@ const setFollow = onCall(
         transaction.update(targetRef, {
           followerCount: countOf(target, "followerCount") + 1,
         });
-        transaction.set(
+        transaction.delete(legacyNotificationRef);
+        transaction.create(
           notificationRef,
           canonicalNotificationData({
             actorId: auth.uid,
             actorProfile: actor,
             type: "follow",
-            dedupeKey: `follow_${auth.uid}`,
+            dedupeKey: followNotificationId,
           }),
         );
         return { changed: true, following: true };
       }
 
-      if (!followingEdge.exists) return { changed: false, following: false };
+      if (!followingEdge.exists) {
+        // A previous partial lifecycle may have removed the graph edge but
+        // left the legacy deterministic activity row behind. Repair it so
+        // a later re-follow is a fresh create and can emit a fresh push.
+        transaction.delete(legacyNotificationRef);
+        return { changed: false, following: false };
+      }
+      const currentNotificationId = storedNotificationId(
+        followingEdge.data(),
+        `follow_${auth.uid}`,
+      );
       transaction.delete(followingRef);
       transaction.delete(followerRef);
+      if (currentNotificationId) {
+        transaction.delete(
+          notificationReference(targetUserId, currentNotificationId),
+        );
+      }
+      transaction.delete(legacyNotificationRef);
       transaction.update(actorRef, {
         followingCount: Math.max(countOf(actor, "followingCount") - 1, 0),
       });
@@ -1125,14 +1301,19 @@ const setUserBlock = onCall(
       const targetSnapshot = snapshots[1];
       profileData(targetSnapshot, "The selected");
       const existingBlock = snapshots[2];
-      const [
+      const edgeSnapshots = Object.fromEntries(
+        Object.keys(refs).map((key, index) => [key, snapshots[index + 3]]),
+      );
+      const {
         myFriend,
         theirFriend,
         myFollowing,
         theirFollower,
         theirFollowing,
         myFollower,
-      ] = snapshots.slice(3, 9);
+        outgoing,
+        incoming,
+      } = edgeSnapshots;
       const target = targetSnapshot.data() ?? {};
 
       if (!existingBlock.exists) {
@@ -1147,8 +1328,54 @@ const setUserBlock = onCall(
         }
       }
 
+      const dynamicNotifications = [
+        {
+          recipientId: targetUserId,
+          notificationId: storedNotificationId(
+            outgoing.data(),
+            `friendRequest_${auth.uid}`,
+          ),
+        },
+        {
+          recipientId: auth.uid,
+          notificationId: storedNotificationId(
+            incoming.data(),
+            `friendRequest_${targetUserId}`,
+          ),
+        },
+        {
+          recipientId: targetUserId,
+          notificationId: storedNotificationId(
+            myFollowing.data(),
+            `follow_${auth.uid}`,
+          ),
+        },
+        {
+          recipientId: auth.uid,
+          notificationId: storedNotificationId(
+            theirFollowing.data(),
+            `follow_${targetUserId}`,
+          ),
+        },
+        storedAcceptanceNotification(
+          myFriend.data(),
+          auth.uid,
+          targetUserId,
+        ) ??
+          storedAcceptanceNotification(
+            theirFriend.data(),
+            auth.uid,
+            targetUserId,
+          ),
+      ].filter((entry) => entry?.notificationId);
+
       for (const reference of Object.values(refs))
         transaction.delete(reference);
+      for (const entry of dynamicNotifications) {
+        transaction.delete(
+          notificationReference(entry.recipientId, entry.notificationId),
+        );
+      }
       const actorUpdate = {};
       const targetUpdate = {};
       const hadFriendship = myFriend.exists || theirFriend.exists;

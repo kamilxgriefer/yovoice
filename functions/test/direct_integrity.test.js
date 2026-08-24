@@ -621,9 +621,21 @@ test("direct-message privacy modes are enforced from server-owned graph state", 
   await db.doc(`users/${D}/following/${C}`).set({
     uid: C,
     followedAt: Timestamp.now(),
+    notificationId: `follow_${C}_current-generation`,
   });
   const followedOpen = await open(service, C, D, "privacy-follow-allow");
   assert.equal(followedOpen.created, true);
+  await db.doc(`users/${D}/following/${C}`).update({
+    notificationId: "x".repeat(321),
+  });
+  await assert.rejects(
+    service.sendDirectMessage(request(C, {
+      conversationId: followedOpen.conversationId,
+      requestId: "privacy-follow-malformed-generation",
+      text: "a malformed generation pointer must fail closed",
+    })),
+    (error) => error.code === "permission-denied",
+  );
 
   await db.doc(`users/${B}`).update({ messagePrivacy: "friends" });
   await db.doc(`friendshipGuards/${A}/friends/${B}`).set({

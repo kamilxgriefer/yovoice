@@ -21,12 +21,34 @@ const FIRESTORE_RULES = path.resolve(__dirname, "../firestore.rules");
 const STORAGE_RULES = path.resolve(__dirname, "../storage.rules");
 
 // Keep this suite independent from any emulator already running for the app
-// or another QA worker. The defaults preserve the documented local command;
-// CI and parallel runs can select their own isolated ports.
-const EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_ADDRESS ?? "127.0.0.1";
-const FIRESTORE_PORT = Number(process.env.FIRESTORE_EMULATOR_PORT ?? 8080);
-const STORAGE_HOST = process.env.STORAGE_EMULATOR_ADDRESS ?? EMULATOR_HOST;
-const STORAGE_PORT = Number(process.env.STORAGE_EMULATOR_PORT ?? 9199);
+// or another QA worker. Firebase CLI injects the combined *_EMULATOR_HOST
+// variables; split values remain available for an explicitly managed run.
+function emulatorEndpoint(combinedValue, explicitHost, explicitPort, fallbackPort) {
+  const separator = combinedValue?.lastIndexOf(":") ?? -1;
+  const combinedHost = separator > 0 ? combinedValue.slice(0, separator) : null;
+  const combinedPort = separator > 0 ? combinedValue.slice(separator + 1) : null;
+  return {
+    host: explicitHost ?? combinedHost ?? "127.0.0.1",
+    port: Number(explicitPort ?? combinedPort ?? fallbackPort),
+  };
+}
+
+const firestoreEndpoint = emulatorEndpoint(
+  process.env.FIRESTORE_EMULATOR_HOST,
+  process.env.FIRESTORE_EMULATOR_ADDRESS,
+  process.env.FIRESTORE_EMULATOR_PORT,
+  8080,
+);
+const storageEndpoint = emulatorEndpoint(
+  process.env.FIREBASE_STORAGE_EMULATOR_HOST,
+  process.env.STORAGE_EMULATOR_ADDRESS,
+  process.env.STORAGE_EMULATOR_PORT,
+  9199,
+);
+const EMULATOR_HOST = firestoreEndpoint.host;
+const FIRESTORE_PORT = firestoreEndpoint.port;
+const STORAGE_HOST = storageEndpoint.host;
+const STORAGE_PORT = storageEndpoint.port;
 
 for (const [name, port] of [
   ["FIRESTORE_EMULATOR_PORT", FIRESTORE_PORT],

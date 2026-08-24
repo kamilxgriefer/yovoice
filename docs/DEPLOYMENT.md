@@ -15,6 +15,195 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Pending Friends notification single-writer rollout
+
+ADR-114 is **SOURCE ONLY — NOT DEPLOYED**. It removes three currently deployed
+trigger exports, so a Hosting release alone is insufficient and a generic
+Functions update does not prove deletion. Release the verified revision in
+this order:
+
+1. run the full Flutter, Functions, Firestore and Storage suites plus the
+   callable two-user smoke. Pin the release commit and capture the live
+   Firestore release/ruleset source using the Rules API procedure below. Also
+   record `state`, `updateTime`, the underlying Cloud Run service and its
+   serving revision for all Functions in stages 3a-3e and the three legacy
+   triggers before changing anything:
+
+   ```bash
+   gcloud functions describe FUNCTION_NAME --gen2 --region=europe-west1 \
+     --project=yovoice-ec54a \
+     --format='yaml(name,state,updateTime,serviceConfig.service)'
+   gcloud run services describe CLOUD_RUN_SERVICE_NAME \
+     --region=europe-west1 --project=yovoice-ec54a \
+     --format='yaml(metadata.name,status.latestCreatedRevisionName,status.latestReadyRevisionName,status.traffic)'
+   ```
+
+   Use the first command's `serviceConfig.service` as
+   `CLOUD_RUN_SERVICE_NAME` in the second command. For a healthy serving
+   revision, `latestCreatedRevisionName` and `latestReadyRevisionName` match,
+   and `status.traffic` sends 100% to that expected latest-ready revision.
+
+   Save this aggregate-only pre-state in the approved release record. A later
+   `firebase functions:list` proves presence/absence and ACTIVE state only; it
+   does not prove which revision is serving.
+2. deploy the backward-compatible Firestore Rules widening first. It accepts
+   both the deployed `{uid, followedAt}` follow edge and the new optional,
+   bounded, server-owned `notificationId` pointer; clients still cannot write
+   either edge shape:
+
+   ```bash
+   firebase deploy --only firestore:rules --project yovoice-ec54a
+   ```
+
+3. update Functions in the ordered selective stages below. Firebase does not
+   make a comma-separated Functions deploy atomic, so do not collapse these
+   commands:
+
+   a. deploy `onNotificationCreated` plus the four direct-message callables
+      that validate the follow edge for
+      `messagePrivacy=peopleYouFollow`, then verify every export is ACTIVE at
+      the new revision. During this intentionally short fail-closed window,
+      the compatibility-aware push guard still permits a genuine legacy row
+      only while its live source has no generation pointer. Once a new
+      callable writes a pointer, the same guard suppresses/deletes the old
+      trigger's duplicate and accepts only the exact generation row:
+
+   ```bash
+   firebase deploy --only functions:onNotificationCreated,functions:openDirectConversation,functions:sendDirectMessage,functions:reserveDirectMessageAttachment,functions:finalizeDirectMessageAttachment --project yovoice-ec54a
+   firebase functions:list --project yovoice-ec54a
+   ```
+
+   Describe each of those five Functions and its Cloud Run service with the
+   two commands from step 1. Require `state: ACTIVE`, a changed `updateTime`,
+   matching expected latest-created/latest-ready revisions, and 100% serving
+   traffic on that revision before continuing. Inspect logs for callable errors,
+   `onNotificationCreated failed` and `Skipped stale social notification
+   cleanup` after every stage.
+
+   b. only after that verification, deploy the backward-compatible cleanup
+      consumers first. They understand both the deployed pointer-less graph
+      and the new generation pointers, but do not introduce a new producer:
+
+   ```bash
+   firebase deploy --only functions:cancelFriendRequest,functions:removeFriend,functions:setUserBlock --project yovoice-ec54a
+   firebase functions:list --project yovoice-ec54a
+   ```
+
+   Describe all three and verify their new ACTIVE revisions before stage c.
+
+   c. deploy and verify the request resolver next. It consumes both legacy and
+      generation-bound requests and writes the upgraded friendship mirrors:
+
+   ```bash
+   firebase deploy --only functions:respondToFriendRequest --project yovoice-ec54a
+   firebase functions:list --project yovoice-ec54a
+   ```
+
+   Describe it and verify its new ACTIVE revision before stage d.
+
+   d. deploy and verify follow lifecycle handling. The widened DM validators
+      are already live before `setFollow` can create a three-field edge:
+
+   ```bash
+   firebase deploy --only functions:setFollow --project yovoice-ec54a
+   firebase functions:list --project yovoice-ec54a
+   ```
+
+   Describe it and verify its new ACTIVE revision before stage e.
+
+   e. deploy `sendFriendRequest` last, after every production consumer can
+      retire its generation-bound request and notification atomically:
+
+   ```bash
+   firebase deploy --only functions:sendFriendRequest --project yovoice-ec54a
+   firebase functions:list --project yovoice-ec54a
+   ```
+
+   Describe it and verify its new ACTIVE revision before the journey smoke.
+
+   A blanket Functions deploy may offer to delete the legacy triggers too
+   early and is not a substitute for these verified stages. Do not combine
+   stages b-e: a comma-separated deploy is not atomic, and a new producer
+   reaching production before its cleanup consumer can strand an alert.
+
+4. verify send → cancel, send → decline, send → accept and unfriend with two
+   test accounts, including bell counts. During this compatibility window the
+   old triggers may still create their retired pair-lifetime ids; the corrected
+   push trigger must delete those rows without a second push, while the
+   generation-specific callable row remains the single visible event;
+5. explicitly delete the retired `europe-west1` triggers, confirm the prompt,
+   and verify they are absent from `firebase functions:list`:
+
+   ```bash
+   firebase functions:delete onFriendRequestCreated onFriendRequestResolved onFollowerCreated --region europe-west1 --project yovoice-ec54a
+   firebase functions:list --project yovoice-ec54a
+   ```
+
+6. after the retired triggers are confirmed absent, take a managed Firestore
+   export of the `notifications` collection group to an approved restricted
+   backup location, or record explicit release-owner acceptance that removing
+   retired notification history is irreversible. Then run the bounded
+   aggregate-only compatibility sweep in dry-run mode as a sample, and apply
+   it page by page until `reachedEnd` is true. The sweep reuses the same source-
+   generation predicate as push: it preserves a genuine legacy request,
+   friendship or follow whose live source has no pointer, and deletes only a
+   source-less row or a legacy duplicate of an upgraded source. This closes
+   the case where a legacy trigger wrote its deterministic row but the non-
+   retrying push trigger hit a transient cleanup error:
+
+   ```bash
+   npm --prefix functions run scrub:retired-social-notifications -- \
+     --project yovoice-ec54a --max-documents 5000
+   npm --prefix functions run scrub:retired-social-notifications -- \
+     --project yovoice-ec54a --apply --restart --max-documents 5000
+   npm --prefix functions run scrub:retired-social-notifications -- \
+     --project yovoice-ec54a --apply --max-documents 5000
+   ```
+
+   The dry-run does not persist a cursor and cannot prove a full dataset larger
+   than 5000 documents. Continue the apply command while `reachedEnd` is false.
+   Then begin a separate verification pass with `--apply --restart`, continue
+   it page by page to `reachedEnd: true`, and require `plannedDeletes: 0` on
+   every page. If any verification page deletes a row, finish that pass and
+   start a new verification pass from the beginning; only an all-zero pass to
+   `reachedEnd: true` is completion. `--restart` without `--apply` is a no-op.
+   Deletes carry each scanned document's `lastUpdateTime` precondition, so a
+   concurrent rewrite aborts the page without advancing its cursor. The
+   command never prints a uid or document path.
+7. repeat send → cancel/decline/accept → unfriend and follow → unfollow →
+   follow after deletion. Confirm notification document ids carry a generation
+   suffix and no exact `friendRequest_{actor}`, `friendAccepted_{actor}` or
+   `follow_{actor}` row remains;
+8. run a two-device FCM smoke, then release the verified Hosting artifact.
+
+### Friends rollout abort and rollback boundaries
+
+- Before stage 3b, no new social producer is live. The captured pre-release
+  Rules, push and DM revisions may be restored as a consistent set.
+- From stage 3b onward, prefer a forward fix. If a social rollback is required,
+  restore all six pre-ADR social callables from the same pinned source revision;
+  never mix restored legacy triggers with only some new social callables.
+- Once `setFollow` has written any three-field edge, keep the widened Rules and
+  all four widened DM validators live. The old exact two-field versions would
+  deny follower lists and `peopleYouFollow` DMs. They may be restored only
+  after a separately verified migration removes every notification pointer.
+- After step 5, a full rollback also requires restoring all three legacy
+  triggers from the same pinned pre-release source alongside the six old
+  social callables. Do not improvise a dual-writer mix; pause and use the
+  incident process if that coordinated restoration cannot be verified.
+- Sweep deletes are irreversible without the step-6 export. Restoring code or
+  triggers does not restore removed history.
+
+At any abort point, capture the affected Functions' revisions and logs before
+changing them again, stop before Hosting, and rerun the two-account journey
+against the final serving revisions.
+
+No index change belongs to this rollout. The Rules change is a
+backward-compatible read-schema widening and must precede Functions because
+new follow edges carry `notificationId`; old rows need no migration and use
+the legacy cleanup fallback. Do not delete the legacy triggers before the
+corrected callables are verified live.
+
 ## Flutter web verification and Hosting release
 
 `.github/workflows/firebase-hosting-merge.yml` runs the complete verification
@@ -412,6 +601,10 @@ functions:setFollow,functions:setUserBlock \
    > followers/following list. The scrub is not hygiene — while rules are
    > ahead of it, it is an active outage. Run it before step 5, or accept
    > that follower lists are broken in the window between.
+
+   ADR-114's pending source keeps legacy two-field edges valid and permits one
+   optional bounded `notificationId`. Re-running the scrub preserves that
+   server-owned pointer; it never strips the active notification generation.
 
    No Firestore export was taken first. Stated plainly because it was a
    judgement call: the `gcloud` CLI keeps a credential store separate from
@@ -1251,7 +1444,8 @@ should be stated as such rather than assumed:
 
 ## Historical: the 2026-08-11 selective manifest (SUPERSEDED)
 
-> **Superseded 2026-08-16.** Everything listed below is now deployed —
+> **Superseded 2026-08-16; its social-trigger instructions were superseded
+> again by ADR-114 on 2026-08-24.** Everything listed below was deployed —
 > `moderateReport`, `listReportAuditTrail`, `setUserBan`, the three social
 > notification triggers, and all five `reports`/`adminAuditLogs` indexes.
 > The **inventory** is obsolete; the **ordering reasoning and the rollback

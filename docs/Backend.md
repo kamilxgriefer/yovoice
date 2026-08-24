@@ -45,20 +45,44 @@ code. `LIVEKIT_URL` (`wss://yovoice-3f7j9fb7.livekit.cloud`) is a plain
 
 ## Notifications
 
+> **ADR-114 social lifecycle is SOURCE ONLY — NOT DEPLOYED.** The generic
+> push trigger already exists in production, but the generation-bound
+> friend/follow behavior and retirement of the three older social writers
+> described below require the ordered Rules + Functions rollout in
+> [DEPLOYMENT.md](DEPLOYMENT.md#pending-friends-notification-single-writer-rollout).
+
 `onNotificationCreated` (`functions/notifications/push.js`) — a Firestore
 `onDocumentCreated` trigger on `users/{userId}/notifications/{id}`. The
-Flutter client writes the notification document directly (see
-`firestore.rules`); this trigger is what turns "a notification doc exists"
-into an actual push via FCM. Has a title-builder per notification type,
+authoritative server mutation writes the notification document; rules deny
+client creates. This trigger turns "a notification doc exists" into an actual
+push via FCM. Before sending it re-reads the document, requires the same
+Firestore create generation and, for social events, revalidates the live graph
+source. During the ADR-114 compatibility window a retired pair-lifetime id is
+allowed only for a genuine old source with no generation pointer; once the
+source is upgraded it is removed rather than delivered. These checks close delayed-event races they can
+observe; FCM remains best effort and a resolution can still race the final
+network send after the last read. Has a title-builder per notification type,
 mirroring the in-app copy in `app_notification.dart`, and respects each
 user's per-type notification preferences (`notification_preferences_screen.dart`
-→ `NotificationService.setPreference`). The shared, unit-tested payload sets
-the high-importance `yovoice_default` Android channel with default sound and
-vibration, APNs default sound with active interruption level, and web icon/
-badge metadata.
+→ `NotificationService.setPreference`). The shared, unit-tested payload uses
+the high-importance `yovoice_activity_v2` Android channel with the custom
+`yovoice_notification` sound and vibration, the matching APNs sound with active
+interruption level, and web icon/badge metadata.
+The ADR-114 rollout also includes the bounded
+`scrub:retired-social-notifications` Admin command. It runs only after the old
+social triggers are gone, reports aggregate counts, preserves genuine legacy
+rows with a live pointer-less source, and converges source-less or upgraded-
+source duplicates that a transient event-time cleanup could have missed.
 
 ## Friends
 
+> **The ADR-114 friend/follow lifecycle below is SOURCE ONLY — NOT DEPLOYED.**
+> Production still has the three ADR-041 social trigger writers until the
+> explicit rollout and deletion sequence is completed.
+
+- `sendFriendRequest`, `respondToFriendRequest`, `cancelFriendRequest`,
+  `removeFriend`, `setFollow`, `setUserBlock` — transactional graph mutations
+  and the single authority for their notification lifecycle (ADR-114).
 - `getMutualFriends` — mutual-friend lookup for a given pair of users.
 - `getFriendSuggestions` — friend-suggestion logic.
 - `searchPublicProfiles` — authenticated, bounded display-name/username prefix
@@ -80,6 +104,10 @@ badge metadata.
   creates paired private `friendshipGuards` atomically; unfriend/block removes
   them atomically. Transactional per-user quotas, hard graph caps and
   `MAX + 1` bounded reads prevent unbounded fan-out and oversized-graph oracles.
+- Push identity binding rotates on cold start and account replacement, not only
+  the happy-path Sign out button. Registration writes are serialized behind an
+  identity epoch, so a delayed token refresh cannot attach Account A's token
+  during Account B's transition.
 
 ## Profile identity
 

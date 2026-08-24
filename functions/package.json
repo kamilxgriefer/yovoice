@@ -11,7 +11,8 @@
     "test": "node --test test/*.test.js",
     "test:smoke": "node test/global_chat_trigger.smoke.js && node test/moderation_trigger.smoke.js && node test/social_graph_binding.smoke.js",
     "backfill:public-profiles": "node scripts/backfill_public_profiles.js",
-    "scrub:legacy-identity": "node scripts/scrub_legacy_identity_snapshots.js"
+    "scrub:legacy-identity": "node scripts/scrub_legacy_identity_snapshots.js",
+    "scrub:retired-social-notifications": "node scripts/scrub_retired_social_notifications.js"
   },
   "dependencies": {
     "firebase-admin": "^13.4.0",

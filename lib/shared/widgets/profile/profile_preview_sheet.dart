@@ -37,6 +37,7 @@ Future<void> showProfilePreview(
   String? photoUrl,
   FirebaseFirestore? firestore,
   FirebaseAuth? auth,
+  FriendService? friendService,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -52,6 +53,7 @@ Future<void> showProfilePreview(
       seedPhotoUrl: photoUrl,
       firestore: firestore,
       auth: auth,
+      friendService: friendService,
     ),
   );
 }
@@ -63,6 +65,7 @@ class ProfilePreviewSheet extends StatefulWidget {
     this.seedPhotoUrl,
     this.firestore,
     this.auth,
+    this.friendService,
     super.key,
   });
 
@@ -77,6 +80,7 @@ class ProfilePreviewSheet extends StatefulWidget {
   /// Ordinary call sites leave both null and use the Firebase singletons.
   final FirebaseFirestore? firestore;
   final FirebaseAuth? auth;
+  final FriendService? friendService;
 
   @override
   State<ProfilePreviewSheet> createState() => _ProfilePreviewSheetState();
@@ -94,7 +98,8 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
       widget.firestore ?? FirebaseFirestore.instance;
   late final FirebaseAuth _auth = widget.auth ?? FirebaseAuth.instance;
   late final _profiles = ProfileService(firestore: _firestore, auth: _auth);
-  late final _friends = FriendService(firestore: _firestore, auth: _auth);
+  late final _friends =
+      widget.friendService ?? FriendService(firestore: _firestore, auth: _auth);
   late final _follows = FollowService(firestore: _firestore, auth: _auth);
   late final _messages = MessageService(firestore: _firestore, auth: _auth);
   final _socialGraph = SocialGraphService();
@@ -219,11 +224,11 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
     try {
       switch (status) {
         case FriendRelationshipStatus.none:
-          await _friends.sendFriendRequest(_asFriendUser(profile));
+          final relationship = await _friends.sendFriendRequest(
+            _asFriendUser(profile),
+          );
           if (mounted) {
-            setState(
-              () => _relationship = FriendRelationshipStatus.requestSent,
-            );
+            setState(() => _relationship = relationship);
           }
         case FriendRelationshipStatus.requestSent:
           await _friends.cancelFriendRequest(profile.uid);

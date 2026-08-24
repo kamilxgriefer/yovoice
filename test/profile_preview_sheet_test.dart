@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 
 Future<FocusNode> _openPreview(
@@ -13,6 +14,7 @@ Future<FocusNode> _openPreview(
   required Size size,
   TextScaler textScaler = TextScaler.noScaling,
   ThemeData? theme,
+  FriendMutationInvoker? friendMutationInvoker,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -62,6 +64,13 @@ Future<FocusNode> _openPreview(
                   displayName: 'Maya Voice',
                   firestore: firestore,
                   auth: auth,
+                  friendService: friendMutationInvoker == null
+                      ? null
+                      : FriendService(
+                          firestore: firestore,
+                          auth: auth,
+                          mutationInvoker: friendMutationInvoker,
+                        ),
                 ),
               ),
               child: const Text('Open profile preview'),
@@ -135,5 +144,32 @@ void main() {
 
     expect(find.byType(ProfilePreviewSheet), findsNothing);
     expect(launcherFocus.hasFocus, isTrue);
+  });
+
+  testWidgets('reciprocal request immediately renders Friends, not Requested', (
+    tester,
+  ) async {
+    final calls = <({String name, Map<String, dynamic> data})>[];
+    await _openPreview(
+      tester,
+      size: const Size(390, 844),
+      friendMutationInvoker: (name, data) async {
+        calls.add((name: name, data: data));
+        return const <String, dynamic>{'changed': true, 'outcome': 'accepted'};
+      },
+    );
+
+    final addFriend = find.text('Add friend');
+    await tester.ensureVisible(addFriend);
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(addFriend);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(calls, hasLength(1));
+    expect(calls.single.name, 'sendFriendRequest');
+    expect(calls.single.data, {'targetUserId': 'creator'});
+    expect(find.text('Friends'), findsWidgets);
+    expect(find.text('Requested'), findsNothing);
   });
 }

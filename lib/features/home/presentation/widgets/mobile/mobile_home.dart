@@ -45,6 +45,7 @@ class MobileHome extends StatefulWidget {
     this.onOpenFindCreators,
     required this.onOpenFriends,
     required this.onOpenNotifications,
+    this.unreadNotificationCount = 0,
     required this.onOpenProfile,
     required this.onCreateMoment,
     required this.onCreateRoom,
@@ -68,6 +69,7 @@ class MobileHome extends StatefulWidget {
   final VoidCallback? onOpenFindCreators;
   final VoidCallback onOpenFriends;
   final VoidCallback onOpenNotifications;
+  final int unreadNotificationCount;
   final VoidCallback onOpenProfile;
   final VoidCallback onCreateMoment;
 
@@ -215,6 +217,7 @@ class _MobileHomeState extends State<MobileHome> {
                   profile: _profile,
                   onNotifications: widget.onOpenNotifications,
                   onProfile: widget.onOpenProfile,
+                  unreadNotificationCount: widget.unreadNotificationCount,
                 ),
                 const SizedBox(height: 16),
                 // Home answers four questions, in this order, and nothing
@@ -233,8 +236,7 @@ class _MobileHomeState extends State<MobileHome> {
                         builder: (context, profileSnapshot) =>
                             MobileMomentsStrip(
                               moments:
-                                  momentSnapshot.data ??
-                                  const <VoiceMoment>[],
+                                  momentSnapshot.data ?? const <VoiceMoment>[],
                               profile: profileSnapshot.data,
                               currentUserId: _resolvedUserId,
                               onOpenMoment: widget.onOpenMoment,
@@ -323,11 +325,13 @@ class _MobileHeader extends StatelessWidget {
     required this.profile,
     required this.onNotifications,
     required this.onProfile,
+    required this.unreadNotificationCount,
   });
 
   final Stream<UserProfile>? profile;
   final VoidCallback onNotifications;
   final VoidCallback onProfile;
+  final int unreadNotificationCount;
 
   static String _partOfDay() {
     final hour = DateTime.now().hour;
@@ -378,7 +382,10 @@ class _MobileHeader extends StatelessWidget {
             _CircleIconButton(
               icon: Icons.notifications_none_rounded,
               onTap: onNotifications,
-              tooltip: 'Notifications',
+              tooltip: unreadNotificationCount > 0
+                  ? 'Notifications, $unreadNotificationCount unread'
+                  : 'Notifications',
+              badgeCount: unreadNotificationCount,
             ),
             const SizedBox(width: 10),
             AccessibleTapRegion(
@@ -414,28 +421,65 @@ class _CircleIconButton extends StatelessWidget {
     required this.icon,
     required this.onTap,
     required this.tooltip,
+    this.badgeCount = 0,
   });
 
   final IconData icon;
   final VoidCallback onTap;
   final String tooltip;
+  final int badgeCount;
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const CircleBorder(),
+    return AccessibleTapRegion(
+      onTap: onTap,
+      semanticLabel: tooltip,
+      tooltip: tooltip,
+      circular: true,
+      child: ExcludeSemantics(
         child: Container(
           width: 46,
           height: 46,
-          alignment: Alignment.center,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             border: Border.all(color: const Color(0xFF2E2140)),
           ),
-          child: Icon(icon, color: Colors.white, size: 21),
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              Icon(icon, color: Colors.white, size: 21),
+              if (badgeCount > 0)
+                Positioned(
+                  top: -4,
+                  right: -4,
+                  child: Container(
+                    constraints: const BoxConstraints(
+                      minWidth: 20,
+                      minHeight: 20,
+                    ),
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(horizontal: 5),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE51852),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: const Color(0xFF080711),
+                        width: 2,
+                      ),
+                    ),
+                    child: Text(
+                      badgeCount > 99 ? '99+' : '$badgeCount',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

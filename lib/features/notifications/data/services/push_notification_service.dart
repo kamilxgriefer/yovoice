@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
@@ -25,6 +26,10 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {}
 /// than crashing app startup — see main.dart's App Check guard for the same
 /// pattern applied here.
 class PushNotificationService {
+  static const String _rotationPendingPreference =
+      'push_token_rotation_pending_v1';
+  static const Duration _signOutCleanupTimeout = Duration(seconds: 4);
+
   /// Web push needs a VAPID public key, and there is no safe default for
   /// it: without one `getToken()` on web either throws or yields a token
   /// the browser will never deliver to. It is supplied at build time and
@@ -49,13 +54,19 @@ class PushNotificationService {
   PushNotificationService._({
     NotificationService? notificationService,
     FirebaseAuth? auth,
+    Future<void> Function()? deleteMessagingToken,
   }) : _notificationService = notificationService ?? NotificationService(),
-       _auth = auth ?? FirebaseAuth.instance;
+       _auth = auth ?? FirebaseAuth.instance,
+       _deleteMessagingToken =
+           deleteMessagingToken ?? FirebaseMessaging.instance.deleteToken;
 
   static final PushNotificationService instance = PushNotificationService._();
 
   final NotificationService _notificationService;
   final FirebaseAuth _auth;
+  final Future<void> Function() _deleteMessagingToken;
+  final PushTokenPrivacyGuard _tokenPrivacyGuard = PushTokenPrivacyGuard();
+  final PushIdentityEpochGuard _identityEpochGuard = PushIdentityEpochGuard();
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
 
@@ -63,6 +74,8 @@ class PushNotificationService {
   StreamSubscription<RemoteMessage>? _foregroundSubscription;
   StreamSubscription<RemoteMessage>? _openedAppSubscription;
   String? _registeredToken;
+  String? _registeredUserId;
+  Future<void> _registrationTail = Future<void>.value();
   bool _initialized = false;
   bool _warnedAboutVapid = false;
 
@@ -70,7 +83,12 @@ class PushNotificationService {
   /// notification's type, targetId, and actorId whenever a push is tapped,
   /// whether the app was foregrounded, backgrounded, or launched cold from
   /// it.
-  void Function(NotificationType type, String? targetId, String? actorId)?
+  void Function(
+    NotificationType type,
+    String? targetId,
+    String? actorId,
+    String? notificationId,
+  )?
   onNotificationTap;
 
   /// Web browsers do not automatically present a `notification` payload
@@ -96,7 +114,26 @@ class PushNotificationService {
   /// permission before there's any account to attach it to would just mean
   /// asking twice.
   Future<void> initialize() async {
-    if (_initialized) return;
+    if (_initialized) {
+      // Listeners and OS permission are device-scoped and must not be added
+      // twice, but token ownership is account-scoped. After A signs out and
+      // B signs in, bind a freshly rotated token to B instead of treating the
+      // already-initialised device as finished forever.
+      if (shouldRebindPushIdentity(
+        registeredUserId: _registeredUserId,
+        currentUserId: _auth.currentUser?.uid,
+      )) {
+        if (!await _bindCurrentIdentity()) {
+          debugPrint(
+            'PushNotificationService: account switch token rotation is '
+            'still pending; the previous token will not be registered to '
+            'the new account.',
+          );
+          return;
+        }
+      }
+      return;
+    }
     _initialized = true;
 
     // An unconfigured web build cannot register a token, so asking the
@@ -127,7 +164,7 @@ class PushNotificationService {
         return;
       }
 
-      await _registerCurrentToken();
+      await _bindCurrentIdentity();
       _tokenRefreshSubscription = messaging.onTokenRefresh.listen(
         _handleTokenRefresh,
         onError: (_) {},
@@ -157,23 +194,88 @@ class PushNotificationService {
   /// session. Stops a shared/reused device from keeping the previous
   /// account's push subscription active.
   Future<void> unregisterCurrentDevice() async {
-    try {
-      final token = _registeredToken ?? await _currentToken();
-      if (token != null && _auth.currentUser != null) {
-        await _notificationService.unregisterFcmToken(token);
-      }
-    } catch (error) {
-      // Best-effort by design: sign-out must never fail because a token
-      // could not be removed. But a token left behind means the PREVIOUS
-      // account keeps receiving push on this device, which is a privacy
-      // consequence and not merely a lost convenience — so it is named.
+    final userId = _auth.currentUser?.uid;
+    _identityEpochGuard.beginTransition();
+    final token = _registeredToken;
+    _registeredToken = null;
+    _registeredUserId = null;
+
+    // Start every privacy boundary immediately and settle them concurrently.
+    // In particular, a Firestore write that never resolves while offline must
+    // not postpone the durable marker or platform-token invalidation. The
+    // synchronous epoch transition above prevents new refresh writes, while a
+    // queued pre-transition operation either finishes before the owner-row
+    // delete or observes the stale epoch and becomes a no-op.
+    final rotationPersistedFuture = resolvePushCleanupWithin(
+      requirePushTokenRotation(guard: _tokenPrivacyGuard),
+      timeout: _signOutCleanupTimeout,
+    );
+    final ownerCleanupFuture = token != null && userId != null
+        ? retirePushOwnerRowWithin(
+            registrationTail: _registrationTail,
+            deleteOwnerRow: () => _notificationService.unregisterFcmToken(
+              token,
+              expectedUserId: userId,
+            ),
+            timeout: _signOutCleanupTimeout,
+          )
+        : completePushCleanupWithin(
+            _registrationTail,
+            timeout: _signOutCleanupTimeout,
+          ).then(
+            (drained) => (registrationDrained: drained, ownerRowRemoved: true),
+          );
+    final rotatedFuture = resolvePushCleanupWithin(
+      _tokenPrivacyGuard.rotate(_deleteMessagingToken),
+      timeout: _signOutCleanupTimeout,
+    );
+
+    final rotationPersisted = await rotationPersistedFuture;
+    final ownerCleanup = await ownerCleanupFuture;
+    final rotated = await rotatedFuture;
+
+    if (!ownerCleanup.registrationDrained) {
       debugPrint(
-        'PushNotificationService: could not unregister this device on sign '
-        'out (${error.runtimeType}). The previous account may keep '
+        'PushNotificationService: a pre-sign-out token write did not settle '
+        'within the cleanup window. Its identity epoch is revoked and the '
+        'owner-row cleanup was issued independently.',
+      );
+    }
+    if (!ownerCleanup.ownerRowRemoved) {
+      debugPrint(
+        'PushNotificationService: could not remove this device token from the '
+        'previous account within the cleanup window. That account may keep '
         'receiving push here until the token is refreshed or invalidated.',
       );
     }
-    _registeredToken = null;
+    if (rotated == true && rotationPersisted == true) {
+      final cleared = await completePushCleanupWithin(
+        clearPushTokenRotationPending(),
+        timeout: _signOutCleanupTimeout,
+      );
+      if (!cleared) {
+        debugPrint(
+          'PushNotificationService: token rotation succeeded but its durable '
+          'pending marker could not be cleared. The next binding will rotate '
+          'again rather than reusing an uncertain token.',
+        );
+      }
+    }
+    if (rotated != true) {
+      debugPrint(
+        'PushNotificationService: could not invalidate the platform token on '
+        'sign out within the cleanup window. Registration for the next account '
+        'is blocked until token rotation succeeds.',
+      );
+      if (rotationPersisted != true) {
+        debugPrint(
+          'PushNotificationService: the durable rotation marker could not be '
+          'stored either. This process remains fail-closed, but after a full '
+          'restart token ownership cannot be proven until the platform '
+          'invalidates or refreshes the token.',
+        );
+      }
+    }
   }
 
   Future<void> dispose() async {
@@ -183,25 +285,75 @@ class PushNotificationService {
     _initialized = false;
   }
 
-  Future<void> _registerCurrentToken() async {
-    final token = await _currentToken();
-    if (token == null || _auth.currentUser == null) return;
-    _registeredToken = token;
-    try {
-      await _notificationService.registerFcmToken(
-        token,
-        platform: _platformName,
-      );
-    } catch (error) {
-      // A token that fails to persist means this device silently gets no
-      // push. That is worth saying out loud — the in-app activity feed
-      // is unaffected either way, so this is never fatal.
+  Future<bool> _bindCurrentIdentity() async {
+    final userId = _auth.currentUser?.uid;
+    if (userId == null) return false;
+    final epoch = _identityEpochGuard.beginTransition();
+    final drainedFuture = completePushCleanupWithin(
+      _registrationTail,
+      timeout: _signOutCleanupTimeout,
+    );
+    final persistedFuture = resolvePushCleanupWithin(
+      requirePushTokenRotation(guard: _tokenPrivacyGuard),
+      timeout: _signOutCleanupTimeout,
+    );
+    final drained = await drainedFuture;
+    final persisted = await persistedFuture;
+    if (!drained || persisted != true) {
       debugPrint(
-        'PushNotificationService: could not store the FCM token for this '
-        'device (${error.runtimeType}). Push will not reach it; in-app '
-        'notifications are unaffected.',
+        'PushNotificationService: previous token work or its durable rotation '
+        'marker did not settle within the binding window. Registration remains '
+        'fail-closed unless platform invalidation succeeds.',
       );
     }
+    if (!await _ensureTokenRotationCompleted()) return false;
+    if (_auth.currentUser?.uid != userId) return false;
+    if (!_identityEpochGuard.completeTransition(epoch)) return false;
+    await _registerCurrentToken(expectedUserId: userId, epoch: epoch);
+    return _registeredUserId == userId;
+  }
+
+  Future<void> _registerCurrentToken({
+    required String expectedUserId,
+    required int epoch,
+  }) {
+    return _enqueueRegistration(() async {
+      if (_tokenPrivacyGuard.rotationRequired ||
+          !_identityEpochGuard.canRegister(epoch) ||
+          _auth.currentUser?.uid != expectedUserId) {
+        return;
+      }
+      final token = await _currentToken();
+      if (token == null ||
+          !_identityEpochGuard.canRegister(epoch) ||
+          _auth.currentUser?.uid != expectedUserId) {
+        return;
+      }
+      // Store before the network write. If sign-out begins while the write is
+      // in flight, unregister waits this queue and can then delete this exact
+      // token instead of racing past a null field.
+      _registeredToken = token;
+      try {
+        await _notificationService.registerFcmToken(
+          token,
+          platform: _platformName,
+          expectedUserId: expectedUserId,
+        );
+        if (_identityEpochGuard.canRegister(epoch) &&
+            _auth.currentUser?.uid == expectedUserId) {
+          _registeredUserId = expectedUserId;
+        }
+      } catch (error) {
+        // A token that fails to persist means this device silently gets no
+        // push. That is worth saying out loud — the in-app activity feed
+        // is unaffected either way, so this is never fatal.
+        debugPrint(
+          'PushNotificationService: could not store the FCM token for this '
+          'device (${error.runtimeType}). Push will not reach it; in-app '
+          'notifications are unaffected.',
+        );
+      }
+    });
   }
 
   /// The device token, or null when this platform cannot produce one.
@@ -239,20 +391,52 @@ class PushNotificationService {
   }
 
   Future<void> _handleTokenRefresh(String token) async {
-    if (_auth.currentUser == null) return;
-    _registeredToken = token;
-    try {
-      await _notificationService.registerFcmToken(
-        token,
-        platform: _platformName,
-      );
-    } catch (error) {
-      debugPrint(
-        'PushNotificationService: refreshed FCM token could not be stored '
-        '(${error.runtimeType}). This device may stop receiving push until '
-        'the next refresh; in-app notifications are unaffected.',
-      );
-    }
+    final userId = _auth.currentUser?.uid;
+    final epoch = _identityEpochGuard.epoch;
+    if (userId == null || !_identityEpochGuard.canRegister(epoch)) return;
+    await _enqueueRegistration(() async {
+      if (!_identityEpochGuard.canRegister(epoch) ||
+          _auth.currentUser?.uid != userId) {
+        return;
+      }
+      // A platform-issued refresh means the previous registration token is no
+      // longer the token being bound. A sign-out transition is synchronous and
+      // drains this queue before persisting its marker, so this clear can never
+      // erase a newer account-transition requirement.
+      _tokenPrivacyGuard.markTokenRefreshed();
+      await clearPushTokenRotationPending().catchError((_) => false);
+      if (!_identityEpochGuard.canRegister(epoch) ||
+          _auth.currentUser?.uid != userId) {
+        return;
+      }
+      _registeredToken = token;
+      try {
+        await _notificationService.registerFcmToken(
+          token,
+          platform: _platformName,
+          expectedUserId: userId,
+        );
+        if (_identityEpochGuard.canRegister(epoch) &&
+            _auth.currentUser?.uid == userId) {
+          _registeredUserId = userId;
+        }
+      } catch (error) {
+        debugPrint(
+          'PushNotificationService: refreshed FCM token could not be stored '
+          '(${error.runtimeType}). This device may stop receiving push until '
+          'the next refresh; in-app notifications are unaffected.',
+        );
+      }
+    });
+  }
+
+  Future<void> _enqueueRegistration(Future<void> Function() operation) {
+    final scheduled = _registrationTail.then((_) => operation());
+    _registrationTail = scheduled.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return scheduled;
   }
 
   String get _platformName {
@@ -286,7 +470,10 @@ class PushNotificationService {
         final actorId = parts.length > 2 && parts[2].isNotEmpty
             ? parts[2]
             : null;
-        onNotificationTap?.call(type, targetId, actorId);
+        final notificationId = parts.length > 3 && parts[3].isNotEmpty
+            ? parts[3]
+            : null;
+        onNotificationTap?.call(type, targetId, actorId, notificationId);
       },
     );
 
@@ -348,7 +535,8 @@ class PushNotificationService {
         ),
         payload:
             '${message.data['type'] ?? ''}|${message.data['targetId'] ?? ''}'
-            '|${message.data['actorId'] ?? ''}',
+            '|${message.data['actorId'] ?? ''}'
+            '|${message.data['notificationId'] ?? ''}',
       );
     } catch (error) {
       // Only the foreground re-display failed. The message itself was
@@ -364,6 +552,179 @@ class PushNotificationService {
     final type = NotificationType.fromName(message.data['type'] as String?);
     final targetId = message.data['targetId'] as String?;
     final actorId = message.data['actorId'] as String?;
-    onNotificationTap?.call(type, targetId, actorId);
+    final notificationId = message.data['notificationId'] as String?;
+    onNotificationTap?.call(type, targetId, actorId, notificationId);
   }
+
+  Future<bool> _ensureTokenRotationCompleted() async {
+    final persistedRotationPending = await resolvePushCleanupWithin(
+      isPushTokenRotationPending(),
+      timeout: _signOutCleanupTimeout,
+    );
+    if (persistedRotationPending == null) {
+      // If durable state cannot be read, token ownership is unknown. Rotate
+      // before any registration instead of treating the read failure as a
+      // clean account switch.
+      _tokenPrivacyGuard.requireRotation();
+    }
+    if (persistedRotationPending == true) _tokenPrivacyGuard.requireRotation();
+    if (!_tokenPrivacyGuard.rotationRequired) return true;
+    final rotated = await resolvePushCleanupWithin(
+      _tokenPrivacyGuard.rotate(_deleteMessagingToken),
+      timeout: _signOutCleanupTimeout,
+    );
+    if (rotated == true) {
+      await completePushCleanupWithin(
+        clearPushTokenRotationPending(),
+        timeout: _signOutCleanupTimeout,
+      );
+    }
+    return rotated == true;
+  }
+}
+
+bool shouldRebindPushIdentity({
+  required String? registeredUserId,
+  required String? currentUserId,
+}) => currentUserId != null && currentUserId != registeredUserId;
+
+@visibleForTesting
+class PushIdentityEpochGuard {
+  int _epoch = 0;
+  bool _transitionInProgress = false;
+
+  int get epoch => _epoch;
+  bool get transitionInProgress => _transitionInProgress;
+
+  int beginTransition() {
+    _transitionInProgress = true;
+    return ++_epoch;
+  }
+
+  bool completeTransition(int epoch) {
+    if (epoch != _epoch) return false;
+    _transitionInProgress = false;
+    return true;
+  }
+
+  bool canRegister(int epoch) => !_transitionInProgress && epoch == _epoch;
+}
+
+@visibleForTesting
+class PushTokenPrivacyGuard {
+  bool _rotationRequired = false;
+
+  bool get rotationRequired => _rotationRequired;
+
+  void requireRotation() {
+    _rotationRequired = true;
+  }
+
+  Future<bool> rotate(Future<void> Function() deleteToken) async {
+    if (!_rotationRequired) return true;
+    try {
+      await deleteToken();
+      _rotationRequired = false;
+      return true;
+    } on Exception {
+      return false;
+    }
+  }
+
+  void markTokenRefreshed() {
+    _rotationRequired = false;
+  }
+}
+
+@visibleForTesting
+Future<bool> isPushTokenRotationPending() async {
+  final preferences = await SharedPreferences.getInstance();
+  return preferences.getBool(
+        PushNotificationService._rotationPendingPreference,
+      ) ??
+      false;
+}
+
+@visibleForTesting
+Future<bool> requirePushTokenRotation({
+  required PushTokenPrivacyGuard guard,
+  Future<bool> Function()? persistPending,
+}) async {
+  guard.requireRotation();
+  try {
+    return await (persistPending ?? markPushTokenRotationPending)();
+  } catch (_) {
+    return false;
+  }
+}
+
+@visibleForTesting
+Future<bool> markPushTokenRotationPending() async {
+  final preferences = await SharedPreferences.getInstance();
+  return preferences.setBool(
+    PushNotificationService._rotationPendingPreference,
+    true,
+  );
+}
+
+@visibleForTesting
+Future<bool> clearPushTokenRotationPending() async {
+  final preferences = await SharedPreferences.getInstance();
+  return preferences.remove(PushNotificationService._rotationPendingPreference);
+}
+
+@visibleForTesting
+Future<bool> completePushCleanupWithin(
+  Future<void> operation, {
+  required Duration timeout,
+}) async {
+  try {
+    await operation.timeout(timeout);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+@visibleForTesting
+Future<bool?> resolvePushCleanupWithin(
+  Future<bool> operation, {
+  required Duration timeout,
+}) async {
+  try {
+    return await operation.timeout(timeout);
+  } catch (_) {
+    return null;
+  }
+}
+
+@visibleForTesting
+Future<({bool registrationDrained, bool ownerRowRemoved})>
+retirePushOwnerRowWithin({
+  required Future<void> registrationTail,
+  required Future<void> Function() deleteOwnerRow,
+  required Duration timeout,
+}) async {
+  // Start with an eager delete so ordinary sign-out is not delayed by SDK
+  // bookkeeping. A registration that already passed its epoch checks before
+  // sign-out may still finish after that delete, though. Once the bounded
+  // drain confirms no such write remains, delete again so retirement is the
+  // final server-side operation.
+  final eagerDelete = completePushCleanupWithin(
+    Future<void>.sync(deleteOwnerRow),
+    timeout: timeout,
+  );
+  final registrationDrained = await completePushCleanupWithin(
+    registrationTail,
+    timeout: timeout,
+  );
+  final eagerRemoved = await eagerDelete;
+  if (!registrationDrained) {
+    return (registrationDrained: false, ownerRowRemoved: eagerRemoved);
+  }
+  final postDrainRemoved = await completePushCleanupWithin(
+    Future<void>.sync(deleteOwnerRow),
+    timeout: timeout,
+  );
+  return (registrationDrained: true, ownerRowRemoved: postDrainRemoved);
 }

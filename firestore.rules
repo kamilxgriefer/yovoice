@@ -237,10 +237,18 @@ service cloud.firestore {
     function canonicalFollowingEdge(ownerId, targetId) {
       let edgePath = /databases/$(database)/documents/users/$(ownerId)/following/$(targetId);
       return exists(edgePath) &&
-          get(edgePath).data.keys().hasAll(['uid', 'followedAt']) &&
-          get(edgePath).data.keys().hasOnly(['uid', 'followedAt']) &&
-          get(edgePath).data.uid == targetId &&
-          get(edgePath).data.followedAt is timestamp;
+          canonicalFollowEdgeData(get(edgePath).data, targetId);
+    }
+
+    function canonicalFollowEdgeData(data, expectedUid) {
+      return data.keys().hasAll(['uid', 'followedAt']) &&
+          data.keys().hasOnly(['uid', 'followedAt', 'notificationId']) &&
+          data.uid == expectedUid &&
+          data.followedAt is timestamp &&
+          (!('notificationId' in data) ||
+            (data.notificationId is string &&
+              data.notificationId.size() > 0 &&
+              data.notificationId.size() <= 320));
     }
 
     function isOwner(userId) {
@@ -1991,22 +1999,26 @@ service cloud.firestore {
       // follow_service.dart — no rules existed for either subcollection
       // before this, so follow()/unfollow() failed outright.
       match /following/{targetUserId} {
-        allow read: if isActiveAccount() && accountIsActive(userId) &&
+        // Keep get stricter because the target uid is known. A collection
+        // query cannot prove per-document liveness or schema predicates for
+        // its wildcard (Rules are not filters). List access is therefore
+        // bounded to the production query; edges are server-only and the
+        // publicProfiles join omits inactive identities. Point reads and the
+        // DM authorization boundary retain the exact schema check.
+        allow get: if canReadFullProfile(userId) &&
             accountIsActive(targetUserId) &&
-            resource.data.keys().hasAll(['uid', 'followedAt']) &&
-            resource.data.keys().hasOnly(['uid', 'followedAt']) &&
-            resource.data.uid == targetUserId &&
-            resource.data.followedAt is timestamp;
+            canonicalFollowEdgeData(resource.data, targetUserId);
+        allow list: if canReadFullProfile(userId) &&
+            request.query.limit != null && request.query.limit <= 100;
         allow create, update, delete: if false;
       }
 
       match /followers/{followerId} {
-        allow read: if isActiveAccount() && accountIsActive(userId) &&
+        allow get: if canReadFullProfile(userId) &&
             accountIsActive(followerId) &&
-            resource.data.keys().hasAll(['uid', 'followedAt']) &&
-            resource.data.keys().hasOnly(['uid', 'followedAt']) &&
-            resource.data.uid == followerId &&
-            resource.data.followedAt is timestamp;
+            canonicalFollowEdgeData(resource.data, followerId);
+        allow list: if canReadFullProfile(userId) &&
+            request.query.limit != null && request.query.limit <= 100;
         allow create, update, delete: if false;
       }
 
