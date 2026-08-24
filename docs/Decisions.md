@@ -2688,6 +2688,11 @@ that cannot work costs the user the chance to enable push later.
 
 ## ADR-043: Home is one room board of full-bleed banners; presence, VIP and Follow on the rail come from existing server-written sources
 
+> **Partially superseded by ADR-110 (2026-08-24).** The server-written
+> presence/VIP sources and friends-not-yet-followed suggestion pool remain,
+> but People & Moments no longer mutates follows inline. Suggestions now open
+> the profile, where the relationship action keeps its proper context.
+
 ### Context
 
 Home carried three overlapping presentations of the same room stream
@@ -6622,3 +6627,35 @@ are unchanged. The profile card, More anchor, unread streams, routing, backend
 and mobile navigation are unchanged. No Firebase, schema, rule, index,
 dependency or deployment change is involved. This is source-only until a
 separate Hosting release is explicitly requested and byte-verified.
+
+## ADR-110: People & Moments suggests profiles but does not mutate follows inline
+
+**Context.** ADR-043 combined playable Moments and friends-not-yet-followed in
+one desktop rail, giving the latter a compact `Follow` chip. In practice that
+chip competed visually with Moment playback and duplicated a relationship
+action that already has a clearer home on the person's profile. Removing only
+the chip initially left the avatar as the sole target while the visible name
+and identity badge were dead pixels.
+
+**Decision.** The real friends-not-yet-followed pool stays after the divider,
+and `FollowService.watchFollowing` remains a read-only filter so an existing
+follow is never suggested again. Each suggestion is one full-tile
+`AccessibleTapRegion`, named `Open profile for <display name>`, with a 44 px
+minimum target, keyboard activation and a visible focus ring. It opens the
+existing profile preview. People & Moments contains no `Follow` button and no
+follow mutation; relationship changes remain on profile and creator surfaces.
+
+**Reasoning.** The rail's primary job is fast listening and lightweight
+discovery. A profile shortcut preserves the honest, server-backed discovery
+value without asking for a relationship change in a cramped mixed-purpose
+strip. Making the whole visible tile interactive also aligns it with the
+Moment tiles and avoids repeating the dead-label defect already fixed for the
+signed-in user's Moment.
+
+**Consequences.** Dedicated Follow controls, their service contract and their
+double-submit protection are unchanged. Only the desktop People & Moments
+mutation path and its test helper are removed. Widget coverage asserts no
+inline `Follow`, continued filtering, a named semantic button, full-tile name
+activation and Enter/Space activation. No backend, rules, schema, index or
+deployment change is involved; this remains source-only until a separate
+Hosting release is explicitly requested and verified.

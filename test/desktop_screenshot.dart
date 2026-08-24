@@ -161,7 +161,8 @@ Future<FakeFirebaseFirestore> _seed({required bool live}) async {
 }
 
 /// Two friends and a Moment — enough for the rail to show a ringed tile,
-/// an online dot, the divider and a Follow action.
+/// an online dot, the divider and a profile shortcut without an inline
+/// Follow action.
 Future<void> _seedCircle(FakeFirebaseFirestore db) async {
   for (final (index, name) in ['Sieeema', 'testGriefer'].indexed) {
     final id = 'friend-$index';

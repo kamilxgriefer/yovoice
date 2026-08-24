@@ -36,6 +36,15 @@ someone decide what to pick up next.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it)
 > for why that distinction is the whole point of this wave.
 
+- **Desktop People & Moments keeps discovery, but no longer embeds Follow
+  buttons** (2026-08-24, ADR-110, **SOURCE ONLY — NOT DEPLOYED**): the profile
+  suggestions after the divider remain visible and open the existing profile
+  preview, while the low-context inline Follow chips and their duplicate
+  mutation path are gone. Existing following edges are still read so already
+  followed people are not suggested. Widget coverage pins both the absence of
+  the inline action and continued profile reachability; the dedicated creator
+  and profile follow controls are unchanged.
+
 - **The desktop rail no longer scrolls; Home is a pinned header action beside
   Notifications** (2026-08-24, ADR-109, **SOURCE ONLY — NOT DEPLOYED**): the
   full-width Home row and the rail's `SingleChildScrollView` are gone. Home

@@ -10,6 +10,7 @@ import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// "Moments from your circle" — the desktop Home strip that sits between
@@ -74,11 +75,11 @@ class DesktopMomentsStrip extends StatefulWidget {
   final HomeFeedService? feedService;
 
   /// Presence and the people this account already knows — the source for
-  /// both the online dots and the follow segment.
+  /// both the online dots and profile suggestions.
   final FriendService? friendService;
 
-  /// The existing follow service. The rail never writes a follow itself;
-  /// it calls the same service the profile screens do.
+  /// Reads the existing following edges so profile suggestions never repeat
+  /// people this account already follows. The strip does not mutate follows.
   final FollowService? followService;
 
   /// Opens someone's profile preview. Optional: without it a person tile
@@ -99,7 +100,6 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
   Stream<List<VoiceMoment>>? _moments;
   Stream<List<FriendUser>>? _friends;
   Stream<List<FollowUser>>? _following;
-  FollowService? _follow;
 
   static const double _tileGap = 14;
 
@@ -118,10 +118,9 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
       _friends = null;
     }
     try {
-      _follow = widget.followService ?? FollowService();
-      _following = _follow!.watchFollowing(widget.currentUserId ?? '');
+      final follow = widget.followService ?? FollowService();
+      _following = follow.watchFollowing(widget.currentUserId ?? '');
     } catch (_) {
-      _follow = null;
       _following = null;
     }
   }
@@ -165,10 +164,10 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                       in followingSnapshot.data ?? const <FollowUser>[])
                     user.uid,
                 };
-                // The segment past the divider: people this account
-                // already knows but has not followed yet. Real people
-                // from a real edge — never an invented suggestion.
-                final toFollow = friends
+                // The segment past the divider: profile shortcuts for people
+                // this account already knows but has not followed yet. Real
+                // people from a real edge — never invented suggestions.
+                final profileSuggestions = friends
                     .where(
                       (friend) =>
                           friend.id != profile?.uid &&
@@ -195,7 +194,8 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                           showSeeAll: others.isNotEmpty || mine.isNotEmpty,
                           onDiscover: widget.onDiscover,
                           showDiscover:
-                              others.isNotEmpty || toFollow.isNotEmpty,
+                              others.isNotEmpty ||
+                              profileSuggestions.isNotEmpty,
                         ),
                         LayoutBuilder(
                           builder: (context, constraints) {
@@ -229,10 +229,10 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                                 ),
                             ];
 
-                            // Nothing from the circle and nobody to follow: the
-                            // quiet state fills the band rather than leaving it
-                            // blank.
-                            if (others.isEmpty && toFollow.isEmpty) {
+                            // Nothing from the circle and no profile suggestion:
+                            // the quiet state fills the band rather than leaving
+                            // it blank.
+                            if (others.isEmpty && profileSuggestions.isEmpty) {
                               return SizedBox(
                                 height: tileHeight,
                                 child: Row(
@@ -251,9 +251,8 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                             }
 
                             // ONE row, packed from the left: people you can hear,
-                            // then the divider, then people you could follow. A
-                            // Flexible list here let the follow segment drift to
-                            // the far edge with a gap in the middle.
+                            // then the divider, then profile shortcuts. Following
+                            // belongs on the profile surface, not in this rail.
                             return SizedBox(
                               height: tileHeight,
                               child: SingleChildScrollView(
@@ -265,18 +264,17 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                                         const SizedBox(width: _tileGap),
                                       tiles[i],
                                     ],
-                                    if (toFollow.isNotEmpty) ...[
+                                    if (profileSuggestions.isNotEmpty) ...[
                                       const _RailDivider(),
                                       for (
                                         var i = 0;
-                                        i < toFollow.length;
+                                        i < profileSuggestions.length;
                                         i++
                                       ) ...[
                                         if (i > 0)
                                           const SizedBox(width: _tileGap),
-                                        _FollowablePersonTile(
-                                          person: toFollow[i],
-                                          follow: _follow,
+                                        _PersonSuggestionTile(
+                                          person: profileSuggestions[i],
                                           onOpenProfile: widget.onOpenProfile,
                                         ),
                                       ],
@@ -300,8 +298,8 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
   }
 }
 
-/// The hairline between "people whose Moments you can hear" and "people
-/// you could follow" — two different offers, one rail.
+/// The hairline between "people whose Moments you can hear" and suggested
+/// profile shortcuts — two different offers, one rail.
 class _RailDivider extends StatelessWidget {
   const _RailDivider();
 
@@ -616,63 +614,35 @@ class _PresenceDot extends StatelessWidget {
   }
 }
 
-/// Someone this account already knows but has not followed yet.
+/// A profile shortcut for someone this account already knows.
 ///
 /// The VIP mark reads `premiumIdentity` off their user document — the
-/// server-written mirror Cloud Functions maintain, never a flag this
-/// client decides. Following goes through the same [FollowService] the
-/// profile screens use, so the write, its transaction and its rules are
-/// the existing ones.
-class _FollowablePersonTile extends StatefulWidget {
-  const _FollowablePersonTile({
+/// server-written mirror Cloud Functions maintain, never a flag this client
+/// decides. Follow controls deliberately live on the person's profile, where
+/// the relationship has context, instead of competing with Moment playback.
+class _PersonSuggestionTile extends StatelessWidget {
+  const _PersonSuggestionTile({
     required this.person,
-    required this.follow,
     required this.onOpenProfile,
   });
 
   final FriendUser person;
-  final FollowService? follow;
   final ValueChanged<String>? onOpenProfile;
 
   @override
-  State<_FollowablePersonTile> createState() => _FollowablePersonTileState();
-}
-
-class _FollowablePersonTileState extends State<_FollowablePersonTile> {
-  bool _busy = false;
-
-  Future<void> _followThem() async {
-    final service = widget.follow;
-    if (service == null || _busy) return;
-    setState(() => _busy = true);
-    try {
-      await service.follow(widget.person.id);
-      // The following stream this rail reads drops the tile on its own.
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('Could not follow just now.')),
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final person = widget.person;
     return SizedBox(
       width: _MomentTile.widthFor(context),
       height: _MomentTile.heightFor(context),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          InkWell(
-            onTap: widget.onOpenProfile == null
-                ? null
-                : () => widget.onOpenProfile!(person.id),
-            customBorder: const CircleBorder(),
-            child: _PresenceDot(
+      child: AccessibleTapRegion(
+        onTap: onOpenProfile == null ? null : () => onOpenProfile!(person.id),
+        semanticLabel: 'Open profile for ${person.displayName}',
+        tooltip: 'Open ${person.displayName}\'s profile',
+        borderRadius: 14,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _PresenceDot(
               online: person.isOnline,
               child: _MomentRing(
                 highlighted: false,
@@ -684,44 +654,23 @@ class _FollowablePersonTileState extends State<_FollowablePersonTile> {
                 ),
               ),
             ),
-          ),
-          const SizedBox(height: 5),
-          _MomentNameLabel(name: person.displayName),
-          const SizedBox(height: 2),
-          SizedBox(
-            height: _MomentTile.actionHeightFor(context),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                UserIdentityBadges(
-                  uid: person.id,
-                  variant: IdentityBadgeVariant.icon,
-                ),
-                const SizedBox(width: 4),
-                OutlinedButton(
-                  onPressed: _busy ? null : _followThem,
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    foregroundColor: const Color(0xFFD3A5FF),
-                    side: BorderSide(
-                      color: AppColors.primary.withValues(alpha: .5),
-                    ),
-                    shape: const StadiumBorder(),
+            const SizedBox(height: 5),
+            _MomentNameLabel(name: person.displayName),
+            const SizedBox(height: 2),
+            SizedBox(
+              height: _MomentTile.actionHeightFor(context),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  UserIdentityBadges(
+                    uid: person.id,
+                    variant: IdentityBadgeVariant.icon,
                   ),
-                  child: const Text(
-                    'Follow',
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

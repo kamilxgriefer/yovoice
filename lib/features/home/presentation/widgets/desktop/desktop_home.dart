@@ -252,7 +252,7 @@ class _DesktopHomeState extends State<DesktopHome> {
               children: [
                 _GreetingHeader(profile: _profile),
                 const SizedBox(height: 20),
-                // 1. Who can I follow or hear from?
+                // 1. Who can I hear from or open as a profile suggestion?
                 DesktopMomentsStrip(
                   profile: _profile,
                   feedService: widget.feedService,

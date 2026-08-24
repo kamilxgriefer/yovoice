@@ -4,6 +4,7 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -20,6 +21,7 @@ import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 
@@ -202,53 +204,6 @@ void main() {
 
   Widget host(Widget child) => MaterialApp(home: Scaffold(body: child));
 
-  Future<Map<String, dynamic>> invokeFollowMutation(
-    Map<String, dynamic> data,
-  ) async {
-    final targetUserId = data['targetUserId'] as String;
-    final following = data['following'] as bool;
-    final targetProfile = await db
-        .collection('publicProfiles')
-        .doc(targetUserId)
-        .get();
-    final target = targetProfile.data() ?? const <String, dynamic>{};
-    final actor = await db.collection('users').doc(uid).get();
-    final actorData = actor.data() ?? const <String, dynamic>{};
-    final actorFollowing = db
-        .collection('users')
-        .doc(uid)
-        .collection('following')
-        .doc(targetUserId);
-    final targetFollower = db
-        .collection('users')
-        .doc(targetUserId)
-        .collection('followers')
-        .doc(uid);
-    final batch = db.batch();
-    if (following) {
-      final now = Timestamp.now();
-      batch.set(actorFollowing, {
-        'uid': targetUserId,
-        'displayName': target['displayName'] ?? 'YO Voice user',
-        'username': target['username'] ?? '',
-        'photoUrl': target['photoUrl'],
-        'followedAt': now,
-      });
-      batch.set(targetFollower, {
-        'uid': uid,
-        'displayName': actorData['displayName'] ?? 'YO Voice user',
-        'username': actorData['username'] ?? '',
-        'photoUrl': actorData['photoUrl'],
-        'followedAt': now,
-      });
-    } else {
-      batch.delete(actorFollowing);
-      batch.delete(targetFollower);
-    }
-    await batch.commit();
-    return {'targetUserId': targetUserId, 'following': following};
-  }
-
   DesktopHome buildHome({
     void Function(VoiceRoom)? onOpenRoom,
     VoidCallback? onSeeAll,
@@ -284,11 +239,7 @@ void main() {
       onOpenClubs: onOpenClubs ?? () {},
       roomService: RoomService(firestore: db, auth: firebaseAuth),
       friendService: FriendService(firestore: db, auth: firebaseAuth),
-      followService: FollowService(
-        firestore: db,
-        auth: firebaseAuth,
-        mutationInvoker: invokeFollowMutation,
-      ),
+      followService: FollowService(firestore: db, auth: firebaseAuth),
       profileService: ProfileService(firestore: db, auth: firebaseAuth),
       feedService: HomeFeedService(firestore: db, auth: firebaseAuth),
       messageService: MessageService(
@@ -740,8 +691,8 @@ void main() {
       expect(seeAllMoments, 1);
     });
 
-    testWidgets('the rail marks online friends, and offers Follow only for '
-        'people this account has not followed yet', (tester) async {
+    testWidgets('the rail shows profile suggestions without inline Follow '
+        'actions', (tester) async {
       useDesktop(tester, const Size(1440, 900));
       // Ola is a friend and online; Marek is already followed.
       await seedFriend('friend-1', 'Ola');
@@ -750,49 +701,60 @@ void main() {
       await seedFriend('friend-2', 'Zosia');
       await seedFollowing('friend-2', 'Zosia');
 
-      await tester.pumpWidget(host(buildHome()));
-      for (var i = 0; i < 8; i++) {
-        await tester.pump(const Duration(milliseconds: 60));
-      }
-
-      // Ola is followable; Zosia and Marek are not.
-      expect(find.text('Follow'), findsOneWidget);
-      expect(
-        find.ancestor(of: find.text('Ola'), matching: find.byType(Column)),
-        findsWidgets,
+      final firebaseAuth = auth();
+      String? openedProfile;
+      var profileOpens = 0;
+      await tester.pumpWidget(
+        host(
+          DesktopMomentsStrip(
+            currentUserId: uid,
+            profile: ProfileService(
+              firestore: db,
+              auth: firebaseAuth,
+            ).watchCurrentProfile(),
+            feedService: HomeFeedService(firestore: db, auth: firebaseAuth),
+            friendService: FriendService(firestore: db, auth: firebaseAuth),
+            followService: FollowService(firestore: db, auth: firebaseAuth),
+            onOpenMoment: (_) {},
+            onCreateMoment: () {},
+            onSeeAll: () {},
+            onDiscover: () {},
+            onOpenProfile: (userId) {
+              openedProfile = userId;
+              profileOpens += 1;
+            },
+          ),
+        ),
       );
-      expect(find.text('Zosia'), findsNothing);
-    });
-
-    testWidgets('following someone from the rail goes through the real '
-        'FollowService and writes both sides of the edge', (tester) async {
-      useDesktop(tester, const Size(1440, 900));
-      await seedFriend('friend-1', 'Ola');
-
-      await tester.pumpWidget(host(buildHome()));
       for (var i = 0; i < 8; i++) {
         await tester.pump(const Duration(milliseconds: 60));
       }
 
-      await tester.tap(find.text('Follow'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
+      // Ola remains a profile shortcut; Zosia and Marek are not suggested.
+      // Following belongs on the profile surface, not in this Moments rail.
+      expect(find.text('Follow'), findsNothing);
+      final profileShortcut = find.bySemanticsLabel('Open profile for Ola');
+      expect(profileShortcut, findsOneWidget);
+      expect(tester.getSize(profileShortcut).width, greaterThanOrEqualTo(44));
+      expect(tester.getSize(profileShortcut).height, greaterThanOrEqualTo(44));
 
-      // The same two documents the profile screens write.
-      final following = await db
-          .collection('users')
-          .doc(uid)
-          .collection('following')
-          .doc('friend-1')
-          .get();
-      final follower = await db
-          .collection('users')
-          .doc('friend-1')
-          .collection('followers')
-          .doc(uid)
-          .get();
-      expect(following.exists, isTrue, reason: 'following edge missing');
-      expect(follower.exists, isTrue, reason: 'follower mirror missing');
+      await tester.tap(find.text('Ola'));
+      await tester.pump();
+      expect(openedProfile, 'friend-1');
+      expect(profileOpens, 1);
+
+      Focus.of(tester.element(find.text('Ola'))).requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      expect(openedProfile, 'friend-1');
+      expect(profileOpens, 3);
+
+      final olaAvatar = find.byWidgetPredicate(
+        (widget) => widget is UserAvatar && widget.displayName == 'Ola',
+      );
+      expect(olaAvatar, findsOneWidget);
+      expect(find.text('Zosia'), findsNothing);
     });
 
     testWidgets('empty circle: a compact state with one Discover action, '
