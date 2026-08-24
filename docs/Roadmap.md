@@ -36,6 +36,15 @@ someone decide what to pick up next.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it)
 > for why that distinction is the whole point of this wave.
 
+- **Desktop Recent Chats is a compact full-bleed conversation rail**
+  (2026-08-24, ADR-111, **SOURCE ONLY — NOT DEPLOYED**): the detached 40 px
+  avatars and 148 px mostly-empty cards are replaced on desktop by 116 px
+  cards whose real participant photo fills and softly blurs behind a dark
+  legibility scrim. Missing or broken photos resolve to deterministic brand
+  gradients with a quiet initial. Name, preview and unread state remain, and
+  the whole card is a named keyboard-accessible chat action. Mobile retains
+  its established avatar presentation and dimensions.
+
 - **Desktop People & Moments keeps discovery, but no longer embeds Follow
   buttons** (2026-08-24, ADR-110, **SOURCE ONLY — NOT DEPLOYED**): the profile
   suggestions after the divider remain visible and open the existing profile

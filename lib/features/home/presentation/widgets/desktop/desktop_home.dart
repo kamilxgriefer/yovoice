@@ -324,6 +324,7 @@ class _DesktopHomeState extends State<DesktopHome> {
                     currentUserId: widget.currentUserId,
                     onOpenConversation: widget.onOpenConversation,
                     onFindFriends: widget.onViewAllFriends,
+                    style: RecentChatsStyle.desktopBackdrop,
                   ),
                 ),
                 if (widget.trailingContent != null) ...[

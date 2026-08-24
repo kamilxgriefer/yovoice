@@ -3073,6 +3073,11 @@ verified.
 
 ## ADR-048: Global Chat is retired from the app UI and Home previews three real private conversations
 
+> **Presentation amended by ADR-111 (2026-08-24).** The stream, three-item
+> maximum, recency, unread state and navigation contract below remain. Only
+> the desktop card presentation changes; mobile keeps the original avatar
+> cards.
+
 ### Context
 
 The public Global Chat feed no longer fits the product direction. Home
@@ -6659,3 +6664,37 @@ inline `Follow`, continued filtering, a named semantic button, full-tile name
 activation and Enter/Space activation. No backend, rules, schema, index or
 deployment change is involved; this remains source-only until a separate
 Hosting release is explicitly requested and verified.
+
+## ADR-111: Desktop recent chats use the participant photo as a bounded blurred backdrop
+
+**Context.** The desktop `Your recent chats` cards were 148 px tall but placed
+only a 40 px avatar in the upper-left and two short text rows at the bottom.
+Most of each surface was empty, the avatar felt detached from the card, and
+the result did not share the full-bleed visual language of the room banners.
+The same `RecentChats` widget also serves mobile, where the smaller avatar card
+remains appropriate and must not drift as a side effect of a desktop request.
+
+**Decision.** `RecentChats` gains an explicit presentation style. Mobile keeps
+the existing standard style and geometry. `DesktopHome` selects a 116 px
+`desktopBackdrop` style: the other participant's existing conversation photo
+fills the card, is enlarged and softly blurred with `ImageFiltered`, and sits
+under a dark vertical scrim. Missing, loading or broken photos show a
+deterministic violet/blue gradient plus a low-emphasis initial. A small chat
+glyph replaces the detached avatar; unread count stays at the upper-right and
+name/preview stay at the bottom. The whole surface is one
+`AccessibleTapRegion` named `Open chat with <display name>`.
+
+**Reasoning.** The participant photo provides identity without consuming a
+separate layout slot, while the shorter card removes dead space. This mirrors
+the room board's full-bleed image-plus-scrim hierarchy without copying its
+scale. `ImageFiltered` affects only the at-most-three image children; it is not
+a `BackdropFilter` resampling the already-painted Home surface per card. The
+scrim, not blur alone, owns text contrast over arbitrary portraits.
+
+**Consequences.** Conversation ordering, the three-item cap, unread data,
+preview copy, callbacks, queries, backend and mobile layout are unchanged.
+Tests pin the desktop variant's full-card image treatment, 116 px height,
+semantic action and tap callback while the existing multi-width suite pins the
+standard avatar cards at 148 px. Missing images remain intentional rather than
+showing a broken glyph. No schema, rules, indexes, Functions or production
+deployment change is involved.

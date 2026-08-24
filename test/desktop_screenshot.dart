@@ -29,6 +29,9 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/recent_chats.dart';
+import 'package:yovoice/features/messages/data/models/conversation.dart';
+import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
@@ -522,6 +525,101 @@ void main() {
     await _settle(tester);
     await _shoot(tester, 'home-mobile-390x844');
   });
+
+  testWidgets('recent-chats-backdrop-1440x300', (tester) async {
+    tester.view.physicalSize = const Size(1440, 300);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    const decodedProfilePhoto = AssetImage(
+      'assets/images/home page assets.jpg',
+    );
+
+    Conversation conversation(
+      int index,
+      String name,
+      String preview, {
+      int unread = 0,
+      String photoUrl = '',
+    }) {
+      final friendId = 'recent-friend-$index';
+      return Conversation(
+        id: 'recent-chat-$index',
+        participantIds: [_me, friendId],
+        participantNames: {_me: 'CeoGriefer', friendId: name},
+        participantEmails: const {},
+        participantPhotoUrls: {if (photoUrl.isNotEmpty) friendId: photoUrl},
+        unreadCounts: {_me: unread, friendId: 0},
+        lastMessage: preview,
+        lastMessageType: MessageType.text,
+        lastMessageSenderId: friendId,
+        updatedAt: DateTime(2026, 8, 24, 18, index),
+        createdAt: DateTime(2026, 8, 20),
+        archivedBy: const [],
+        mutedBy: const [],
+      );
+    }
+
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: _capture,
+        child: MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(
+            brightness: Brightness.dark,
+            useMaterial3: true,
+            fontFamily: 'Roboto',
+          ),
+          home: Scaffold(
+            backgroundColor: const Color(0xFF080711),
+            body: Padding(
+              padding: const EdgeInsets.fromLTRB(28, 24, 28, 30),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Your recent chats',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  RecentChats(
+                    snapshot: AsyncSnapshot.withData(ConnectionState.active, [
+                      conversation(
+                        0,
+                        'Sieeema',
+                        'Photo from yesterday',
+                        unread: 2,
+                        photoUrl: 'fixture://decoded-profile-photo',
+                      ),
+                      conversation(1, 'Otee', 'Voice later?'),
+                      conversation(2, 'Marek', 'That was fun'),
+                    ]),
+                    currentUserId: _me,
+                    onOpenConversation: (_) {},
+                    onFindFriends: () {},
+                    style: RecentChatsStyle.desktopBackdrop,
+                    backdropImageProvider: (_) => decodedProfilePhoto,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.runAsync(
+      () => precacheImage(
+        decodedProfilePhoto,
+        tester.element(find.byType(RecentChats)),
+      ),
+    );
+    await _settle(tester);
+    await _shoot(tester, 'recent-chats-backdrop-1440x300');
+  });
+
   // The two creation wizards, at phone width and desktop, so the
   // identity colours and the step layout are looked at rather than
   // merely asserted.
