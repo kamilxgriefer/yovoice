@@ -12,6 +12,7 @@
 //
 // PNGs land in test/.screenshots/ (git-ignored).
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -29,6 +30,7 @@ import 'package:yovoice/features/creator/data/services/creator_directory_service
 import 'package:yovoice/features/creator/presentation/screens/find_creators_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
@@ -36,6 +38,7 @@ import 'package:yovoice/features/home/presentation/widgets/shared/recent_chats.d
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
+import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
@@ -640,6 +643,91 @@ void main() {
     await _settle(tester);
     await _shoot(tester, 'recent-chats-backdrop-1440x300');
   });
+
+  for (final size in const [Size(390, 844), Size(768, 900), Size(1440, 900)]) {
+    final label =
+        'new-message-sheet-${size.width.toInt()}x${size.height.toInt()}';
+    testWidgets(label, (tester) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final friends = Stream<List<FriendUser>>.value(const [
+        FriendUser(
+          id: 'otee',
+          displayName: 'Otee',
+          email: 'otee@yovoice.app',
+          username: 'otee',
+          photoUrl: null,
+          isOnline: true,
+          lastSeen: null,
+        ),
+        FriendUser(
+          id: 'sieeema',
+          displayName: 'Sieeema',
+          email: 'sieeema@yovoice.app',
+          username: 'sieeema',
+          photoUrl: null,
+          isOnline: false,
+          lastSeen: null,
+        ),
+      ]).asBroadcastStream();
+      final conversations = Stream<List<Conversation>>.value([
+        Conversation(
+          id: 'preview-chat',
+          participantIds: const [_me, 'maya'],
+          participantNames: const {_me: 'CeoGriefer', 'maya': 'Maya Voice'},
+          participantEmails: const {
+            _me: 'preview@yovoice.app',
+            'maya': 'maya@yovoice.app',
+          },
+          participantPhotoUrls: const {},
+          unreadCounts: const {},
+          lastMessage: 'Let us record tomorrow',
+          lastMessageType: MessageType.text,
+          lastMessageSenderId: 'maya',
+          updatedAt: DateTime(2026, 8, 24, 18),
+          createdAt: DateTime(2026, 8, 24, 17),
+          archivedBy: const [],
+          mutedBy: const [],
+        ),
+      ]).asBroadcastStream();
+
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: _capture,
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.darkTheme,
+            home: Scaffold(
+              backgroundColor: const Color(0xFF080711),
+              body: Builder(
+                builder: (context) => Center(
+                  child: FilledButton.icon(
+                    onPressed: () => unawaited(
+                      showNewMessageSheet(
+                        context,
+                        friendsStream: friends,
+                        conversationsStream: conversations,
+                        currentUserId: _me,
+                        onFriendSelected: (_) {},
+                        onConversationSelected: (_) {},
+                      ),
+                    ),
+                    icon: const Icon(Icons.edit_rounded),
+                    label: const Text('New message'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('New message'));
+      await _settle(tester);
+      await _shoot(tester, label);
+    });
+  }
 
   for (final size in const [Size(1440, 720), Size(390, 844)]) {
     final label =

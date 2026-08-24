@@ -12,6 +12,43 @@ import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+
+/// Opens the production New message route.
+///
+/// Kept public so route-level tests and the dev preview exercise the exact
+/// BottomSheet configuration used by [MessagesScreen], including handle
+/// ownership and dismissal behavior.
+Future<void> showNewMessageSheet(
+  BuildContext context, {
+  required Stream<List<FriendUser>> friendsStream,
+  required Stream<List<Conversation>> conversationsStream,
+  required String currentUserId,
+  required ValueChanged<FriendUser> onFriendSelected,
+  required ValueChanged<Conversation> onConversationSelected,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: Colors.transparent,
+    showDragHandle: false,
+    constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
+    builder: (sheetContext) => NewMessageSheet(
+      friendsStream: friendsStream,
+      conversationsStream: conversationsStream,
+      currentUserId: currentUserId,
+      onFriendSelected: (friend) {
+        Navigator.pop(sheetContext);
+        onFriendSelected(friend);
+      },
+      onConversationSelected: (conversation) {
+        Navigator.pop(sheetContext);
+        onConversationSelected(conversation);
+      },
+    ),
+  );
+}
 
 class MessagesScreen extends StatefulWidget {
   const MessagesScreen({
@@ -171,26 +208,14 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 
   Future<void> _showNewMessageSheet() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
-      builder: (sheetContext) {
-        return NewMessageSheet(
-          friendsStream: _friendsStream,
-          conversationsStream: _conversationsStream,
-          currentUserId: _auth.currentUser?.uid ?? '',
-          onFriendSelected: (friend) {
-            Navigator.pop(sheetContext);
-            unawaited(_startChat(friend));
-          },
-          onConversationSelected: (conversation) {
-            Navigator.pop(sheetContext);
-            unawaited(_openConversation(conversation));
-          },
-        );
-      },
+    await showNewMessageSheet(
+      context,
+      friendsStream: _friendsStream,
+      conversationsStream: _conversationsStream,
+      currentUserId: _auth.currentUser?.uid ?? '',
+      onFriendSelected: (friend) => unawaited(_startChat(friend)),
+      onConversationSelected: (conversation) =>
+          unawaited(_openConversation(conversation)),
     );
   }
 
@@ -849,6 +874,7 @@ class _ConversationTile extends StatelessWidget {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
+      showDragHandle: false,
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(
         context,
         maxWidth: 520,
@@ -1014,15 +1040,11 @@ class _ConversationActionsSheet extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 42,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.white24,
-              borderRadius: BorderRadius.circular(20),
-            ),
+          const YoModalSheetChrome(
+            sheetLabel: 'conversation actions',
+            surfaceColor: Color(0xFF15101E),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 2),
           ListTile(
             onTap: onMute,
             leading: Icon(
@@ -1107,6 +1129,7 @@ class NewMessageSheetState extends State<NewMessageSheet> {
   @override
   Widget build(BuildContext context) {
     return DraggableScrollableSheet(
+      expand: false,
       initialChildSize: .76,
       minChildSize: .5,
       maxChildSize: .94,
@@ -1123,28 +1146,22 @@ class NewMessageSheetState extends State<NewMessageSheet> {
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
           child: Column(
             children: [
-              const SizedBox(height: 11),
-              Container(
-                width: 42,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(20),
-                ),
+              const YoModalSheetChrome(
+                sheetLabel: 'New message',
+                surfaceColor: _sheetSurface,
               ),
               const Padding(
-                padding: EdgeInsets.fromLTRB(20, 18, 20, 14),
-                child: Row(
-                  children: [
-                    Text(
-                      'New message',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                      ),
+                padding: EdgeInsets.fromLTRB(20, 2, 20, 14),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'New message',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
                     ),
-                  ],
+                  ),
                 ),
               ),
               Padding(

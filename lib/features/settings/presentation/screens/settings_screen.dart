@@ -28,6 +28,7 @@ import 'package:yovoice/features/settings/presentation/screens/two_factor_authen
 import 'package:yovoice/features/settings/presentation/widgets/appearance_language_settings_section.dart';
 import 'package:yovoice/features/settings/presentation/widgets/message_privacy_settings_tile.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 const _background = Color(0xFF080711);
 const _surface = Color(0xFF14101E);
@@ -262,6 +263,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: _surface,
+      showDragHandle: false,
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(
         context,
         maxWidth: 560,
@@ -275,6 +277,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            const YoModalSheetChrome(
+              sheetLabel: 'delete account request',
+              surfaceColor: _surface,
+            ),
             Container(
               width: 46,
               height: 46,
@@ -822,6 +828,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: _surface,
+      showDragHandle: false,
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(
         context,
         maxWidth: 560,
@@ -836,6 +843,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              const YoModalSheetChrome(
+                sheetLabel: 'email verification',
+                surfaceColor: _surface,
+              ),
               Container(
                 width: 46,
                 height: 46,

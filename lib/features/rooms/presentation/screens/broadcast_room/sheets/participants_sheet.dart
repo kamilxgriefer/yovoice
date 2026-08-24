@@ -7,6 +7,7 @@ import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broad
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 class AnalyticsTile extends StatelessWidget {
   const AnalyticsTile({
@@ -113,17 +114,12 @@ class _BroadcastParticipantsSheetState
 
     return Column(
       children: [
-        const SizedBox(height: 10),
-        Container(
-          width: 42,
-          height: 4,
-          decoration: BoxDecoration(
-            color: Colors.white24,
-            borderRadius: BorderRadius.circular(99),
-          ),
+        const YoModalSheetChrome(
+          sheetLabel: 'podcast participants',
+          surfaceColor: BroadcastRoomColors.surface,
         ),
         const Padding(
-          padding: EdgeInsets.fromLTRB(20, 18, 20, 8),
+          padding: EdgeInsets.fromLTRB(20, 2, 20, 8),
           child: Row(
             children: [
               Expanded(

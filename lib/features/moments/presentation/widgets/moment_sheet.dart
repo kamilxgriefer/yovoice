@@ -11,6 +11,7 @@ import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/offline_voice_moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_card.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 /// Opens ONE Voice Moment so it can actually be heard.
 ///
@@ -73,7 +74,7 @@ Future<void> showMomentSheet(
     context: context,
     backgroundColor: AppColors.surface,
     isScrollControlled: true,
-    showDragHandle: true,
+    showDragHandle: false,
     constraints: const BoxConstraints(maxWidth: 560),
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
@@ -87,36 +88,48 @@ Future<void> showMomentSheet(
           // which is what makes this feel like opening a Moment rather
           // than navigating away from where you were.
           constraints: BoxConstraints(maxHeight: viewport * .82),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: StreamBuilder<VoiceMoment>(
-              stream: live,
-              initialData: moment,
-              builder: (context, snapshot) {
-                // An errored or empty document stream keeps the Moment
-                // the caller passed: it is real, just not live.
-                final current = snapshot.data ?? moment;
-                return MomentCard(
-                  // Keyed by id, so switching Moments rebuilds the card's
-                  // player rather than reusing another Moment's state.
-                  key: ValueKey('moment-sheet-${current.id}'),
-                  moment: current,
-                  isOwn: isOwn,
-                  canReport: canReport,
-                  feedService: feed,
-                  offlineService: offlineService,
-                  contentReportService: contentReportService,
-                  playerFactory: playerFactory,
-                  onComments: () => unawaited(
-                    navigator.push<void>(
-                      MaterialPageRoute<void>(
-                        builder: (_) => MomentCommentsScreen(moment: current),
-                      ),
-                    ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const YoModalSheetChrome(
+                sheetLabel: 'Moment',
+                surfaceColor: AppColors.surface,
+              ),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: StreamBuilder<VoiceMoment>(
+                    stream: live,
+                    initialData: moment,
+                    builder: (context, snapshot) {
+                      // An errored or empty document stream keeps the Moment
+                      // the caller passed: it is real, just not live.
+                      final current = snapshot.data ?? moment;
+                      return MomentCard(
+                        // Keyed by id, so switching Moments rebuilds the card's
+                        // player rather than reusing another Moment's state.
+                        key: ValueKey('moment-sheet-${current.id}'),
+                        moment: current,
+                        isOwn: isOwn,
+                        canReport: canReport,
+                        feedService: feed,
+                        offlineService: offlineService,
+                        contentReportService: contentReportService,
+                        playerFactory: playerFactory,
+                        onComments: () => unawaited(
+                          navigator.push<void>(
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  MomentCommentsScreen(moment: current),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
+                ),
+              ),
+            ],
           ),
         ),
       );

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 class ShareRoomSheet extends StatelessWidget {
   const ShareRoomSheet({
@@ -27,6 +28,10 @@ class ShareRoomSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            const YoModalSheetChrome(
+              sheetLabel: 'share podcast',
+              surfaceColor: BroadcastRoomColors.surface,
+            ),
             const Text(
               'Share podcast',
               style: TextStyle(

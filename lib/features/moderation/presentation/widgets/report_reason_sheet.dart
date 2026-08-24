@@ -4,6 +4,7 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/moderation/data/services/report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_reason_labels.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 /// Asks the reporter which of the eight reasons applies, and returns it.
 ///
@@ -36,6 +37,7 @@ Future<ReportReason?> showReportReasonSheet({
     context: context,
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
+    showDragHandle: false,
     constraints: ResponsiveContentFrame.adaptiveModalConstraints(
       context,
       maxWidth: 520,
@@ -76,17 +78,12 @@ class ReportReasonSheet extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const SizedBox(height: 12),
-            Container(
-              width: 42,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(20),
-              ),
+            const YoModalSheetChrome(
+              sheetLabel: 'report reason',
+              surfaceColor: AppColors.surface,
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 4),
+              padding: const EdgeInsets.fromLTRB(20, 2, 20, 4),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -120,9 +117,7 @@ class ReportReasonSheet extends StatelessWidget {
             Flexible(
               child: ListView(
                 shrinkWrap: true,
-                padding: EdgeInsets.only(
-                  bottom: 12 + media.padding.bottom,
-                ),
+                padding: EdgeInsets.only(bottom: 12 + media.padding.bottom),
                 children: [
                   for (final reason in ReportReason.values)
                     ListTile(

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 /// The expanded chat surface for the mini player. It REUSES [RoomChatPanel]
 /// — the one real room chat (messages, role badges, reactions, report,
@@ -26,12 +28,13 @@ class ExpandedMiniChat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isSheet = scrollController != null;
     final panel = RoomChatPanel(
       key: const ValueKey('mini-player-expanded-chat'),
       roomId: roomId,
       isHost: isHost,
       accent: AppColors.voice,
-      onClose: onCollapse,
+      onClose: isSheet ? null : onCollapse,
       scrollController: scrollController,
       service: service,
       currentUserId: service.currentUserId,
@@ -39,21 +42,22 @@ class ExpandedMiniChat extends StatelessWidget {
     // The SHEET variant (scrollController != null) carries its own handle
     // ON the surface: the modal wrapper is transparent, so a theme-drawn
     // handle floated ~20px above the visible top as a detached dash.
-    if (scrollController == null) return panel;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 36,
-          height: 4,
-          margin: const EdgeInsets.only(top: 10, bottom: 6),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: .28),
-            borderRadius: BorderRadius.circular(3),
+    if (!isSheet) return panel;
+    return Material(
+      color: const Color(0xFF110B19),
+      clipBehavior: Clip.antiAlias,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          YoModalSheetChrome(
+            sheetLabel: 'room chat',
+            surfaceColor: const Color(0xFF110B19),
+            onClose: onCollapse,
           ),
-        ),
-        Expanded(child: panel),
-      ],
+          Expanded(child: panel),
+        ],
+      ),
     );
   }
 }
@@ -71,6 +75,7 @@ Future<void> showExpandedMiniChatSheet(
     isScrollControlled: true,
     useSafeArea: true,
     backgroundColor: Colors.transparent,
+    constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
     // The theme's handle is drawn on THIS transparent wrapper, ~20px above
     // the visible surface — a lone dash floating over the dim. The surface
     // draws its own handle instead (ExpandedMiniChat, sheet variant).

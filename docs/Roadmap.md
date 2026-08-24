@@ -36,6 +36,20 @@ someone decide what to pick up next.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it)
 > for why that distinction is the whole point of this wave.
 
+- **Modal sheets have one attached drag cue and an explicit Close action**
+  (2026-08-24, ADR-113, **SOURCE ONLY — NOT DEPLOYED**): the global Material
+  drag handle is disabled and all 26 production bottom-sheet routes use the
+  shared `YoModalSheetChrome`. Phones and tablets show one cue on the actual
+  sheet surface plus a 44 px-or-larger Close action; pointer-first desktop
+  omits the misleading drag cue and keeps Close. New Message no longer expands
+  an invisible route-sized sheet behind its visible panel, and the same route
+  remains dismissible by scrim, swipe, Back/Escape and Close with focus
+  restored to the launcher. Chrome colors are derived from each sheet's real
+  surface rather than the ambient theme, preserving non-text contrast in dark
+  and light mode. New Message and Profile Preview route tests cover 320–2560
+  px and 200% text; production-theme frames were rendered and inspected at
+  390, 768 and 1440 px.
+
 - **Desktop Recent Chats is a compact full-bleed conversation rail**
   (2026-08-24, ADR-111, **SOURCE ONLY — NOT DEPLOYED**): the detached 40 px
   avatars and 148 px mostly-empty cards are replaced on desktop by 116 px

@@ -15,6 +15,7 @@ import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_settings_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 class ClubOverviewScreen extends StatefulWidget {
   const ClubOverviewScreen({required this.clubId, super.key});
@@ -92,6 +93,7 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      showDragHandle: false,
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
       builder: (_) => _InviteFriendsSheet(club: club),
     );
@@ -106,6 +108,7 @@ class _ClubOverviewScreenState extends State<ClubOverviewScreen> {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
+      showDragHandle: false,
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(
         context,
         maxWidth: 520,
@@ -844,15 +847,11 @@ class _ClubOptionsSheet extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 44,
-              height: 5,
-              decoration: BoxDecoration(
-                color: const Color(0xFF665A70),
-                borderRadius: BorderRadius.circular(99),
-              ),
+            const YoModalSheetChrome(
+              sheetLabel: 'Club options',
+              surfaceColor: Color(0xFF171120),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 2),
             const Align(
               alignment: Alignment.centerLeft,
               child: Text(
@@ -989,15 +988,11 @@ class _InviteFriendsSheetState extends State<_InviteFriendsSheet> {
         ),
         child: Column(
           children: [
-            Container(
-              width: 44,
-              height: 5,
-              decoration: BoxDecoration(
-                color: const Color(0xFF665A70),
-                borderRadius: BorderRadius.circular(99),
-              ),
+            const YoModalSheetChrome(
+              sheetLabel: 'Invite friends',
+              surfaceColor: Color(0xFF171120),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 2),
             const Align(
               alignment: Alignment.centerLeft,
               child: Text(

@@ -51,6 +51,7 @@ import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.da
 import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_screen.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_mini_bar.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -612,6 +613,11 @@ class _MainShellState extends State<MainShell>
       useSafeArea: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      showDragHandle: false,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 560,
+      ),
       barrierColor: Colors.black.withValues(alpha: 0.7),
       builder: (sheetContext) {
         return const _VoiceActionSheet();
@@ -1960,15 +1966,11 @@ class _VoiceActionSheet extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 44,
-            height: 5,
-            decoration: BoxDecoration(
-              color: const Color(0xFF51475E),
-              borderRadius: BorderRadius.circular(10),
-            ),
+          const YoModalSheetChrome(
+            sheetLabel: 'voice actions',
+            surfaceColor: Color(0xFF151020),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 4),
           const Text(
             'Use your voice',
             style: TextStyle(

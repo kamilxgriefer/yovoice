@@ -32,6 +32,7 @@ import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.da
 import 'package:yovoice/features/home/presentation/widgets/live_now_hero.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_card.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({this.onOpenDiscover, super.key});
@@ -835,6 +836,11 @@ class _HomeScreenState extends State<HomeScreen> {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
+      showDragHandle: false,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 720,
+      ),
       builder: (_) => _MomentPlayerSheet(moment: moment),
     );
   }
@@ -1337,15 +1343,11 @@ class _MomentPlayerSheetState extends State<_MomentPlayerSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 44,
-            height: 5,
-            decoration: BoxDecoration(
-              color: const Color(0xFF5A5063),
-              borderRadius: BorderRadius.circular(10),
-            ),
+          const YoModalSheetChrome(
+            sheetLabel: 'Moment player',
+            surfaceColor: Color(0xFF151020),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 4),
           CircleAvatar(
             radius: 42,
             backgroundImage: widget.moment.authorPhotoUrl?.isNotEmpty == true

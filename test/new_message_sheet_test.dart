@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/theme/app_theme.dart';
@@ -71,6 +72,69 @@ Future<void> _pumpSheet(
     ),
   );
   await tester.pump();
+}
+
+Future<FocusNode> _openProductionRoute(
+  WidgetTester tester, {
+  required Size size,
+  TextScaler textScaler = TextScaler.noScaling,
+  EdgeInsets safeArea = EdgeInsets.zero,
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+
+  final launcherFocus = FocusNode(debugLabel: 'new-message-launcher');
+  addTearDown(launcherFocus.dispose);
+  final friends = Stream<List<FriendUser>>.value([
+    _friend('ava', 'Ava Stone'),
+    _friend('ben', 'Ben Carter'),
+  ]).asBroadcastStream();
+  final conversations = Stream<List<Conversation>>.value([
+    _conversation('cleo', 'Cleo Nakamura'),
+  ]).asBroadcastStream();
+
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: AppTheme.darkTheme,
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          textScaler: textScaler,
+          padding: safeArea,
+          viewPadding: safeArea,
+        ),
+        child: child!,
+      ),
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => Center(
+            child: FilledButton(
+              focusNode: launcherFocus,
+              onPressed: () {
+                unawaited(
+                  showNewMessageSheet(
+                    context,
+                    friendsStream: friends,
+                    conversationsStream: conversations,
+                    currentUserId: _me,
+                    onFriendSelected: (_) {},
+                    onConversationSelected: (_) {},
+                  ),
+                );
+              },
+              child: const Text('Open new message'),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  launcherFocus.requestFocus();
+  await tester.pump();
+  await tester.tap(find.text('Open new message'));
+  await tester.pumpAndSettle();
+  return launcherFocus;
 }
 
 void main() {
@@ -215,6 +279,138 @@ void main() {
         );
       }
     });
+  });
+
+  group('production New message route', () {
+    testWidgets('mobile has one handle attached to the visible surface', (
+      tester,
+    ) async {
+      await _openProductionRoute(tester, size: const Size(390, 844));
+
+      final handle = find.byKey(const ValueKey('modal-sheet-drag-handle'));
+      expect(handle, findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (widget) => widget.runtimeType.toString() == '_DragHandle',
+        ),
+        findsNothing,
+      );
+      expect(find.byType(NewMessageSheet), findsOneWidget);
+
+      final surface = find
+          .descendant(
+            of: find.byType(NewMessageSheet),
+            matching: find.byType(Material),
+          )
+          .first;
+      expect(
+        tester.getTopLeft(handle).dy - tester.getTopLeft(surface).dy,
+        inInclusiveRange(0, 48),
+      );
+      expect(tester.getTopLeft(handle).dy, greaterThan(100));
+    });
+
+    testWidgets('desktop has no drag cue and keeps one 44px Close', (
+      tester,
+    ) async {
+      await _openProductionRoute(tester, size: const Size(1440, 900));
+
+      expect(
+        find.byKey(const ValueKey('modal-sheet-drag-handle')),
+        findsNothing,
+      );
+      final close = find.bySemanticsLabel('Close New message');
+      expect(close, findsOneWidget);
+      final closeSize = tester.getSize(close);
+      expect(closeSize.width, greaterThanOrEqualTo(44));
+      expect(closeSize.height, greaterThanOrEqualTo(44));
+      expect(find.bySemanticsLabel('New message'), findsWidgets);
+    });
+
+    testWidgets('Close and Escape dismiss one route and restore focus', (
+      tester,
+    ) async {
+      var launcherFocus = await _openProductionRoute(
+        tester,
+        size: const Size(390, 844),
+      );
+      expect(find.byType(NewMessageSheet), findsOneWidget);
+
+      await tester.tap(find.bySemanticsLabel('Close New message'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NewMessageSheet), findsNothing);
+      expect(launcherFocus.hasFocus, isTrue);
+
+      launcherFocus = await _openProductionRoute(
+        tester,
+        size: const Size(390, 844),
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(NewMessageSheet), findsNothing);
+      expect(launcherFocus.hasFocus, isTrue);
+    });
+
+    testWidgets('scrim and swipe dismiss the top route', (tester) async {
+      await _openProductionRoute(tester, size: const Size(390, 844));
+      await tester.tapAt(const Offset(8, 8));
+      await tester.pumpAndSettle();
+      expect(find.byType(NewMessageSheet), findsNothing);
+
+      await _openProductionRoute(tester, size: const Size(390, 844));
+      final sheetTop = tester.getTopLeft(find.byType(NewMessageSheet)).dy;
+      await tester.dragFrom(Offset(80, sheetTop + 24), const Offset(0, 700));
+      await tester.pumpAndSettle();
+      expect(find.byType(NewMessageSheet), findsNothing);
+    });
+
+    testWidgets('expanded sheet keeps Close below the phone top safe area', (
+      tester,
+    ) async {
+      const topInset = 59.0;
+      await _openProductionRoute(
+        tester,
+        size: const Size(390, 844),
+        safeArea: const EdgeInsets.only(top: topInset),
+      );
+
+      final sheetTop = tester.getTopLeft(find.byType(NewMessageSheet)).dy;
+      await tester.dragFrom(Offset(80, sheetTop + 24), const Offset(0, -700));
+      await tester.pumpAndSettle();
+
+      final close = find.bySemanticsLabel('Close New message');
+      expect(tester.getTopLeft(close).dy, greaterThanOrEqualTo(topInset));
+      expect(tester.takeException(), isNull);
+    });
+
+    for (final size in const <Size>[
+      Size(320, 640),
+      Size(390, 844),
+      Size(430, 900),
+      Size(768, 900),
+      Size(1100, 900),
+      Size(1440, 900),
+      Size(2560, 1440),
+    ]) {
+      testWidgets('200% text stays usable at ${size.width.toInt()}px', (
+        tester,
+      ) async {
+        await _openProductionRoute(
+          tester,
+          size: size,
+          textScaler: const TextScaler.linear(2),
+        );
+
+        final close = find.bySemanticsLabel('Close New message');
+        expect(close, findsOneWidget);
+        final rect = tester.getRect(close);
+        expect(rect.left, greaterThanOrEqualTo(0));
+        expect(rect.top, greaterThanOrEqualTo(0));
+        expect(rect.right, lessThanOrEqualTo(size.width));
+        expect(rect.bottom, lessThanOrEqualTo(size.height));
+        expect(tester.takeException(), isNull);
+      });
+    }
   });
 }
 

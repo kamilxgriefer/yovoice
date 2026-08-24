@@ -31,6 +31,7 @@ import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
@@ -425,6 +426,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         maxWidth: 720,
       ),
       backgroundColor: BroadcastRoomColors.surface,
+      showDragHandle: false,
       builder: (_) => FractionallySizedBox(
         heightFactor: .86,
         child: BroadcastParticipantsSheet(
@@ -458,7 +460,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         maxWidth: 560,
       ),
       backgroundColor: BroadcastRoomColors.surface,
-      showDragHandle: true,
+      showDragHandle: false,
       builder: (_) => ShareRoomSheet(
         roomName: widget.room.name,
         roomId: widget.room.id,
@@ -481,6 +483,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         maxWidth: 720,
       ),
       backgroundColor: BroadcastRoomColors.surface,
+      showDragHandle: false,
       builder: (_) =>
           BroadcastSettingsSheet(room: widget.room, service: _rooms),
     );
@@ -499,7 +502,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         maxWidth: 560,
       ),
       backgroundColor: BroadcastRoomColors.surface,
-      showDragHandle: true,
+      showDragHandle: false,
       builder: (_) => OwnerMenuSheet(
         onShare: () {
           Navigator.of(context).pop();
@@ -545,13 +548,17 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         maxWidth: 560,
       ),
       backgroundColor: BroadcastRoomColors.surface,
-      showDragHandle: true,
+      showDragHandle: false,
       builder: (_) => Padding(
         padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            const YoModalSheetChrome(
+              sheetLabel: 'podcast analytics',
+              surfaceColor: BroadcastRoomColors.surface,
+            ),
             const Text(
               'Podcast analytics',
               style: TextStyle(
@@ -943,8 +950,9 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
             accentColor: accent,
             onTap: _ending
                 ? null
-                : () =>
-                      unawaited(_isHost ? _confirmEndBroadcast() : _leaveRoom()),
+                : () => unawaited(
+                    _isHost ? _confirmEndBroadcast() : _leaveRoom(),
+                  ),
           ),
         ],
       ],

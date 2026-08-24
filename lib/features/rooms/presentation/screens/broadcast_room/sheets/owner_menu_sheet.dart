@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 class OwnerMenuSheet extends StatelessWidget {
   const OwnerMenuSheet({
@@ -25,72 +26,83 @@ class OwnerMenuSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(6, 0, 6, 10),
-                child: Text(
-                  'Manage podcast',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const YoModalSheetChrome(
+            sheetLabel: 'manage podcast',
+            surfaceColor: BroadcastRoomColors.surface,
+          ),
+          Flexible(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(6, 0, 6, 10),
+                      child: Text(
+                        'Manage podcast',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
                   ),
-                ),
+                  OwnerMenuItem(
+                    icon: Icons.ios_share_rounded,
+                    title: 'Share room',
+                    subtitle: 'Copy the invitation link or room ID',
+                    onTap: onShare,
+                  ),
+                  OwnerMenuItem(
+                    icon: Icons.groups_rounded,
+                    title: 'Participants',
+                    subtitle: 'Manage stage, audience, mute and removal',
+                    onTap: onParticipants,
+                  ),
+                  OwnerMenuItem(
+                    icon: Icons.back_hand_rounded,
+                    title: 'Raised hands',
+                    subtitle: 'Review listeners requesting the stage',
+                    onTap: onHands,
+                  ),
+                  OwnerMenuItem(
+                    icon: Icons.settings_rounded,
+                    title: 'Room settings',
+                    subtitle: 'Edit details, capacity and moderation options',
+                    onTap: onSettings,
+                  ),
+                  OwnerMenuItem(
+                    icon: Icons.analytics_rounded,
+                    title: 'Live analytics',
+                    subtitle: 'View the current podcast snapshot',
+                    onTap: onAnalytics,
+                  ),
+                  const Divider(color: Color(0xFF3B171E), height: 22),
+                  OwnerMenuItem(
+                    icon: Icons.stop_circle_rounded,
+                    title: 'End podcast',
+                    subtitle: 'Disconnect everyone and close this podcast',
+                    onTap: onEnd,
+                    destructive: true,
+                  ),
+                  OwnerMenuItem(
+                    icon: Icons.delete_forever_rounded,
+                    title: 'Delete room permanently',
+                    subtitle: 'Remove the room and its messages from YO Voice',
+                    onTap: onDelete,
+                    destructive: true,
+                  ),
+                ],
               ),
             ),
-            OwnerMenuItem(
-              icon: Icons.ios_share_rounded,
-              title: 'Share room',
-              subtitle: 'Copy the invitation link or room ID',
-              onTap: onShare,
-            ),
-            OwnerMenuItem(
-              icon: Icons.groups_rounded,
-              title: 'Participants',
-              subtitle: 'Manage stage, audience, mute and removal',
-              onTap: onParticipants,
-            ),
-            OwnerMenuItem(
-              icon: Icons.back_hand_rounded,
-              title: 'Raised hands',
-              subtitle: 'Review listeners requesting the stage',
-              onTap: onHands,
-            ),
-            OwnerMenuItem(
-              icon: Icons.settings_rounded,
-              title: 'Room settings',
-              subtitle: 'Edit details, capacity and moderation options',
-              onTap: onSettings,
-            ),
-            OwnerMenuItem(
-              icon: Icons.analytics_rounded,
-              title: 'Live analytics',
-              subtitle: 'View the current podcast snapshot',
-              onTap: onAnalytics,
-            ),
-            const Divider(color: Color(0xFF3B171E), height: 22),
-            OwnerMenuItem(
-              icon: Icons.stop_circle_rounded,
-              title: 'End podcast',
-              subtitle: 'Disconnect everyone and close this podcast',
-              onTap: onEnd,
-              destructive: true,
-            ),
-            OwnerMenuItem(
-              icon: Icons.delete_forever_rounded,
-              title: 'Delete room permanently',
-              subtitle: 'Remove the room and its messages from YO Voice',
-              onTap: onDelete,
-              destructive: true,
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

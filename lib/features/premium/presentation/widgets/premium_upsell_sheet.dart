@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 /// The contextual Premium moments — what a free member sees when they
 /// reach for a Premium capability. One component, two voices, so the
@@ -17,6 +18,7 @@ Future<void> showPremiumUpsellSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
+    showDragHandle: false,
     constraints: ResponsiveContentFrame.adaptiveModalConstraints(
       context,
       maxWidth: 560,
@@ -70,15 +72,11 @@ class _PremiumUpsellSheet extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 42,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(20),
-                ),
+              const YoModalSheetChrome(
+                sheetLabel: 'Premium offer',
+                surfaceColor: Color(0xFF120D1A),
               ),
-              const SizedBox(height: 26),
+              const SizedBox(height: 6),
               Container(
                 width: 68,
                 height: 68,

@@ -18,6 +18,8 @@ import 'package:yovoice/features/settings/presentation/screens/settings_screen.d
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/presentation/screens/staff_center_screen.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 enum MoreDestination {
   friends,
@@ -89,6 +91,8 @@ Future<MoreDestination?> showMoreSheet(
     useSafeArea: true,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
+    showDragHandle: false,
+    constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
     barrierColor: Colors.black.withValues(alpha: 0.72),
     builder: (_) => MoreSheet(entitlements: entitlements),
   );
@@ -403,17 +407,10 @@ class _MoreSheetState extends State<MoreSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Container(
-              key: const ValueKey('more-sheet-drag-handle'),
-              width: 44,
-              height: 5,
-              decoration: BoxDecoration(
-                color: const Color(0xFF594C65),
-                borderRadius: BorderRadius.circular(99),
-              ),
-            ),
+          const YoModalSheetChrome(
+            key: ValueKey('more-sheet-drag-handle'),
+            sheetLabel: 'More menu',
+            surfaceColor: MoreSheet._surface,
           ),
           Flexible(
             child: SingleChildScrollView(

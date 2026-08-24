@@ -20,6 +20,7 @@ import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/presentation/widgets/user_actions_menu.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// The one way to open "who is this person?" from anywhere in the app —
@@ -34,18 +35,23 @@ Future<void> showProfilePreview(
   required String userId,
   String? displayName,
   String? photoUrl,
+  FirebaseFirestore? firestore,
+  FirebaseAuth? auth,
 }) {
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
     backgroundColor: Colors.transparent,
+    showDragHandle: false,
     barrierColor: Colors.black.withValues(alpha: .72),
     constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
     builder: (_) => ProfilePreviewSheet(
       userId: userId,
       seedDisplayName: displayName,
       seedPhotoUrl: photoUrl,
+      firestore: firestore,
+      auth: auth,
     ),
   );
 }
@@ -55,6 +61,8 @@ class ProfilePreviewSheet extends StatefulWidget {
     required this.userId,
     this.seedDisplayName,
     this.seedPhotoUrl,
+    this.firestore,
+    this.auth,
     super.key,
   });
 
@@ -64,6 +72,11 @@ class ProfilePreviewSheet extends StatefulWidget {
   /// the real profile loads, so the sheet never opens empty.
   final String? seedDisplayName;
   final String? seedPhotoUrl;
+
+  /// Injection seams keep the production route testable without a live app.
+  /// Ordinary call sites leave both null and use the Firebase singletons.
+  final FirebaseFirestore? firestore;
+  final FirebaseAuth? auth;
 
   @override
   State<ProfilePreviewSheet> createState() => _ProfilePreviewSheetState();
@@ -77,10 +90,13 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
   static const _muted = Color(0xFFA69CAF);
   static const _online = Color(0xFF35D07F);
 
-  final _profiles = ProfileService();
-  final _friends = FriendService();
-  final _follows = FollowService();
-  final _messages = MessageService();
+  late final FirebaseFirestore _firestore =
+      widget.firestore ?? FirebaseFirestore.instance;
+  late final FirebaseAuth _auth = widget.auth ?? FirebaseAuth.instance;
+  late final _profiles = ProfileService(firestore: _firestore, auth: _auth);
+  late final _friends = FriendService(firestore: _firestore, auth: _auth);
+  late final _follows = FollowService(firestore: _firestore, auth: _auth);
+  late final _messages = MessageService(firestore: _firestore, auth: _auth);
   final _socialGraph = SocialGraphService();
 
   FriendRelationshipStatus? _relationship;
@@ -91,7 +107,7 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
   bool _busyFollow = false;
   bool _busyMessage = false;
 
-  String get _currentUid => FirebaseAuth.instance.currentUser?.uid ?? '';
+  String get _currentUid => _auth.currentUser?.uid ?? '';
   bool get _isSelf => widget.userId == _currentUid;
 
   @override
@@ -99,14 +115,14 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
     super.initState();
     // The ••• menu's staff section renders only what the server granted;
     // failure means the personal-only menu, never a guess.
-    StaffCapabilityService()
+    StaffCapabilityService(auth: _auth)
         .load()
         .then((capabilities) {
           if (mounted) setState(() => _capabilities = capabilities);
         })
         .catchError((_) {});
     if (!_isSelf && _currentUid.isNotEmpty) {
-      FirebaseFirestore.instance
+      _firestore
           .collection('users')
           .doc(_currentUid)
           .collection('muted')
@@ -251,6 +267,9 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
   @override
   Widget build(BuildContext context) {
     return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * .9,
+      ),
       decoration: const BoxDecoration(
         color: _surface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -264,31 +283,23 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(height: 10),
               // Handle centred, the ••• user-actions menu upper-right —
               // present on every account's sheet with the personal
               // actions, growing the staff section only when the server
               // granted one.
               SizedBox(
-                height: 34,
+                height: 48,
                 child: Stack(
                   alignment: Alignment.topCenter,
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Container(
-                        width: 44,
-                        height: 5,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF51475E),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
+                    const YoModalSheetChrome(
+                      sheetLabel: 'profile preview',
+                      surfaceColor: _surface,
                     ),
                     if (!_isSelf)
                       Positioned(
-                        right: 10,
-                        top: 0,
+                        right: 56,
+                        top: 2,
                         child: UserActionsMenu(
                           targetUid: widget.userId,
                           targetName:
@@ -312,29 +323,31 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
                   ],
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(22, 18, 22, 22),
-                child: snapshot.hasError
-                    ? _ErrorBody(error: snapshot.error!)
-                    : _Body(
-                        userId: widget.userId,
-                        profile: profile,
-                        seedDisplayName: widget.seedDisplayName,
-                        seedPhotoUrl: widget.seedPhotoUrl,
-                        isSelf: _isSelf,
-                        relationship: _relationship,
-                        mutuals: _mutuals,
-                        busyFriend: _busyFriend,
-                        busyMessage: _busyMessage,
-                        busyFollow: _busyFollow,
-                        followStream: _isSelf
-                            ? null
-                            : _follows.watchIsFollowing(widget.userId),
-                        onOpenFull: _openFullProfile,
-                        onMessage: _message,
-                        onFriend: _friendAction,
-                        onFollow: _toggleFollow,
-                      ),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(22, 18, 22, 22),
+                  child: snapshot.hasError
+                      ? _ErrorBody(error: snapshot.error!)
+                      : _Body(
+                          userId: widget.userId,
+                          profile: profile,
+                          seedDisplayName: widget.seedDisplayName,
+                          seedPhotoUrl: widget.seedPhotoUrl,
+                          isSelf: _isSelf,
+                          relationship: _relationship,
+                          mutuals: _mutuals,
+                          busyFriend: _busyFriend,
+                          busyMessage: _busyMessage,
+                          busyFollow: _busyFollow,
+                          followStream: _isSelf
+                              ? null
+                              : _follows.watchIsFollowing(widget.userId),
+                          onOpenFull: _openFullProfile,
+                          onMessage: _message,
+                          onFriend: _friendAction,
+                          onFollow: _toggleFollow,
+                        ),
+                ),
               ),
             ],
           );
@@ -540,23 +553,45 @@ class _Body extends StatelessWidget {
             style: TextStyle(color: _muted, fontSize: 13),
           )
         else ...[
-          Row(
-            children: [
-              Expanded(
-                child: _PrimaryButton(
-                  icon: Icons.chat_bubble_rounded,
-                  label: 'Message',
-                  busy: busyMessage,
-                  onPressed: profile == null ? null : () => onMessage(profile!),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(child: _friendButton()),
-              if (followStream != null) ...[
-                const SizedBox(width: 10),
-                Expanded(child: _followButton()),
-              ],
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final stackActions =
+                  constraints.maxWidth < 330 ||
+                  MediaQuery.textScalerOf(context).scale(1) >= 1.5;
+              final message = _PrimaryButton(
+                icon: Icons.chat_bubble_rounded,
+                label: 'Message',
+                busy: busyMessage,
+                onPressed: profile == null ? null : () => onMessage(profile!),
+              );
+
+              if (stackActions) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    message,
+                    const SizedBox(height: 8),
+                    _friendButton(),
+                    if (followStream != null) ...[
+                      const SizedBox(height: 8),
+                      _followButton(),
+                    ],
+                  ],
+                );
+              }
+
+              return Row(
+                children: [
+                  Expanded(child: message),
+                  const SizedBox(width: 10),
+                  Expanded(child: _friendButton()),
+                  if (followStream != null) ...[
+                    const SizedBox(width: 10),
+                    Expanded(child: _followButton()),
+                  ],
+                ],
+              );
+            },
           ),
         ],
         const SizedBox(height: 10),
@@ -676,6 +711,7 @@ class _Chip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final showIcon = MediaQuery.textScalerOf(context).scale(1) < 1.5;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
       decoration: BoxDecoration(
@@ -686,8 +722,10 @@ class _Chip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 4),
+          if (showIcon) ...[
+            Icon(icon, size: 12, color: color),
+            const SizedBox(width: 4),
+          ],
           Text(
             label,
             style: TextStyle(

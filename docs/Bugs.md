@@ -1041,6 +1041,21 @@ permission flags).
 
 ## UI
 
+- **FIXED IN SOURCE 2026-08-24, NOT DEPLOYED — modal sheets drew two detached
+  drag handles and offered no obvious universal way to close them.** The app
+  theme enabled Material's automatic bottom-sheet handle globally while many
+  custom sheets also painted their own bar. On transparent draggable routes,
+  notably New Message, the framework bar belonged to the full route at the
+  top of the viewport and the custom bar belonged to the visible panel, so one
+  sheet looked like two stacked layers. Every production modal route now owns
+  exactly one shared chrome contract: one attached cue on phones/tablets, no
+  drag cue on pointer-first desktop, and an explicit named Close target of at
+  least 44 px everywhere. Scrim, swipe, Back and Escape remain available.
+  New Message uses `DraggableScrollableSheet(expand: false)`, and Profile
+  Preview now scrolls and stacks its actions when enlarged text or narrow
+  geometry makes a fixed row unsafe. See
+  [ADR-113](Decisions.md#adr-113-modal-sheets-own-one-chrome-contract-instead-of-inheriting-a-global-drag-handle).
+
 - **FIXED AND DEPLOYED 2026-08-22 — the bottom-nav center logo lost its
   circle.** Per the operator's before/after spec: the 58pt gradient disc,
   border ring and circular BoxShadow are gone; the standalone transparent

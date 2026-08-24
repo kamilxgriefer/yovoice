@@ -11,6 +11,7 @@ import 'package:yovoice/features/moderation/presentation/report_reason_labels.da
 import 'package:yovoice/features/moderation/presentation/widgets/report_audit_timeline.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 /// The staff Moderation Center — the report queue and its detail panel,
 /// rendered inside the SAME fixed desktop shell as every other
@@ -595,6 +596,7 @@ class _ModerationWorkspace extends StatelessWidget {
             useSafeArea: true,
             isScrollControlled: true,
             backgroundColor: const Color(0xFF151020),
+            showDragHandle: false,
             shape: const RoundedRectangleBorder(
               borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
@@ -1142,14 +1144,28 @@ class _FilterPanelState extends State<_FilterPanel> {
     );
 
     return SafeArea(
-      child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(
-          18,
-          widget.asSheet ? 14 : 18,
-          18,
-          widget.asSheet ? 14 + MediaQuery.viewInsetsOf(context).bottom : 18,
-        ),
-        child: body,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (widget.asSheet)
+            const YoModalSheetChrome(
+              sheetLabel: 'report filters',
+              surfaceColor: Color(0xFF151020),
+            ),
+          Flexible(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                18,
+                widget.asSheet ? 2 : 18,
+                18,
+                widget.asSheet
+                    ? 14 + MediaQuery.viewInsetsOf(context).bottom
+                    : 18,
+              ),
+              child: body,
+            ),
+          ),
+        ],
       ),
     );
   }

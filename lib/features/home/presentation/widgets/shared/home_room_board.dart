@@ -13,6 +13,7 @@ import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 import 'package:yovoice/features/staff/presentation/widgets/room_staff_menu.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 /// One deduplicated room list for Home, and the widgets that render it.
 ///
@@ -370,8 +371,7 @@ class _OwnedRoomMenuState extends State<_OwnedRoomMenu> {
         final uid = widget.currentUserId?.trim().isNotEmpty == true
             ? widget.currentUserId!.trim()
             : _clubService?.currentUserId ?? '';
-        final ownsClub =
-            club != null && uid.isNotEmpty && club.ownerId == uid;
+        final ownsClub = club != null && uid.isNotEmpty && club.ownerId == uid;
         // Loading, error, missing club or a non-owner all land here with
         // deleteClub null: no delete control. Fail closed — the server
         // would refuse anyway, and offering a dead control is the exact
@@ -1216,18 +1216,29 @@ void _openRoster(
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF120C1D),
-      showDragHandle: true,
+      showDragHandle: false,
       useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
-      builder: (sheetContext) => Padding(
-        padding: const EdgeInsets.fromLTRB(14, 0, 14, 18),
-        child: _RosterLoader(
-          room: room,
-          service: service,
-          onDismiss: () => Navigator.of(sheetContext).pop(),
-        ),
+      builder: (sheetContext) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const YoModalSheetChrome(
+            sheetLabel: 'room roster',
+            surfaceColor: Color(0xFF120C1D),
+          ),
+          Flexible(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 18),
+              child: _RosterLoader(
+                room: room,
+                service: service,
+                onDismiss: () => Navigator.of(sheetContext).pop(),
+              ),
+            ),
+          ),
+        ],
       ),
     );
     return;

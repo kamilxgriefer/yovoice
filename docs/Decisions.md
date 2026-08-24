@@ -6736,3 +6736,57 @@ still use their existing account-type vocabulary and should be aligned in a
 separate audited identity-copy pass rather than through an unreviewed global
 replacement. This remains source-only until a separate Hosting release is
 explicitly requested and verified.
+
+## ADR-113: Modal sheets own one chrome contract instead of inheriting a global drag handle
+
+**Context.** `AppTheme.bottomSheetTheme.showDragHandle` was enabled globally,
+so every `showModalBottomSheet` route received Material's automatic handle.
+Many YO Voice sheets also rendered a custom 42–44 px bar inside their visible
+surface. The duplication was especially misleading on transparent routes that
+wrapped a `DraggableScrollableSheet`: the automatic handle was laid out at the
+top of the route-sized transparent layer while the custom handle stayed on the
+panel, visually suggesting two sheets. Dismissal still existed through the
+scrim, Back/Escape and drag defaults, but none of those routes provided a
+consistent, discoverable close action.
+
+**Decision.** The theme no longer draws a handle implicitly, and every
+production `showModalBottomSheet` call explicitly sets `showDragHandle: false`.
+Visible sheet surfaces use `YoModalSheetChrome`:
+
+1. Below the existing 1100 px desktop breakpoint, the chrome renders one
+   centered 44×4 cue attached to the sheet and one named Close action with a
+   target of at least 44×44.
+2. At 1100 px and above, the drag cue is omitted because pointer-first desktop
+   does not present dragging as the primary interaction; the same Close action
+   remains.
+3. Close uses the sheet navigator by default and can be overridden for routes
+   with specialised teardown. The component exposes one explicit semantic
+   button, tooltip and keyboard target; the decorative cue is excluded from
+   semantics and ignores pointer events so vertical gestures reach the route.
+   Every caller supplies its actual surface color, from which the chrome
+   derives a WCAG-compliant light or dark foreground independently of the
+   ambient app theme.
+4. New Message uses `DraggableScrollableSheet(expand: false)`, keeping its
+   visible Material as the sheet boundary instead of expanding a transparent
+   child across the route. Its content list still owns the supplied scroll
+   controller. Profile Preview gains bounded scrolling and stacks actions at
+   narrow widths or enlarged text.
+
+**Reasoning.** A drag cue describes a gesture; it is not a reliable close
+control. Separating the cue from an explicit Close action makes the interaction
+discoverable without removing native scrim, swipe, Back or Escape dismissal.
+Making ownership explicit at both theme and route levels prevents a future
+Material/theme change from silently reintroducing duplicate chrome. One shared
+component also keeps breakpoint, target size, contrast and semantics aligned
+across otherwise unrelated features.
+
+**Consequences.** All 26 current production modal routes adopt the same chrome
+contract. Dialogs and non-modal in-page panels are unchanged. Route-level tests
+exercise the real New Message and Profile Preview launchers at 320, 390, 430,
+768, 1100, 1440 and 2560 logical pixels with 200% text, plus Close, Escape,
+scrim, swipe, scrolling and focus restoration. Contrast tests cover dark,
+light and fixed-dark sheet surfaces. Production-theme visual frames cover
+phone, tablet and desktop.
+No Firebase data, rules, indexes, Functions, schema or dependency changes are
+involved. This is source-only until a separate Hosting release is explicitly
+requested and byte-verified.

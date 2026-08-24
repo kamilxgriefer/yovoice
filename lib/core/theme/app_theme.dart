@@ -140,7 +140,10 @@ class AppTheme {
         modalElevation: 0,
         elevation: 0,
         clipBehavior: Clip.antiAlias,
-        showDragHandle: true,
+        // Modal surfaces own one explicit, responsive chrome row. Leaving
+        // this implicit used to stack a detached framework handle above the
+        // handle drawn by custom sheets (most visibly New message).
+        showDragHandle: false,
         dragHandleColor: border,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(28)),

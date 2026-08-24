@@ -23,7 +23,9 @@ import 'package:yovoice/features/rooms/presentation/widgets/room_header.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_hero_banner.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 class CommunityVoiceRoomScreen extends StatefulWidget {
   const CommunityVoiceRoomScreen({
@@ -430,6 +432,11 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
+      showDragHandle: false,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(
+        context,
+        maxWidth: 720,
+      ),
       builder: (context) => _ParticipantsSheet(
         title: 'People · ${participants.length}',
         participants: ordered,
@@ -735,8 +742,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
           micState: _voice.micState,
         );
 
-        if (_roomOver ||
-            _entry.outcome == RoomVoiceEntryOutcome.unavailable) {
+        if (_roomOver || _entry.outcome == RoomVoiceEntryOutcome.unavailable) {
           return Scaffold(
             backgroundColor: _background,
             body: SafeArea(child: RoomEndedState(roomName: widget.room.name)),
@@ -852,17 +858,12 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const SizedBox(height: 10),
-          Container(
-            width: 42,
-            height: 4,
-            decoration: BoxDecoration(
-              color: const Color(0xFF5D4C66),
-              borderRadius: BorderRadius.circular(4),
-            ),
+          const YoModalSheetChrome(
+            sheetLabel: 'room participants',
+            surfaceColor: Color(0xFF120B18),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 12, 10),
+            padding: const EdgeInsets.fromLTRB(20, 2, 12, 10),
             child: Row(
               children: [
                 Expanded(
@@ -874,11 +875,6 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                       fontWeight: FontWeight.w900,
                     ),
                   ),
-                ),
-                IconButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  tooltip: 'Close',
-                  icon: const Icon(Icons.close_rounded, color: Colors.white),
                 ),
               ],
             ),

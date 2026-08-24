@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 class BroadcastSettingsSheet extends StatefulWidget {
   const BroadcastSettingsSheet({
@@ -123,143 +124,153 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.only(
-        left: 18,
-        right: 18,
-        top: 10,
-        bottom: MediaQuery.viewInsetsOf(context).bottom + 20,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 42,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 18),
-              decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(99),
-              ),
-            ),
-            const Text(
-              'Room settings',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 23,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 5),
-            const Text(
-              'Changes are saved directly to this podcast.',
-              style: TextStyle(color: BroadcastRoomColors.muted),
-            ),
-            const SizedBox(height: 20),
-            SettingsField(controller: _name, label: 'Room name', maxLength: 80),
-            const SizedBox(height: 12),
-            SettingsField(
-              controller: _description,
-              label: 'Description',
-              maxLines: 3,
-              maxLength: 300,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: SettingsField(
-                    controller: _category,
-                    label: 'Category',
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const YoModalSheetChrome(
+            sheetLabel: 'room settings',
+            surfaceColor: BroadcastRoomColors.surface,
+          ),
+          Flexible(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(18, 10, 18, 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Room settings',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 23,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: SettingsField(
-                    controller: _language,
-                    label: 'Language',
+                  const SizedBox(height: 5),
+                  const Text(
+                    'Changes are saved directly to this podcast.',
+                    style: TextStyle(color: BroadcastRoomColors.muted),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: SettingsField(
-                    controller: _capacity,
-                    label: 'Capacity',
-                    keyboardType: TextInputType.number,
+                  const SizedBox(height: 20),
+                  SettingsField(
+                    controller: _name,
+                    label: 'Room name',
+                    maxLength: 80,
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: SettingsField(
-                    controller: _slowMode,
-                    label: 'Slow mode (sec)',
-                    keyboardType: TextInputType.number,
+                  const SizedBox(height: 12),
+                  SettingsField(
+                    controller: _description,
+                    label: 'Description',
+                    maxLines: 3,
+                    maxLength: 300,
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            DropdownButtonFormField<String>(
-              initialValue: _visibility,
-              dropdownColor: BroadcastRoomColors.surfaceSoft,
-              decoration: settingsDecoration('Visibility'),
-              style: const TextStyle(color: Colors.white),
-              items: const [
-                DropdownMenuItem(value: 'public', child: Text('Public')),
-                DropdownMenuItem(value: 'private', child: Text('Private')),
-              ],
-              onChanged: (value) {
-                if (value != null) setState(() => _visibility = value);
-              },
-            ),
-            const SizedBox(height: 14),
-            SettingsSwitch(
-              title: 'Auto-mute new listeners',
-              subtitle: 'New participants enter without an active microphone.',
-              value: _autoMuteNewUsers,
-              onChanged: (value) => setState(() => _autoMuteNewUsers = value),
-            ),
-            SettingsSwitch(
-              title: 'Approval required',
-              subtitle: 'Keep this option ready for invite approval workflows.',
-              value: _approvalRequired,
-              onChanged: (value) => setState(() => _approvalRequired = value),
-            ),
-            SettingsSwitch(
-              title: 'Members can start voice',
-              subtitle: 'Stored for compatibility with the shared room model.',
-              value: _membersCanStartVoice,
-              onChanged: (value) =>
-                  setState(() => _membersCanStartVoice = value),
-            ),
-            const SizedBox(height: 18),
-            FilledButton.icon(
-              onPressed: _saving ? null : _save,
-              style: FilledButton.styleFrom(
-                backgroundColor: BroadcastRoomColors.accent,
-                minimumSize: const Size.fromHeight(54),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(17),
-                ),
-              ),
-              icon: _saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SettingsField(
+                          controller: _category,
+                          label: 'Category',
+                        ),
                       ),
-                    )
-                  : const Icon(Icons.save_rounded),
-              label: Text(_saving ? 'Saving…' : 'Save settings'),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: SettingsField(
+                          controller: _language,
+                          label: 'Language',
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SettingsField(
+                          controller: _capacity,
+                          label: 'Capacity',
+                          keyboardType: TextInputType.number,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: SettingsField(
+                          controller: _slowMode,
+                          label: 'Slow mode (sec)',
+                          keyboardType: TextInputType.number,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<String>(
+                    initialValue: _visibility,
+                    dropdownColor: BroadcastRoomColors.surfaceSoft,
+                    decoration: settingsDecoration('Visibility'),
+                    style: const TextStyle(color: Colors.white),
+                    items: const [
+                      DropdownMenuItem(value: 'public', child: Text('Public')),
+                      DropdownMenuItem(
+                        value: 'private',
+                        child: Text('Private'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) setState(() => _visibility = value);
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  SettingsSwitch(
+                    title: 'Auto-mute new listeners',
+                    subtitle:
+                        'New participants enter without an active microphone.',
+                    value: _autoMuteNewUsers,
+                    onChanged: (value) =>
+                        setState(() => _autoMuteNewUsers = value),
+                  ),
+                  SettingsSwitch(
+                    title: 'Approval required',
+                    subtitle:
+                        'Keep this option ready for invite approval workflows.',
+                    value: _approvalRequired,
+                    onChanged: (value) =>
+                        setState(() => _approvalRequired = value),
+                  ),
+                  SettingsSwitch(
+                    title: 'Members can start voice',
+                    subtitle:
+                        'Stored for compatibility with the shared room model.',
+                    value: _membersCanStartVoice,
+                    onChanged: (value) =>
+                        setState(() => _membersCanStartVoice = value),
+                  ),
+                  const SizedBox(height: 18),
+                  FilledButton.icon(
+                    onPressed: _saving ? null : _save,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: BroadcastRoomColors.accent,
+                      minimumSize: const Size.fromHeight(54),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(17),
+                      ),
+                    ),
+                    icon: _saving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.save_rounded),
+                    label: Text(_saving ? 'Saving…' : 'Save settings'),
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

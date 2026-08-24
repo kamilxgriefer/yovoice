@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 const int _kResendCooldownSeconds = 60;
 
@@ -24,6 +25,7 @@ Future<bool?> showCheckInboxSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
+    showDragHandle: false,
     constraints: ResponsiveContentFrame.adaptiveModalConstraints(
       context,
       maxWidth: 480,
@@ -126,15 +128,11 @@ class _CheckInboxSheetState extends State<_CheckInboxSheet> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 42,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(20),
-                ),
+              const YoModalSheetChrome(
+                sheetLabel: 'check your inbox',
+                surfaceColor: Color(0xFF120D1A),
               ),
-              const SizedBox(height: 26),
+              const SizedBox(height: 6),
               Container(
                 width: 68,
                 height: 68,

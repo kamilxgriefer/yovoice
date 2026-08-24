@@ -9,6 +9,7 @@ import 'package:yovoice/shared/widgets/interactions/accessible_context_action.da
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 /// The room chat quick-reaction set (board screen 2). Persistent,
 /// rules-backed message reactions — not ephemeral confetti.
@@ -95,11 +96,7 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
       );
       return;
     }
-    final text = value.text.replaceRange(
-      selection.start,
-      selection.end,
-      emoji,
-    );
+    final text = value.text.replaceRange(selection.start, selection.end, emoji);
     _composer.value = value.copyWith(
       text: text,
       selection: TextSelection.collapsed(
@@ -125,6 +122,7 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF171021),
+      showDragHandle: false,
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(
         context,
         maxWidth: 520,
@@ -136,8 +134,12 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            const YoModalSheetChrome(
+              sheetLabel: 'room message actions',
+              surfaceColor: Color(0xFF171021),
+            ),
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 14),
+              padding: const EdgeInsets.only(bottom: 14),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [

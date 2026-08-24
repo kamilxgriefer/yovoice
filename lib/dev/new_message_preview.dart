@@ -163,19 +163,13 @@ class _PreviewAppState extends State<_PreviewApp> {
   }
 
   Future<void> _open(BuildContext context) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) {
-        return NewMessageSheet(
-          friendsStream: _friends,
-          conversationsStream: _conversations,
-          currentUserId: _me,
-          onFriendSelected: (_) => Navigator.pop(sheetContext),
-          onConversationSelected: (_) => Navigator.pop(sheetContext),
-        );
-      },
+    await showNewMessageSheet(
+      context,
+      friendsStream: _friends,
+      conversationsStream: _conversations,
+      currentUserId: _me,
+      onFriendSelected: (_) {},
+      onConversationSelected: (_) {},
     );
   }
 

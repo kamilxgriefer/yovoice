@@ -16,6 +16,7 @@ import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dar
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -258,6 +259,7 @@ class _ChatScreenState extends State<ChatScreen> {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
+      showDragHandle: false,
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(
         context,
         maxWidth: 520,
@@ -499,6 +501,7 @@ class _ChatScreenState extends State<ChatScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
+      showDragHandle: false,
       constraints: ResponsiveContentFrame.adaptiveModalConstraints(
         context,
         maxWidth: 520,
@@ -1376,15 +1379,11 @@ class _VoiceMessageRecorderSheetState
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 44,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(20),
-                ),
+              const YoModalSheetChrome(
+                sheetLabel: 'voice message recorder',
+                surfaceColor: _ChatScreenState._surface,
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 4),
               Text(
                 _recording
                     ? 'Recording voice message…'
@@ -1510,15 +1509,11 @@ class _MessageActionsSheet extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 42,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(20),
-              ),
+            const YoModalSheetChrome(
+              sheetLabel: 'message actions',
+              surfaceColor: Color(0xFF15101E),
             ),
-            const SizedBox(height: 15),
+            const SizedBox(height: 1),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: reactions
