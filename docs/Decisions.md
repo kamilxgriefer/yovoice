@@ -6565,3 +6565,60 @@ deploys only on `workflow_dispatch` with `deploy_hosting: true`; rules,
 indexes and Functions deploy by hand. Pushing to `main` ships nothing to
 users, which is what makes an unprotected default branch an acceptable trade
 here and would not make it one in a repository that auto-deploys.
+
+## ADR-109: The desktop rail has no scroll position — Home is a pinned header destination
+
+**Context.** ADR-107 proved that the reported moving sidebar was not coupled
+to the page: the rail stayed fixed while its own navigation
+`SingleChildScrollView` moved. Giving that scrollable an explicit controller
+made the behavior correct and predictable, but did not make it visually
+desirable. At short heights a wheel gesture could still leave the menu shifted
+by up to 82 px, which made a permanent navigation surface look unstable.
+
+Simply deleting the scroll view was not safe. Moving the 47 px Home row into
+the header still left too little height at 620 px once header targets were
+corrected from 38 to 44 px. `RoomMiniBar` and the verification banner also sat
+outside the shell's desktop `Row`, subtracting roughly 118 and 38 px from the
+rail respectively. At 200% text, a fixed replacement column overflowed by 61
+px even after the ordinary 620 px layout fit.
+
+**Decision.** The desktop rail is a fixed `Column` with no `Scrollable` and no
+`ScrollController`.
+
+1. Home moves from a full-width `_NavTile` to a shared `_HeaderNavButton`
+   beside Notifications. Both actions are 44×44, expose a localized Tooltip
+   and one explicit Semantics label, report `selected`, and keep the existing
+   `DesktopNavItem` callbacks and content slots.
+2. Below 700 px of measured rail height, Create Room and Create Voice Moment
+   share one 46 px row. The primary room action keeps its label; Voice Moment
+   becomes an icon with the same tooltip and semantic label. Navigation rows
+   never shrink below 44 px.
+3. The desktop shell becomes `Row(rail, Expanded(contentColumn))`. The email
+   verification banner and `RoomMiniBar` live inside `contentColumn`, so their
+   appearance cannot change the rail's height. `MoreDestinationHost` uses the
+   same composition.
+4. As soon as text is enlarged, the informational timezone card and decorative
+   section labels yield on rails below 900 px, and the rail widens from 264 to
+   528 px at 200% so primary labels remain fully visible. No navigation,
+   creation, profile or settings action is removed. If the logical viewport is
+   below 620 px high, the shell uses its existing mobile navigation instead of
+   clipping a desktop rail — important for a wide display at high browser zoom.
+
+**Reasoning.** A permanent navigation surface should have permanent geometry.
+Moving Home into the header follows the user's requested information
+architecture and saves one full row. The horizontal short-height create tier
+recovers the remaining space without hiding functionality. Giving content-only
+chrome to the content column removes the largest variable constraint rather
+than adding more rail-specific compression rules. The mobile fallback is the
+honest responsive answer once 44 px targets and scaled text physically cannot
+fit; shrinking targets or clipping focusable controls would fail the product's
+own accessibility contract.
+
+**Consequences.** `DesktopSidebar` returns to `StatelessWidget`; tests and
+screenshots that asserted internal scrolling are intentionally replaced by a
+stronger invariant: there is no descendant `Scrollable`. The timezone map
+still follows the rail-height tier from ADR-107, and timezone detection/privacy
+are unchanged. The profile card, More anchor, unread streams, routing, backend
+and mobile navigation are unchanged. No Firebase, schema, rule, index,
+dependency or deployment change is involved. This is source-only until a
+separate Hosting release is explicitly requested and byte-verified.

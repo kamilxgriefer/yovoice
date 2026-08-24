@@ -55,6 +55,17 @@ import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
 
+  static const double desktopBreakpoint = 1100;
+
+  /// One layout predicate for rendering AND navigation. A wide viewport can
+  /// still need the mobile shell when browser zoom leaves too little logical
+  /// height for the fixed rail; menu presentation and content-slot routing
+  /// must follow that same decision.
+  @visibleForTesting
+  static bool usesDesktopLayout(Size viewport) =>
+      viewport.width >= desktopBreakpoint &&
+      viewport.height >= DesktopSidebar.minimumSupportedHeight;
+
   /// DESKTOP content slots beyond the three shared dock tabs, keyed by
   /// IndexedStack index. Every More destination EXCEPT the two below
   /// must own a slot, so selecting any of them swaps the centre of the
@@ -644,7 +655,7 @@ class _MainShellState extends State<MainShell>
   /// beside the rail item — no dimmed page, no drag handle.
   Future<void> _openMoreMenu() async {
     final MoreDestination? destination;
-    if (MediaQuery.sizeOf(context).width >= _desktopBreakpoint) {
+    if (MainShell.usesDesktopLayout(MediaQuery.sizeOf(context))) {
       final box = _moreItemKey.currentContext?.findRenderObject() as RenderBox?;
       final anchor = box == null
           ? const Offset(16, 320)
@@ -696,7 +707,7 @@ class _MainShellState extends State<MainShell>
     // centre of the existing shell — same mechanism as Chats/Friends —
     // so the rail, the profile card and the layout never move. Only
     // Profile (no slot: it keeps a real Back button) still pushes.
-    if (MediaQuery.sizeOf(context).width >= _desktopBreakpoint) {
+    if (MainShell.usesDesktopLayout(MediaQuery.sizeOf(context))) {
       final slot = _slotForDestination(destination);
       if (slot != null) {
         _onDestinationSelected(slot);
@@ -748,13 +759,11 @@ class _MainShellState extends State<MainShell>
     };
   }
 
-  // --- Desktop-only wiring (>= _desktopBreakpoint) ---------------------
+  // --- Desktop-only wiring (the shared MainShell layout predicate) -----
   //
   // The desktop rail is a PRESENTATION shell over the same destinations,
   // state and routes the dock uses; nothing below this line changes the
   // phone layout, which keeps the dock exactly as it was.
-
-  static const double _desktopBreakpoint = 1100;
 
   DesktopNavItem get _activeDesktopItem => switch (_selectedIndex) {
     1 => DesktopNavItem.chats,
@@ -958,38 +967,43 @@ class _MainShellState extends State<MainShell>
 
   @override
   Widget build(BuildContext context) {
+    final viewport = MediaQuery.sizeOf(context);
+    final isDesktop = MainShell.usesDesktopLayout(viewport);
+
     HomeScreen.openDiscoverTab = () {
-      if (MediaQuery.sizeOf(context).width >= _desktopBreakpoint) {
+      if (isDesktop) {
         _onDestinationSelected(_discoverSlot);
       } else {
         unawaited(_openMoreDestination(MoreDestination.discover));
       }
     };
 
-    final isDesktop = MediaQuery.sizeOf(context).width >= _desktopBreakpoint;
-
     if (isDesktop) {
       return Scaffold(
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-        body: Column(
+        body: Row(
+          key: const ValueKey('desktop-shell-row'),
           children: [
-            if (_showVerificationBanner)
-              _VerificationBanner(onTap: _openVerifyEmail),
+            // The rail owns the full viewport height. Content-only chrome
+            // (verification and the live-room dock) must not squeeze primary
+            // navigation into a shorter, scrollable lane.
+            DesktopSidebar(
+              moreItemKey: _moreItemKey,
+              active: _activeDesktopItem,
+              unreadConversationCount: _unreadConversationCount,
+              unreadNotificationCount: _unreadNotificationCount,
+              onSelect: (item) => unawaited(_onDesktopNavSelected(item)),
+              onCreateRoom: () => unawaited(_openCreateRoom()),
+              onCreateMoment: _openCreateMoment,
+              onOpenProfile: () => unawaited(_openProfile()),
+              onOpenProfileSettings: () => unawaited(_openProfileSettings()),
+            ),
             Expanded(
-              child: Row(
+              child: Column(
+                key: const ValueKey('desktop-content-column'),
                 children: [
-                  DesktopSidebar(
-                    moreItemKey: _moreItemKey,
-                    active: _activeDesktopItem,
-                    unreadConversationCount: _unreadConversationCount,
-                    unreadNotificationCount: _unreadNotificationCount,
-                    onSelect: (item) => unawaited(_onDesktopNavSelected(item)),
-                    onCreateRoom: () => unawaited(_openCreateRoom()),
-                    onCreateMoment: _openCreateMoment,
-                    onOpenProfile: () => unawaited(_openProfile()),
-                    onOpenProfileSettings: () =>
-                        unawaited(_openProfileSettings()),
-                  ),
+                  if (_showVerificationBanner)
+                    _VerificationBanner(onTap: _openVerifyEmail),
                   Expanded(
                     child: ResponsiveContentFrame(
                       width: ResponsiveContentWidth.workbench,
@@ -1024,14 +1038,12 @@ class _MainShellState extends State<MainShell>
                       ),
                     ),
                   ),
+                  // The dock now belongs to the content column, so appearing
+                  // or expanding it cannot change the rail's height.
+                  const SafeArea(top: false, child: RoomMiniBar()),
                 ],
               ),
             ),
-            // Desktop: the floating dock is the bottom-most element, so it
-            // owns the bottom viewport inset itself (mobile Safari / iPad
-            // home indicator). The mobile mounts sit above the bottom
-            // navigation, which already consumes that inset.
-            const SafeArea(top: false, child: RoomMiniBar()),
           ],
         ),
       );
@@ -1085,6 +1097,7 @@ class _DesktopHomeExtras extends StatelessWidget {
 
   final String currentUserId;
   final ValueChanged<VoiceRoom> onOpenRoom;
+
   /// The card's "View all" — Moments.
   final VoidCallback onSeeAll;
 
@@ -1194,8 +1207,8 @@ class MoreDestinationHost extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isDesktop =
-        MediaQuery.sizeOf(context).width >= _MainShellState._desktopBreakpoint;
+    final viewport = MediaQuery.sizeOf(context);
+    final isDesktop = MainShell.usesDesktopLayout(viewport);
 
     if (isDesktop && onDesktopNavSelected != null) {
       // Rail taps pop this route FIRST, then act, so the shell's own
@@ -1208,35 +1221,35 @@ class MoreDestinationHost extends StatelessWidget {
 
       return Scaffold(
         backgroundColor: _MainShellState._background,
-        body: Column(
+        body: Row(
+          key: const ValueKey('desktop-shell-row'),
           children: [
+            DesktopSidebar(
+              active: activeDesktopItem,
+              unreadConversationCount: unreadConversationCount,
+              unreadNotificationCount: unreadNotificationCount,
+              onSelect: (item) => popThen(() => onDesktopNavSelected!(item)),
+              onCreateRoom: () => popThen(onCreateRoom ?? () {}),
+              onCreateMoment: () => popThen(onCreateMoment ?? () {}),
+              onOpenProfile: () => popThen(onOpenProfile ?? () {}),
+              onOpenProfileSettings: () =>
+                  popThen(onOpenProfileSettings ?? () {}),
+            ),
             Expanded(
-              child: Row(
+              child: Column(
+                key: const ValueKey('desktop-content-column'),
                 children: [
-                  DesktopSidebar(
-                    active: activeDesktopItem,
-                    unreadConversationCount: unreadConversationCount,
-                    unreadNotificationCount: unreadNotificationCount,
-                    onSelect: (item) =>
-                        popThen(() => onDesktopNavSelected!(item)),
-                    onCreateRoom: () => popThen(onCreateRoom ?? () {}),
-                    onCreateMoment: () => popThen(onCreateMoment ?? () {}),
-                    onOpenProfile: () => popThen(onOpenProfile ?? () {}),
-                    onOpenProfileSettings: () =>
-                        popThen(onOpenProfileSettings ?? () {}),
-                  ),
                   Expanded(
                     child: ResponsiveContentFrame(
                       width: ResponsiveContentWidth.workbench,
                       child: body,
                     ),
                   ),
+                  // Same full-height-rail contract as the primary shell.
+                  const SafeArea(top: false, child: RoomMiniBar()),
                 ],
               ),
             ),
-            // Same contract as the primary desktop shell: the dock is the
-            // bottom-most element here, so it owns the bottom inset.
-            const SafeArea(top: false, child: RoomMiniBar()),
           ],
         ),
       );
@@ -1594,8 +1607,7 @@ class _BottomNavigation extends StatelessWidget {
                     icon: Icons.graphic_eq_outlined,
                     selectedIcon: Icons.graphic_eq_rounded,
                     label: copy.moments,
-                    isSelected:
-                        selectedIndex == _MainShellState._momentsSlot,
+                    isSelected: selectedIndex == _MainShellState._momentsSlot,
                     onPressed: () =>
                         onDestinationSelected(_MainShellState._momentsSlot),
                   ),
@@ -1781,9 +1793,7 @@ class _VoiceActionButton extends StatelessWidget {
             voice.status != VoiceCallStatus.disconnected &&
             voice.status != VoiceCallStatus.failed;
         final size = _logoSizeFor(MediaQuery.sizeOf(context).width);
-        final glow = live
-            ? const Color(0xFFFF3F72)
-            : _MainShellState._primary;
+        final glow = live ? const Color(0xFFFF3F72) : _MainShellState._primary;
 
         return Semantics(
           button: true,
@@ -1830,9 +1840,7 @@ class _VoiceActionButton extends StatelessWidget {
                                 'assets/images/logo.png',
                                 width: size,
                                 height: size,
-                                color: glow.withValues(
-                                  alpha: live ? .85 : .6,
-                                ),
+                                color: glow.withValues(alpha: live ? .85 : .6),
                                 errorBuilder: (_, __, ___) =>
                                     const SizedBox.shrink(),
                               ),
@@ -1859,6 +1867,7 @@ class _VoiceActionButton extends StatelessWidget {
     );
   }
 }
+
 class _WaveformIcon extends StatelessWidget {
   const _WaveformIcon({this.compact = false});
 

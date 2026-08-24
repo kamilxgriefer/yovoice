@@ -36,6 +36,21 @@ someone decide what to pick up next.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it)
 > for why that distinction is the whole point of this wave.
 
+- **The desktop rail no longer scrolls; Home is a pinned header action beside
+  Notifications** (2026-08-24, ADR-109, **SOURCE ONLY — NOT DEPLOYED**): the
+  full-width Home row and the rail's `SingleChildScrollView` are gone. Home
+  keeps the same slot/routing but renders as a 44×44 selected icon beside the
+  44×44 bell. At rail heights below 700 px the two creation actions share one
+  row; at 200% text the informational timezone card yields, and below 620
+  logical px the shell uses the existing mobile navigation rather than
+  clipping a desktop rail; enlarged text also widens the rail so primary
+  labels stay complete rather than ellipsized. Verification and the live-room
+  mini-player now belong to the content column, so neither can shorten the
+  rail. Widget coverage verifies no descendant `Scrollable`, every action
+  in-bounds at 620 px, selected semantics, callbacks, 44 px targets and 200%
+  text. Visual harness frames were rendered and inspected at 1440×900 and
+  1280×620.
+
 - **The desktop rail is pinned, and its clock becomes a timezone world-map
   card** (2026-08-22, ADR-107, **DEPLOYED 2026-08-23** — Hosting, byte-verified): the rail owns its
   scroll position explicitly (`controller` + `primary: false`, matching the

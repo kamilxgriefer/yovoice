@@ -47,21 +47,22 @@ about things that are broken, risky, or need verification.
   pending work, and a deliberate separate decision rather than an oversight to
   fix in passing.
 
-- **FIXED IN SOURCE 2026-08-22, NOT DEPLOYED — the desktop rail's navigation
-  column could sit scrolled, clipping the Home tile under the wordmark.** The
-  rail itself never moved with the page (it is a `Row` child inside an
-  `Expanded`, and the browser document cannot scroll — `body` computes to
-  `position: fixed; overflow: hidden`), but its own nav `SingleChildScrollView`
-  genuinely overflows once the rail drops below ~730px: `maxScrollExtent` is 0
-  at 1440x768, **40 at 720** and **82 at 620**, and `RoomMiniBar` alone costs
-  ~118px without changing the window height. A wheel gesture with the pointer
-  over the rail then scrolled it and it stayed scrolled. The rail now owns its
-  scroll position (`controller` + `primary: false`) and its decoration sizes
-  from the rail's real height instead of `MediaQuery.height`, which could not
-  see the mini player. Two folk explanations were tested and are false: a
-  shared `PrimaryScrollController` does not couple two scrollables, and macOS
-  bouncing physics does not rubber-band at zero extent. See
-  [ADR-107](Decisions.md#adr-107-the-desktop-rail-owns-its-scroll-position-and-sizes-its-decoration-from-the-rail-not-the-window).
+- **FIXED IN SOURCE 2026-08-24, NOT DEPLOYED — the desktop rail could still be
+  deliberately scrolled, making primary navigation look displaced.** ADR-107
+  correctly separated the rail from the page and fixed controller ownership,
+  but kept the nav `SingleChildScrollView` as a short-height safety valve:
+  measured `maxScrollExtent` was 40 px at 720 and 82 px at 620. That prevented
+  overflow while preserving the exact layout, but a wheel gesture could still
+  leave the menu visibly shifted — the visual behavior reported again on
+  2026-08-24. The new contract removes the scrollable entirely: Home is a
+  pinned 44×44 header action beside Notifications, the creation actions share
+  one row below 700 px, and the content-only verification banner/RoomMiniBar
+  no longer shorten the rail. At 200% text the informational timezone card
+  yields; below 620 logical px the shell uses mobile navigation. The earlier
+  diagnosis and measurements remain valid history in
+  [ADR-107](Decisions.md#adr-107-the-desktop-rail-owns-its-scroll-position-and-sizes-its-decoration-from-the-rail-not-the-window);
+  the superseding layout decision is
+  [ADR-109](Decisions.md#adr-109-the-desktop-rail-has-no-scroll-position--home-is-a-pinned-header-destination).
 
 - **FIXED IN SOURCE 2026-08-22 — the desktop rail hard-coded a 24-hour
   clock.** The same defect `message_bubble.dart`, `edit_profile_screen.dart`

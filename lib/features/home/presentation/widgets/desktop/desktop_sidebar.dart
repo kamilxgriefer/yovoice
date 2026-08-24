@@ -16,23 +16,19 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 ///
 /// Layout contract (the operator's reference design):
 ///
-///  * TOP ROW, pinned: wordmark at the left, the notification BELL at
-///    the right. The bell is the ONE entry point to the notifications
-///    feed on desktop — there is deliberately no Notifications row in
-///    the nav list below. It reports [DesktopNavItem.notifications]
-///    through [onSelect] exactly like the old row did, so the shell's
-///    routing, content slot and unread stream are untouched.
-///  * NAV: compact rows — Home, Moments, Discover, Find creators,
-///    Chats, Friends. The selected row gets a subtle violet surface, a
-///    thin left accent bar and brighter icon/text.
+///  * TOP ROW, pinned: wordmark at the left, then HOME and the notification
+///    BELL as compact icon buttons. Those are the only desktop entry points
+///    to their destinations — neither is duplicated in the nav list below.
+///  * NAV: compact rows — Moments, Discover, Find creators, Chats, Friends.
+///    The selected row gets a subtle violet surface, a thin left accent bar
+///    and brighter icon/text.
 ///  * CREATE: a section label, the gradient "Create Room" primary CTA,
 ///    and the quieter outlined "Create Voice Moment" under it.
 ///  * MORE: a section label plus a single More row, which the shell
 ///    anchors its floating popover to (via [moreItemKey]).
-///  * The compact local-time block and the profile card stay pinned at
-///    the bottom; the middle section scrolls INTERNALLY when the window
-///    is short, so the rail itself never overflows and never hands the
-///    page a scrollbar.
+///  * The compact local-time block and the profile card stay pinned at the
+///    bottom. The menu NEVER scrolls. On a short rail the optional time card
+///    yields so every navigation and creation action remains visible.
 ///
 /// Deliberately NOT a nav item: Profile. On desktop the signed-in user
 /// is represented by the profile card pinned at the bottom of this rail
@@ -54,27 +50,12 @@ enum DesktopNavItem {
 /// `flutter_bootstrap.js` initializes with no `hostElement` and the engine
 /// pins `<body>` to `position: fixed; overflow: hidden`.
 ///
-/// What DID move was the nav column's own scroll view, and the cause was
-/// measured rather than guessed: the rail's fixed chrome plus the six
-/// destinations, two Create buttons and More demand more height than the
-/// rail gets once the window is short OR the mini player is mounted. At
-/// 1440x768 `maxScrollExtent` is 0; at 720 it is 40; at 620 it is 82. Past
-/// that threshold a wheel gesture with the pointer over the rail scrolls
-/// it and it STAYS scrolled — which is what clips the Home tile under the
-/// wordmark.
-///
-/// Two hypotheses were tested and REJECTED rather than carried:
-///  * a shared `PrimaryScrollController` does NOT couple two scrollables —
-///    each `Scrollable` keeps its own `ScrollPosition`, verified by driving
-///    one and measuring the other (delta 0.0). It does still put two
-///    positions on one controller, which `Scrollbar` asserts against — the
-///    bug this file's sibling already hit and documented at
-///    desktop_home.dart:478. That is closed below on principle, not as the
-///    cause.
-///  * macOS `BouncingScrollPhysics` does NOT rubber-band at zero extent:
-///    a held pointer drag AND a trackpad pan-zoom both left `pixels` at
-///    0.0. No physics override is warranted, so none is added.
-class DesktopSidebar extends StatefulWidget {
+/// The former implementation put the entire middle column in a
+/// `SingleChildScrollView`. That kept short layouts from overflowing, but it
+/// also let a wheel gesture leave primary navigation visibly displaced. The
+/// header Home action and the short-height time-card tier recover that space,
+/// so the menu can now be a fixed Column with no scroll position at all.
+class DesktopSidebar extends StatelessWidget {
   const DesktopSidebar({
     required this.active,
     required this.unreadConversationCount,
@@ -118,47 +99,61 @@ class DesktopSidebar extends StatefulWidget {
 
   static const double width = 264;
 
+  /// Enlarged text needs real horizontal room, not an ellipsis that merely
+  /// keeps the render tree green. The ordinary visual design remains 264 px;
+  /// accessibility text sizes receive enough width for Polish primary labels.
+  static const double enlargedTextWidth = 528;
+
+  /// Below this logical height the shell uses its existing mobile navigation
+  /// instead of compressing or clipping a desktop rail.
+  static const double minimumSupportedHeight = 620;
+
+  /// Below this measured rail height the creation actions share one row.
+  static const double compactCreateActionsBelow = 700;
+
   /// The rail's bright violet accent tint (established in this file long
   /// before this redesign) — readable on the dark surface where the
   /// saturated brand primary would sink.
   static const Color _accentTint = Color(0xFFD3A5FF);
 
-  @override
-  State<DesktopSidebar> createState() => _DesktopSidebarState();
-}
-
-class _DesktopSidebarState extends State<DesktopSidebar> {
-  /// The rail's OWN scroll position, never the ambient primary one.
-  ///
-  /// `primary: false` is what actually severs the inheritance; the
-  /// controller is what makes the ownership legible and assertable — a
-  /// test can read `position.maxScrollExtent` and pin "the rail does not
-  /// scroll at this height" instead of inferring it from pixels on screen.
-  /// Same pattern, same reason, as `_RosterListState` in desktop_home.dart.
-  final ScrollController _railScroll = ScrollController();
-
-  @override
-  void dispose() {
-    _railScroll.dispose();
-    super.dispose();
+  /// Brand primary is sufficiently strong on the light surface, while the
+  /// established pale violet is the accessible interactive foreground on
+  /// the dark rail. Keeping this decision here prevents header and creation
+  /// actions from drifting to different contrast behaviour.
+  static Color _interactiveAccent(BuildContext context) {
+    final theme = Theme.of(context);
+    return theme.brightness == Brightness.dark
+        ? _accentTint
+        : theme.colorScheme.primary;
   }
 
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
-    // ONE measurement of the rail's true height, taken here because this
-    // is the only place that has it. The window is the wrong number:
-    // RoomMiniBar (~118 px with a live room) and the verification banner
-    // (~38 px) both shrink the rail without changing the window, and the
-    // card's own slot inside the Column is vertically unbounded.
+    // ONE measurement of the rail's true height, taken here because this is
+    // the only place that has it. MainShell now keeps content-only chrome in
+    // the content column, but direct preview/test hosts can still constrain
+    // the rail independently of the window.
     return LayoutBuilder(
       builder: (context, constraints) {
         final railHeight = constraints.maxHeight.isFinite
             ? constraints.maxHeight
             : null;
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
+        final railWidth = textScale >= 2
+            ? enlargedTextWidth
+            : textScale > 1
+            ? width * textScale
+            : width;
+        final useCompactCreateActions =
+            railHeight != null && railHeight < compactCreateActionsBelow;
+        final showTimezoneCard =
+            textScale <= 1 || railHeight == null || railHeight >= 900;
+        final showSectionLabels =
+            textScale <= 1 || railHeight == null || railHeight >= 900;
         return Container(
-          width: DesktopSidebar.width,
+          width: railWidth,
           padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
           decoration: BoxDecoration(
             color: colors.surface,
@@ -167,110 +162,131 @@ class _DesktopSidebarState extends State<DesktopSidebar> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Pinned header: identity left, the bell right. The bell is
-              // the single notifications entry point at desktop width.
+              // Pinned header: identity left, then the two compact primary
+              // actions. Home moved here so the menu below never needs to
+              // trade visual stability for one more full-width row.
               Row(
                 children: [
                   const Expanded(child: _Wordmark()),
-                  _BellButton(
-                    count: widget.unreadNotificationCount,
-                    active: widget.active == DesktopNavItem.notifications,
+                  _HeaderNavButton(
+                    activeIcon: Icons.home_rounded,
+                    inactiveIcon: Icons.home_outlined,
+                    active: active == DesktopNavItem.home,
+                    label: copy.home,
+                    onTap: () => onSelect(DesktopNavItem.home),
+                  ),
+                  const SizedBox(width: 2),
+                  _HeaderNavButton(
+                    activeIcon: Icons.notifications_rounded,
+                    inactiveIcon: Icons.notifications_none_rounded,
+                    count: unreadNotificationCount,
+                    active: active == DesktopNavItem.notifications,
                     label: copy.notifications,
                     unreadWord: copy.text('unread', 'nieprzeczytane'),
-                    onTap: () => widget.onSelect(DesktopNavItem.notifications),
+                    onTap: () => onSelect(DesktopNavItem.notifications),
                   ),
                 ],
               ),
-              const SizedBox(height: 18),
-              // The rail must survive short desktop windows (a 1280x620
-              // laptop): six destinations, two create actions and the More
-              // row overflow a fixed column, so this block scrolls while the
-              // header, clock and profile card stay pinned.
+              const SizedBox(height: 12),
+              // Fixed, deliberately non-scrollable navigation. At short
+              // heights the time card below yields instead of making primary
+              // destinations move under the pointer.
               Expanded(
-                child: SingleChildScrollView(
-                  controller: _railScroll,
-                  primary: false,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _NavTile(
-                        item: DesktopNavItem.home,
-                        icon: Icons.home_rounded,
-                        label: copy.home,
-                        active: widget.active == DesktopNavItem.home,
-                        onTap: widget.onSelect,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Moments sits directly above Discover: the rail is
+                    // where the two coexist, and a discovery surface for
+                    // voice belongs ahead of a discovery surface for rooms.
+                    _NavTile(
+                      item: DesktopNavItem.moments,
+                      icon: Icons.graphic_eq_rounded,
+                      label: copy.moments,
+                      active: active == DesktopNavItem.moments,
+                      onTap: onSelect,
+                    ),
+                    _NavTile(
+                      item: DesktopNavItem.discover,
+                      icon: Icons.explore_outlined,
+                      label: copy.discover,
+                      active: active == DesktopNavItem.discover,
+                      onTap: onSelect,
+                    ),
+                    _NavTile(
+                      item: DesktopNavItem.findCreators,
+                      icon: Icons.person_search_outlined,
+                      label: copy.findCreators,
+                      active: active == DesktopNavItem.findCreators,
+                      onTap: onSelect,
+                    ),
+                    _NavTile(
+                      item: DesktopNavItem.chats,
+                      icon: Icons.chat_bubble_outline_rounded,
+                      label: copy.chats,
+                      badge: unreadConversationCount,
+                      active: active == DesktopNavItem.chats,
+                      onTap: onSelect,
+                    ),
+                    _NavTile(
+                      item: DesktopNavItem.friends,
+                      icon: Icons.people_alt_outlined,
+                      label: copy.friends,
+                      active: active == DesktopNavItem.friends,
+                      onTap: onSelect,
+                    ),
+                    SizedBox(height: useCompactCreateActions ? 8 : 12),
+                    if (showSectionLabels)
+                      _SectionLabel(
+                        copy.text('CREATE', 'TWORZENIE'),
+                        compact: useCompactCreateActions,
                       ),
-                      // Moments sits directly above Discover: the rail is
-                      // where the two coexist, and a discovery surface for
-                      // voice belongs ahead of a discovery surface for rooms.
-                      _NavTile(
-                        item: DesktopNavItem.moments,
-                        icon: Icons.graphic_eq_rounded,
-                        label: copy.moments,
-                        active: widget.active == DesktopNavItem.moments,
-                        onTap: widget.onSelect,
-                      ),
-                      _NavTile(
-                        item: DesktopNavItem.discover,
-                        icon: Icons.explore_outlined,
-                        label: copy.discover,
-                        active: widget.active == DesktopNavItem.discover,
-                        onTap: widget.onSelect,
-                      ),
-                      _NavTile(
-                        item: DesktopNavItem.findCreators,
-                        icon: Icons.person_search_outlined,
-                        label: copy.findCreators,
-                        active: widget.active == DesktopNavItem.findCreators,
-                        onTap: widget.onSelect,
-                      ),
-                      _NavTile(
-                        item: DesktopNavItem.chats,
-                        icon: Icons.chat_bubble_outline_rounded,
-                        label: copy.chats,
-                        badge: widget.unreadConversationCount,
-                        active: widget.active == DesktopNavItem.chats,
-                        onTap: widget.onSelect,
-                      ),
-                      _NavTile(
-                        item: DesktopNavItem.friends,
-                        icon: Icons.people_alt_outlined,
-                        label: copy.friends,
-                        active: widget.active == DesktopNavItem.friends,
-                        onTap: widget.onSelect,
-                      ),
-                      const SizedBox(height: 16),
-                      _SectionLabel(copy.text('CREATE', 'TWORZENIE')),
-                      _CreateRoomButton(onTap: widget.onCreateRoom),
-                      const SizedBox(height: 8),
-                      _CreateMomentButton(onTap: widget.onCreateMoment),
-                      const SizedBox(height: 16),
-                      _SectionLabel(copy.text('MORE', 'WIĘCEJ')),
-                      _NavTile(
-                        key: widget.moreItemKey,
-                        item: DesktopNavItem.more,
-                        icon: Icons.more_horiz_rounded,
-                        label: copy.more,
-                        active: widget.active == DesktopNavItem.more,
-                        trailingChevron: true,
-                        onTap: widget.onSelect,
-                      ),
+                    if (useCompactCreateActions)
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _CreateRoomButton(onTap: onCreateRoom),
+                          ),
+                          const SizedBox(width: 8),
+                          _CreateMomentButton(
+                            onTap: onCreateMoment,
+                            compact: true,
+                          ),
+                        ],
+                      )
+                    else ...[
+                      _CreateRoomButton(onTap: onCreateRoom),
+                      const SizedBox(height: 6),
+                      _CreateMomentButton(onTap: onCreateMoment),
                     ],
-                  ),
+                    SizedBox(height: useCompactCreateActions ? 8 : 12),
+                    if (showSectionLabels)
+                      _SectionLabel(
+                        copy.text('MORE', 'WIĘCEJ'),
+                        compact: useCompactCreateActions,
+                      ),
+                    _NavTile(
+                      key: moreItemKey,
+                      item: DesktopNavItem.more,
+                      icon: Icons.more_horiz_rounded,
+                      label: copy.more,
+                      active: active == DesktopNavItem.more,
+                      trailingChevron: true,
+                      onTap: onSelect,
+                    ),
+                  ],
                 ),
               ),
-              // The timezone card uses the space the rail already leaves above
-              // the profile card. It sits OUTSIDE the scrolling nav column, so
-              // it cannot push navigation off-screen at short heights, and the
-              // profile card stays anchored to the bottom. It REPLACES the
-              // plain clock block that used to live here — there is exactly one
-              // local time in the rail, not two.
-              TimezoneWorldMapCard(railHeight: railHeight),
-              const SizedBox(height: 6),
+              // The map inside the time card already yields below 800 px. At
+              // large text scale the whole informational card yields on short
+              // rails so primary actions never clip or become unreachable.
+              if (showTimezoneCard) ...[
+                TimezoneWorldMapCard(railHeight: railHeight),
+                const SizedBox(height: 6),
+              ],
               _ProfileCard(
-                profileService: widget.profileService,
-                onTap: widget.onOpenProfile,
-                onSettings: widget.onOpenProfileSettings,
+                profileService: profileService,
+                onTap: onOpenProfile,
+                onSettings: onOpenProfileSettings,
               ),
             ],
           ),
@@ -318,112 +334,119 @@ class _Wordmark extends StatelessWidget {
   }
 }
 
-/// The compact circular notification bell in the pinned header — the ONE
-/// desktop entry point to the notifications feed, carrying the same live
-/// unread count the old nav row displayed.
-class _BellButton extends StatefulWidget {
-  const _BellButton({
-    required this.count,
+/// A compact primary destination in the pinned header. Home and Notifications
+/// share this control so their hit targets, selected state, focus treatment
+/// and screen-reader output cannot drift apart.
+class _HeaderNavButton extends StatefulWidget {
+  const _HeaderNavButton({
+    required this.activeIcon,
+    required this.inactiveIcon,
     required this.active,
     required this.label,
-    required this.unreadWord,
     required this.onTap,
+    this.count = 0,
+    this.unreadWord,
   });
 
+  final IconData activeIcon;
+  final IconData inactiveIcon;
   final int count;
   final bool active;
-  final String unreadWord;
+  final String? unreadWord;
   final String label;
   final VoidCallback onTap;
 
   @override
-  State<_BellButton> createState() => _BellButtonState();
+  State<_HeaderNavButton> createState() => _HeaderNavButtonState();
 }
 
-class _BellButtonState extends State<_BellButton> {
+class _HeaderNavButtonState extends State<_HeaderNavButton> {
   bool _hovered = false;
+  bool _focused = false;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final accent = DesktopSidebar._interactiveAccent(context);
     final active = widget.active;
     return Semantics(
       button: true,
       selected: active,
-      // `unreadLabel` comes through the same copy mechanism as every
-      // other rail string — the literal English 'unread' was the one
-      // unlocalized word on an otherwise bilingual rail.
-      label: widget.count > 0
+      excludeSemantics: true,
+      onTap: widget.onTap,
+      label: widget.count > 0 && widget.unreadWord != null
           ? '${widget.label}, ${widget.count} ${widget.unreadWord}'
           : widget.label,
       child: Tooltip(
         message: widget.label,
-        child: Material(
-          color: Colors.transparent,
-          shape: const CircleBorder(),
-          child: InkWell(
-            customBorder: const CircleBorder(),
-            onHover: (value) => setState(() => _hovered = value),
-            onTap: widget.onTap,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 140),
-                  width: 38,
-                  height: 38,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: active
-                        ? AppColors.primary.withValues(alpha: .22)
-                        : _hovered
-                        ? colors.onSurface.withValues(alpha: .07)
-                        : colors.onSurface.withValues(alpha: .04),
-                    border: Border.all(
+        child: SizedBox.square(
+          dimension: 44,
+          child: Material(
+            color: Colors.transparent,
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onHover: (value) => setState(() => _hovered = value),
+              onFocusChange: (value) => setState(() => _focused = value),
+              onTap: widget.onTap,
+              child: Stack(
+                clipBehavior: Clip.none,
+                alignment: Alignment.center,
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 140),
+                    width: 38,
+                    height: 38,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
                       color: active
-                          ? AppColors.primary.withValues(alpha: .55)
-                          : colors.outlineVariant,
+                          ? accent.withValues(alpha: .18)
+                          : _hovered || _focused
+                          ? colors.onSurface.withValues(alpha: .08)
+                          : colors.onSurface.withValues(alpha: .04),
+                      border: Border.all(
+                        width: _focused ? 2 : 1,
+                        color: active || _focused
+                            ? accent
+                            : colors.outlineVariant,
+                      ),
+                    ),
+                    child: Icon(
+                      active ? widget.activeIcon : widget.inactiveIcon,
+                      size: 19,
+                      color: active ? accent : colors.onSurfaceVariant,
                     ),
                   ),
-                  child: Icon(
-                    active
-                        ? Icons.notifications_rounded
-                        : Icons.notifications_none_rounded,
-                    size: 19,
-                    color: active
-                        ? DesktopSidebar._accentTint
-                        : colors.onSurfaceVariant,
-                  ),
-                ),
-                if (widget.count > 0)
-                  Positioned(
-                    top: -3,
-                    right: -3,
-                    child: Container(
-                      constraints: const BoxConstraints(minWidth: 18),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 4,
-                        vertical: 2,
-                      ),
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: colors.surface, width: 1.5),
-                      ),
-                      child: Text(
-                        widget.count > 99 ? '99+' : '${widget.count}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w800,
-                          height: 1,
+                  if (widget.count > 0)
+                    Positioned(
+                      top: 0,
+                      right: 0,
+                      child: Container(
+                        constraints: const BoxConstraints(minWidth: 18),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 2,
+                        ),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: colors.primary,
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: colors.surface, width: 1.5),
+                        ),
+                        child: Text(
+                          widget.count > 99 ? '99+' : '${widget.count}',
+                          style: TextStyle(
+                            color: colors.onPrimary,
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w800,
+                            height: 1,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -436,15 +459,16 @@ class _BellButtonState extends State<_BellButton> {
 /// from the nav row labels on purpose, so tests and screen readers never
 /// confuse a heading with the tappable row under it.
 class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.label);
+  const _SectionLabel(this.label, {this.compact = false});
 
   final String label;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      padding: EdgeInsets.fromLTRB(12, 0, 12, compact ? 4 : 8),
       child: Text(
         label,
         maxLines: 1,
@@ -646,14 +670,18 @@ class _CreateRoomButton extends StatelessWidget {
                 children: [
                   Icon(Icons.add_rounded, color: Colors.white, size: 19),
                   SizedBox(width: 7),
-                  Text(
-                    AppLocalizations.of(
-                      context,
-                    ).text('Create Room', 'Utwórz pokój'),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
+                  Flexible(
+                    child: Text(
+                      AppLocalizations.of(
+                        context,
+                      ).text('Create Room', 'Utwórz pokój'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                 ],
@@ -673,9 +701,10 @@ class _CreateRoomButton extends StatelessWidget {
 /// is the primary act and this is the one-tap alternative beside it. It
 /// opens the existing recorder; there is no second recording screen.
 class _CreateMomentButton extends StatefulWidget {
-  const _CreateMomentButton({required this.onTap});
+  const _CreateMomentButton({required this.onTap, this.compact = false});
 
   final VoidCallback onTap;
+  final bool compact;
 
   @override
   State<_CreateMomentButton> createState() => _CreateMomentButtonState();
@@ -687,7 +716,11 @@ class _CreateMomentButtonState extends State<_CreateMomentButton> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return Material(
+    final accent = DesktopSidebar._interactiveAccent(context);
+    final label = AppLocalizations.of(
+      context,
+    ).text('Create Voice Moment', 'Nagraj Voice Moment');
+    final button = Material(
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
@@ -696,17 +729,15 @@ class _CreateMomentButtonState extends State<_CreateMomentButton> {
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 140),
-          width: double.infinity,
-          height: 40,
+          width: widget.compact ? 46 : double.infinity,
+          height: 46,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             color: _hovered
                 ? AppColors.primary.withValues(alpha: .16)
                 : colors.onSurface.withValues(alpha: .035),
             border: Border.all(
-              color: _hovered
-                  ? AppColors.primary.withValues(alpha: .55)
-                  : colors.outlineVariant,
+              color: _hovered ? accent : colors.outlineVariant,
             ),
           ),
           padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -714,34 +745,37 @@ class _CreateMomentButtonState extends State<_CreateMomentButton> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  Icons.mic_none_rounded,
-                  color: DesktopSidebar._accentTint,
-                  size: 17,
-                ),
-                SizedBox(width: 7),
-                // Flexible so the label ellipsises rather than overflowing
-                // if the rail ever gets narrower (or the font wider) than
-                // the 264px this is designed against.
-                Flexible(
-                  child: Text(
-                    AppLocalizations.of(
-                      context,
-                    ).text('Create Voice Moment', 'Nagraj Voice Moment'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: DesktopSidebar._accentTint,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
+                Icon(Icons.mic_none_rounded, color: accent, size: 17),
+                if (!widget.compact) ...[
+                  const SizedBox(width: 7),
+                  // Flexible so the label ellipsises rather than overflowing
+                  // if the rail ever gets narrower (or the font wider) than
+                  // the 264px this is designed against.
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: accent,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
         ),
       ),
+    );
+    return Semantics(
+      button: true,
+      label: label,
+      excludeSemantics: true,
+      onTap: widget.onTap,
+      child: widget.compact ? Tooltip(message: label, child: button) : button,
     );
   }
 }
@@ -775,6 +809,7 @@ class _ProfileCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final copy = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 10, 6, 10),
       decoration: BoxDecoration(
@@ -856,7 +891,7 @@ class _ProfileCard extends StatelessWidget {
               ),
               IconButton(
                 onPressed: onSettings,
-                tooltip: 'Profile settings',
+                tooltip: copy.text('Profile settings', 'Ustawienia profilu'),
                 visualDensity: VisualDensity.compact,
                 icon: Container(
                   width: 32,

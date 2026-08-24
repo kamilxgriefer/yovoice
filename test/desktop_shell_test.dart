@@ -1,10 +1,17 @@
+import 'dart:ui' as ui;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
@@ -16,8 +23,20 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/voice_trendin
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/rooms/presentation/widgets/room_mini_bar.dart';
+
+double _contrastRatio(Color first, Color second) {
+  final lighter = first.computeLuminance() > second.computeLuminance()
+      ? first.computeLuminance()
+      : second.computeLuminance();
+  final darker = first.computeLuminance() > second.computeLuminance()
+      ? second.computeLuminance()
+      : first.computeLuminance();
+  return (lighter + .05) / (darker + .05);
+}
 
 /// Desktop-shell coverage. The rail and the Home right column are
 /// desktop-only presentation over existing destinations and existing
@@ -52,14 +71,6 @@ void main() {
           onOpenProfileSettings: () {},
         );
 
-    /// The rail's own scroll view — the thing that actually moved.
-    Finder railScrollable() => find
-        .descendant(
-          of: find.byType(DesktopSidebar),
-          matching: find.byType(Scrollable),
-        )
-        .first;
-
     /// The shell's real desktop composition, minus Firebase. `MainShell`
     /// itself is not pumpable — `const MainShell()` takes no injectable
     /// dependencies and its state constructs MessageService, RoomService,
@@ -82,13 +93,9 @@ void main() {
       ),
     );
 
-    /// THE REGRESSION THIS GROUP EXISTS FOR.
-    ///
-    /// Scrolling the main content must not move the rail by one pixel.
-    /// Asserted on the rail's ScrollPosition rather than on a widget's
-    /// screen coordinates: a position of 0 proves the rail did not scroll
-    /// even if some future layout change moves the tile for an unrelated
-    /// reason, and it is the number the fix actually controls.
+    /// Scrolling the main content must not move the rail by one pixel. The
+    /// stronger contract now is structural: the rail has no Scrollable of its
+    /// own, so no wheel gesture can leave navigation displaced.
     testWidgets('scrolling the main content does not move the rail', (
       tester,
     ) async {
@@ -106,56 +113,48 @@ void main() {
       );
       await tester.pump();
 
-      final railPosition = tester.state<ScrollableState>(railScrollable());
       final wordmarkBefore = tester.getTopLeft(find.text('YO Voice'));
       final navBefore = tester.getTopLeft(find.text('Moments'));
+
+      expect(
+        find.descendant(
+          of: find.byType(DesktopSidebar),
+          matching: find.byType(Scrollable),
+        ),
+        findsNothing,
+      );
 
       await tester.drag(find.text('content-row-2'), const Offset(0, -900));
       await tester.pump();
 
-      expect(
-        railPosition.position.pixels,
-        0,
-        reason: 'the rail must not scroll when the page scrolls',
-      );
       expect(tester.getTopLeft(find.text('YO Voice')), wordmarkBefore);
       expect(tester.getTopLeft(find.text('Moments')), navBefore);
     });
 
-    /// "Fixed", not merely "decoupled": at a normal desktop height the
-    /// rail has nothing to scroll at all, so no gesture anywhere can move
-    /// it. This is the assertion that would have caught the original bug,
-    /// which was the rail overflowing and then being scrolled by a wheel
-    /// that happened to be over it.
-    testWidgets('at normal desktop heights the rail has no scroll extent', (
+    testWidgets('the rail has no scrollable menu at any supported height', (
       tester,
     ) async {
-      for (final height in <double>[1080, 900, 800, 768]) {
+      for (final height in <double>[1080, 900, 800, 768, 720, 680, 620]) {
         useDesktopWindow(tester, size: Size(1440, height));
         await tester.pumpWidget(desktopShell(content: const SizedBox.expand()));
         await tester.pump();
         expect(
-          tester
-              .state<ScrollableState>(railScrollable())
-              .position
-              .maxScrollExtent,
-          0,
+          find.descendant(
+            of: find.byType(DesktopSidebar),
+            matching: find.byType(Scrollable),
+          ),
+          findsNothing,
+          reason: 'the rail must not become scrollable at ${height}px',
+        );
+        expect(
+          tester.takeException(),
+          isNull,
           reason: 'the rail must not overflow at ${height}px',
         );
-        expect(tester.takeException(), isNull);
       }
     });
 
-    /// The rail never claims the ambient primary controller, so it cannot
-    /// collide with the feed's position on a target where `shouldInherit`
-    /// is true (an Android tablet in landscape reaches the desktop rail).
-    ///
-    /// An EXPLICIT probe controller is installed rather than reading
-    /// `PrimaryScrollController.maybeOf`: that returns null in this
-    /// harness, which made an earlier version of this test pass whether
-    /// or not the fix was present. The probe cannot be vacuous — the
-    /// first assertion fails if the ambient controller is missing.
-    testWidgets('the rail owns its scroll position on a mobile-gate target', (
+    testWidgets('the rail never attaches to an ambient primary controller', (
       tester,
     ) async {
       useDesktopWindow(tester, size: const Size(1440, 620));
@@ -179,30 +178,19 @@ void main() {
       );
       await tester.pump();
 
-      // The gate really is open on this target — otherwise the assertion
-      // below would prove nothing. 620px also guarantees the rail has a
-      // real scroll extent, so it WOULD attach if it were allowed to.
       expect(
-        PrimaryScrollController.shouldInherit(
-          tester.element(railScrollable()),
-          Axis.vertical,
+        find.descendant(
+          of: find.byType(DesktopSidebar),
+          matching: find.byType(Scrollable),
         ),
-        isTrue,
-        reason: 'this target must have the primary-inheritance gate OPEN',
-      );
-      expect(
-        tester
-            .state<ScrollableState>(railScrollable())
-            .position
-            .maxScrollExtent,
-        greaterThan(0),
-        reason: 'the rail must be scrollable here, or nothing is proven',
+        findsNothing,
       );
       expect(
         probe.positions,
         isEmpty,
-        reason: 'the rail must not attach to the ambient primary controller',
+        reason: 'a fixed rail has no position to attach',
       );
+      expect(tester.takeException(), isNull);
     });
 
     /// EDIT B, pinned. The map tier reads the RAIL's height, not the
@@ -245,30 +233,46 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    /// Short-height contract: the safety valve still exists (the rail
-    /// genuinely cannot fit at 620), the pinned bottom pair survives, and
-    /// nothing overflows.
-    testWidgets('a short window scrolls ONLY the nav column and keeps the '
-        'timezone card and profile card pinned', (tester) async {
+    /// Short-height contract: every action remains in-bounds without a
+    /// scroll position. The create actions become one compact row while the
+    /// timezone and profile cards remain pinned.
+    testWidgets('a short window keeps every rail action fixed and visible', (
+      tester,
+    ) async {
       useDesktopWindow(tester, size: const Size(1440, 620));
       await tester.pumpWidget(desktopShell(content: const SizedBox.expand()));
       await tester.pump();
 
       expect(tester.takeException(), isNull);
-      final position = tester.state<ScrollableState>(railScrollable()).position;
       expect(
-        position.maxScrollExtent,
-        greaterThan(0),
-        reason: 'the nav column is the safety valve at short heights',
+        find.descendant(
+          of: find.byType(DesktopSidebar),
+          matching: find.byType(Scrollable),
+        ),
+        findsNothing,
       );
-
-      // The pinned pair sits OUTSIDE that scroll view, so scrolling the
-      // nav column must not move either of them.
-      final cardBefore = tester.getTopLeft(find.byType(TimezoneWorldMapCard));
-      await tester.drag(railScrollable(), const Offset(0, -200));
-      await tester.pump();
-      expect(position.pixels, greaterThan(0), reason: 'the nav DID scroll');
-      expect(tester.getTopLeft(find.byType(TimezoneWorldMapCard)), cardBefore);
+      final railRect = tester.getRect(find.byType(DesktopSidebar));
+      for (final target in [
+        find.byTooltip('Home'),
+        find.byTooltip('Notifications'),
+        find.text('Moments'),
+        find.text('Discover'),
+        find.text('Find creators'),
+        find.text('Chats'),
+        find.text('Friends'),
+        find.text('Create Room'),
+        find.byTooltip('Create Voice Moment'),
+        find.text('More'),
+        find.byTooltip('Profile settings'),
+      ]) {
+        expect(target, findsOneWidget);
+        expect(
+          railRect.contains(tester.getCenter(target)),
+          isTrue,
+          reason: '$target must remain inside the short rail',
+        );
+      }
+      expect(find.byType(TimezoneWorldMapCard), findsOneWidget);
     });
 
     /// The map is the part that yields on a starved rail; the time and the
@@ -287,8 +291,9 @@ void main() {
       expect(find.byKey(const ValueKey('sidebar-clock-map')), findsOneWidget);
     });
 
-    testWidgets('shows exactly the six primary destinations and NO '
-        'Profile/Moments/Clubs/Creator Studio rail items', (tester) async {
+    testWidgets('shows Home in the header and five primary menu rows', (
+      tester,
+    ) async {
       useDesktopWindow(tester);
       await tester.pumpWidget(
         host(
@@ -307,7 +312,6 @@ void main() {
       await tester.pump();
 
       for (final label in [
-        'Home',
         'Moments',
         'Discover',
         'Find creators',
@@ -317,8 +321,10 @@ void main() {
       ]) {
         expect(find.text(label), findsOneWidget, reason: '$label missing');
       }
-      // Notifications is the header BELL now — one entry point at the
-      // top, and no duplicate row in the nav list below it.
+      // Home and Notifications are icon-only header destinations — neither
+      // is duplicated as a full-width menu row.
+      expect(find.text('Home'), findsNothing);
+      expect(find.byTooltip('Home'), findsOneWidget);
       expect(
         find.text('Notifications'),
         findsNothing,
@@ -330,9 +336,13 @@ void main() {
         reason: 'the header bell is the one notifications entry point',
       );
       expect(
+        tester.getCenter(find.byTooltip('Home')).dy,
         tester.getCenter(find.byTooltip('Notifications')).dy,
-        lessThan(tester.getCenter(find.text('Home')).dy),
-        reason: 'the bell lives in the pinned header, above the nav list',
+      );
+      expect(
+        tester.getCenter(find.byTooltip('Notifications')).dy,
+        lessThan(tester.getCenter(find.text('Moments')).dy),
+        reason: 'both icon actions live above the fixed menu',
       );
       // The Create and More section labels frame their blocks.
       expect(find.text('CREATE'), findsOneWidget);
@@ -373,6 +383,189 @@ void main() {
       expect(profileCard.dy, greaterThan(createMoment.dy));
     });
 
+    testWidgets('header destinations are 44px and expose selected semantics', (
+      tester,
+    ) async {
+      useDesktopWindow(tester);
+      await tester.pumpWidget(host(rail()));
+      await tester.pump();
+
+      final home = find.bySemanticsLabel('Home');
+      final notifications = find.bySemanticsLabel('Notifications');
+      expect(home, findsOneWidget);
+      expect(notifications, findsOneWidget);
+      expect(tester.getSize(find.byTooltip('Home')).width, 44);
+      expect(tester.getSize(find.byTooltip('Home')).height, 44);
+      expect(tester.getSize(find.byTooltip('Notifications')).width, 44);
+      expect(tester.getSize(find.byTooltip('Notifications')).height, 44);
+      expect(
+        tester
+            .getSemantics(home)
+            .getSemanticsData()
+            .hasAction(ui.SemanticsAction.tap),
+        isTrue,
+      );
+      expect(
+        tester
+            .getSemantics(notifications)
+            .getSemanticsData()
+            .hasAction(ui.SemanticsAction.tap),
+        isTrue,
+      );
+      expect(
+        tester.getSemantics(home).getSemanticsData().flagsCollection.isSelected,
+        ui.Tristate.isTrue,
+      );
+      expect(
+        tester
+            .getSemantics(notifications)
+            .getSemanticsData()
+            .flagsCollection
+            .isSelected,
+        ui.Tristate.isFalse,
+      );
+
+      await tester.pumpWidget(host(rail(active: DesktopNavItem.notifications)));
+      await tester.pump();
+      expect(
+        tester
+            .getSemantics(find.bySemanticsLabel('Home'))
+            .getSemanticsData()
+            .flagsCollection
+            .isSelected,
+        ui.Tristate.isFalse,
+      );
+      expect(
+        tester
+            .getSemantics(find.bySemanticsLabel('Notifications'))
+            .getSemanticsData()
+            .flagsCollection
+            .isSelected,
+        ui.Tristate.isTrue,
+      );
+    });
+
+    testWidgets('interactive accents keep AA contrast in dark and light', (
+      tester,
+    ) async {
+      useDesktopWindow(tester);
+
+      Future<void> pumpTheme(ThemeData theme) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            key: ValueKey(theme.brightness),
+            theme: theme,
+            darkTheme: theme,
+            themeMode: theme.brightness == Brightness.dark
+                ? ThemeMode.dark
+                : ThemeMode.light,
+            home: Scaffold(body: rail()),
+          ),
+        );
+        await tester.pump();
+      }
+
+      for (final theme in [AppTheme.darkTheme, AppTheme.lightTheme]) {
+        await pumpTheme(theme);
+        final scheme = theme.colorScheme;
+        final accent = theme.brightness == Brightness.dark
+            ? const Color(0xFFD3A5FF)
+            : AppColors.primary;
+        final activeBackground = Color.alphaBlend(
+          accent.withValues(alpha: .18),
+          scheme.surface,
+        );
+        final momentBackground = Color.alphaBlend(
+          scheme.onSurface.withValues(alpha: .035),
+          scheme.surface,
+        );
+
+        expect(
+          tester.widget<Icon>(find.byIcon(Icons.home_rounded)).color,
+          accent,
+        );
+        expect(
+          _contrastRatio(accent, activeBackground),
+          greaterThanOrEqualTo(3),
+        );
+        expect(
+          tester.widget<Text>(find.text('Create Voice Moment')).style?.color,
+          accent,
+        );
+        expect(
+          _contrastRatio(accent, momentBackground),
+          greaterThanOrEqualTo(4.5),
+        );
+
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        final focusedDecoration =
+            tester
+                    .widget<AnimatedContainer>(
+                      find
+                          .ancestor(
+                            of: find.byIcon(Icons.notifications_none_rounded),
+                            matching: find.byType(AnimatedContainer),
+                          )
+                          .first,
+                    )
+                    .decoration
+                as BoxDecoration;
+        final focusBorder = focusedDecoration.border! as Border;
+        expect(focusBorder.top.color, accent);
+        expect(
+          _contrastRatio(focusBorder.top.color, scheme.surface),
+          greaterThanOrEqualTo(3),
+        );
+      }
+    });
+
+    testWidgets('keyboard focus reaches Home then Notifications in order', (
+      tester,
+    ) async {
+      final tapped = <DesktopNavItem>[];
+      useDesktopWindow(tester);
+      await tester.pumpWidget(
+        host(
+          DesktopSidebar(
+            active: DesktopNavItem.home,
+            unreadConversationCount: 0,
+            unreadNotificationCount: 0,
+            onSelect: tapped.add,
+            onCreateRoom: () {},
+            onCreateMoment: () {},
+            onOpenProfile: () {},
+            onOpenProfileSettings: () {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      bool focusIsInside(Finder target) {
+        final focusedWidget = primaryFocus?.context?.widget;
+        return focusedWidget != null &&
+            find
+                .descendant(of: target, matching: find.byWidget(focusedWidget))
+                .evaluate()
+                .isNotEmpty;
+      }
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(focusIsInside(find.byTooltip('Home')), isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(focusIsInside(find.byTooltip('Notifications')), isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pump();
+
+      expect(tapped, [DesktopNavItem.home, DesktopNavItem.notifications]);
+    });
+
     testWidgets('Create Voice Moment reports its own callback — the rail '
         'never owns a second recorder', (tester) async {
       var rooms = 0;
@@ -405,8 +598,9 @@ void main() {
       expect(moments, 1);
     });
 
-    testWidgets('both creation actions survive a SHORT desktop window '
-        '(1440x620) and stay reachable', (tester) async {
+    testWidgets('short rail compacts both creation actions into one row', (
+      tester,
+    ) async {
       useDesktopWindow(tester, size: const Size(1440, 620));
       await tester.pumpWidget(
         host(
@@ -425,12 +619,31 @@ void main() {
       await tester.pump();
 
       expect(tester.takeException(), isNull);
-      await tester.scrollUntilVisible(
-        find.text('Create Voice Moment'),
-        80,
-        scrollable: find.byType(Scrollable).first,
+      expect(
+        find.descendant(
+          of: find.byType(DesktopSidebar),
+          matching: find.byType(Scrollable),
+        ),
+        findsNothing,
       );
-      expect(find.text('Create Voice Moment'), findsOneWidget);
+      expect(find.text('Create Room'), findsOneWidget);
+      expect(find.text('Create Voice Moment'), findsNothing);
+      expect(find.byTooltip('Create Voice Moment'), findsOneWidget);
+      expect(
+        tester.getCenter(find.text('Create Room')).dy,
+        tester.getCenter(find.byTooltip('Create Voice Moment')).dy,
+      );
+      expect(
+        tester.getSize(find.byTooltip('Create Voice Moment')).height,
+        greaterThanOrEqualTo(44),
+      );
+      expect(
+        tester
+            .getSemantics(find.bySemanticsLabel('Create Voice Moment'))
+            .getSemanticsData()
+            .hasAction(ui.SemanticsAction.tap),
+        isTrue,
+      );
       expect(find.byTooltip('Profile settings'), findsOneWidget);
     });
 
@@ -482,6 +695,8 @@ void main() {
       );
       await tester.pump();
 
+      await tester.tap(find.byTooltip('Home'));
+      await tester.pump();
       for (final label in [
         'Moments',
         'Discover',
@@ -500,6 +715,7 @@ void main() {
       await tester.pump();
 
       expect(tapped, [
+        DesktopNavItem.home,
         DesktopNavItem.moments,
         DesktopNavItem.discover,
         DesktopNavItem.findCreators,
@@ -510,8 +726,9 @@ void main() {
       ]);
     });
 
-    testWidgets('survives a SHORT desktop window (1440x620) — the rail '
-        'scrolls instead of overflowing', (tester) async {
+    testWidgets('survives a SHORT desktop window without scrolling', (
+      tester,
+    ) async {
       useDesktopWindow(tester, size: const Size(1440, 620));
       await tester.pumpWidget(
         host(
@@ -530,8 +747,174 @@ void main() {
       await tester.pump();
 
       expect(tester.takeException(), isNull);
-      // The pinned profile card stays reachable at any height.
+      expect(
+        find.descendant(
+          of: find.byType(DesktopSidebar),
+          matching: find.byType(Scrollable),
+        ),
+        findsNothing,
+      );
+      expect(find.byTooltip('Home'), findsOneWidget);
+      expect(find.text('More'), findsOneWidget);
+      expect(find.byTooltip('Create Voice Moment'), findsOneWidget);
       expect(find.byTooltip('Profile settings'), findsOneWidget);
+    });
+
+    testWidgets('short rail remains fixed at 200 percent text scale', (
+      tester,
+    ) async {
+      useDesktopWindow(tester, size: const Size(1440, 620));
+      await tester.pumpWidget(
+        host(
+          MediaQuery(
+            data: const MediaQueryData(
+              textScaler: TextScaler.linear(2),
+              alwaysUse24HourFormat: true,
+            ),
+            child: rail(),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        find.descendant(
+          of: find.byType(DesktopSidebar),
+          matching: find.byType(Scrollable),
+        ),
+        findsNothing,
+      );
+      final railRect = tester.getRect(find.byType(DesktopSidebar));
+      for (final target in [
+        find.byTooltip('Home'),
+        find.byTooltip('Notifications'),
+        find.text('Moments'),
+        find.text('Discover'),
+        find.text('Find creators'),
+        find.text('Chats'),
+        find.text('Friends'),
+        find.text('Create Room'),
+        find.byTooltip('Create Voice Moment'),
+        find.text('More'),
+        find.byTooltip('Profile settings'),
+      ]) {
+        expect(target, findsOneWidget);
+        expect(
+          railRect.contains(tester.getCenter(target)),
+          isTrue,
+          reason: '$target must stay in-bounds at 200% text',
+        );
+      }
+      expect(
+        find.byType(TimezoneWorldMapCard),
+        findsNothing,
+        reason: 'informational chrome yields before primary actions',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('Polish populated profile stays reachable at 200 percent', (
+      tester,
+    ) async {
+      useDesktopWindow(tester, size: const Size(1440, 620));
+      final db = FakeFirebaseFirestore();
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: 'rail-polish-owner'),
+      );
+      await db.collection('users').doc('rail-polish-owner').set({
+        'displayName': 'CeoGriefer — właściciel',
+        'username': 'ceogriefer',
+        'premiumIdentity': true,
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.darkTheme,
+          locale: const Locale('pl'),
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: const [
+            AppLocalizationsDelegate(),
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          home: Scaffold(
+            body: MediaQuery(
+              data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+              child: DesktopSidebar(
+                active: DesktopNavItem.home,
+                unreadConversationCount: 2,
+                unreadNotificationCount: 3,
+                onSelect: (_) {},
+                onCreateRoom: () {},
+                onCreateMoment: () {},
+                onOpenProfile: () {},
+                onOpenProfileSettings: () {},
+                profileService: ProfileService(firestore: db, auth: auth),
+              ),
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      final railRect = tester.getRect(find.byType(DesktopSidebar));
+      for (final target in [
+        find.byTooltip('Główna'),
+        find.byTooltip('Powiadomienia'),
+        find.text('Momenty'),
+        find.text('Odkrywaj'),
+        find.text('Znajdź twórców'),
+        find.text('Czaty'),
+        find.text('Znajomi'),
+        find.text('Utwórz pokój'),
+        find.byTooltip('Nagraj Voice Moment'),
+        find.text('Więcej'),
+        find.text('CeoGriefer — właściciel'),
+        find.byTooltip('Ustawienia profilu'),
+      ]) {
+        expect(target, findsOneWidget);
+        expect(railRect.contains(tester.getCenter(target)), isTrue);
+      }
+      expect(tester.getSize(find.byType(DesktopSidebar)).width, 528);
+      for (final primaryLabel in [
+        find.text('Znajdź twórców'),
+        find.text('Utwórz pokój'),
+      ]) {
+        final paragraph = tester.renderObject<RenderParagraph>(primaryLabel);
+        expect(
+          paragraph.didExceedMaxLines,
+          isFalse,
+          reason:
+              '$primaryLabel must be fully visible at 200% text; '
+              'size=${paragraph.size}, constraints=${paragraph.constraints}',
+        );
+      }
+      expect(find.byType(TimezoneWorldMapCard), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('short rail yields its time card as soon as text is enlarged', (
+      tester,
+    ) async {
+      useDesktopWindow(tester, size: const Size(1440, 620));
+      await tester.pumpWidget(
+        host(
+          MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(1.49)),
+            child: rail(),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byType(TimezoneWorldMapCard), findsNothing);
+      expect(find.byTooltip('Create Voice Moment'), findsOneWidget);
+      expect(find.byTooltip('Profile settings'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('unread counts surface as badges', (tester) async {
@@ -558,6 +941,12 @@ void main() {
   });
 
   group('desktop information architecture', () {
+    test('rendering and navigation share the wide-short fallback boundary', () {
+      expect(MainShell.usesDesktopLayout(const Size(1440, 620)), isTrue);
+      expect(MainShell.usesDesktopLayout(const Size(1440, 619)), isFalse);
+      expect(MainShell.usesDesktopLayout(const Size(1099, 900)), isFalse);
+    });
+
     test(
       'every destination is reachable: the rail owns Discover, creator '
       'search and Friends, everything else is in More or the profile card',
@@ -782,6 +1171,73 @@ void main() {
       expect(find.text('Create Room'), findsOneWidget);
       // …and the mobile dock is not: its Voice action never renders here.
       expect(find.byType(BottomNavigationBar), findsNothing);
+    });
+
+    testWidgets('at exactly 620px the rail owns the full viewport and the '
+        'mini-player stays in the content column', (tester) async {
+      useDesktopWindow(tester, size: const Size(1440, 620));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MoreDestinationHost(
+            body: const Scaffold(body: Center(child: Text('Awards body'))),
+            selectedIndex: 0,
+            unreadConversationCount: 0,
+            activeDesktopItem: DesktopNavItem.more,
+            onDestinationSelected: (_) {},
+            onVoicePressed: () {},
+            onMorePressed: () {},
+            onDesktopNavSelected: (_) {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final shell = find.byKey(const ValueKey('desktop-shell-row'));
+      final contentColumn = find.byKey(
+        const ValueKey('desktop-content-column'),
+      );
+      expect(find.byType(DesktopSidebar), findsOneWidget);
+      expect(tester.getSize(shell).height, 620);
+      expect(tester.getSize(find.byType(DesktopSidebar)).height, 620);
+      expect(tester.getSize(contentColumn).height, 620);
+      expect(
+        find.descendant(of: contentColumn, matching: find.byType(RoomMiniBar)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(DesktopSidebar),
+          matching: find.byType(RoomMiniBar),
+        ),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a wide but very short viewport uses the mobile fallback', (
+      tester,
+    ) async {
+      useDesktopWindow(tester, size: const Size(1440, 619));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MoreDestinationHost(
+            body: const Scaffold(body: Center(child: Text('Awards body'))),
+            selectedIndex: 0,
+            unreadConversationCount: 0,
+            activeDesktopItem: DesktopNavItem.more,
+            onDestinationSelected: (_) {},
+            onVoicePressed: () {},
+            onMorePressed: () {},
+            onDesktopNavSelected: (_) {},
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Awards body'), findsOneWidget);
+      expect(find.byType(DesktopSidebar), findsNothing);
+      expect(find.text('Home'), findsWidgets);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('at MOBILE width the same host keeps the existing dock', (

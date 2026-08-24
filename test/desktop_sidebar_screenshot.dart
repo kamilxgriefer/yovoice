@@ -202,13 +202,6 @@ Finder _homeScrollable() => find
     .descendant(of: find.byType(DesktopHome), matching: find.byType(Scrollable))
     .first;
 
-Finder _railScrollable() => find
-    .descendant(
-      of: find.byType(DesktopSidebar),
-      matching: find.byType(Scrollable),
-    )
-    .first;
-
 void main() {
   setUpAll(_loadRealFonts);
 
@@ -312,22 +305,26 @@ void main() {
     await _shoot(tester, 'sidebar-more-popover-1440x900');
   });
 
-  // ── SHORT viewport: the rail scrolls INTERNALLY, nothing overflows ─
-  testWidgets('short viewport scrolls internally', (tester) async {
+  // ── SHORT viewport: fixed compact rail, no internal scrolling ───────
+  testWidgets('short viewport keeps the complete rail fixed', (tester) async {
     await pumpShell(tester, const Size(1280, 620));
 
     expect(tester.takeException(), isNull, reason: 'no overflow at 620px');
-    // Pinned edges: header bell on top, profile card at the bottom.
+    expect(
+      find.descendant(
+        of: find.byType(DesktopSidebar),
+        matching: find.byType(Scrollable),
+      ),
+      findsNothing,
+    );
+    // Pinned header actions and profile card remain available; the secondary
+    // create action compacts to an icon in the same row as Create Room.
+    expect(find.byTooltip('Home'), findsOneWidget);
     expect(find.byTooltip('Notifications'), findsOneWidget);
+    expect(find.byTooltip('Create Voice Moment'), findsOneWidget);
+    expect(find.text('More'), findsOneWidget);
     expect(find.byTooltip('Profile settings'), findsOneWidget);
     await _shoot(tester, 'sidebar-short-1280x620');
-
-    // The middle section reaches the More row by its OWN scroll.
-    await tester.drag(_railScrollable(), const Offset(0, -220));
-    await _settle(tester);
-    expect(find.text('More'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-    await _shoot(tester, 'sidebar-short-1280x620-scrolled');
   });
 }
 
