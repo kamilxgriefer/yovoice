@@ -84,7 +84,18 @@ void main() {
       );
       expect(creator.uid, 'c1');
       expect(creator.accountType, CreatorDirectoryAccountType.creator);
+      expect(creator.accountType.label, 'Creator');
+      expect(creator.isVerified, isFalse);
       expect(creator.followerCount, 42);
+
+      final verified = CreatorSearchResult.fromMap(
+        result(uid: 'o1', name: 'YO Editorial', accountType: 'official'),
+      );
+      expect(verified.accountType, CreatorDirectoryAccountType.official);
+      expect(verified.accountType.label, 'Creator');
+      expect(verified.isVerified, isTrue);
+      expect(verified.supportingText, isNot(contains('Official')));
+
       expect(
         () => CreatorSearchResult.fromMap(
           result(uid: 'p1', name: 'Personal User', accountType: 'personal'),
@@ -133,8 +144,29 @@ void main() {
       expect(find.text('Private User'), findsNothing);
       expect(find.textContaining('private.invalid'), findsNothing);
       expect(find.textContaining('Online'), findsNothing);
+      expect(find.text('Official'), findsNothing);
 
-      await tester.tap(find.text('Official').first);
+      final ordinaryCard = find.byKey(const ValueKey('creator-c1'));
+      final verifiedCard = find.byKey(const ValueKey('creator-o1'));
+      expect(
+        find.descendant(of: ordinaryCard, matching: find.text('Creator')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: ordinaryCard, matching: find.text('Verified')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(of: verifiedCard, matching: find.text('Creator')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: verifiedCard, matching: find.text('Verified')),
+        findsOneWidget,
+      );
+      expect(find.bySemanticsLabel('Verified by YO Voice'), findsOneWidget);
+
+      await tester.tap(find.bySemanticsLabel('Verified creators filter'));
       await tester.pump();
       await tester.pump();
       expect(payloads.last['accountTypes'], ['official']);
@@ -142,6 +174,102 @@ void main() {
       expect(find.text('Maya Voice'), findsNothing);
     },
   );
+
+  testWidgets(
+    'directory presents all accounts as creators and verification as a subset',
+    (tester) async {
+      useSize(tester, const Size(390, 844));
+      CreatorSearchResult? opened;
+      final directory = CreatorDirectoryService(
+        searchInvoker: (_) async => {
+          'profiles': [
+            result(uid: 'o1', name: 'YO Editorial', accountType: 'official'),
+          ],
+        },
+      );
+
+      await tester.pumpWidget(
+        host(directory: directory, onOpen: (creator) => opened = creator),
+      );
+
+      expect(find.text('All creators'), findsOneWidget);
+      expect(find.text('Verified'), findsOneWidget);
+      expect(find.text('Creators'), findsNothing);
+      expect(find.text('Official'), findsNothing);
+      expect(
+        tester.getSize(find.byKey(const ValueKey('creator-filter-all'))).height,
+        greaterThanOrEqualTo(44),
+      );
+      final allFilterSemantics = tester.widget<Semantics>(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Semantics &&
+              widget.properties.label == 'All creators filter',
+        ),
+      );
+      final verifiedFilterSemantics = tester.widget<Semantics>(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Semantics &&
+              widget.properties.label == 'Verified creators filter',
+        ),
+      );
+      expect(allFilterSemantics.properties.selected, isTrue);
+      expect(verifiedFilterSemantics.properties.selected, isFalse);
+      expect(
+        find.text(
+          'Search by display name or @username. Verified creators are marked '
+          'with a YO Voice badge.',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.enterText(
+        find.byKey(const ValueKey('find-creators-search')),
+        'editorial',
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('creator-status-o1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('verified-status-o1')), findsOneWidget);
+      expect(
+        tester
+            .getSize(find.widgetWithText(OutlinedButton, 'View profile'))
+            .height,
+        greaterThanOrEqualTo(44),
+      );
+      expect(
+        tester.getSize(find.widgetWithText(FilledButton, 'Follow')).height,
+        greaterThanOrEqualTo(44),
+      );
+      await tester.tap(find.byKey(const ValueKey('creator-o1')));
+      await tester.pump();
+      expect(opened?.accountType, CreatorDirectoryAccountType.official);
+      expect(opened?.isVerified, isTrue);
+    },
+  );
+
+  testWidgets('verified empty state never exposes the legacy type name', (
+    tester,
+  ) async {
+    useSize(tester, const Size(390, 844));
+    final directory = CreatorDirectoryService(
+      searchInvoker: (_) async => const {'profiles': <dynamic>[]},
+    );
+    await tester.pumpWidget(host(directory: directory));
+    await tester.tap(find.bySemanticsLabel('Verified creators filter'));
+    await tester.enterText(
+      find.byKey(const ValueKey('find-creators-search')),
+      'nobody',
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+
+    expect(find.text('No verified creators found'), findsOneWidget);
+    expect(find.textContaining('Official'), findsNothing);
+    expect(find.text('Try another name or view all creators.'), findsOneWidget);
+  });
 
   testWidgets(
     'desktop is a bounded two-column directory and mobile is one column',
@@ -197,9 +325,11 @@ void main() {
   for (final size in const [
     Size(320, 568),
     Size(390, 844),
+    Size(430, 900),
     Size(768, 900),
     Size(1100, 800),
     Size(1440, 900),
+    Size(2560, 900),
   ]) {
     testWidgets('large text has no overflow at ${size.width.toInt()}px', (
       tester,
@@ -211,7 +341,7 @@ void main() {
             result(
               uid: 'c1',
               name: 'A Creator With A Long Display Name',
-              accountType: 'creator',
+              accountType: 'official',
             ),
           ],
         },

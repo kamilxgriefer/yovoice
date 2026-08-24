@@ -10,10 +10,14 @@ enum CreatorDirectoryAccountType {
     };
   }
 
-  String get label => switch (this) {
-    CreatorDirectoryAccountType.creator => 'Creator',
-    CreatorDirectoryAccountType.official => 'Official',
-  };
+  /// Both wire values describe Creator accounts in the public directory.
+  ///
+  /// `official` is the legacy, server-owned verification signal. It must stay
+  /// on the wire for compatibility, but it is not a separate public account
+  /// type.
+  String get label => 'Creator';
+
+  bool get isVerified => this == CreatorDirectoryAccountType.official;
 }
 
 class CreatorSearchResult {
@@ -39,14 +43,14 @@ class CreatorSearchResult {
   final bool premiumIdentity;
   final int followerCount;
 
+  bool get isVerified => accountType.isVerified;
+
   String get supportingText {
     final status = statusMessage.trim();
     if (status.isNotEmpty) return status;
     final description = bio.trim();
     if (description.isNotEmpty) return description;
-    return accountType == CreatorDirectoryAccountType.official
-        ? 'Official voice on YO Voice'
-        : 'Creating conversations on YO Voice';
+    return 'Creating conversations on YO Voice';
   }
 
   factory CreatorSearchResult.fromMap(Map<String, dynamic> data) {

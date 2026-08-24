@@ -6,11 +6,12 @@ import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/features/creator/data/models/creator_search_result.dart';
 import 'package:yovoice/features/creator/data/services/creator_directory_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
-enum _CreatorFilter { all, creator, official }
+enum _CreatorFilter { allCreators, verified }
 
 class FindCreatorsScreen extends StatefulWidget {
   const FindCreatorsScreen({
@@ -43,7 +44,7 @@ class _FindCreatorsScreenState extends State<FindCreatorsScreen> {
   final _searchController = TextEditingController();
   Timer? _debounce;
   List<CreatorSearchResult> _results = const [];
-  _CreatorFilter _filter = _CreatorFilter.all;
+  _CreatorFilter _filter = _CreatorFilter.allCreators;
   bool _searching = false;
   String? _error;
   int _requestVersion = 0;
@@ -83,12 +84,11 @@ class _FindCreatorsScreenState extends State<FindCreatorsScreen> {
   }
 
   Set<CreatorDirectoryAccountType> get _requestedTypes => switch (_filter) {
-    _CreatorFilter.all => const {
+    _CreatorFilter.allCreators => const {
       CreatorDirectoryAccountType.creator,
       CreatorDirectoryAccountType.official,
     },
-    _CreatorFilter.creator => const {CreatorDirectoryAccountType.creator},
-    _CreatorFilter.official => const {CreatorDirectoryAccountType.official},
+    _CreatorFilter.verified => const {CreatorDirectoryAccountType.official},
   };
 
   Future<void> _search(String query, int requestVersion) async {
@@ -125,19 +125,9 @@ class _FindCreatorsScreenState extends State<FindCreatorsScreen> {
   }
 
   List<CreatorSearchResult> get _visibleResults => switch (_filter) {
-    _CreatorFilter.all => _results,
-    _CreatorFilter.creator =>
-      _results
-          .where(
-            (item) => item.accountType == CreatorDirectoryAccountType.creator,
-          )
-          .toList(growable: false),
-    _CreatorFilter.official =>
-      _results
-          .where(
-            (item) => item.accountType == CreatorDirectoryAccountType.official,
-          )
-          .toList(growable: false),
+    _CreatorFilter.allCreators => _results,
+    _CreatorFilter.verified =>
+      _results.where((item) => item.isVerified).toList(growable: false),
   };
 
   void _openCreator(CreatorSearchResult creator) {
@@ -276,8 +266,8 @@ class _FindCreatorsScreenState extends State<FindCreatorsScreen> {
               icon: Icons.auto_awesome_rounded,
               title: 'Find a voice worth following',
               subtitle:
-                  'Search by display name or @username. Results include only '
-                  'Creator and Official accounts.',
+                  'Search by display name or @username. Verified creators '
+                  'are marked with a YO Voice badge.',
             ),
           ),
         ),
@@ -291,12 +281,12 @@ class _FindCreatorsScreenState extends State<FindCreatorsScreen> {
             padding: const EdgeInsets.only(top: 18, bottom: 32),
             child: _DirectoryState(
               icon: Icons.person_search_rounded,
-              title: _results.isEmpty
-                  ? 'No creators found'
-                  : 'No ${_filter.name} accounts in these results',
-              subtitle: _results.isEmpty
-                  ? 'Try another name or username.'
-                  : 'Choose another filter or refine your search.',
+              title: _filter == _CreatorFilter.verified
+                  ? 'No verified creators found'
+                  : 'No creators found',
+              subtitle: _filter == _CreatorFilter.verified
+                  ? 'Try another name or view all creators.'
+                  : 'Try another name or @username.',
             ),
           ),
         ),
@@ -496,74 +486,82 @@ class _FilterBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          _FilterChip(
-            label: 'All',
-            selected: selected == _CreatorFilter.all,
-            onTap: () => onSelected(_CreatorFilter.all),
-          ),
-          const SizedBox(width: 8),
-          _FilterChip(
-            label: 'Creators',
-            selected: selected == _CreatorFilter.creator,
-            onTap: () => onSelected(_CreatorFilter.creator),
-          ),
-          const SizedBox(width: 8),
-          _FilterChip(
-            label: 'Official',
-            selected: selected == _CreatorFilter.official,
-            onTap: () => onSelected(_CreatorFilter.official),
-          ),
-        ],
-      ),
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        _FilterChip(
+          filterKey: const ValueKey('creator-filter-all'),
+          label: 'All creators',
+          semanticLabel: 'All creators filter',
+          selected: selected == _CreatorFilter.allCreators,
+          onTap: () => onSelected(_CreatorFilter.allCreators),
+        ),
+        _FilterChip(
+          filterKey: const ValueKey('creator-filter-verified'),
+          label: 'Verified',
+          semanticLabel: 'Verified creators filter',
+          selected: selected == _CreatorFilter.verified,
+          onTap: () => onSelected(_CreatorFilter.verified),
+        ),
+      ],
     );
   }
 }
 
 class _FilterChip extends StatelessWidget {
   const _FilterChip({
+    required this.filterKey,
     required this.label,
+    required this.semanticLabel,
     required this.selected,
     required this.onTap,
   });
 
+  final Key filterKey;
   final String label;
+  final String semanticLabel;
   final bool selected;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
+    return AccessibleTapRegion(
+      key: filterKey,
+      semanticLabel: semanticLabel,
       selected: selected,
-      label: '$label creator filter',
-      child: Material(
-        color: selected
-            ? _FindCreatorsScreenState._accent.withValues(alpha: .18)
-            : _FindCreatorsScreenState._surface,
-        shape: StadiumBorder(
-          side: BorderSide(
-            color: selected
-                ? _FindCreatorsScreenState._accent
-                : _FindCreatorsScreenState._border,
-          ),
-        ),
-        child: InkWell(
-          onTap: onTap,
-          customBorder: const StadiumBorder(),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-            child: Text(
-              label,
-              style: TextStyle(
-                color: selected
-                    ? const Color(0xFFE0B9FF)
-                    : _FindCreatorsScreenState._muted,
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
+      onTap: onTap,
+      borderRadius: 999,
+      child: ExcludeSemantics(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 44),
+          child: DecoratedBox(
+            decoration: ShapeDecoration(
+              color: selected
+                  ? _FindCreatorsScreenState._accent.withValues(alpha: .18)
+                  : _FindCreatorsScreenState._surface,
+              shape: StadiumBorder(
+                side: BorderSide(
+                  color: selected
+                      ? _FindCreatorsScreenState._accent
+                      : _FindCreatorsScreenState._border,
+                ),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+              child: Center(
+                widthFactor: 1,
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: selected
+                        ? const Color(0xFFE0B9FF)
+                        : _FindCreatorsScreenState._muted,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
               ),
             ),
           ),
@@ -630,6 +628,7 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
         return LayoutBuilder(
           builder: (context, constraints) {
             final compact = constraints.maxWidth < 560 || textScale > 1.35;
+            final denseGridCard = constraints.hasBoundedHeight;
             final identity = Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -657,7 +656,9 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
                               fontWeight: FontWeight.w900,
                             ),
                           ),
-                          _AccountTypeBadge(type: creator.accountType),
+                          _CreatorStatusBadge(uid: creator.uid),
+                          if (creator.isVerified)
+                            _VerifiedCreatorBadge(uid: creator.uid),
                         ],
                       ),
                       if (creator.username.isNotEmpty) ...[
@@ -671,10 +672,10 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
                           ),
                         ),
                       ],
-                      const SizedBox(height: 7),
+                      SizedBox(height: denseGridCard ? 4 : 7),
                       Text(
                         creator.supportingText,
-                        maxLines: compact ? 3 : 2,
+                        maxLines: denseGridCard ? 1 : (compact ? 3 : 2),
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: _FindCreatorsScreenState._muted,
@@ -682,7 +683,7 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
                           fontSize: 13,
                         ),
                       ),
-                      const SizedBox(height: 7),
+                      SizedBox(height: denseGridCard ? 4 : 7),
                       Text(
                         _followersLabel(creator.followerCount),
                         style: const TextStyle(
@@ -696,66 +697,64 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
                 ),
               ],
             );
-            final actions = Row(
-              mainAxisSize: compact ? MainAxisSize.max : MainAxisSize.min,
-              children: [
-                if (compact)
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: widget.onOpen,
-                      child: const Text('View profile'),
-                    ),
-                  )
-                else
-                  OutlinedButton(
-                    onPressed: widget.onOpen,
-                    child: const Text('View profile'),
-                  ),
-                const SizedBox(width: 8),
-                if (compact)
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: _busy ? null : () => _toggle(following),
-                      icon: _busy
-                          ? const SizedBox(
-                              width: 15,
-                              height: 15,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : Icon(
-                              following
-                                  ? Icons.check_rounded
-                                  : Icons.person_add_alt_1_rounded,
-                              size: 18,
-                            ),
-                      label: Text(following ? 'Following' : 'Follow'),
-                    ),
-                  )
-                else
-                  FilledButton.icon(
-                    onPressed: _busy ? null : () => _toggle(following),
-                    icon: _busy
-                        ? const SizedBox(
-                            width: 15,
-                            height: 15,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : Icon(
-                            following
-                                ? Icons.check_rounded
-                                : Icons.person_add_alt_1_rounded,
-                            size: 18,
-                          ),
-                    label: Text(following ? 'Following' : 'Follow'),
-                  ),
-              ],
+            final viewProfileButton = OutlinedButton(
+              onPressed: widget.onOpen,
+              style: const ButtonStyle(
+                minimumSize: WidgetStatePropertyAll(Size(0, 44)),
+                foregroundColor: WidgetStatePropertyAll(
+                  _FindCreatorsScreenState._accent,
+                ),
+                side: WidgetStatePropertyAll(
+                  BorderSide(color: _FindCreatorsScreenState._accent),
+                ),
+              ),
+              child: const Text('View profile'),
             );
+            final followButton = FilledButton.icon(
+              onPressed: _busy ? null : () => _toggle(following),
+              style: const ButtonStyle(
+                minimumSize: WidgetStatePropertyAll(Size(0, 44)),
+              ),
+              icon: _busy
+                  ? const SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Icon(
+                      following
+                          ? Icons.check_rounded
+                          : Icons.person_add_alt_1_rounded,
+                      size: 18,
+                    ),
+              label: Text(following ? 'Following' : 'Follow'),
+            );
+            final actions = textScale > 1.35
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      viewProfileButton,
+                      const SizedBox(height: 8),
+                      followButton,
+                    ],
+                  )
+                : Row(
+                    mainAxisSize: compact ? MainAxisSize.max : MainAxisSize.min,
+                    children: [
+                      if (compact)
+                        Expanded(child: viewProfileButton)
+                      else
+                        viewProfileButton,
+                      const SizedBox(width: 8),
+                      if (compact)
+                        Expanded(child: followButton)
+                      else
+                        followButton,
+                    ],
+                  );
 
             return Material(
               color: _FindCreatorsScreenState._surface,
@@ -774,7 +773,10 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             identity,
-                            const SizedBox(height: 14),
+                            if (denseGridCard)
+                              const Spacer()
+                            else
+                              const SizedBox(height: 14),
                             actions,
                           ],
                         )
@@ -800,29 +802,91 @@ class _CreatorResultCardState extends State<_CreatorResultCard> {
   }
 }
 
-class _AccountTypeBadge extends StatelessWidget {
-  const _AccountTypeBadge({required this.type});
+class _CreatorStatusBadge extends StatelessWidget {
+  const _CreatorStatusBadge({required this.uid});
 
-  final CreatorDirectoryAccountType type;
+  final String uid;
 
   @override
   Widget build(BuildContext context) {
-    final official = type == CreatorDirectoryAccountType.official;
-    final color = official ? const Color(0xFF67D8FF) : const Color(0xFFD59BFF);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: .1),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: .55)),
-      ),
-      child: Text(
-        type.label,
-        style: TextStyle(
-          color: color,
-          fontSize: 10.5,
-          fontWeight: FontWeight.w900,
-          letterSpacing: .25,
+    return _IdentityBadge(
+      key: ValueKey('creator-status-$uid'),
+      icon: Icons.auto_awesome_rounded,
+      label: 'Creator',
+      semanticLabel: 'Creator account',
+      color: const Color(0xFFD59BFF),
+    );
+  }
+}
+
+class _VerifiedCreatorBadge extends StatelessWidget {
+  const _VerifiedCreatorBadge({required this.uid});
+
+  final String uid;
+
+  @override
+  Widget build(BuildContext context) {
+    return _IdentityBadge(
+      key: ValueKey('verified-status-$uid'),
+      icon: Icons.verified_rounded,
+      label: 'Verified',
+      semanticLabel: 'Verified by YO Voice',
+      color: const Color(0xFF67D8FF),
+    );
+  }
+}
+
+class _IdentityBadge extends StatelessWidget {
+  const _IdentityBadge({
+    required this.icon,
+    required this.label,
+    required this.semanticLabel,
+    required this.color,
+    super.key,
+  });
+
+  final IconData icon;
+  final String label;
+  final String semanticLabel;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final enlargedText = MediaQuery.textScalerOf(context).scale(1) > 1.35;
+    return Tooltip(
+      message: semanticLabel,
+      excludeFromSemantics: true,
+      child: Semantics(
+        container: true,
+        label: semanticLabel,
+        child: ExcludeSemantics(
+          child: Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: enlargedText ? 2 : 8,
+              vertical: 4,
+            ),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: .1),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: color.withValues(alpha: .55)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, color: color, size: 12),
+                const SizedBox(width: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: .25,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

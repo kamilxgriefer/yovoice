@@ -24,6 +24,9 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/creator/data/services/creator_directory_service.dart';
+import 'package:yovoice/features/creator/presentation/screens/find_creators_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
@@ -74,6 +77,24 @@ Future<void> _loadRealFonts() async {
     roboto.addFont(read(face));
   }
   await roboto.load();
+  final inter = FontLoader('Inter')
+    ..addFont(
+      Future.value(
+        ByteData.view(
+          File('assets/fonts/InterVariable.ttf').readAsBytesSync().buffer,
+        ),
+      ),
+    )
+    ..addFont(
+      Future.value(
+        ByteData.view(
+          File(
+            'assets/fonts/InterVariable-Italic.ttf',
+          ).readAsBytesSync().buffer,
+        ),
+      ),
+    );
+  await inter.load();
   final icons = FontLoader('MaterialIcons')
     ..addFont(read('MaterialIcons-Regular.otf'));
   await icons.load();
@@ -619,6 +640,82 @@ void main() {
     await _settle(tester);
     await _shoot(tester, 'recent-chats-backdrop-1440x300');
   });
+
+  for (final size in const [Size(1440, 720), Size(390, 844)]) {
+    final label =
+        'find-creators-verified-${size.width.toInt()}x${size.height.toInt()}';
+    testWidgets(label, (tester) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final db = FakeFirebaseFirestore();
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(
+          uid: _me,
+          displayName: 'CeoGriefer',
+          email: 'preview@yovoice.app',
+          isEmailVerified: true,
+        ),
+      );
+      Map<String, dynamic> creator(
+        String uid,
+        String name,
+        String username,
+        String accountType,
+        int followers,
+      ) => <String, dynamic>{
+        'uid': uid,
+        'displayName': name,
+        'username': username,
+        'photoUrl': null,
+        'bio': accountType == 'official'
+            ? 'Independent interviews, culture and thoughtful conversations.'
+            : 'Audio stories about design, music and creative work.',
+        'statusMessage': '',
+        'accountType': accountType,
+        'premiumIdentity': accountType == 'creator',
+        'followerCount': followers,
+      };
+      final directory = CreatorDirectoryService(
+        searchInvoker: (_) async => <String, dynamic>{
+          'profiles': [
+            creator('creator-1', 'Maya Voice', 'mayavoice', 'creator', 1842),
+            creator(
+              'verified-1',
+              'YO Editorial',
+              'yoeditorial',
+              'official',
+              9204,
+            ),
+          ],
+        },
+      );
+
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: _capture,
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.darkTheme,
+            home: FindCreatorsScreen(
+              isRootTab: true,
+              directoryService: directory,
+              followService: FollowService(firestore: db, auth: auth),
+              onOpenCreator: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('find-creators-search')),
+        'voice',
+      );
+      await _settle(tester);
+      await _shoot(tester, label);
+    });
+  }
 
   // The two creation wizards, at phone width and desktop, so the
   // identity colours and the step layout are looked at rather than

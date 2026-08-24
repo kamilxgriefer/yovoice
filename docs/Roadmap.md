@@ -1043,6 +1043,13 @@ someone decide what to pick up next.
   NOT built, and why: the mockups' `SCHEDULED` banner with a date (rooms
   carry no start time in Firestore) and the mobile rail's people segment
   (`MobileMomentsStrip` still shows Moments only).
+- Find Creators identity taxonomy corrected (2026-08-24; **SOURCE ONLY — NOT
+  DEPLOYED**): every directory result now presents the account status
+  `Creator`, while the server-owned
+  legacy `official` value adds a separate `Verified by YO Voice` badge. The
+  directory filters are `All creators` and `Verified`; wire values, callable
+  queries, rules and stored profiles are unchanged. See
+  [ADR-112](Decisions.md#adr-112-find-creators-presents-official-as-a-verified-creator-not-a-separate-account-type).
 - Family Room, first slice (2026-08-13): a fourth creation choice on the
   Create screen, implemented as a Club with `type: family` at the
   deterministic id `family_{uid}` — reusing club membership, roles,

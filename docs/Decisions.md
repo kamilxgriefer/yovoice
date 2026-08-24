@@ -6698,3 +6698,41 @@ semantic action and tap callback while the existing multi-width suite pins the
 standard avatar cards at 148 px. Missing images remain intentional rather than
 showing a broken glyph. No schema, rules, indexes, Functions or production
 deployment change is involved.
+
+## ADR-112: Find Creators presents `official` as a verified Creator, not a separate account type
+
+**Context.** The creator directory exposed the storage value `official` as a
+third public category beside All and Creators. That mixed two concepts: what
+the account does (Creator) and whether YO Voice has verified it. It also made a
+verified creator appear not to be a Creator. The existing value cannot simply
+be renamed in storage: `official` is server-owned, is accepted by the deployed
+callable and indexes, and is the only current signal that distinguishes these
+profiles from ordinary Creator accounts. Firebase email verification is a
+different anti-abuse fact about the signed-in searcher and is not a public
+endorsement of a search result.
+
+**Decision.** Find Creators keeps `official` as the wire value and maps it only
+at the presentation boundary. Every directory result is labelled `Creator`.
+An `official` result additionally receives a blue verified-check badge with the
+explicit tooltip and semantic label `Verified by YO Voice`. The filters become
+`All creators` (`creator + official`) and `Verified` (`official` only); the
+client never sends `verified` to the backend. Intro, fallback and empty-state
+copy no longer expose `Official`. The verified badge is independent from
+Premium identity and the staff `OfficialRoleBadge` system.
+
+**Reasoning.** Verification is a property of a Creator, not a competing account
+type. Two filters express that subset relationship without the previous
+redundant `All / Creators / Official` taxonomy. Keeping the mapping at the UI
+boundary preserves the server authority, current queries, security rules and
+existing data while making the visible model accurate.
+
+**Consequences.** No Firestore document, rule, index, Function or entitlement
+changes. Search still sends `official`, and the dedicated result model still
+decodes it for backward compatibility. Filter targets are at least 44 px, the
+two badges wrap at narrow widths, enlarged text stacks the card actions, and
+tests cover 320–2560 px plus 200% text. This ADR is intentionally scoped to
+Find Creators; Profile Preview, profile headers, Settings and Creator Studio
+still use their existing account-type vocabulary and should be aligned in a
+separate audited identity-copy pass rather than through an unreviewed global
+replacement. This remains source-only until a separate Hosting release is
+explicitly requested and verified.
