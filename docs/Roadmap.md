@@ -37,8 +37,8 @@ someone decide what to pick up next.
 > for why that distinction is the whole point of this wave.
 
 - **Modal sheets have one attached drag cue and an explicit Close action**
-  (2026-08-24, ADR-113, **SOURCE ONLY — NOT DEPLOYED**): the global Material
-  drag handle is disabled and all 26 production bottom-sheet routes use the
+  (2026-08-24, ADR-113, **DEPLOYED 2026-08-25**, Hosting byte-verified): the
+  global Material drag handle is disabled and all 26 production bottom-sheet routes use the
   shared `YoModalSheetChrome`. Phones and tablets show one cue on the actual
   sheet surface plus a 44 px-or-larger Close action; pointer-first desktop
   omits the misleading drag cue and keeps Close. New Message no longer expands
@@ -51,8 +51,8 @@ someone decide what to pick up next.
   390, 768 and 1440 px.
 
 - **Desktop Recent Chats is a compact full-bleed conversation rail**
-  (2026-08-24, ADR-111, **SOURCE ONLY — NOT DEPLOYED**): the detached 40 px
-  avatars and 148 px mostly-empty cards are replaced on desktop by 116 px
+  (2026-08-24, ADR-111, **DEPLOYED 2026-08-25**, Hosting byte-verified): the
+  detached 40 px avatars and 148 px mostly-empty cards are replaced on desktop by 116 px
   cards whose real participant photo fills and softly blurs behind a dark
   legibility scrim. Missing or broken photos resolve to deterministic brand
   gradients with a quiet initial. Name, preview and unread state remain, and
@@ -60,8 +60,8 @@ someone decide what to pick up next.
   its established avatar presentation and dimensions.
 
 - **Desktop People & Moments keeps discovery, but no longer embeds Follow
-  buttons** (2026-08-24, ADR-110, **SOURCE ONLY — NOT DEPLOYED**): the profile
-  suggestions after the divider remain visible and open the existing profile
+  buttons** (2026-08-24, ADR-110, **DEPLOYED 2026-08-25**, Hosting
+  byte-verified): the profile suggestions after the divider remain visible and open the existing profile
   preview, while the low-context inline Follow chips and their duplicate
   mutation path are gone. Existing following edges are still read so already
   followed people are not suggested. Widget coverage pins both the absence of
@@ -69,8 +69,8 @@ someone decide what to pick up next.
   and profile follow controls are unchanged.
 
 - **The desktop rail no longer scrolls; Home is a pinned header action beside
-  Notifications** (2026-08-24, ADR-109, **SOURCE ONLY — NOT DEPLOYED**): the
-  full-width Home row and the rail's `SingleChildScrollView` are gone. Home
+  Notifications** (2026-08-24, ADR-109, **DEPLOYED 2026-08-25**, Hosting
+  byte-verified): the full-width Home row and the rail's `SingleChildScrollView` are gone. Home
   keeps the same slot/routing but renders as a 44×44 selected icon beside the
   44×44 bell. At rail heights below 700 px the two creation actions share one
   row; at 200% text the informational timezone card yields, and below 620
@@ -824,11 +824,12 @@ someone decide what to pick up next.
   stages, from the source write to the recipient's bell feed and unread
   badge. 224 Flutter tests, 173 rules tests, 65 Functions tests.
   This records the historical ADR-041 trigger rollout; those three trigger
-  writers are now retired in source and must follow ADR-114's single-writer
-  rollout instead
+  writers were retired in production by ADR-114's single-writer rollout on
+  2026-08-25
   ([ADR-041](Decisions.md#adr-041-friend-request-acceptance-and-follow-notifications-are-derived-from-their-source-documents-by-firestore-triggers-not-written-by-the-acting-client)).
-  Web push remains broken for a separate, documented reason, and
-  `@mentions` are not started.
+  At that time web push was still broken for a separate, documented reason.
+  Its service worker, VAPID and payload configuration are now fixed, while a
+  real-browser push E2E remains unverified; `@mentions` are not started.
 
 - Moderation Center completion pass (2026-08-11): each report now shows
   its own moderation history, served by a new scoped
@@ -1021,7 +1022,8 @@ someone decide what to pick up next.
   generation-specific re-requests/refollows, compatibility-row suppression,
   account-switch FCM token rotation, mobile unread badge, resilient blocked
   rows and 44 px Add Friend actions (ADR-114).
-  **SOURCE ONLY — NOT DEPLOYED.**
+  **DEPLOYED 2026-08-25** — Rules, ordered Functions cutover and byte-verified
+  Hosting; physical two-device FCM presentation was explicitly not performed.
 - Direct messages + club channel chat.
 - Voice Moments — recorded audio posts, likes, comments, voice replies.
 - Achievements/Awards — full 100-title catalog; Level/XP header, category
@@ -1068,9 +1070,9 @@ someone decide what to pick up next.
   NOT built, and why: the mockups' `SCHEDULED` banner with a date (rooms
   carry no start time in Firestore) and the mobile rail's people segment
   (`MobileMomentsStrip` still shows Moments only).
-- Find Creators identity taxonomy corrected (2026-08-24; **SOURCE ONLY — NOT
-  DEPLOYED**): every directory result now presents the account status
-  `Creator`, while the server-owned
+- Find Creators identity taxonomy corrected (2026-08-24; **DEPLOYED
+  2026-08-25**, Hosting byte-verified): every directory result now presents the
+  account status `Creator`, while the server-owned
   legacy `official` value adds a separate `Verified by YO Voice` badge. The
   directory filters are `All creators` and `Verified`; wire values, callable
   queries, rules and stored profiles are unchanged. See

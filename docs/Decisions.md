@@ -6644,8 +6644,8 @@ stronger invariant: there is no descendant `Scrollable`. The timezone map
 still follows the rail-height tier from ADR-107, and timezone detection/privacy
 are unchanged. The profile card, More anchor, unread streams, routing, backend
 and mobile navigation are unchanged. No Firebase, schema, rule, index,
-dependency or deployment change is involved. This is source-only until a
-separate Hosting release is explicitly requested and byte-verified.
+dependency or backend deployment change is involved. Deployed through the
+byte-verified Hosting release from `5377aa6` on 2026-08-25.
 
 ## ADR-110: People & Moments suggests profiles but does not mutate follows inline
 
@@ -6675,9 +6675,9 @@ signed-in user's Moment.
 double-submit protection are unchanged. Only the desktop People & Moments
 mutation path and its test helper are removed. Widget coverage asserts no
 inline `Follow`, continued filtering, a named semantic button, full-tile name
-activation and Enter/Space activation. No backend, rules, schema, index or
-deployment change is involved; this remains source-only until a separate
-Hosting release is explicitly requested and verified.
+activation and Enter/Space activation. No backend, rules, schema or index
+change is involved. Deployed through the byte-verified Hosting release from
+`5377aa6` on 2026-08-25.
 
 ## ADR-111: Desktop recent chats use the participant photo as a bounded blurred backdrop
 
@@ -6710,8 +6710,9 @@ preview copy, callbacks, queries, backend and mobile layout are unchanged.
 Tests pin the desktop variant's full-card image treatment, 116 px height,
 semantic action and tap callback while the existing multi-width suite pins the
 standard avatar cards at 148 px. Missing images remain intentional rather than
-showing a broken glyph. No schema, rules, indexes, Functions or production
-deployment change is involved.
+showing a broken glyph. No schema, rules, indexes or Functions change is
+involved. The presentation was deployed through the byte-verified Hosting
+release from `5377aa6` on 2026-08-25.
 
 ## ADR-112: Find Creators presents `official` as a verified Creator, not a separate account type
 
@@ -6748,8 +6749,8 @@ tests cover 320–2560 px plus 200% text. This ADR is intentionally scoped to
 Find Creators; Profile Preview, profile headers, Settings and Creator Studio
 still use their existing account-type vocabulary and should be aligned in a
 separate audited identity-copy pass rather than through an unreviewed global
-replacement. This remains source-only until a separate Hosting release is
-explicitly requested and verified.
+replacement. Deployed through the byte-verified Hosting release from
+`5377aa6` on 2026-08-25.
 
 ## ADR-113: Modal sheets own one chrome contract instead of inheriting a global drag handle
 
@@ -6802,8 +6803,8 @@ scrim, swipe, scrolling and focus restoration. Contrast tests cover dark,
 light and fixed-dark sheet surfaces. Production-theme visual frames cover
 phone, tablet and desktop.
 No Firebase data, rules, indexes, Functions, schema or dependency changes are
-involved. This is source-only until a separate Hosting release is explicitly
-requested and byte-verified.
+involved. Deployed through the byte-verified Hosting release from `5377aa6` on
+2026-08-25.
 
 ## ADR-114: Social graph callables own the notification lifecycle end to end
 
@@ -6892,4 +6893,7 @@ Emulator tests cover cancel/decline/accept/replay/unfriend notification
 lifecycle, fresh re-requests/refollows, region/routing contracts, blocked-row
 degradation, mobile badge semantics and 200% request actions. System FCM still
 requires a two-device smoke because delivery beyond the durable notification
-row is best effort. **SOURCE ONLY — NOT DEPLOYED.**
+row is best effort. **DEPLOYED 2026-08-25.** The ordered Rules/Functions
+cutover, trigger deletion, backup and zero-plan sweep completed before Hosting.
+The release owner explicitly proceeded without the physical two-device FCM
+smoke, so OS-level delivery on two real devices remains unverified.

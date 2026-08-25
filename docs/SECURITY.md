@@ -319,7 +319,7 @@ a user's whole followers/following list. Any future exact-schema rule has
 the same shape: the data must conform *before* the rule lands, or the
 rule is an outage rather than a boundary.
 
-ADR-114's pending source widening keeps that lesson at the point-read and DM
+ADR-114's deployed widening keeps that lesson at the point-read and DM
 authorization boundaries: they accept only the same two fields plus an
 optional bounded, server-owned `notificationId`. Firestore cannot prove an
 exact per-document schema for an unconstrained list query (Rules are not
@@ -499,10 +499,10 @@ callable. Full reasoning:
 
 ## Social notification integrity
 
-> **SOURCE ONLY — NOT DEPLOYED (ADR-114).** Production still has the older
-> ADR-041 social trigger writers. The source boundary below becomes current
-> only after the ordered Firestore Rules + Functions rollout and explicit
-> trigger deletion in `docs/DEPLOYMENT.md`.
+> **DEPLOYED 2026-08-25 (ADR-114).** The ordered Firestore Rules + Functions
+> rollout completed, the three ADR-041 social trigger writers were explicitly
+> deleted, and the source-aware compatibility sweep converged to zero planned
+> deletions. See `docs/DEPLOYMENT.md` for fingerprints and the recovery record.
 
 `friendRequest`, `friendAccepted` and `follow` are not client-creatable.
 Their server-authoritative social callable writes or retires the matching

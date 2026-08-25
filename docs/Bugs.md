@@ -47,7 +47,7 @@ about things that are broken, risky, or need verification.
   pending work, and a deliberate separate decision rather than an oversight to
   fix in passing.
 
-- **FIXED IN SOURCE 2026-08-24, NOT DEPLOYED — the desktop rail could still be
+- **FIXED AND DEPLOYED 2026-08-25 — the desktop rail could still be
   deliberately scrolled, making primary navigation look displaced.** ADR-107
   correctly separated the rail from the page and fixed controller ownership,
   but kept the nav `SingleChildScrollView` as a short-height safety valve:
@@ -701,10 +701,10 @@ permission flags).
   ADR-114 supersedes that implementation with the social callable as the
   single transactional writer, because the trigger and callable later
   overlapped.
-  **Deployed 2026-08-16** — all three appear in `firebase functions:list`.
-  *(This bullet read "Needs the Functions deploy to take effect in
-  production" until that date.)*
-- **FIXED IN SOURCE — resolved/cancelled friend requests could leave or
+  **Deployed 2026-08-16, retired 2026-08-25** — those three historical
+  triggers were explicitly deleted when ADR-114 became the production
+  single-writer contract.
+- **FIXED AND DEPLOYED 2026-08-25 — resolved/cancelled friend requests could leave or
   resurrect an unread alert.** Cancel omitted the notification cleanup and
   legacy source triggers could overwrite the callable's resolved state. The
   callable now retires actionable rows atomically on accept/decline/cancel,
@@ -713,14 +713,15 @@ permission flags).
   Friend-request taps open Requests with Accept/Decline, the mobile bell shows
   the unread count, and new lifecycles use generation-specific ids. Push
   delivery re-checks both document generation and the canonical graph source;
-  retired compatibility ids are removed during rollout (ADR-114).
-  **SOURCE ONLY — NOT DEPLOYED.**
+  retired compatibility ids were removed during rollout (ADR-114). The
+  production journey passed before and after trigger deletion, and the final
+  source-aware sweep planned zero further deletions.
 - **FIXED — clients could forge these three notification types.** A
   client could write "X accepted your friend request" with no friendship
   existing; rules cannot check that. The three types were removed from
   the client-creatable list, and the server authority validates the
-  friendship itself. Production still derives this through the deployed
-  triggers; ADR-114 moves the same authority into the graph transaction.
+  friendship itself. ADR-114 now keeps that authority inside the deployed
+  graph transaction.
 - **FIXED — web push configuration.** The service worker
   (`web/firebase-messaging-sw.js`) now exists and ships in the build, and
   `getToken()` passes a `vapidKey` from
@@ -1060,7 +1061,7 @@ permission flags).
 
 ## UI
 
-- **FIXED IN SOURCE 2026-08-24, NOT DEPLOYED — modal sheets drew two detached
+- **FIXED AND DEPLOYED 2026-08-25 — modal sheets drew two detached
   drag handles and offered no obvious universal way to close them.** The app
   theme enabled Material's automatic bottom-sheet handle globally while many
   custom sheets also painted their own bar. On transparent draggable routes,
@@ -1592,7 +1593,7 @@ permission flags).
   Verified live on iOS Simulator and the deployed web app (first-chat
   bootstrap opens cleanly). Regression tests: `test/error_messages_test.dart`,
   rules suite conversation-bootstrap cases.
-- **Superseded by ADR-114 (SOURCE ONLY — NOT DEPLOYED). Fixed (P0,
+- **Superseded by ADR-114 (DEPLOYED 2026-08-25). Fixed (P0,
   2026-08-08): friend-request acceptance never notified the
   original sender.** `notify()`'s dedupe path queried the *recipient's*
   notification subcollection, which rules forbid — the permission-denied

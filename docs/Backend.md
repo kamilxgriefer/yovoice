@@ -45,11 +45,10 @@ code. `LIVEKIT_URL` (`wss://yovoice-3f7j9fb7.livekit.cloud`) is a plain
 
 ## Notifications
 
-> **ADR-114 social lifecycle is SOURCE ONLY — NOT DEPLOYED.** The generic
-> push trigger already exists in production, but the generation-bound
-> friend/follow behavior and retirement of the three older social writers
-> described below require the ordered Rules + Functions rollout in
-> [DEPLOYMENT.md](DEPLOYMENT.md#pending-friends-notification-single-writer-rollout).
+> **ADR-114 social lifecycle is DEPLOYED (2026-08-25).** The generation-bound
+> friend/follow behavior is live and the three older social writers are absent
+> from production. Deployment evidence and the retained recovery runbook are in
+> [DEPLOYMENT.md](DEPLOYMENT.md#friends-notification-single-writer-rollout--executed-2026-08-25).
 
 `onNotificationCreated` (`functions/notifications/push.js`) — a Firestore
 `onDocumentCreated` trigger on `users/{userId}/notifications/{id}`. The
@@ -76,9 +75,9 @@ source duplicates that a transient event-time cleanup could have missed.
 
 ## Friends
 
-> **The ADR-114 friend/follow lifecycle below is SOURCE ONLY — NOT DEPLOYED.**
-> Production still has the three ADR-041 social trigger writers until the
-> explicit rollout and deletion sequence is completed.
+> **The ADR-114 friend/follow lifecycle below is DEPLOYED (2026-08-25).**
+> Production uses the six social callables as the single lifecycle authority;
+> all three ADR-041 trigger writers were explicitly deleted and verified absent.
 
 - `sendFriendRequest`, `respondToFriendRequest`, `cancelFriendRequest`,
   `removeFriend`, `setFollow`, `setUserBlock` — transactional graph mutations

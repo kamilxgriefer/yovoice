@@ -15,12 +15,45 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
-### Pending Friends notification single-writer rollout
+### Friends notification single-writer rollout — executed 2026-08-25
 
-ADR-114 is **SOURCE ONLY — NOT DEPLOYED**. It removes three currently deployed
-trigger exports, so a Hosting release alone is insufficient and a generic
-Functions update does not prove deletion. Release the verified revision in
-this order:
+ADR-114 is **DEPLOYED** from commit `5377aa688b030211ea36ba600142b82c792ae227`.
+The ordered production rollout below completed on 2026-08-25 with the
+documented step-8 physical-FCM exception. Evidence:
+
+- Firestore Rules release
+  `projects/yovoice-ec54a/rulesets/264042f0-5952-4b09-809e-ed72af354af1`
+  was read back through the Rules API and is byte-identical to the repository
+  source (SHA-256
+  `c5ce8978748206684e2fc0794a865c7e099890bd934def683255e3f49def3c8d`);
+- all five ordered Functions stages reached `ACTIVE`, their Cloud Run
+  latest-created/latest-ready revisions matched, and 100% traffic served those
+  revisions; the retired `onFriendRequestCreated`,
+  `onFriendRequestResolved` and `onFollowerCreated` exports were then deleted
+  and their production count verified as zero;
+- the two-account production journey passed before and after trigger deletion:
+  send/cancel, decline, accept/unfriend, follow/unfollow/refollow, generation
+  pointers, bell cleanup and fixture cleanup;
+- `notifications` was exported before the sweep to
+  `gs://yovoice-ec54a-admin-backups-europe-west4/friends-notifications-pre-sweep-20260825T223745Z`
+  (102 documents, successful export, restricted bucket with seven-day soft
+  delete). The source-aware sweep removed 2 retired rows; a fresh full pass
+  reached the end with 0 planned deletions;
+- Hosting workflow run
+  [32810379503](https://github.com/kamilxgriefer/yovoice/actions/runs/32810379503)
+  rebuilt and verified the pinned commit, then deployed the verified artifact
+  to `live`. The artifact, `yovoice-ec54a.web.app` and `app.yovoice.app`
+  served the same 6,114,305-byte `main.dart.js` with SHA-256
+  `b5a5e9e02bfe1c4802d21693ab6ff209e1ff089f5cc92d86256ae9e2fff8e06a`.
+
+The release owner explicitly allowed Hosting to proceed without the final
+physical two-device FCM smoke. Durable in-app state and production lifecycle
+were verified, but OS-level FCM presentation on two real devices remains
+**not performed** and must not be inferred from this release record.
+
+The rollout removed three previously deployed trigger exports, so Hosting
+alone was insufficient and a generic Functions update could not prove
+deletion. The executed order remains the recovery and future-release runbook:
 
 1. run the full Flutter, Functions, Firestore and Storage suites plus the
    callable two-user smoke. Pin the release commit and capture the live
@@ -602,7 +635,7 @@ functions:setFollow,functions:setUserBlock \
    > ahead of it, it is an active outage. Run it before step 5, or accept
    > that follower lists are broken in the window between.
 
-   ADR-114's pending source keeps legacy two-field edges valid and permits one
+   ADR-114's deployed source keeps legacy two-field edges valid and permits one
    optional bounded `notificationId`. Re-running the scrub preserves that
    server-owned pointer; it never strips the active notification generation.
 
