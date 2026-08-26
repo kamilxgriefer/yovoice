@@ -22,6 +22,22 @@
           }
         },
         {
+          "client_id": "80235878542-futnp604nfpnaf5ius0vkiml4rof2ipe.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "app.yovoice",
+            "certificate_hash": "936d7a283cd16c5b2ab74ffb9ecb80388416ee05"
+          }
+        },
+        {
+          "client_id": "80235878542-ile1t1p7tovpjrjlovgdshb9i3qvalh1.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "app.yovoice",
+            "certificate_hash": "ff42f4be57be688db57758b43b17142ef17bf92c"
+          }
+        },
+        {
           "client_id": "80235878542-vcrcafdpgm1p3nbqe1b58emar3toqd9n.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {

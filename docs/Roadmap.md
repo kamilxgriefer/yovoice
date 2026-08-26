@@ -1768,12 +1768,15 @@ regression test pinning the contract.
 
 ### 13. App-store distribution
 
-- **Status**: Not started — no published iOS/Android builds exist yet.
-- **Social-auth readiness (2026-08-18)**: Google web OAuth and Android
-  debug/release configuration are fixed in source; deploy plus real-account
-  device smoke tests remain. Sign in with Apple has a real fail-closed client
-  flow, but stays disabled until the Apple Service ID/key, Firebase provider,
-  capability and regenerated release profile exist.
+- **Status (2026-08-26)**: In progress — TestFlight build `1.0.0 (3)` is in
+  `Testing`, and the matching Google Play internal-test release is active.
+  Production App Store and Google Play releases have not been submitted.
+- **Social-auth readiness (2026-08-26)**: Google web OAuth and Android
+  debug/release configuration are fixed in source. Google Play App Signing
+  fingerprints are registered in Firebase and the checked-in
+  `google-services.json` is refreshed. Sign in with Apple is configured and
+  enabled in the signed iOS build, while the Android beta intentionally shows
+  it as unavailable. Real-account, store-installed device smoke tests remain.
 - **Description**: Publish to the Apple App Store and Google Play. The
   website's download center is honest about this today ("coming soon" + a
   GitHub link) rather than linking to store pages that don't exist.

@@ -722,12 +722,13 @@ client and verified with a real popup flow.
 
 ### Social sign-in release gates
 
-- Google: confirm the Firebase Android app contains debug and release/upload
-  SHA-1 plus SHA-256 fingerprints, download the resulting
-  `google-services.json`, deploy the Flutter Hosting build, and verify that the
-  production popup reaches Google's account chooser without
-  `redirect_uri_mismatch`. Add the Google Play App Signing fingerprints before
-  distributing a Play-signed build.
+- Google: the Firebase Android app contains debug, release/upload, and Google
+  Play App Signing SHA-1 plus SHA-256 fingerprints. The Play fingerprints were
+  registered and `google-services.json` was refreshed on 2026-08-26 after the
+  first internal-track upload. Deploy the Flutter Hosting build and verify that
+  the production popup reaches Google's account chooser without
+  `redirect_uri_mismatch`. A real Play-installed Google Sign-In smoke test is
+  still required for each release candidate.
 - Apple: the `app.yovoice.web` Service ID, dedicated Sign in with Apple key,
   enabled Firebase `apple.com` provider, `app.yovoice` capability and matching
   `YO Voice App Store` provisioning profile are configured. Production Hosting
@@ -1675,6 +1676,31 @@ xcodebuild -exportArchive \
   -exportPath build/ios/app-store-upload \
   -exportOptionsPlist ios/ExportOptionsUpload.plist
 ```
+
+### Mobile beta release status — 2026-08-26
+
+Commit `e7f3cd45ea4e97b27a0e9b784a82ca9c93cab859` produced mobile build
+`1.0.0 (3)`. The exact commit passed the full verification workflow, browser
+smoke workflow, and CodeQL workflow before upload.
+
+- **iOS:** TestFlight build `1.0.0 (3)` is in `Testing`, with the existing
+  internal group and two individual testers assigned. The export-compliance
+  declaration is complete. IPA SHA-256:
+  `a9d6bb849f8e296744cf27daafba12204a86a4041ab5517b799d4ce6e840d98d`.
+- **Android:** Google Play internal testing is active for version code `3`
+  (`1.0.0`), with five validated tester accounts assigned. The store may show
+  the temporary name `app.yovoice (unreviewed)` until the application setup and
+  review are complete. AAB SHA-256:
+  `3231cdd6533339fb1e43ece4d835aaf362a4f93b9c9feed35f3f188d5efead87`.
+- **Scope:** this is a test-channel release, not a production-store release.
+  Premium purchases are inactive; Apple Sign-In is intentionally disabled in
+  the Android beta; and the known non-host room-message permission error remains
+  disclosed to testers.
+- **Acceptance gate:** perform the physical iPhone-to-Android notification,
+  live-room, deep-link, Google Sign-In, and audio smoke tests after both builds
+  are installed from their store test channels. Do not describe the release as
+  production-ready until those checks and the remaining store-listing/policy
+  work pass.
 
 The matching distribution private key, certificate, CSR, and provisioning
 profile are intentionally stored outside the repository under
