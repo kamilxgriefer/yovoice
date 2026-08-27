@@ -15,14 +15,48 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
-### Pending release: Voice Moment local review, custom availability and authoritative capacity
+### Released 2026-08-27: Voice Moment local review, custom availability and authoritative capacity
 
-**SOURCE ONLY — NOT DEPLOYED. This is not a Hosting-only release.** The new
-client can send any whole `availabilityHours` value from 24 through 720, while
-the deployed Function accepts only the old presets. The exact capacity check
-also depends on a new composite index, and the root/Storage authority changes
-must follow working callables rather than strand an older direct client
-halfway through publication.
+**DEPLOYED from `65c1c5f906e6d3dd569dc96b092dead9f8424f9e`.** The
+`voiceMoments(authorId ASC, isPublished ASC)` index reached READY and the real
+production query succeeded; all thirteen ordered Functions reached ACTIVE on
+their latest-ready revisions with 100% traffic; Firestore and Storage Rules
+were read back byte-for-byte; and controlled production smokes covered a
+25-hour publish/replay, like/unlike, text and voice comment lifecycle, cleanup,
+draft privacy, server-only root mutation, reservation-bound media and legacy
+read compatibility. Hosting workflow
+[33043536603](https://github.com/kamilxgriefer/yovoice/actions/runs/33043536603)
+rebuilt every gate from the pinned commit and deployed the verified artifact.
+Both live origins serve the same 6,213,146-byte `main.dart.js` with SHA-256
+`a1255cfcf05864a76761a38f3bf6ef4892684dd0d7db7ed5933e4036950468af`.
+
+Durable backend read-back evidence:
+
+- index `CICAgNi4-ZIK` is READY;
+- Firestore release
+  `projects/yovoice-ec54a/rulesets/4786aefc-8d18-487c-9f5a-465a9ed5ba8e`
+  matches `firestore.rules` at SHA-256
+  `10dc84f502adec1d0b8f2329d75654f0e67f6c706d46d5b6214a004237da600c`;
+- Storage release
+  `projects/yovoice-ec54a/rulesets/9619c567-d221-4094-835e-827a469e8741`
+  matches `storage.rules` at SHA-256
+  `e713b9d46ce0cf6af2c702297b3a9ecb421d7bb521b95e1bafea0c99b342312c`;
+- the thirteen serving revisions are `reservemomentdraft-00007-rej`,
+  `finalizemomentdraft-00007-big`, `deletemoment-00007-jec`,
+  `expirevoicemomentsschedule-00003-bad`, `setmomentlike-00007-sem`,
+  `createmomentcomment-00007-ban`,
+  `reservevoicecommentdraft-00007-wep`,
+  `finalizevoicecommentdraft-00007-keq`,
+  `deletemomentcomment-00007-nen`,
+  `expireabandonedmomentdraftsschedule-00007-xah`,
+  `expireabandonedvoicecommentdraftsschedule-00007-des`,
+  `processpendingcontentcleanupschedule-00007-xog` and
+  `oncontentcleanupoutboxcreated-00007-wax`.
+
+Physical mobile review/playback and store delivery were not performed in this
+rollout; that remaining validation does not weaken the now-live server
+authority. The ordered procedure below is retained as the recovery and future
+release runbook.
 
 The load-bearing order is:
 
@@ -133,12 +167,17 @@ Rules are live, restore the captured Firestore/Storage sources only as part of
 an explicit coordinated rollback; do not mix an old permissive root writer
 with a new client and call that a safe intermediate state.
 
-### Pending release: Velvet Prism product sound
+### Partial release 2026-08-27: Velvet Prism product sound
 
-**SOURCE ONLY — NOT DEPLOYED.** ADR-116 changes native app bundles, Hosting and
-the `onNotificationCreated` payload. Android notification-channel sounds are
-immutable, so this is not a same-id asset replacement and Functions must not
-move old clients onto v3 before they can create that channel.
+**HOSTING DEPLOYED; NATIVE/FCM CUTOVER HELD.** The verified Hosting artifact
+from `65c1c5f` contains exactly the eight cache-safe `audio/ui/v3` WAVs, and
+both live origins return byte-identical copies while the old root-level path
+resolves only to the SPA fallback. Native stores still have build `1.0.0+3`,
+whose build number cannot be reused; physical listening and a new build `+4`
+remain required. Production `onNotificationCreated` therefore deliberately
+continues to serve revision `onnotificationcreated-00013-dex` and Android
+channel v2. Do not deploy the v3 payload until the client/channel adoption gate
+below is satisfied.
 
 1. Run the full Flutter/Functions gates plus:
 

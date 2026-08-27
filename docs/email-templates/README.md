@@ -3,9 +3,17 @@
 Branded HTML bodies for Firebase Authentication emails and the project-wide
 action callback that replaces Firebase's generic white `__/auth/action` page.
 
-> **SOURCE READY — NOT DEPLOYED (2026-08-27):** the website handlers and these
-> templates are tested locally, but production still points at Firebase's
-> default handler. Deploy the website first; only then change Auth config.
+> **WEBSITE LIVE; FIREBASE AUTH CONFIG UNCHANGED / BLOCKED (2026-08-27):**
+> website commit `ce11602` is deployed and all five action routes pass live
+> mode/header probes. The narrow callback/template request was rejected with
+> HTTP 400 `EMAIL_TEMPLATE_UPDATE_NOT_ALLOWED`; immediate authenticated
+> read-back confirmed that every targeted field remained unchanged. Production
+> emails therefore still use the previous Firebase callback and templates.
+
+Do not retry with a broader mask or a parent `notification`/`sendEmail` write:
+that would expand the blast radius and can overwrite the write-only custom-SMTP
+secret. The route deployment is intentionally retained while the supported
+configuration path is resolved.
 
 The project uses custom SMTP through Resend, so Firebase permits custom HTML.
 The SMTP username must remain literally `resend` (see `docs/Decisions.md`).
@@ -24,8 +32,9 @@ templates.
    global callback change would break Firebase's protective MFA-revert email.
 3. Take a restricted pre-change snapshot of only the callback and template
    fields. Do not include SMTP credentials.
-4. Patch only the following leaf fields through the Identity Toolkit Admin
-   API:
+4. **BLOCKED in the 2026-08-27 release:** when Firebase permits the change,
+   update only the following leaf fields through a supported narrow admin
+   mechanism:
 
    ```text
    notification.sendEmail.callbackUri
@@ -51,10 +60,10 @@ templates.
    non-production diagnostic code; applying a real MFA-revert action requires
    separate explicit authorization.
 
-The Firebase Console remains an emergency manual recovery path, but the API
-procedure above is the reproducible release path. Confirm `yovoice.app`
-remains in Auth authorized domains and CUSTOM_SMTP remains enabled before and
-after the change.
+The Firebase Console remains an emergency manual recovery path. Any supported
+future procedure must preserve the same restricted preimage, leaf scope and
+read-back gates above. Confirm `yovoice.app` remains in Auth authorized domains
+and CUSTOM_SMTP remains enabled before and after the change.
 
 ## Template values
 

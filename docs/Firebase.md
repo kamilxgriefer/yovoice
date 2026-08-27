@@ -68,12 +68,12 @@ Top-level collections (from `firestore.rules`):
 | `clubs/{clubId}` | `members`, `invites`, `channels` → `messages` |
 | `rooms/{roomId}` | `participants`, `roomMembers`, `messages`, `handRequests` |
 | `voiceMoments/{momentId}` | `likes`, `comments` |
-| `momentCapacityLedgers/{userId}` (server-only revision/mutex; source only, not deployed) | — |
+| `momentCapacityLedgers/{userId}` (server-only revision/mutex; deployed 2026-08-27) | — |
 | `creatorPinnedPosts/{creatorId}` (server-owned exact pointer) | — |
 
 Notable fields:
 
-- **Voice Moment lifecycle (ADR-115, source only)** — root create, publication,
+- **Voice Moment lifecycle (ADR-115, deployed 2026-08-27)** — root create, publication,
   expiry and delete are Cloud Functions authority. Draft, expired and deleting
   roots are readable only by their author; published roots remain readable by
   signed-in clients. Like/comment documents and every root counter transition
@@ -189,11 +189,11 @@ document, never trust the request — are collected in
 `firestore.indexes.json` currently holds **26** composite indexes and **5**
 `fieldOverrides`. The 2026-08-19 live reading of 19 and 4 is historical, not
 proof of today's production state; re-read production before every release
-rather than subtracting one stale count from another. ADR-115 adds the
-source-only `voiceMoments(authorId ASC, isPublished ASC)` composite used by the
-exact active-cap query. It must be deployed to READY/Enabled and the real query
-must succeed before the new Functions can serve traffic. The emulator does not
-enforce this requirement.
+rather than subtracting one stale count from another. ADR-115's
+`voiceMoments(authorId ASC, isPublished ASC)` composite is deployed and reached
+READY on 2026-08-27; the exact production query succeeded before the new
+Functions received traffic. The emulator does not enforce this requirement,
+so the live query remains a mandatory release gate.
 
 The file is deliberately kept a **superset** of production, so an index deploy
 can never be the thing that removes one; being ahead is expected, and the thing
@@ -310,7 +310,7 @@ Uploads tied to content shown to other users require `email_verified`
 (profile photos are deliberately exempt — setting one during onboarding,
 before verification completes, is normal).
 
-ADR-115's source-only root-audio contract accepts creation only for a
+ADR-115's deployed root-audio contract accepts creation only for a
 server-reserved schema-v2 `uploading` draft with a lowercase 20-hex Moment id,
 exact path and `{authorId, momentId}` metadata, plus unpublished/null audio and
 media state (`isPublished: false`; `audioUrl`, `publishedAt` and media fields

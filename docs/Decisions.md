@@ -77,8 +77,8 @@ given a false-precision date.
 | [088](#adr-088-entering-a-room-performs-the-liveness-transition-through-one-ordered-coordinator-that-mirrors-the-deployed-rule) | Entering a room performs the liveness transition, through one ordered coordinator | Accepted in source | 2026-08-20 |
 | [089](#adr-089-moments-is-a-primary-destination-and-its-discovery-feed-ranks-client-side-because-firestore-can-neither-order-by-a-computed-sum-nor-randomise) | Moments is a primary destination; its discovery feed ranks client-side | Accepted in source | 2026-08-19 |
 | [090](#adr-090-session-cleanup-converges-on-authservicesignout-because-a-write-the-rules-authorize-by-session-cannot-live-after-the-session-ends) | Session cleanup converges on `AuthService.signOut()` | Accepted in source | 2026-08-19 |
-| [115](#adr-115-voice-moment-review-stays-local-availability-is-user-sized-the-root-lifecycle-is-server-authoritative) | Voice Moment review stays local; availability is user-sized; the root lifecycle is server-authoritative | Accepted in source | 2026-08-27 |
-| [116](#adr-116-product-sound-is-a-material-feedback-system-not-a-set-of-jingles) | Product sound is a material feedback system, not a set of jingles | Accepted in source | 2026-08-27 |
+| [115](#adr-115-voice-moment-review-stays-local-availability-is-user-sized-the-root-lifecycle-is-server-authoritative) | Voice Moment review stays local; availability is user-sized; the root lifecycle is server-authoritative | Deployed | 2026-08-27 |
+| [116](#adr-116-product-sound-is-a-material-feedback-system-not-a-set-of-jingles) | Product sound is a material feedback system, not a set of jingles | Hosting deployed; native/FCM held | 2026-08-27 |
 
 > **The index is incomplete and has been for a while**: rows for ADR-020
 > through ADR-052 were never added, and neither were ADR-062–065,
@@ -1199,10 +1199,10 @@ dispatcher at `yovoice.app/auth/action` (Next.js route handler) receives
 operation on load but calls `applyActionCode` only after a deliberate click;
 mail scanners must not remove a legitimate authenticator. All token-bearing
 routes send private/no-store, no-referrer and noindex headers. The project-wide
-action URL must be set to `https://yovoice.app/auth/action` through a narrowly
-field-masked Identity Toolkit Admin API PATCH after the website routes are
-deployed and probed. Firebase stays the sole source of truth for code validity;
-nothing is faked client-side.
+action URL remains intended to be `https://yovoice.app/auth/action`, but may
+change only through a supported narrow Firebase admin mechanism after the
+website routes are deployed and probed. Firebase stays the sole source of truth
+for code validity; nothing is faked client-side.
 
 **Reasoning.** One dispatcher (the console allows exactly one custom
 action URL) keeps every mode on a branded page, including the
@@ -1215,10 +1215,21 @@ reached from an email, i.e. a textbook open-redirect vector.
 
 The callback setting is global across reset, verification, email-change and
 MFA recovery. Therefore the safe rollout order is website first, production
-route/header probes second, leaf-only Auth config PATCH third, then immediate
-read-back and real mailbox journeys. A pre-PATCH snapshot and the identical
-leaf mask are the rollback boundary; patching the parent `notification` object
-would risk the write-only custom-SMTP secret and is forbidden.
+route/header probes second, a supported leaf-only Auth config change third,
+then immediate read-back and real mailbox journeys. A pre-change snapshot and
+the identical leaf scope are the rollback boundary; patching the parent
+`notification` object would risk the write-only custom-SMTP secret and is
+forbidden.
+
+**Release record, 2026-08-27.** Website commit `ce11602` is live and all five
+token routes passed production mode/header probes. The narrowly field-masked
+callback/template request was rejected with HTTP 400
+`EMAIL_TEMPLATE_UPDATE_NOT_ALLOWED`; immediate authenticated read-back proved
+that every targeted field remained unchanged. Production email therefore
+continues to use Firebase's previous callback and templates. Do not broaden the
+mask or overwrite a parent object to work around that backend refusal; the
+blocked configuration step remains tracked in
+[the email-template runbook](email-templates/README.md).
 
 **Consequences.**
 - The full reset lifecycle was verified against the Firebase Auth
@@ -1401,7 +1412,8 @@ re-picking — the same trade Instagram/WhatsApp/Discord make.
 - Regression tests: `test/image_crop_test.dart` (geometry + 1:1 output),
   `test/profile_save_e2e_test.dart` (whole pipeline through the editor).
 
-**Corrective amendment (2026-08-27, source only — not deployed).** The cover
+**Corrective amendment (2026-08-27, deployed to web from `65c1c5f`; native
+store build pending).** The cover
 matrix must scale X, Y **and Z** uniformly. `InteractiveViewer` clamps pinch
 gestures with `getMaxScaleOnAxis()`; leaving Z at 1 while a large photo's X/Y
 cover scale was below 1 made the first pinch multiply the cover scale twice and
@@ -3214,10 +3226,10 @@ fills the foreground behavior browsers deliberately leave to applications.
 earlier `yovoice_default`/default-sound names are historical, not an instruction
 for current code or deployment.
 
-**Amended in source by ADR-116 (2026-08-27).** The Velvet Prism migration uses
-`yovoice_activity_v3`; Android cannot mutate the sound of an already-created
-channel. Production remains on v2 until the staged mobile-client and Functions
-cutover in ADR-116 is completed.
+**Amended by ADR-116 (2026-08-27; Hosting deployed, native/FCM held).** The
+Velvet Prism migration uses `yovoice_activity_v3`; Android cannot mutate the
+sound of an already-created channel. Production push remains on v2 until the
+staged mobile-client and Functions cutover in ADR-116 is completed.
 
 ### Consequences
 
@@ -4895,10 +4907,11 @@ tap would create fatigue and unnecessary audio work.
    existing installed channel's sound cannot be changed; APNs references the
    packaged WAV by exact name.
 
-**Source amendment, 2026-08-27 (ADR-116).** The eight semantic events remain,
-but their oscillator/jingle language does not: one 48 kHz stereo material pack
-replaces it, native and in-app notification bytes are identical, Android moves
-to v3, and foreground FCM/Firestore presentation claims one audible owner.
+**Amendment, 2026-08-27 (ADR-116; Hosting deployed, native/FCM held).** The
+eight semantic events remain, but their oscillator/jingle language does not:
+one 48 kHz stereo material pack replaces it, native and in-app notification
+bytes are identical, Android moves to v3, and foreground FCM/Firestore
+presentation claims one audible owner.
 
 ### Consequences
 
@@ -6039,10 +6052,10 @@ pitches in the script and rerunning it. Subjective pleasantness is
 UNVERIFIED by the author (no ears); the operator's listen is the acceptance
 test. Preview locally: `afplay assets/audio/ui/v3/notification.wav`.
 
-**Superseded in source by ADR-116 (2026-08-27).** The operator rejected the
-v2 glass-bell/pentatonic language as retro and kitschy. The generator remains
-the authority, but the musical grammar above is historical rather than a rule
-for new work.
+**Superseded by ADR-116 (2026-08-27; Hosting deployed, native/FCM held).** The
+operator rejected the v2 glass-bell/pentatonic language as retro and kitschy.
+The generator remains the authority, but the musical grammar above is
+historical rather than a rule for new work.
 
 ## ADR-100: The pre-stories Discover avatar board is deleted, not kept dormant
 
@@ -6785,7 +6798,8 @@ the existing multi-width suite pins standard avatar cards at 148 px. Missing
 images remain intentional rather than showing a broken glyph. No schema,
 rules, indexes or Functions change is involved. The original blurred
 presentation shipped in the byte-verified Hosting release from `5377aa6` on
-2026-08-25; the 2026-08-27 correction is **SOURCE ONLY — NOT DEPLOYED**.
+2026-08-25; the 2026-08-27 correction deployed to web from `65c1c5f`, while a
+new signed native store build remains pending.
 
 ## ADR-112: Find Creators presents `official` as a verified Creator, not a separate account type
 
@@ -6879,7 +6893,8 @@ No Firebase data, rules, indexes, Functions, schema or dependency changes are
 involved. Deployed through the byte-verified Hosting release from `5377aa6` on
 2026-08-25.
 
-**Corrective amendment (2026-08-27, source only — not deployed).** An action
+**Corrective amendment (2026-08-27, deployed to web from `65c1c5f`; native
+store build pending).** An action
 that leaves Profile Preview must not navigate through the preview's `BuildContext`
 after calling `pop`. The modal returns a typed destination; the launcher keeps
 its stable `NavigatorState`, awaits full dismissal, then pushes Chat or the full
@@ -6986,7 +7001,8 @@ smoke, so OS-level delivery on two real devices remains unverified.
 
 ## ADR-115: Voice Moment review stays local; availability is user-sized; the root lifecycle is server-authoritative
 
-**Status**: Accepted in source — **SOURCE ONLY, NOT DEPLOYED**
+**Status**: **DEPLOYED 2026-08-27** from `65c1c5f`; physical mobile validation
+remains outstanding
 **Date**: 2026-08-27
 
 ### Context
@@ -7075,13 +7091,16 @@ or token revocation, regardless of later Storage-rule denial.
 
 Release order is index to READY and production query proof, then Functions and
 callable/concurrency smoke, then Firestore Rules, Storage Rules and their
-read-back/smoke, and only then the client. Existing ADR-103 remains the
-historical deployed contract; this ADR supersedes only its fixed-selector,
-bounded-cap and client-root-authority details in source.
+read-back/smoke, and only then the client. That order completed on 2026-08-27:
+all backend stages and controlled production smokes passed before Hosting run
+`33043536603` deployed the verified `65c1c5f` artifact. Existing ADR-103
+remains the historical pre-rollout contract; this ADR now supersedes its
+fixed-selector, bounded-cap and client-root-authority details in production.
 
 ## ADR-116: Product sound is a material feedback system, not a set of jingles
 
-**Status**: Accepted in source — **SOURCE ONLY, NOT DEPLOYED**
+**Status**: **PARTIALLY DEPLOYED 2026-08-27** — Hosting v3 live; native build
+and FCM payload cutover held
 **Date**: 2026-08-27
 
 ### Context
@@ -7142,7 +7161,10 @@ folder of unrelated WAVs.
 
 ### Consequences
 
-The v3 client/Functions cutover is staged: ship clients that create v3 first,
+The v3 client/Functions cutover is staged. Hosting from `65c1c5f` now serves
+the verified v3 in-app pack, but native stores remain on build `+3` and live
+`onNotificationCreated` remains revision `00013-dex` with channel v2. Ship
+clients that create v3 first,
 verify the new native assets on physical Android/iOS devices, then switch FCM
 payloads only when the minimum supported Android population has v3 (or a
 forced upgrade is in effect). Old Android clients do not know the new channel.

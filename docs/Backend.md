@@ -50,9 +50,11 @@ code. `LIVEKIT_URL` (`wss://yovoice-3f7j9fb7.livekit.cloud`) is a plain
 > from production. Deployment evidence and the retained recovery runbook are in
 > [DEPLOYMENT.md](DEPLOYMENT.md#friends-notification-single-writer-rollout--executed-2026-08-25).
 
-> **ADR-116 premium product sound is SOURCE ONLY — NOT DEPLOYED.** Production
-> Android remains on `yovoice_activity_v2` until the staged v3 client/channel
-> cutover in [DEPLOYMENT.md](DEPLOYMENT.md#pending-release-velvet-prism-product-sound) is complete.
+> **ADR-116 is partially deployed.** Hosting serves the v3 in-app pack, while
+> production `onNotificationCreated` deliberately remains on
+> `yovoice_activity_v2` until a new native build creates v3 and passes the
+> physical acceptance matrix in
+> [DEPLOYMENT.md](DEPLOYMENT.md#partial-release-2026-08-27-velvet-prism-product-sound).
 
 `onNotificationCreated` (`functions/notifications/push.js`) — a Firestore
 `onDocumentCreated` trigger on `users/{userId}/notifications/{id}`. The
@@ -185,7 +187,7 @@ to server-authoritative callables:
   `deleteMoment`, `setMomentLike`.
 - `selectMyAchievementTitle`.
 
-### Voice Moment publication contract (ADR-115, source only)
+### Voice Moment publication contract (ADR-115, deployed 2026-08-27)
 
 Local review never touches the backend: native playback reads the temporary
 file and web playback owns a temporary Blob URL. The first server operation is
@@ -214,9 +216,10 @@ retry that already owns a matching preflight. At `expiresAt` (not at the later
 sweeper pass), like, text-comment and voice-comment reserve/finalize callables
 reject new engagement. Root and reply audio are immutable to clients; bounded
 abandoned-upload workers and the cleanup outbox are the only deletion paths.
-This contract and its new
-`(authorId, isPublished)` index are **SOURCE ONLY — NOT DEPLOYED** until the
-ordered rollout in DEPLOYMENT.md completes.
+This contract and its new `(authorId, isPublished)` index are live. The index
+reached READY, all thirteen ordered Functions became ACTIVE, both Rules sources
+were read back byte-for-byte, production authority/media smokes passed, and the
+verified client was then released through Hosting run `33043536603`.
 
 All of these are attempted from the Flutter clients first via callable.
 When a callable is genuinely **absent** — no Firebase app, or

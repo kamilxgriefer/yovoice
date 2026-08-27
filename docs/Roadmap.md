@@ -37,7 +37,8 @@ someone decide what to pick up next.
 > for why that distinction is the whole point of this wave.
 
 - **Voice Moments can be reviewed before publish and use a user-sized
-  availability window** (2026-08-27, ADR-115, **SOURCE ONLY — NOT DEPLOYED**):
+  availability window** (2026-08-27, ADR-115, **DEPLOYED TO WEB; NATIVE STORE
+  BUILD PENDING**):
   finished audio can be played, paused and sought locally before any draft or
   Storage upload exists. Timed availability is any whole 24–720 hours or 1–30
   days, plus Until deleted. Publish retries keep the original caption and
@@ -54,7 +55,8 @@ someone decide what to pick up next.
   server cleanup owns both explicit deletion and abandoned uploads.
 
 - **Desktop Recent Chats keeps profile artwork current and recognizable**
-  (2026-08-27, ADR-111 corrective follow-up, **SOURCE ONLY — NOT DEPLOYED**):
+  (2026-08-27, ADR-111 corrective follow-up, **DEPLOYED TO WEB; NATIVE STORE
+  BUILD PENDING**):
   the cards now refresh an empty or stale conversation avatar from the other
   participant's server-owned `publicProfiles` projection while retaining the
   conversation copy as a loading/error fallback. The portrait is a sharp,
@@ -65,8 +67,8 @@ someone decide what to pick up next.
   shared mobile avatar presentation is unchanged.
 
 - **Avatar cropping keeps the selected photo covering its frame through the
-  first pinch** (2026-08-27, ADR-025 corrective follow-up, **SOURCE ONLY — NOT
-  DEPLOYED**): the editor now seeds a uniform XYZ cover transform instead of
+  first pinch** (2026-08-27, ADR-025 corrective follow-up, **DEPLOYED TO WEB;
+  NATIVE STORE BUILD PENDING**): the editor now seeds a uniform XYZ cover transform instead of
   leaving Z at 1, which had made Flutter apply the below-1 cover scale twice
   and shrink the image into the upper-left corner. Named 44 px Zoom −/+ and
   directional controls add single-pointer and keyboard equivalents to pinch
@@ -75,7 +77,8 @@ someone decide what to pick up next.
   geometry at normal and 200% text.
 
 - **Profile Preview's Message action survives stacked modal sheets**
-  (2026-08-27, ADR-113 corrective follow-up, **SOURCE ONLY — NOT DEPLOYED**):
+  (2026-08-27, ADR-113 corrective follow-up, **DEPLOYED TO WEB; NATIVE STORE
+  BUILD PENDING**):
   Preview returns a typed Chat/Profile destination to its launcher's navigator
   and navigation begins only after the sheet is gone. Callable refusal remains
   visibly actionable inside the preview instead of placing a snackbar under
@@ -413,7 +416,7 @@ someone decide what to pick up next.
   older than this release: their fallback sends will be denied with no queue
   to catch them.
 
-  **Follow-up completed in source 2026-08-27 — NOT YET DEPLOYED:** Chat now
+  **Follow-up deployed to web 2026-08-27; native store build pending:** Chat now
   renders the bounded outbox optimistically, reconciles it against the exact
   deterministic server message id, and keeps Pending / Waiting for connection /
   Failed visible with manual Retry and Remove. The composer clears after local
@@ -756,7 +759,7 @@ someone decide what to pick up next.
   a responsive lock-screen-style depth effect. It disappears after the first
   Flutter frame/Auth resolution rather than after a fabricated countdown. See
   [ADR-052](Decisions.md#adr-052-the-app-origin-owns-the-only-startup-surface-and-no-startup-animation-imposes-a-minimum-delay).
-  Follow-up in source (2026-08-27, not deployed) replaces transparent/missing
+  Follow-up deployed to web (2026-08-27; native build pending) replaces transparent/missing
   native launch art, matches one centred 170 logical-pixel mark through the first Flutter
   frame, smooths ring/wave boundaries, and crossfades Auth state without adding
   a minimum delay.
@@ -784,8 +787,8 @@ someone decide what to pick up next.
   web foreground banner uses the in-app player. See
   [ADR-076](Decisions.md#adr-076-product-sounds-are-original-bounded-and-reserved-for-meaningful-events).
 
-- Velvet Prism product-sound redesign (2026-08-27, **SOURCE ONLY — NOT
-  DEPLOYED**): replaced the rejected glass-bell/pentatonic jingles with eight
+- Velvet Prism product-sound redesign (2026-08-27, **HOSTING DEPLOYED; NATIVE
+  BUILD/FCM CUTOVER HELD**): replaced the rejected glass-bell/pentatonic jingles with eight
   95–360 ms material cues built from a filtered contact, muted inharmonic body
   and quiet air layer. One deterministic Python authority now writes the app,
   Android and iOS masters; notification bytes are identical, Android moves to
@@ -863,7 +866,7 @@ someone decide what to pick up next.
   full-width detail drawers, verified at 320/390/430 with rendered and
   live 390×844 inspections. See
   [ADR-046](Decisions.md#adr-046-user-search-lives-in-a-server-only-directory-behind-an-owner-callable-staff-center-becomes-seven-capability-gated-sections).
-  A 2026-08-27 source-only density follow-up reduces ordinary More destinations
+  A 2026-08-27 web-deployed density follow-up reduces ordinary More destinations
   to 78 px tiles and staff/settings to 58 px rows: ordinary 320×568 and owner
   390×844/430×932 sheets fit without scrolling, while enlarged text reflows to
   full-width scrollable rows.

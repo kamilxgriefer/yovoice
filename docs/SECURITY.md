@@ -198,7 +198,7 @@ exempt, since setting one during onboarding — before verification completes �
 is normal, expected behavior, not a gap. Full table in
 [Firebase.md](Firebase.md#storage).
 
-ADR-115's **source-only, not-deployed** Voice Moment contract also binds a root
+ADR-115's **deployed 2026-08-27** Voice Moment contract also binds a root
 audio object to an exact server-reserved schema-v2 uploading draft. Only the
 author may read that draft object; no client may delete root or reply audio.
 Signed-in users may read root audio only after the root is published, and
@@ -711,11 +711,12 @@ rule counting a different unit than the UI the user is looking at.
 **No known open cross-account privilege-escalation gap.** What remains behind
 `canAccessRoom()` are the two non-escalating ungated writes directly above,
 plus App Check enforcement, which stays off deliberately. Production's Voice
-Moment root rules still let an author/modified legacy client bypass the
+Moment root rules no longer let an author or modified legacy client bypass the
 server-authoritative availability, capacity/media validation and cleanup
-lifecycle for that author's own content. ADR-115 closes that integrity/abuse
-gap in source, but it is **NOT DEPLOYED** until its coordinated
-index/Functions/Firestore/Storage/client rollout completes. A full audit found
+lifecycle. ADR-115's coordinated index, thirteen Functions, Firestore Rules,
+Storage Rules and Hosting rollout completed on 2026-08-27; byte read-back and
+controlled production smokes proved that boundary before the client shipped.
+A full audit found
 13 earlier issues (3 critical, 3 high, 6 medium, 1 client/server contract bug);
 12 are fixed, verified directly against the then-current rules and Functions —
 not assumed from the audit's own "fixed" claims.

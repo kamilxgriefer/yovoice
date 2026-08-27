@@ -45,11 +45,12 @@ caller's actual participant role — never trusted from the client.
 Meaningful voice actions have original, short YO Voice cues: room creation,
 the local join/leave transition, remote participant join/leave, and confirmed
 microphone mute/unmute. The cues are throttled during bursts and can be turned
-off with the device-local **Sound effects** setting. In source, ADR-116 replaces
-the deployed melodic cues with the non-musical Velvet Prism material system;
+off with the device-local **Sound effects** setting. ADR-116 replaces the
+melodic cues with the non-musical Velvet Prism material system;
 room creation consumes its immediate join confirmation instead of producing a
-two-cue jingle. **SOURCE ONLY — NOT DEPLOYED.** User speech, Voice Moments and
-voice messages are media and are deliberately outside this effects system.
+two-cue jingle. The v3 pack is live on Hosting; native build `+4`, physical
+listening and the FCM payload cutover remain held. User speech, Voice Moments
+and voice messages are media and are deliberately outside this effects system.
 
 **Legacy note**: room documents may still contain `experience: 'podcast'`
 from before the room-type rename; the client maps that to `broadcast` for
@@ -175,8 +176,8 @@ same draft, request id and object generation. Browser/native seams and the
 complete reservation/rules contract are automated, but a real post-deploy
 iPhone Safari publish remains a release verification step.
 
-**Review-before-publish and custom availability** (2026-08-27, **SOURCE ONLY —
-NOT DEPLOYED**): a completed take can be played, paused and sought from its
+**Review-before-publish and custom availability** (2026-08-27, **DEPLOYED TO
+WEB; NATIVE STORE BUILD PENDING**): a completed take can be played, paused and sought from its
 local file/Blob without reserving a Firestore draft or uploading bytes. The
 author chooses any whole 24–720 hours, 1–30 days, or Until deleted; 24 hours
 remains the backward-compatible default. Voice replies receive preview but no

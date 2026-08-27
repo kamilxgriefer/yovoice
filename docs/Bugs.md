@@ -20,7 +20,7 @@ about things that are broken, risky, or need verification.
 
 ## Security
 
-- **FIXED IN SOURCE 2026-08-27 — the product sound was a retro synth-jingle
+- **FIXED AND PARTIALLY DEPLOYED 2026-08-27 — the product sound was a retro synth-jingle
   system and one foreground notification could play two different cues.** All
   eight effects used notes, pentatonic rise/fall pairs, glass-bell partials,
   detune or a two-note chime. Worse, native push still packaged the much louder
@@ -30,18 +30,19 @@ about things that are broken, risky, or need verification.
   Dart generator, derives all native copies from one deterministic 48 kHz
   master, serializes channel playback, dedupes foreground ownership and makes
   room creation one confirmation rather than create+join. Android uses a new
-  immutable `yovoice_activity_v3` channel consistently in Flutter, Functions
-  and the manifest fallback. **SOURCE ONLY — NOT DEPLOYED.** Mobile clients
+  immutable `yovoice_activity_v3` channel consistently in source. Hosting now
+  serves all eight v3 cues; native stores remain on build `+3`, and production
+  `onNotificationCreated` deliberately remains on channel v2. Mobile clients
   must create v3 before the Functions payload cutover; physical-device
   listening is still required. See ADR-116.
 
-- **FIXED IN SOURCE 2026-08-27 — Voice Moment root lifecycle and the active
-  cap could be bypassed by a modified or legacy client.** Production rules
-  still permit a direct root create with no `expiresAt` (which now means
-  permanent), broad author updates that can forge publish/media/status state,
-  and direct root deletion that skips the cleanup outbox. The deployed cap
-  also scans only the newest 100 authored documents and has no shared write on
-  which two finalizations of different drafts must conflict. ADR-115 makes
+- **FIXED AND DEPLOYED 2026-08-27 — Voice Moment root lifecycle and the active
+  cap could be bypassed by a modified or legacy client.** Before this rollout,
+  production rules permitted a direct root create with no `expiresAt`, broad
+  author updates that could forge publish/media/status state, and direct root
+  deletion that skipped the cleanup outbox. The old cap scanned only the
+  newest 100 authored documents and had no shared write on which two
+  finalizations of different drafts could conflict. ADR-115 makes
   root and engagement mutation server authority, queries the complete
   published set and serializes
   finalize/delete/expiry through a server-only per-author revision document.
@@ -55,9 +56,8 @@ about things that are broken, risky, or need verification.
   Emulator coverage includes direct
   lifecycle/counter/comment attacks, more than 100 newer drafts, concurrent
   publication into the tenth slot, retry-budget attacks and deadline edges.
-  **SOURCE ONLY — NOT DEPLOYED; production
-  retains the old integrity/abuse surface until the coordinated ADR-115
-  rollout.**
+  The ordered index, Functions, Firestore Rules, Storage Rules and Hosting
+  rollout completed with byte read-back and controlled production smokes.
 
 - **OPEN, pre-existing, found while auditing the DM rules — the conversation
   ROOT update rule pins only `participantIds`.** `firestore.rules:2132` lets
@@ -88,8 +88,8 @@ about things that are broken, risky, or need verification.
   different chat, and closing Chat cancels its shared Firestore listener. An
   enqueue refusal restores every draft word, while a local bubble can no longer
   hide a failed server-history stream. FIFO, restart/account-switch,
-  cold-callable, 320 px/200% and recovery paths are regression-tested. **SOURCE
-  ONLY — NOT DEPLOYED.** See ADR-105.
+  cold-callable, 320 px/200% and recovery paths are regression-tested.
+  **DEPLOYED TO WEB 2026-08-27; NATIVE STORE BUILD PENDING.** See ADR-105.
 
 - **FIXED IN SOURCE 2026-08-27 — the avatar cropper could shrink a picked
   photo into the upper-left corner on the first pinch.** The initial cover
@@ -103,8 +103,8 @@ about things that are broken, risky, or need verification.
   multi-pointer gesture and work from the keyboard; the crop preview exposes
   its current zoom to assistive technology. Gesture- and control-level
   regressions cover portrait and landscape inputs on phone layouts, including
-  200% text. **SOURCE ONLY — NOT DEPLOYED.** This is a corrective amendment to
-  ADR-025.
+  200% text. **DEPLOYED TO WEB 2026-08-27; NATIVE STORE BUILD PENDING.** This
+  is a corrective amendment to ADR-025.
 
 - **FIXED IN SOURCE 2026-08-27 — Message in Profile Preview appeared to do
   nothing when the preview was opened above another sheet.** The callback
@@ -120,7 +120,8 @@ about things that are broken, risky, or need verification.
   live-region message; while the request is pending, the button and a concise
   live status both say that the chat is opening. The real two-sheet route,
   delayed/double tap, Back behavior and 320 px/200% failure state are
-  regression-tested. **SOURCE ONLY — NOT DEPLOYED.**
+  regression-tested. **DEPLOYED TO WEB 2026-08-27; NATIVE STORE BUILD
+  PENDING.**
 
 - **OPEN, noted not fixed — `enforceAppCheck: false` on the Stage B callables,
   including `sendDirectMessage`.** App Check is supported but not enforced
@@ -770,9 +771,9 @@ permission flags).
   #0D0618 surface, centred 170 logical-pixel mark and Android light/dark API-31 themes;
   the ring envelope reaches zero on both sides of its wrap and Auth crossfades
   for 220 ms (or instantly under Reduce Motion). The mark is positioned in its
-  own centred layer, so text metrics and 200% scaling cannot move it. **SOURCE
-  ONLY — NOT DEPLOYED; physical iOS and Android 12+ handoff still needs device
-  verification.** See ADR-052.
+  own centred layer, so text metrics and 200% scaling cannot move it. **WEB
+  DEPLOYED 2026-08-27; native iOS and Android 12+ handoff remains pending and
+  still needs device verification.** See ADR-052.
 
 ## Notifications
 
@@ -1111,7 +1112,8 @@ permission flags).
   390×844/430×932 owner sheets fit without scrolling. At enlarged text the
   sheet deliberately reflows to full-width rows and keeps scrolling as the
   accessible safety valve. Every action and capability gate remains intact,
-  with named ≥44 px targets. **SOURCE ONLY — NOT DEPLOYED.**
+  with named ≥44 px targets. **DEPLOYED TO WEB 2026-08-27; NATIVE STORE BUILD
+  PENDING.**
 - **`adminAuditLogs` has no BROAD staff-facing view.** Entries are
   written deterministically and stay unreadable by every client, staff
   included. A moderator can now see one report's own history through the
@@ -1173,7 +1175,7 @@ permission flags).
   actions commit once, pop once, wait for `Route.completed`, and only then
   invoke the shell action. Regressions cover a same-frame double callback,
   launcher-position retap during entry and the closing-animation boundary.
-  **SOURCE ONLY — NOT DEPLOYED.**
+  **DEPLOYED TO WEB 2026-08-27; NATIVE STORE BUILD PENDING.**
 
 - **FIXED IN SOURCE 2026-08-27 — a Voice Moment could not be heard before it
   was published, and availability was limited to fixed presets.** Review now
@@ -1183,7 +1185,8 @@ permission flags).
   compatible. Playback is stopped and disposed before publish, record-again,
   Back or discard, and caption/lifetime lock after a first publish attempt so
   an idempotent retry cannot silently change its contract. Voice replies gain
-  preview without their own lifetime selector. **SOURCE ONLY — NOT DEPLOYED.**
+  preview without their own lifetime selector. **DEPLOYED TO WEB 2026-08-27;
+  NATIVE STORE BUILD PENDING.**
 
 - **FIXED IN SOURCE 2026-08-27 — desktop Recent Chats could show a ghost
   initial or turn a real portrait into an unrecognizable color stripe.** The
@@ -1198,7 +1201,8 @@ permission flags).
   photos get a deliberate branded accent/monogram. Mobile remains unchanged.
   Widget/integration coverage pins the live-photo repair, image treatment,
   fallback, semantics, keyboard path and 200% layout; a production-theme frame
-  was rendered and inspected. **SOURCE ONLY — NOT DEPLOYED.** See ADR-111.
+  was rendered and inspected. **DEPLOYED TO WEB 2026-08-27; NATIVE STORE BUILD
+  PENDING.** See ADR-111.
 
 - **FIXED AND DEPLOYED 2026-08-25 — modal sheets drew two detached
   drag handles and offered no obvious universal way to close them.** The app
@@ -2218,7 +2222,7 @@ permission flags).
   same value from one Firestore listener, and a screen opened after the
   first emission renders immediately instead of flashing a placeholder.
   Cleared on sign-out via `resetCurrentProfileCache()`.
-- **SOURCE READY 2026-08-27 — password reset / email verification links still
+- **PARTIALLY RELEASED 2026-08-27 — password reset / email verification links still
   dump production users on Firebase's generic white `__/auth/action` page.**
   Not a bug in
   ActionCodeSettings — its `url` only ever becomes the post-action
@@ -2233,9 +2237,12 @@ permission flags).
   branded error, hostile continueUrl stripped by allowlist). Token routes are
   private/no-store, no-referrer and noindex; the MFA recovery path validates
   the exact operation and requires a deliberate click so a mail scanner cannot
-  remove an authenticator. **The website diff and narrow Identity Toolkit PATCH
-  are NOT DEPLOYED; production callbackUri is still the Firebase handler.** The
-  required website-first rollout, leaf field mask, read-back and rollback are
+  remove an authenticator. Website commit `ce11602` is live and all five token
+  routes pass production probes. The narrow Identity Toolkit callback/template
+  request was rejected with HTTP 400 `EMAIL_TEMPLATE_UPDATE_NOT_ALLOWED`, and
+  immediate read-back confirmed no targeted field changed; production
+  `callbackUri` therefore remains the Firebase handler. Do not broaden the
+  update mask. The retained leaf scope, read-back and rollback gates are
   documented in docs/email-templates/README.md. See ADR-022.
 - **Fixed: login's "Forgot password?" required the login form's email and
   only answered with a SnackBar.** It now opens a dedicated responsive

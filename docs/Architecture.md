@@ -28,7 +28,8 @@ express this correctly" before reaching for a Cloud Function. See
 for the full reasoning and the four conditions that *do* justify a Cloud
 Function.
 
-**Source-only ADR-115 exception.** Voice Moment root lifecycle is one of the
+**ADR-115 server-authoritative exception — deployed 2026-08-27.** Voice Moment
+root lifecycle is one of the
 explicit server-authoritative exceptions to the client-direct model. Capacity
 spans multiple roots, publication binds a Storage generation, expiry races
 deletion, and deletion must queue cleanup; Security Rules cannot make those
@@ -36,9 +37,9 @@ effects atomic. Clients still query published/owned data directly, but reserve,
 finalize, root delete, abandoned-media cleanup and expiry belong to Cloud
 Functions/Admin workers. Client timers enforce the selected deadline on live
 UI, while engagement callables enforce it independently on the write boundary.
-This change is
-**SOURCE ONLY — NOT DEPLOYED**; see ADR-115 and the pending rollout in
-[DEPLOYMENT.md](DEPLOYMENT.md#pending-release-voice-moment-local-review-custom-availability-and-authoritative-capacity).
+This boundary is live in production; see ADR-115 and the retained rollout /
+recovery record in
+[DEPLOYMENT.md](DEPLOYMENT.md#released-2026-08-27-voice-moment-local-review-custom-availability-and-authoritative-capacity).
 
 ## Two repos, one Firebase project
 
