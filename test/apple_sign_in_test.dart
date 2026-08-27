@@ -129,8 +129,26 @@ void main() {
   });
 
   group('AuthService Apple Sign-In', () {
+    test('configured production builds enable Apple by default', () async {
+      var probeCalls = 0;
+      final service = AuthService(
+        firebaseAuth: MockFirebaseAuth(),
+        firestoreService: FirestoreService(firestore: FakeFirebaseFirestore()),
+        appleProviderProbe: () async {
+          probeCalls += 1;
+          return AppleSignInAvailability.available;
+        },
+      );
+
+      expect(
+        await service.getAppleSignInAvailability(),
+        AppleSignInAvailability.available,
+      );
+      expect(probeCalls, 1);
+    });
+
     test(
-      'build flag defaults to fail-closed and does not run the probe',
+      'an explicit false build flag fails closed and skips the probe',
       () async {
         var probeCalls = 0;
         final service = AuthService(
@@ -174,6 +192,31 @@ void main() {
         AppleSignInAvailability.available,
       );
       expect(probeCalls, 1);
+    });
+
+    test('does not cache a temporary provider probe failure', () async {
+      var probeCalls = 0;
+      final service = AuthService(
+        firebaseAuth: MockFirebaseAuth(),
+        firestoreService: FirestoreService(firestore: FakeFirebaseFirestore()),
+        appleSignInFeatureEnabled: true,
+        appleProviderProbe: () async {
+          probeCalls += 1;
+          return probeCalls == 1
+              ? AppleSignInAvailability.temporarilyUnavailable
+              : AppleSignInAvailability.available;
+        },
+      );
+
+      expect(
+        await service.getAppleSignInAvailability(),
+        AppleSignInAvailability.temporarilyUnavailable,
+      );
+      expect(
+        await service.getAppleSignInAvailability(),
+        AppleSignInAvailability.available,
+      );
+      expect(probeCalls, 2);
     });
 
     test('uses the native provider flow with the required scopes', () async {
@@ -276,7 +319,7 @@ void main() {
     });
 
     test(
-      'profile provisioning failure signs out but never deletes the social identity',
+      'profile provisioning failure preserves the authenticated social identity',
       () async {
         final user = _RecordingMockUser(
           uid: 'new-social-user',
@@ -294,11 +337,8 @@ void main() {
           appleProviderProbe: () async => AppleSignInAvailability.available,
         );
 
-        await expectLater(
-          service.signInWithApple(),
-          throwsA(isA<AuthServiceException>()),
-        );
-        expect(auth.signOutCalls, 1);
+        await service.signInWithApple();
+        expect(auth.signOutCalls, 0);
         expect(user.deleteCalls, 0);
       },
     );

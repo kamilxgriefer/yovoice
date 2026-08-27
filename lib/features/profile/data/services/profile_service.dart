@@ -11,6 +11,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_image_rules.dart';
+import 'package:yovoice/features/auth/data/auth_profile_identity.dart';
 
 export 'package:yovoice/features/profile/data/services/profile_image_rules.dart'
     show
@@ -207,8 +208,10 @@ class ProfileService {
   Future<void> ensureProfile() async {
     final user = _auth.currentUser;
     if (user == null) return;
+    final uid = user.uid;
+    final document = _firestore.collection('users').doc(uid);
 
-    final existing = await _document.get();
+    final existing = await document.get();
     final data = existing.data();
 
     // Keyed off displayName, not document existence: other services
@@ -219,9 +222,10 @@ class ProfileService {
         (data?['displayName'] as String?)?.trim().isNotEmpty == true;
     if (alreadySeeded) return;
 
-    final displayName = user.displayName?.trim().isNotEmpty == true
-        ? user.displayName!.trim()
-        : (user.email?.split('@').first ?? 'YO Voice user');
+    final displayName = resolveAuthProfileName(
+      displayName: user.displayName,
+      email: user.email,
+    );
 
     final seed = <String, Object?>{
       'uid': user.uid,
@@ -247,7 +251,15 @@ class ProfileService {
       seed.addAll(_initialCounters());
     }
 
-    await _document.set(seed, SetOptions(merge: true));
+    // AuthGate can still have this Future in flight while the device signs
+    // out or switches accounts. Never retarget captured identity data through
+    // the mutable currentUser getter. The captured document path also makes a
+    // token switch fail closed under owner-only Firestore rules.
+    if (_auth.currentUser?.uid != uid) {
+      throw StateError('Authenticated account changed during profile setup.');
+    }
+
+    await document.set(seed, SetOptions(merge: true));
   }
 
   Map<String, Object?> _initialCounters() {

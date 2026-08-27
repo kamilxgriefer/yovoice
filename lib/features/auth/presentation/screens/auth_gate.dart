@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/login_screen.dart';
 import 'package:yovoice/features/auth/presentation/widgets/startup_loading_screen.dart';
 import 'package:yovoice/features/auth/providers/auth_provider.dart';
@@ -79,22 +80,159 @@ class _AuthenticatedEntry extends StatefulWidget {
 }
 
 class _AuthenticatedEntryState extends State<_AuthenticatedEntry> {
+  late Future<void> _profileBootstrap;
+
   @override
   void initState() {
     super.initState();
 
-    // Fire-and-forget: neither service is allowed to hold the main shell.
-    unawaited(PushNotificationService.instance.initialize());
-
-    // Seeds the Firestore profile doc once per sign-in if it doesn't
-    // exist yet (ensureProfile() is a no-op for existing docs). Must run
-    // before PresenceService's heartbeat has any reason to touch the doc.
-    unawaited(ProfileService().ensureProfile());
+    _profileBootstrap = _bootstrapProfile();
   }
+
+  Future<void> _bootstrapProfile() async {
+    await ensureAuthenticatedProfileWithRetry(ProfileService().ensureProfile);
+
+    // Bind push only after the private profile exists. Profile provisioning is
+    // the authenticated-entry boundary; push remains best-effort and never
+    // delays the shell once that boundary has succeeded.
+    unawaited(PushNotificationService.instance.initialize());
+  }
+
+  void _retryProfileBootstrap() {
+    setState(() {
+      _profileBootstrap = _bootstrapProfile();
+    });
+  }
+
+  Future<void> _signOut() => AuthService().signOut();
 
   @override
   Widget build(BuildContext context) {
-    return const MainShell();
+    return FutureBuilder<void>(
+      future: _profileBootstrap,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const StartupLoadingScreen();
+        }
+
+        if (snapshot.hasError) {
+          return _ProfileBootstrapErrorScreen(
+            onRetry: _retryProfileBootstrap,
+            onSignOut: _signOut,
+          );
+        }
+
+        return const MainShell();
+      },
+    );
+  }
+}
+
+@visibleForTesting
+Future<void> ensureAuthenticatedProfileWithRetry(
+  Future<void> Function() ensureProfile, {
+  List<Duration> retryDelays = const [
+    Duration.zero,
+    Duration(milliseconds: 350),
+    Duration(milliseconds: 1200),
+  ],
+}) async {
+  Object? lastError;
+  StackTrace? lastStackTrace;
+
+  for (final delay in retryDelays) {
+    if (delay > Duration.zero) {
+      await Future<void>.delayed(delay);
+    }
+
+    try {
+      await ensureProfile();
+      return;
+    } catch (error, stackTrace) {
+      lastError = error;
+      lastStackTrace = stackTrace;
+    }
+  }
+
+  Error.throwWithStackTrace(lastError!, lastStackTrace!);
+}
+
+class _ProfileBootstrapErrorScreen extends StatelessWidget {
+  const _ProfileBootstrapErrorScreen({
+    required this.onRetry,
+    required this.onSignOut,
+  });
+
+  final VoidCallback onRetry;
+  final Future<void> Function() onSignOut;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D0618),
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.cloud_off_rounded,
+                    color: Color(0xFFC05CFF),
+                    size: 58,
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'Finishing your profile',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 25,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Your account is secure. Check your connection and try '
+                    'again to finish setting up YO Voice.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFFB8B1C8),
+                      fontSize: 15,
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 26),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 54,
+                    child: FilledButton(
+                      onPressed: onRetry,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFFA02BFF),
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text(
+                        'TRY AGAIN',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: () => unawaited(onSignOut()),
+                    child: const Text('Use another account'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

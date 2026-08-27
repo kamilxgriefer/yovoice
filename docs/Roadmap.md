@@ -16,6 +16,18 @@ someone decide what to pick up next.
 
 ## Done
 
+- **P0 Google/Apple sign-in and registration recovery** (2026-08-27, build 6
+  source ready; store/real-account smoke pending): Login and Registration now
+  expose the same federated actions. Valid provider sessions are no longer
+  rolled back by a concurrent or transient Firestore profile failure;
+  authenticated entry waits for a bounded, retried, rules-safe profile
+  bootstrap. Provider names are normalized to the canonical 2–120 UTF-16-unit
+  contract without splitting graphemes, an in-flight account switch cannot
+  retarget provider identity into another profile, iOS supplies `GIDClientID`,
+  Apple probe outages are retriable, and Apple is available on Android through
+  Firebase OAuth. Automated coverage is credential-independent; production web
+  and store-installed new/returning-account smokes remain release evidence.
+
 - **Friends can call each other directly from a DM** (2026-08-27, ADR-117,
   **DEPLOYED TO BACKEND + WEB; ANDROID BUILD 5 INTERNAL**): the formerly inert
   phone action now creates a private ringing session, presents incoming calls
@@ -475,11 +487,12 @@ someone decide what to pick up next.
   redirect. See ADR-078, ADR-079, ADR-080.
 
 - **Sign in with Apple provider and dedicated password-reset route**
-  (2026-08-18, source/configuration ready; Hosting deployment and real-account
-  smoke pending): the former Apple placeholder now uses Firebase's real Apple
+  (2026-08-18, configuration ready; superseded by the build 6 recovery entry
+  above): the former Apple placeholder now uses Firebase's real Apple
   provider with a dedicated Service ID/key, enabled App ID capability,
   regenerated release provisioning profile and runtime availability probe.
-  Production web builds enable the otherwise fail-closed compile-time gate.
+  Every configured shipped target enables Apple by default; an explicitly
+  disabled build still fails closed.
   “Forgot password?” now opens its own responsive email form instead of
   requiring a value in the login screen. See ADR-068.
 

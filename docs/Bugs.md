@@ -2400,17 +2400,33 @@ permission flags).
   the Google OAuth client. Flutter Web now uses Firebase's registered
   `yovoice-ec54a.firebaseapp.com` Auth handler. The Android Firebase app also
   has both debug and release/upload SHA-1 and SHA-256 fingerprints, and the
-  checked-in SDK config contains the release OAuth client. Production web will
-  remain broken until the auth-only Hosting build is deployed and smoke-tested.
+  checked-in SDK config contains the release OAuth client. The registered
+  Firebase handler is now live; each auth release still requires a real popup
+  smoke rather than relying on static configuration alone.
+- **Fixed in build 6 source — Google/Apple authentication could succeed and
+  then return the user to Login, while Registration did not expose either
+  provider.** Firebase publishes the authenticated user before the provider
+  future completes; if concurrent first-profile provisioning then failed, the
+  old rollback signed out a valid provider session. Provider names outside the
+  Firestore 2–120 UTF-16-unit contract could fail the same boundary. Federated
+  auth now preserves the Firebase Auth session, normalizes provider identity
+  without splitting graphemes, aborts an in-flight cross-account bootstrap,
+  and blocks `MainShell` behind bounded, idempotent profile-bootstrap retries
+  with an explicit retry/sign-out state. Registration reuses the Google/Apple
+  actions from Login, transient Apple availability failures can be retried,
+  and iOS declares `GIDClientID`. Automated tests/config checks are not a real
+  provider login: new-account and returning-account smokes on production web,
+  Play-installed build 6 and signed iOS/TestFlight remain release evidence.
 - **Fixed in source and provider configuration — Sign in with Apple was a
   placeholder.** Apple App ID `app.yovoice` now has the capability, Service ID
   `app.yovoice.web` owns the three verified web domains and Firebase callback,
   a dedicated Sign in with Apple key configures the enabled Firebase
   `apple.com` provider, and the regenerated `YO Voice App Store` profile
   carries the entitlement. The client has a real Firebase Apple flow, shared
-  profile provisioning and a runtime provider probe; production Hosting builds
-  now enable its compile-time gate. Deployment and a real-account web/iOS
-  smoke test remain the release evidence, not the existence of source code.
+  profile provisioning and a runtime provider probe. Every configured shipped
+  target enables Apple by default; an explicitly disabled build still fails
+  closed. Deployment and real-account web/Android/iOS smoke tests remain the
+  release evidence, not the existence of source code.
 - **Fixed in source — Profile visibility was a disabled placeholder.** The
   reusable Settings surface now persists `public`/`friends`/`private` through a
   server-authoritative callable. Rules, search and website publication enforce

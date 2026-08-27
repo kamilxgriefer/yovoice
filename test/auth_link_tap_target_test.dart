@@ -1,11 +1,16 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/firebase_core_platform_interface.dart';
+import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/login_screen.dart';
 import 'package:yovoice/features/auth/presentation/screens/register_screen.dart';
 import 'package:yovoice/features/auth/presentation/screens/forgot_password_screen.dart';
+import 'package:yovoice/services/firestore_service.dart';
 
 // Both LoginScreen and RegisterScreen previously shrank their
 // "Sign up" / "Log in" cross-links to a near-zero hit box (padding:
@@ -47,6 +52,29 @@ class _FakeFirebasePlatform extends FirebasePlatform {
     String? name,
     FirebaseOptions? options,
   }) async => _app;
+}
+
+class _SuccessfulSocialAuthService extends AuthService {
+  _SuccessfulSocialAuthService()
+    : _mockAuth = MockFirebaseAuth(),
+      super(
+        firebaseAuth: MockFirebaseAuth(),
+        firestoreService: FirestoreService(firestore: FakeFirebaseFirestore()),
+      );
+
+  final MockFirebaseAuth _mockAuth;
+
+  int googleCalls = 0;
+
+  @override
+  Future<AppleSignInAvailability> getAppleSignInAvailability() async =>
+      AppleSignInAvailability.available;
+
+  @override
+  Future<UserCredential> signInWithGoogle() {
+    googleCalls += 1;
+    return _mockAuth.signInAnonymously();
+  }
 }
 
 void main() {
@@ -108,25 +136,6 @@ void main() {
     },
   );
 
-  testWidgets(
-    'Apple Sign-In is honest and disabled until production is configured',
-    (tester) async {
-      await tester.binding.setSurfaceSize(const Size(402, 874));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-
-      await tester.pumpWidget(const MaterialApp(home: LoginScreen()));
-      await tester.pump(const Duration(milliseconds: 500));
-
-      final label = find.text('Continue with Apple — Coming soon');
-      expect(label, findsOneWidget);
-
-      final button = tester.widget<OutlinedButton>(
-        find.ancestor(of: label, matching: find.byType(OutlinedButton)),
-      );
-      expect(button.onPressed, isNull);
-    },
-  );
-
   for (final width in <double>[320, 390, 768, 1100, 1440]) {
     testWidgets(
       'social sign-in controls fit at ${width.toInt()}px with 200% text',
@@ -145,7 +154,7 @@ void main() {
         );
         await tester.pump(const Duration(milliseconds: 500));
 
-        final appleLabel = find.text('Continue with Apple — Coming soon');
+        final appleLabel = find.textContaining('Continue with Apple');
         await tester.ensureVisible(appleLabel);
         await tester.pump();
 
@@ -155,6 +164,58 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'Register exposes the same Google and Apple account creation actions',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(402, 1100));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(const MaterialApp(home: RegisterScreen()));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('Continue with Google'), findsOneWidget);
+      expect(find.textContaining('Continue with Apple'), findsOneWidget);
+      expect(find.byType(OutlinedButton), findsNWidgets(2));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('successful social registration closes the registration route', (
+    tester,
+  ) async {
+    final auth = _SuccessfulSocialAuthService();
+    await tester.binding.setSurfaceSize(const Size(402, 1100));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: ElevatedButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => RegisterScreen(authService: auth),
+                ),
+              ),
+              child: const Text('open social registration'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('open social registration'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('Continue with Google'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(auth.googleCalls, 1);
+    expect(find.byType(RegisterScreen), findsNothing);
+    expect(find.text('open social registration'), findsOneWidget);
+  });
 
   testWidgets(
     'tapping "Log in" at its default TextButton hit box pops RegisterScreen',

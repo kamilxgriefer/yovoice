@@ -1,14 +1,19 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/features/auth/presentation/screens/totp_challenge_screen.dart';
 import 'package:yovoice/features/auth/presentation/screens/verify_email_screen.dart';
+import 'package:yovoice/features/auth/presentation/widgets/auth_social_button.dart';
 import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
 
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key});
+  const RegisterScreen({super.key, @visibleForTesting this.authService});
+
+  final AuthService? authService;
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -23,11 +28,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final TextEditingController _confirmPasswordController =
       TextEditingController();
 
-  final AuthService _authService = AuthService();
+  late final AuthService _authService = widget.authService ?? AuthService();
 
   bool _isLoading = false;
+  bool _isGoogleLoading = false;
+  bool _isAppleLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirmation = true;
+  AppleSignInAvailability? _appleSignInAvailability;
+
+  bool get _isAuthenticationLoading =>
+      _isLoading || _isGoogleLoading || _isAppleLoading;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAppleSignInAvailability();
+  }
 
   @override
   void dispose() {
@@ -39,6 +56,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _register() async {
+    if (_isAuthenticationLoading) {
+      return;
+    }
+
     FocusScope.of(context).unfocus();
 
     final formState = _formKey.currentState;
@@ -76,6 +97,102 @@ class _RegisterScreenState extends State<RegisterScreen> {
         });
       }
     }
+  }
+
+  Future<void> _signInWithGoogle() async {
+    if (_isAuthenticationLoading) {
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _isGoogleLoading = true;
+    });
+
+    try {
+      await _authService.signInWithGoogle();
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } catch (error) {
+      if (mounted && await _handleAuthenticationError(error)) {
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isGoogleLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadAppleSignInAvailability() async {
+    final availability = await _authService.getAppleSignInAvailability();
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _appleSignInAvailability = availability;
+    });
+  }
+
+  Future<void> _signInWithApple() async {
+    if (_isAuthenticationLoading ||
+        _appleSignInAvailability == null ||
+        _appleSignInAvailability == AppleSignInAvailability.notConfigured) {
+      return;
+    }
+
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _isAppleLoading = true;
+    });
+
+    try {
+      await _authService.signInWithApple();
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } catch (error) {
+      if (mounted && await _handleAuthenticationError(error)) {
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAppleLoading = false;
+        });
+      }
+    }
+  }
+
+  /// Returns true only when an MFA challenge completed the social sign-in.
+  Future<bool> _handleAuthenticationError(Object error) async {
+    if (error is FirebaseAuthMultiFactorException) {
+      final challenge = _authService.createTotpSignInChallenge(error);
+      if (challenge.factors.isEmpty) {
+        _showMessage(
+          'This account requires a second factor that this app cannot verify. Contact support.',
+        );
+        return false;
+      }
+
+      return await Navigator.of(context).push<bool>(
+            MaterialPageRoute<bool>(
+              builder: (_) => TotpChallengeScreen(challenge: challenge),
+            ),
+          ) ??
+          false;
+    }
+
+    _showMessage(_authService.getErrorMessage(error));
+    return false;
   }
 
   void _showMessage(String message) {
@@ -227,7 +344,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           Align(
                             alignment: Alignment.centerLeft,
                             child: IconButton(
-                              onPressed: _isLoading ? null : _goBack,
+                              onPressed: _isAuthenticationLoading
+                                  ? null
+                                  : _goBack,
                               icon: SvgPicture.asset(
                                 'assets/icons/icon_back.svg',
                                 width: 34,
@@ -270,7 +389,74 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               letterSpacing: 0.3,
                             ),
                           ),
-                          const SizedBox(height: 34),
+                          const SizedBox(height: 28),
+                          AuthSocialButton(
+                            label: copy.continueWithGoogle,
+                            svgIconPath: 'assets/icons/icon_google_g.svg',
+                            isLoading: _isGoogleLoading,
+                            onPressed: _isAuthenticationLoading
+                                ? null
+                                : _signInWithGoogle,
+                          ),
+                          const SizedBox(height: 14),
+                          AuthSocialButton(
+                            label:
+                                _appleSignInAvailability ==
+                                    AppleSignInAvailability.notConfigured
+                                ? copy.text(
+                                    'Continue with Apple — Coming soon',
+                                    'Kontynuuj z Apple — Wkrótce',
+                                  )
+                                : _appleSignInAvailability ==
+                                      AppleSignInAvailability
+                                          .temporarilyUnavailable
+                                ? copy.text(
+                                    'Continue with Apple — Try again',
+                                    'Kontynuuj z Apple — Spróbuj ponownie',
+                                  )
+                                : copy.continueWithApple,
+                            materialIcon: Icons.apple,
+                            iconSize: 34,
+                            isLoading:
+                                _isAppleLoading ||
+                                _appleSignInAvailability == null,
+                            onPressed:
+                                _isAuthenticationLoading ||
+                                    _appleSignInAvailability == null ||
+                                    _appleSignInAvailability ==
+                                        AppleSignInAvailability.notConfigured
+                                ? null
+                                : _signInWithApple,
+                          ),
+                          const SizedBox(height: 24),
+                          const Row(
+                            children: [
+                              Expanded(
+                                child: Divider(
+                                  color: Color(0xFF4C376F),
+                                  thickness: 1,
+                                ),
+                              ),
+                              Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 20),
+                                child: Text(
+                                  'OR',
+                                  style: TextStyle(
+                                    color: Color(0xFF9189A6),
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                child: Divider(
+                                  color: Color(0xFF4C376F),
+                                  thickness: 1,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 24),
                           _RegisterField(
                             controller: _usernameController,
                             hintText: copy.username,
@@ -355,7 +541,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           _RegisterPrimaryButton(
                             label: copy.createAccount,
                             isLoading: _isLoading,
-                            onPressed: _isLoading ? null : _register,
+                            onPressed: _isAuthenticationLoading
+                                ? null
+                                : _register,
                           ),
                           const SizedBox(height: 24),
                           Row(
@@ -371,7 +559,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 ),
                               ),
                               TextButton(
-                                onPressed: _isLoading ? null : _goBack,
+                                onPressed: _isAuthenticationLoading
+                                    ? null
+                                    : _goBack,
                                 style: ButtonStyle(
                                   // Was shrunk to the bare text glyphs
                                   // (EdgeInsets.zero + Size.zero +

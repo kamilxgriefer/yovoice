@@ -15,6 +15,24 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Release candidate 2026-08-27: Google/Apple authentication recovery and build 6
+
+Build 6 source restores federated login and registration parity, keeps a valid
+Firebase identity when Firestore profile creation is temporarily unavailable,
+and gates authenticated entry on a bounded, retried canonical profile
+bootstrap. Provider names are normalized to Firestore Rules' UTF-16 length
+contract without splitting graphemes; an in-flight account switch cannot
+retarget provider data. Apple provider outages are retriable, Android uses the
+Firebase-hosted Apple OAuth flow, and iOS carries an explicit `GIDClientID`.
+
+Release gates before this heading may be changed to **RELEASED**: full Flutter
+tests and analysis; signed AAB/IPA metadata, signatures and entitlements;
+verified Hosting workflow from the pinned commit; Google Play internal and
+TestFlight upload results; then real new/returning-account provider smokes on
+available controlled devices. No Functions, Firestore/Storage Rules, indexes,
+or production data change belongs to this release. Do not describe an
+automated provider-configuration probe as a real-account sign-in.
+
 ### Released 2026-08-27: direct friend calls and Android build 5
 
 **DEPLOYED from `cbe3e463f9209ea9e1fcc97b5fe27dad2cd8a5ef`.** The
@@ -978,11 +996,13 @@ client and verified with a real popup flow.
   still required for each release candidate.
 - Apple: the `app.yovoice.web` Service ID, dedicated Sign in with Apple key,
   enabled Firebase `apple.com` provider, `app.yovoice` capability and matching
-  `YO Voice App Store` provisioning profile are configured. Production Hosting
-  builds pass `YOVOICE_APPLE_SIGN_IN_ENABLED=true`; local/default builds remain
-  fail-closed. After each auth release, smoke-test a real Apple account on web
-  and a signed iOS build. The APNs key documented below is notification-only
-  and is not valid for Apple Auth.
+  `YO Voice App Store` provisioning profile are configured. Configured shipped
+  targets enable Apple by default; an unconfigured build must pass
+  `YOVOICE_APPLE_SIGN_IN_ENABLED=false` and fails closed. A confirmed missing
+  provider disables the control, while transient probe failures remain
+  retriable. After each auth release, smoke-test a real Apple account on web,
+  Play-installed Android and a signed iOS build. The APNs key documented below
+  is notification-only and is not valid for Apple Auth.
 
 ### TOTP two-factor release gate
 
@@ -1907,7 +1927,7 @@ in `UIBackgroundModes`.
 
 App Store releases use manual signing for the Release configuration with
 the `YO Voice App Store` provisioning profile (UUID
-`1a59a340-37ab-43a5-bdb2-bdc29d60600d`, expires 2027-08-15), Apple
+`6a817efe-d05c-443b-a10b-3f91ca381322`, expires 2027-08-15), Apple
 Distribution, and `ios/ExportOptions.plist`. Build an uploadable IPA with:
 
 ```sh
@@ -1940,9 +1960,9 @@ smoke workflow, and CodeQL workflow before upload.
   review are complete. AAB SHA-256:
   `3231cdd6533339fb1e43ece4d835aaf362a4f93b9c9feed35f3f188d5efead87`.
 - **Scope:** this is a test-channel release, not a production-store release.
-  Premium purchases are inactive; Apple Sign-In is intentionally disabled in
-  the Android beta; and the known non-host room-message permission error remains
-  disclosed to testers.
+  Premium purchases are inactive; Apple Sign-In was intentionally disabled in
+  this historical build 3 Android beta (superseded by build 6); and the known
+  non-host room-message permission error remains disclosed to testers.
 - **Acceptance gate:** perform the physical iPhone-to-Android notification,
   live-room, deep-link, Google Sign-In, and audio smoke tests after both builds
   are installed from their store test channels. Do not describe the release as

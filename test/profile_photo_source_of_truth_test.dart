@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -12,6 +13,20 @@ const String _uid = 'user-1';
 const String _avatarUrl =
     'https://firebasestorage.googleapis.com/v0/b/yovoice.appspot.com/o/'
     'users%2Fuser-1%2Fprofile%2Favatar_1754640000000.jpg?alt=media&token=abc';
+
+class _SwitchingFirebaseAuth extends MockFirebaseAuth {
+  _SwitchingFirebaseAuth({required this.first, required this.second});
+
+  final User first;
+  final User second;
+  var _reads = 0;
+
+  @override
+  User? get currentUser {
+    _reads += 1;
+    return _reads == 1 ? first : second;
+  }
+}
 
 /// An email/password account: FirebaseAuth's own photoURL is null, which is
 /// the case that made the clobber destructive.
@@ -103,6 +118,34 @@ void main() {
     );
 
     test(
+      'ensureProfile normalizes a provider name before completing a partial document',
+      () async {
+        final db = FakeFirebaseFirestore();
+        final auth = MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(
+            uid: _uid,
+            email: 'alice@example.com',
+            displayName: 'A',
+          ),
+        );
+        await db.collection('users').doc(_uid).set({
+          'isOnline': true,
+          'lastSeen': Timestamp.fromMillisecondsSinceEpoch(1),
+        });
+
+        await ProfileService(firestore: db, auth: auth).ensureProfile();
+
+        final data = await _readUser(db);
+        expect(data['displayName'], 'alice');
+        expect(
+          (data['displayName'] as String).length,
+          inInclusiveRange(2, 120),
+        );
+      },
+    );
+
+    test(
       'ensureProfile never overwrites an avatar the profile already owns',
       () async {
         final db = FakeFirebaseFirestore();
@@ -149,6 +192,38 @@ void main() {
         expect(data['friendCount'], 7);
         expect(data['followerCount'], 12);
         expect(data['displayName'], 'Ada Lovelace');
+      },
+    );
+
+    test(
+      'ensureProfile aborts without cross-account writes when auth changes',
+      () async {
+        final db = FakeFirebaseFirestore();
+        final first = MockUser(
+          uid: 'account-a',
+          email: 'a@example.com',
+          displayName: 'Account A',
+        );
+        final second = MockUser(
+          uid: 'account-b',
+          email: 'b@example.com',
+          displayName: 'Account B',
+        );
+        final auth = _SwitchingFirebaseAuth(first: first, second: second);
+
+        await expectLater(
+          ProfileService(firestore: db, auth: auth).ensureProfile(),
+          throwsStateError,
+        );
+
+        expect(
+          (await db.collection('users').doc('account-a').get()).exists,
+          isFalse,
+        );
+        expect(
+          (await db.collection('users').doc('account-b').get()).exists,
+          isFalse,
+        );
       },
     );
 

@@ -87,6 +87,13 @@ void main() {
         '${clientId.replaceFirst('.apps.googleusercontent.com', '')}',
       );
       expect(infoPlist, contains('<string>$reversedClientId</string>'));
+      expect(
+        _plistString(infoPlist, 'GIDClientID'),
+        clientId,
+        reason:
+            'google_sign_in_ios requires GIDClientID in Runner/Info.plist '
+            'when initialize() does not receive a clientId in Dart.',
+      );
     });
   });
 }

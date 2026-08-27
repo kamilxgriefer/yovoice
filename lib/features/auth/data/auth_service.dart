@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 
 import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/features/auth/data/action_code_settings.dart';
+import 'package:yovoice/features/auth/data/auth_profile_identity.dart';
 import 'package:yovoice/features/auth/data/totp_mfa_service.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
@@ -48,7 +49,7 @@ class AuthService {
            appleSignInFeatureEnabled ??
            const bool.fromEnvironment(
              'YOVOICE_APPLE_SIGN_IN_ENABLED',
-             defaultValue: false,
+             defaultValue: true,
            ),
        _appleUseWebPopup = appleUseWebPopup,
        _appleProviderProbe = appleProviderProbe;
@@ -187,13 +188,32 @@ class AuthService {
   /// OAuth flow. The build flag is intentionally necessary as well: enabling
   /// the provider in the Firebase console before the Apple Service ID,
   /// signing capability and release profile are ready must not expose a
-  /// half-configured button to users.
-  Future<AppleSignInAvailability> getAppleSignInAvailability() {
+  /// half-configured button to users. Every shipped target is configured and
+  /// therefore defaults on; an unconfigured build must explicitly set the
+  /// compile-time flag to false.
+  Future<AppleSignInAvailability> getAppleSignInAvailability() async {
     if (!_appleSignInFeatureEnabled) {
-      return Future.value(AppleSignInAvailability.notConfigured);
+      return AppleSignInAvailability.notConfigured;
     }
 
-    return _appleSignInAvailability ??= _probeAppleProvider();
+    final probe = _appleSignInAvailability ??= _probeAppleProvider();
+
+    try {
+      final availability = await probe;
+      if (availability == AppleSignInAvailability.temporarilyUnavailable &&
+          identical(_appleSignInAvailability, probe)) {
+        // A timeout/offline result is not configuration state. Do not make a
+        // transient network failure disable Apple until the screen is rebuilt;
+        // the next tap can probe again and continue immediately.
+        _appleSignInAvailability = null;
+      }
+      return availability;
+    } catch (_) {
+      if (identical(_appleSignInAvailability, probe)) {
+        _appleSignInAvailability = null;
+      }
+      rethrow;
+    }
   }
 
   Future<UserCredential> signInWithApple() async {
@@ -484,26 +504,16 @@ class AuthService {
 
     try {
       await _firestoreService.createUserProfile(appUser);
-    } catch (_) {
-      // Keep the Firebase Auth identity intact. A transient Firestore failure
-      // must never delete a successfully authenticated Google/Apple account:
-      // the next sign-in and AuthGate.ensureProfile() can safely retry the
-      // idempotent profile bootstrap. Deleting here caused the visible
-      // one-second login followed by an immediate return to Login.
-      try {
-        // This is still a real authenticated session: AuthGate may already
-        // have started push binding before profile bootstrap failed. Route the
-        // rollback through the same token privacy boundary as an explicit
-        // sign-out so a half-created social login cannot leave this device
-        // registered to the abandoned account.
-        await _unregisterDeviceTokenBestEffort();
-        await _firebaseAuth.signOut();
-      } catch (_) {
-        // Preserve the original provisioning error below.
-      }
-
-      throw AuthServiceException(
-        '$providerName account was authenticated, but the user profile could not be created.',
+    } catch (error) {
+      // Firebase publishes the authenticated user before this method returns.
+      // A transient Firestore failure must therefore never roll a valid
+      // Google/Apple session back to signed-out: that produced the visible
+      // "login for one second, then back to Login" failure for both providers.
+      // AuthGate owns the idempotent, retried profile bootstrap and does not
+      // reveal MainShell until it succeeds.
+      debugPrint(
+        'AuthService: $providerName authentication succeeded; deferred '
+        'profile bootstrap after ${error.runtimeType}.',
       );
     }
   }
@@ -551,23 +561,10 @@ class AuthService {
   }
 
   String _resolveUsername(User user) {
-    final displayName = user.displayName?.trim();
-
-    if (displayName != null && displayName.isNotEmpty) {
-      return displayName;
-    }
-
-    final email = user.email?.trim();
-
-    if (email != null && email.contains('@')) {
-      final emailUsername = email.split('@').first.trim();
-
-      if (emailUsername.isNotEmpty) {
-        return emailUsername;
-      }
-    }
-
-    return 'YO Voice User';
+    return resolveAuthProfileName(
+      displayName: user.displayName,
+      email: user.email,
+    );
   }
 
   String getErrorMessage(Object error) {

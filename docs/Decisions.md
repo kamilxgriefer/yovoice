@@ -4569,14 +4569,29 @@ another identity at store-distribution time.
 
 Apple Auth is additive but must never be represented as available from source
 code alone. The client uses Firebase's `AppleAuthProvider` and the same
-server-backed social-profile bootstrap as Google, guarded by both a disabled-by-
-default build flag and a runtime Firebase provider probe. Missing, malformed or
-unreachable provider configuration disables the control. Production enables
-the flag only after the dedicated `app.yovoice.web` Service ID, Sign in with
-Apple key, Firebase `apple.com` provider, App ID capability and regenerated
-release provisioning profile have all been verified. Real-account web/iOS
-smoke tests remain release evidence. Notification/APNs keys are not
-interchangeable with Sign in with Apple keys.
+server-backed social-profile bootstrap as Google, guarded by a build flag and a
+runtime Firebase provider probe. Notification/APNs keys are not interchangeable
+with Sign in with Apple keys.
+
+**Amended 2026-08-27.** The production Apple provider stack is now configured
+for every shipped target, so Apple is enabled by default and can still be
+disabled explicitly with `YOVOICE_APPLE_SIGN_IN_ENABLED=false` for an
+unconfigured build. The runtime provider probe remains the configuration gate:
+a confirmed missing provider disables the action, while a transient network
+failure is shown as retriable and is never cached as configuration state.
+Android uses Firebase's provider-hosted OAuth flow and is no longer
+intentionally unavailable. Signed iOS release artifacts must still prove the
+`com.apple.developer.applesignin` entitlement and matching distribution
+profile before upload.
+
+Firebase Auth success is the identity boundary: a concurrent Firestore profile
+bootstrap failure must not revoke or delete that identity. `AuthGate` withholds
+`MainShell`, retries the idempotent canonical profile bootstrap, and exposes
+retry or explicit sign-out if it still fails. Profile identity is bounded by
+the same UTF-16 length contract as Firestore Rules, and each bootstrap captures
+one uid/document reference so an in-flight account switch cannot retarget
+provider PII into another account's document. Real-account web/Android/iOS
+smoke tests remain release evidence.
 
 ## ADR-069: Profile visibility is private source authority, not a cosmetic projection flag
 

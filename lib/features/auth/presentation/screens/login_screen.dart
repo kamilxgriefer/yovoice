@@ -6,6 +6,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/auth/presentation/screens/forgot_password_screen.dart';
 import 'package:yovoice/features/auth/presentation/screens/totp_challenge_screen.dart';
+import 'package:yovoice/features/auth/presentation/widgets/auth_social_button.dart';
 import 'package:yovoice/shared/widgets/backgrounds/animated_waves_background.dart';
 import 'package:yovoice/features/auth/presentation/screens/register_screen.dart';
 
@@ -121,7 +122,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _signInWithApple() async {
     if (_isAuthenticationLoading ||
-        _appleSignInAvailability != AppleSignInAvailability.available) {
+        _appleSignInAvailability == null ||
+        _appleSignInAvailability == AppleSignInAvailability.notConfigured) {
       return;
     }
 
@@ -365,7 +367,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ],
                         ),
                         const SizedBox(height: 24),
-                        _LoginSocialButton(
+                        AuthSocialButton(
                           label: copy.continueWithGoogle,
                           svgIconPath: 'assets/icons/icon_google_g.svg',
                           isLoading: _isGoogleLoading,
@@ -374,7 +376,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               : _signInWithGoogle,
                         ),
                         const SizedBox(height: 14),
-                        _LoginSocialButton(
+                        AuthSocialButton(
                           label:
                               _appleSignInAvailability ==
                                   AppleSignInAvailability.notConfigured
@@ -382,7 +384,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               : _appleSignInAvailability ==
                                     AppleSignInAvailability
                                         .temporarilyUnavailable
-                              ? 'Continue with Apple — Unavailable'
+                              ? 'Continue with Apple — Try again'
                               : copy.continueWithApple,
                           materialIcon: Icons.apple,
                           iconSize: 34,
@@ -391,8 +393,9 @@ class _LoginScreenState extends State<LoginScreen> {
                               _appleSignInAvailability == null,
                           onPressed:
                               _isAuthenticationLoading ||
-                                  _appleSignInAvailability !=
-                                      AppleSignInAvailability.available
+                                  _appleSignInAvailability == null ||
+                                  _appleSignInAvailability ==
+                                      AppleSignInAvailability.notConfigured
                               ? null
                               : _signInWithApple,
                         ),
@@ -679,100 +682,6 @@ class _LoginAuthField extends StatelessWidget {
           borderRadius: BorderRadius.circular(18),
           borderSide: const BorderSide(color: Color(0xFFA02BFF), width: 1.8),
         ),
-      ),
-    );
-  }
-}
-
-class _LoginSocialButton extends StatelessWidget {
-  const _LoginSocialButton({
-    required this.label,
-    required this.onPressed,
-    this.svgIconPath,
-    this.materialIcon,
-    this.iconSize = 30,
-    this.isLoading = false,
-  }) : assert(
-         svgIconPath != null || materialIcon != null,
-         'An SVG icon path or Material icon must be provided.',
-       );
-
-  final String label;
-  final VoidCallback? onPressed;
-  final String? svgIconPath;
-  final IconData? materialIcon;
-  final double iconSize;
-  final bool isLoading;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 58,
-      child: OutlinedButton(
-        onPressed: onPressed,
-        style: OutlinedButton.styleFrom(
-          backgroundColor: const Color(0x660D0618),
-          disabledBackgroundColor: const Color(0x440D0618),
-          foregroundColor: Colors.white,
-          disabledForegroundColor: const Color(0xFF9189A6),
-          side: BorderSide(
-            color: onPressed == null
-                ? const Color(0xFF46305F)
-                : const Color(0xFF6E1FBD),
-            width: 1.3,
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-        ),
-        child: isLoading
-            ? const SizedBox(
-                width: 25,
-                height: 25,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.5,
-                  color: Colors.white,
-                ),
-              )
-            : Row(
-                children: [
-                  SizedBox(
-                    width: 44,
-                    height: 44,
-                    child: Center(
-                      child: svgIconPath != null
-                          ? SvgPicture.asset(
-                              svgIconPath!,
-                              width: iconSize,
-                              height: iconSize,
-                              fit: BoxFit.contain,
-                            )
-                          : Icon(
-                              materialIcon,
-                              size: iconSize,
-                              color: onPressed == null
-                                  ? const Color(0xFF9189A6)
-                                  : Colors.white,
-                            ),
-                    ),
-                  ),
-                  Expanded(
-                    child: Text(
-                      label,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: onPressed == null
-                            ? const Color(0xFF9189A6)
-                            : Colors.white,
-                        fontSize: 16.5,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 44),
-                ],
-              ),
       ),
     );
   }
