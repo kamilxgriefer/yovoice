@@ -16,6 +16,7 @@ class AccessibleTapRegion extends StatefulWidget {
     this.minimumSize = const Size(44, 44),
     this.selected,
     this.onHover,
+    this.focusContrastColor,
     super.key,
   });
 
@@ -28,6 +29,13 @@ class AccessibleTapRegion extends StatefulWidget {
   final Size minimumSize;
   final bool? selected;
   final ValueChanged<bool>? onHover;
+
+  /// Optional outer focus color for artwork whose luminance is unknown.
+  ///
+  /// The default violet ring is sufficient on ordinary app surfaces. Image
+  /// cards can supply a dark contrast color to create a black/white two-tone
+  /// indicator: at least one edge remains visible on every possible pixel.
+  final Color? focusContrastColor;
 
   @override
   State<AccessibleTapRegion> createState() => _AccessibleTapRegionState();
@@ -45,6 +53,12 @@ class _AccessibleTapRegionState extends State<AccessibleTapRegion> {
         ? const CircleBorder()
         : RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(widget.borderRadius),
+          );
+    final contrastedFocus = widget.focusContrastColor != null;
+    final innerBorderRadius = widget.circular
+        ? null
+        : BorderRadius.circular(
+            (widget.borderRadius - (contrastedFocus ? 2 : 0)).clamp(0, 1000),
           );
 
     Widget result = Semantics(
@@ -84,20 +98,45 @@ class _AccessibleTapRegionState extends State<AccessibleTapRegion> {
                   child: widget.child,
                 ),
               ),
+              if (contrastedFocus)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 120),
+                      decoration: BoxDecoration(
+                        shape: widget.circular
+                            ? BoxShape.circle
+                            : BoxShape.rectangle,
+                        borderRadius: borderRadius,
+                        border: Border.all(
+                          color: _showsFocusHighlight
+                              ? widget.focusContrastColor!
+                              : Colors.transparent,
+                          width: 4,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               Positioned.fill(
                 child: IgnorePointer(
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 120),
-                    decoration: BoxDecoration(
-                      shape: widget.circular
-                          ? BoxShape.circle
-                          : BoxShape.rectangle,
-                      borderRadius: borderRadius,
-                      border: Border.all(
-                        color: _showsFocusHighlight
-                            ? const Color(0xFFD28AFF)
-                            : Colors.transparent,
-                        width: 2,
+                  child: Padding(
+                    padding: EdgeInsets.all(contrastedFocus ? 2 : 0),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 120),
+                      decoration: BoxDecoration(
+                        shape: widget.circular
+                            ? BoxShape.circle
+                            : BoxShape.rectangle,
+                        borderRadius: innerBorderRadius,
+                        border: Border.all(
+                          color: _showsFocusHighlight
+                              ? contrastedFocus
+                                    ? Colors.white
+                                    : const Color(0xFFD28AFF)
+                              : Colors.transparent,
+                          width: 2,
+                        ),
                       ),
                     ),
                   ),

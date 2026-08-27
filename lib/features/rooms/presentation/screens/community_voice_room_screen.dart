@@ -35,6 +35,7 @@ class CommunityVoiceRoomScreen extends StatefulWidget {
     this.voiceService,
     this.entryCoordinator,
     this.clubService,
+    this.playInitialJoinSound = true,
     super.key,
   });
 
@@ -52,6 +53,10 @@ class CommunityVoiceRoomScreen extends StatefulWidget {
   final VoiceCallService? voiceService;
   final RoomVoiceEntryCoordinator? entryCoordinator;
   final ClubService? clubService;
+
+  /// Room creation already has its own confirmation; all other entry points
+  /// keep the normal connected cue.
+  final bool playInitialJoinSound;
 
   @override
   State<CommunityVoiceRoomScreen> createState() =>
@@ -124,7 +129,9 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     // Only a live room may be connected. Entering a dormant one and asking
     // for a token anyway is exactly the "This room is not currently live."
     // failure this screen used to produce.
-    if (_live) unawaited(_connect());
+    if (_live) {
+      unawaited(_connect(playSound: widget.playInitialJoinSound));
+    }
     _announceEntryFailure();
   }
 
@@ -262,7 +269,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     }
   }
 
-  Future<void> _connect() async {
+  Future<void> _connect({bool playSound = true}) async {
     // Structural guard: no token request may leave this screen while the
     // room document says the session does not exist.
     if (!_live) return;
@@ -274,6 +281,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
           roomId: widget.room.id,
           roomName: widget.room.name,
           participantName: name,
+          playSound: playSound,
         );
       }
     } catch (_) {

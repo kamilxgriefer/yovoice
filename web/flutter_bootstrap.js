@@ -8,9 +8,15 @@ _flutter.loader.load({
 
     const splash = document.getElementById("yovoice-bootstrap");
     if (!splash) return;
+    // runApp resolves when Flutter has scheduled its first frame. Give the
+    // browser one paint to commit that frame underneath the bootstrap before
+    // fading the cover; otherwise fast devices can reveal a single empty
+    // canvas between the two surfaces.
     requestAnimationFrame(() => {
-      splash.classList.add("boot-leaving");
-      setTimeout(() => splash.remove(), 180);
+      requestAnimationFrame(() => {
+        splash.classList.add("boot-leaving");
+        setTimeout(() => splash.remove(), 180);
+      });
     });
   },
 });

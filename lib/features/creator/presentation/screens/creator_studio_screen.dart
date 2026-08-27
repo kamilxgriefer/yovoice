@@ -14,6 +14,8 @@ import 'package:yovoice/features/creator/presentation/screens/creator_pinned_pos
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_boundary.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
@@ -57,6 +59,10 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
   late final Stream<List<VoiceRoom>> _rooms;
   late final Stream<List<Club>> _clubs;
   late final Stream<List<VoiceMoment>> _moments;
+  final FocusNode _expiryRecoveryFocus = FocusNode(
+    debugLabel: 'Creator Studio heading after expiry',
+  );
+  final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
 
   @override
   void initState() {
@@ -65,6 +71,27 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
     _rooms = _roomService.watchOwnedRooms();
     _clubs = _clubService.watchMyClubs();
     _moments = _momentService.watchMyMoments();
+  }
+
+  @override
+  void dispose() {
+    _expiryRecoveryFocus.dispose();
+    super.dispose();
+  }
+
+  void _handleExpiryDeadline(DateTime deadline) {
+    final previousFocus = FocusManager.instance.primaryFocus;
+    final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
+    _expiryAnnouncer.announce(
+      context,
+      transition: 'creator-studio-${deadline.microsecondsSinceEpoch}',
+      message: 'Voice Moment expired and was removed from Creator Studio.',
+    );
+    recoverMomentExpiryFocusAfterFrame(
+      context: context,
+      fallback: _expiryRecoveryFocus,
+      previousFocus: recoverFocus ? previousFocus : null,
+    );
   }
 
   @override
@@ -128,13 +155,27 @@ class _CreatorStudioScreenState extends State<CreatorStudioScreen> {
                               child: CircularProgressIndicator(color: _accent),
                             );
                           }
-                          final moments = momentsSnapshot.data!;
-                          return _CreatorStudioContent(
-                            profile: profile,
-                            rooms: rooms,
-                            clubs: clubs,
-                            moments: moments,
-                            isRootTab: widget.isRootTab,
+                          final snapshotMoments = momentsSnapshot.data!;
+                          return MomentExpiryListBuilder(
+                            moments: snapshotMoments,
+                            onDeadline: _handleExpiryDeadline,
+                            builder: (context, now) {
+                              final visibleMoments = snapshotMoments
+                                  .where(
+                                    (moment) =>
+                                        !moment.isPublished ||
+                                        moment.isActiveAt(now),
+                                  )
+                                  .toList(growable: false);
+                              return _CreatorStudioContent(
+                                profile: profile,
+                                rooms: rooms,
+                                clubs: clubs,
+                                moments: visibleMoments,
+                                isRootTab: widget.isRootTab,
+                                expiryRecoveryFocus: _expiryRecoveryFocus,
+                              );
+                            },
                           );
                         },
                       );
@@ -156,6 +197,7 @@ class _CreatorStudioContent extends StatelessWidget {
     required this.rooms,
     required this.clubs,
     required this.moments,
+    required this.expiryRecoveryFocus,
     this.isRootTab = false,
   });
 
@@ -163,6 +205,7 @@ class _CreatorStudioContent extends StatelessWidget {
   final List<VoiceRoom> rooms;
   final List<Club> clubs;
   final List<VoiceMoment> moments;
+  final FocusNode expiryRecoveryFocus;
   final bool isRootTab;
 
   @override
@@ -193,24 +236,28 @@ class _CreatorStudioContent extends StatelessWidget {
                 ),
                 const SizedBox(width: 12),
               ],
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Creator Studio',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -0.5,
+              Expanded(
+                child: MomentExpiryFocusTarget(
+                  focusNode: expiryRecoveryFocus,
+                  semanticLabel: 'Creator Studio',
+                  child: const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Creator Studio',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -0.5,
+                        ),
                       ),
-                    ),
-                    Text(
-                      'Your tools, your growth, your community.',
-                      style: TextStyle(color: _muted, fontSize: 12.5),
-                    ),
-                  ],
+                      Text(
+                        'Your tools, your growth, your community.',
+                        style: TextStyle(color: _muted, fontSize: 12.5),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],

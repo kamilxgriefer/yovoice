@@ -1,204 +1,437 @@
 #!/usr/bin/env python3
-"""Generates every UI sound in assets/audio/ui/ — the single source of truth.
+"""Build the complete YO Voice product-sound pack.
 
-The shipped WAVs are BUILD ARTIFACTS of this script, not hand-made assets:
-run `python3 tool/generate_ui_sounds.py` from the repo root and the whole set
-is reproduced bit-for-bit (the synthesis is deterministic — no randomness).
+The checked-in WAV files are deterministic build artifacts of this script.
+Run it from the repository root:
 
-DESIGN LANGUAGE (v2, "exclusive"), so future sounds stay in the same family:
+    python3 tool/generate_ui_sounds.py
 
-* One instrument: a felt-mallet GLASS BELL, built the way real struck glass
-  behaves rather than from a textbook harmonic series —
-    - fundamental doubled at ±2.5 cents (chorus warmth), split L/R;
-    - a SUB-OCTAVE at -18 dB with a slow decay: the body that makes a small
-      speaker sound like a large room;
-    - a slightly INHARMONIC glass partial at 2.756x (-20 dB, fast decay) and
-      an "air" partial at 5.04x (-30 dB, faster): real bells are not integer
-      stacks, and the ear reads that stretch as material, i.e. expensive;
-    - gentle true harmonics at 2x (-16 dB) and 3x (-25 dB) underneath;
-    - a mallet PITCH SETTLE: the note starts +8 cents sharp and glides to
-      pitch over 40 ms, the way a struck object tightens into its tone.
-* STEREO, subtly: the bell body is a MONO ANCHOR — identical and
-  simultaneous in both channels — while the two ±2.5-cent fundamentals split
-  left/now, right/9 ms-late (Haas). Width you feel more than hear, the
-  image stays solid (the script verifies inter-channel correlation lands in
-  0.2..0.98), and the mono sum is clean because the only delayed element is
-  a detuned copy, never the anchor.
-* One key: A-major pentatonic (E4 / A4 / C#5 / E5) — any two sounds heard
-  together are consonant.
-* One grammar: things BEGINNING rise (created, joined, unmuted), things
-  ENDING fall (left, muted), mirrored intervals — the ear learns the pair,
-  not eight jingles.
-* One envelope: 8 ms raised-cosine attack, exponential decay, longer silk
-  tails than v1 (files grew 0.04-0.23 s), last sample exactly zero on both
-  channels — no clicks.
-* One level: every file peak-normalized to -6 dBFS. Loudness BALANCE between
-  sounds stays where it always lived, in each UiSound's `volume` field.
+Use ``--check`` in CI or before a release to prove that every checked-in copy
+matches the generator without rewriting anything.
 
-The measurable claim behind "softer" (v1, unchanged in spirit): the fraction
-of energy above 2 kHz dropped in every file versus the original hand-made
-set — notification 25.9% -> ~8%, participant_joined 17.7% -> ~7% (one-pole
-highpass split; crest factor is NOT the metric here, because a decaying
-bell's quiet tail inflates it regardless of timbre).
+DESIGN LANGUAGE (v3, "Velvet Prism")
 
-Filenames match lib/core/audio/ui_sound.dart exactly; nothing on the Dart
-side changes when the set is regenerated.
+* No notes, scales, arpeggios, detune, chorus or melodic up/down grammar.
+* Every cue combines one 4-10 ms filtered material contact, a muted
+  inharmonic body and a very quiet air layer.
+* Meaning lives in timbre: beginnings open their high-frequency texture and
+  stereo width; endings rapidly fold both back into the mono body.
+* The body stays mono. Only decorrelated air carries a small side signal, at
+  least 14 dB below the mid channel, so headphones gain depth without a
+  phasey Haas effect and mono playback remains solid.
+* Internal synthesis is 48 kHz float. Delivery is stereo PCM16 at 48 kHz,
+  with deterministic TPDF dither, a click-free tail and exact terminal zeroes.
+* Loudness is mastered into each asset. ``UiSound.volume`` stays at 1.0, so
+  the same notification bytes mean the same thing in Flutter, Android and
+  iOS instead of being three unrelated mixes.
+
+The sound is intentionally restrained. Normal navigation, loading, likes and
+sheet transitions have no cue; only the eight semantic events below do.
 """
 
+from __future__ import annotations
+
+import argparse
+import io
 import math
 import struct
+import sys
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 
-# 22.05 kHz, deliberately: the highest partial in the set is 5.04x E5 =
-# 3.32 kHz, comfortably under this rate's 11 kHz Nyquist, so nothing audible
-# is lost — and the app's own asset test caps every WAV at 64 KB, which
-# stereo 44.1 kHz files broke. The generator enforces the same cap below so
-# a future longer sound fails HERE, not in CI.
-RATE = 22050
-MAX_BYTES = 64 * 1024
-PEAK = 0.5  # -6 dBFS
 
-E4, A4, CS5, E5 = 329.63, 440.0, 554.37, 659.26
+RATE = 48_000
+SAMPLE_WIDTH = 2
+CHANNELS = 2
+MAX_BYTES = 96 * 1024
+TERMINAL_ZERO_FRAMES = 64
+ASSET_PACK_VERSION = "v3"
 
-HAAS = int(0.009 * RATE)  # inter-channel delay for width
+# One deliberately non-musical material: the ratios do not describe a
+# harmonic series or equal-tempered chord.
+PARTIAL_RATIOS = (1.0, 1.47, 2.31, 3.88)
+PARTIAL_LEVELS = (1.0, 0.29, 0.15, 0.065)
+PARTIAL_PHASES = (0.17, 1.03, 2.11, 2.73)
 
 
-def bell(freq: float, start: float, dur: float, *,
-         level: float = 1.0, tau: float = None, pan: float = 0.0,
-         shimmer: bool = False):
-    """One glass-bell note: list of (sample_index, left, right)."""
-    tau = tau if tau is not None else dur / 3.0
-    n0 = int(start * RATE)
-    count = int(dur * RATE)
-    attack = int(0.008 * RATE)
-    cents = 2.5 / 1200.0
-    f_lo, f_hi = freq * 2 ** -cents, freq * 2 ** cents
-    # Equal-power pan for everything but the Haas pair, which carries the
-    # width on its own.
-    gl = math.cos((pan + 1) * math.pi / 4)
-    gr = math.sin((pan + 1) * math.pi / 4)
-    out = []
-    for i in range(count):
-        t = i / RATE
-        env = (0.5 - 0.5 * math.cos(math.pi * i / attack)) \
-            if i < attack else math.exp(-(t - attack / RATE) / tau)
-        # The mallet settle: +8 cents gliding to pitch over 40 ms.
-        settle = 2 ** ((8 / 1200) * math.exp(-t / 0.040))
-        # Shared body: sub-octave, true harmonics, inharmonic glass + air.
+@dataclass(frozen=True)
+class CueSpec:
+    name: str
+    duration: float
+    loudness_db: float
+    peak_ceiling_db: float
+    base_hz: float
+    body_tau: float
+    body_level: float
+    contact_ms: float
+    contact_low_hz: float
+    contact_high_hz: float
+    contact_level: float
+    air_level: float
+    width: float
+    opening: bool
+    seed: int
+
+
+CUES = (
+    CueSpec(
+        "room_created", 0.360, -23.0, -6.0, 176.0, 0.105, 1.00,
+        10.0, 1600.0, 4800.0, 0.34, 0.045, 0.14, True, 0x31A5,
+    ),
+    CueSpec(
+        "room_joined", 0.240, -25.0, -8.0, 208.0, 0.074, 0.88,
+        7.0, 1800.0, 5400.0, 0.29, 0.048, 0.13, True, 0x42B7,
+    ),
+    CueSpec(
+        "room_left", 0.190, -26.0, -9.0, 208.0, 0.056, 0.84,
+        6.0, 1300.0, 3400.0, 0.27, 0.024, 0.055, False, 0x53C9,
+    ),
+    CueSpec(
+        "participant_joined", 0.135, -30.0, -11.0, 296.0, 0.039, 0.68,
+        5.0, 2100.0, 5800.0, 0.38, 0.038, 0.095, True, 0x64DB,
+    ),
+    CueSpec(
+        "participant_left", 0.125, -31.0, -12.0, 264.0, 0.032, 0.64,
+        4.5, 1300.0, 3300.0, 0.34, 0.018, 0.035, False, 0x75ED,
+    ),
+    CueSpec(
+        "microphone_muted", 0.095, -27.0, -9.0, 192.0, 0.024, 0.94,
+        5.0, 1100.0, 2800.0, 0.42, 0.009, 0.018, False, 0x86F1,
+    ),
+    CueSpec(
+        "microphone_unmuted", 0.115, -27.0, -9.0, 192.0, 0.031, 0.88,
+        6.0, 1900.0, 5600.0, 0.38, 0.030, 0.065, True, 0x9703,
+    ),
+    CueSpec(
+        "notification", 0.330, -20.0, -4.0, 232.0, 0.098, 1.00,
+        8.0, 1700.0, 6400.0, 0.31, 0.052, 0.12, True, 0xA815,
+    ),
+)
+
+
+class DeterministicNoise:
+    """Small xorshift generator; identical on every supported Python."""
+
+    def __init__(self, seed: int):
+        self._state = seed & 0xFFFFFFFF or 1
+
+    def sample(self) -> float:
+        x = self._state
+        x ^= (x << 13) & 0xFFFFFFFF
+        x ^= x >> 17
+        x ^= (x << 5) & 0xFFFFFFFF
+        self._state = x & 0xFFFFFFFF
+        return (self._state / 0xFFFFFFFF) * 2.0 - 1.0
+
+
+def _lowpass(samples: list[float], cutoff_hz: float) -> list[float]:
+    coefficient = 1.0 - math.exp(-2.0 * math.pi * cutoff_hz / RATE)
+    value = 0.0
+    output: list[float] = []
+    for sample in samples:
+        value += coefficient * (sample - value)
+        output.append(value)
+    return output
+
+
+def _bandpass_noise(
+    length: int,
+    seed: int,
+    low_hz: float,
+    high_hz: float,
+) -> list[float]:
+    generator = DeterministicNoise(seed)
+    raw = [generator.sample() for _ in range(length)]
+    below_high = _lowpass(_lowpass(raw, high_hz), high_hz)
+    below_low = _lowpass(_lowpass(raw, low_hz), low_hz)
+    filtered = [high - low for high, low in zip(below_high, below_low)]
+    rms = math.sqrt(sum(value * value for value in filtered) / length) or 1.0
+    return [value / rms for value in filtered]
+
+
+def _smooth_attack(time: float, duration: float) -> float:
+    if duration <= 0.0 or time >= duration:
+        return 1.0
+    phase = max(0.0, time / duration)
+    return math.sin(phase * math.pi / 2.0) ** 2
+
+
+def _synthesise(spec: CueSpec) -> tuple[list[float], list[float]]:
+    frame_count = round(spec.duration * RATE)
+    contact_count = max(1, round(spec.contact_ms / 1000.0 * RATE))
+
+    contact_mid = _bandpass_noise(
+        contact_count,
+        spec.seed,
+        spec.contact_low_hz,
+        spec.contact_high_hz,
+    )
+    contact_side = _bandpass_noise(
+        contact_count,
+        spec.seed ^ 0xBADC0FFE,
+        spec.contact_low_hz,
+        spec.contact_high_hz,
+    )
+    air_mid = _bandpass_noise(
+        frame_count,
+        spec.seed ^ 0x13579BDF,
+        3200.0,
+        7500.0,
+    )
+    air_side = _bandpass_noise(
+        frame_count,
+        spec.seed ^ 0x2468ACE0,
+        3600.0,
+        7900.0,
+    )
+    texture = _bandpass_noise(
+        frame_count,
+        spec.seed ^ 0xC001D00D,
+        120.0,
+        1050.0,
+    )
+
+    left = [0.0] * frame_count
+    right = [0.0] * frame_count
+    for index in range(frame_count):
+        time = index / RATE
+
         body = 0.0
-        body += 10 ** (-18 / 20) * math.sin(2 * math.pi * 0.5 * freq * settle * t) \
-            * math.exp(-t / (tau * 1.4))
-        body += 10 ** (-16 / 20) * math.sin(2 * math.pi * 2 * freq * t) \
-            * math.exp(-t / (tau / 1.7))
-        body += 10 ** (-25 / 20) * math.sin(2 * math.pi * 3 * freq * t) \
-            * math.exp(-t / (tau / 2.5))
-        body += 10 ** (-20 / 20) * math.sin(2 * math.pi * 2.756 * freq * t) \
-            * math.exp(-t / (tau / 3.0))
-        body += 10 ** (-30 / 20) * math.sin(2 * math.pi * 5.04 * freq * t) \
-            * math.exp(-t / (tau / 4.0))
-        if shimmer:
-            body += 10 ** (-22 / 20) * math.sin(2 * math.pi * 4 * freq * t) \
-                * math.exp(-t / (tau / 3.0))
-        # THE BODY IS THE MONO ANCHOR: identical and simultaneous in both
-        # channels. The first cut delayed the whole right channel, which
-        # decorrelated everything and measured 0.18-0.19 inter-channel
-        # correlation on the longest file — width read as phasey, not wide.
-        # Only the detuned twin is Haas-late now; the anchor keeps the image
-        # solid and the mono sum clean.
-        # The partial stack alone was too quiet an anchor: over a long
-        # tail the ±2.5-cent twins beat out of phase and the longest file
-        # still measured 0.20 correlation. An UNDETUNED center fundamental
-        # joins the anchor, and the twins drop to a width layer around it.
-        center = 0.35 * math.sin(2 * math.pi * freq * settle * t)
-        anchor = (center + 0.5 * body) * env * level
-        lo = 0.34 * math.sin(2 * math.pi * f_lo * settle * t) * env * level
-        out.append((n0 + i, (anchor + lo) * gl, anchor * gr))
-        hi = 0.34 * math.sin(2 * math.pi * f_hi * settle * t) * env * level
-        out.append((n0 + i + HAAS, 0.0, hi * gr))
-    return out
+        for partial_index, (ratio, level, phase) in enumerate(
+            zip(PARTIAL_RATIOS, PARTIAL_LEVELS, PARTIAL_PHASES)
+        ):
+            # Opening cues let the upper material wake a few milliseconds
+            # later; closing cues shed those partials first. This changes
+            # colour without spelling a note or sliding pitch.
+            if spec.opening:
+                attack = 0.0035 + partial_index * 0.0035
+                tau = spec.body_tau / (1.0 + partial_index * 0.42)
+            else:
+                attack = 0.0025
+                tau = spec.body_tau / (1.0 + partial_index * 0.92)
+            envelope = _smooth_attack(time, attack) * math.exp(-time / tau)
+            body += level * math.sin(
+                2.0 * math.pi * spec.base_hz * ratio * time + phase
+            ) * envelope
+        body *= spec.body_level
 
+        # A low-mid, aperiodic veil makes the material tactile rather than a
+        # clean oscillator. It remains mono and dies with the body.
+        veil = texture[index] * 0.055 * math.exp(-time / (spec.body_tau * 0.72))
 
-def render(path: Path, total: float, notes):
-    n = int(total * RATE)
-    left = [0.0] * n
-    right = [0.0] * n
-    for note in notes:
-        for i, l, r in note:
-            if i < n:
-                left[i] += l
-                right[i] += r
-    peak = max(max(abs(v) for v in left), max(abs(v) for v in right)) or 1.0
-    scale = PEAK / peak
-    fade = int(0.012 * RATE)
-    for i in range(fade):
-        left[-1 - i] *= i / fade
-        right[-1 - i] *= i / fade  # both channels end at exactly zero
-    frames = bytearray()
-    for l, r in zip(left, right):
-        frames += struct.pack(
-            '<hh',
-            max(-32767, min(32767, int(l * scale * 32767))),
-            max(-32767, min(32767, int(r * scale * 32767))),
+        contact = 0.0
+        contact_width = 0.0
+        if index < contact_count:
+            contact_time = index / RATE
+            contact_envelope = (
+                _smooth_attack(contact_time, 0.0012)
+                * math.exp(-contact_time / (spec.contact_ms / 4300.0))
+            )
+            contact = contact_mid[index] * contact_envelope * spec.contact_level
+            contact_width = (
+                contact_side[index]
+                * contact_envelope
+                * spec.contact_level
+                * spec.width
+                * 0.45
+            )
+
+        if spec.opening:
+            air_shape = _smooth_attack(time, 0.018) * math.exp(
+                -time / (spec.body_tau * 1.15)
+            )
+            width_shape = _smooth_attack(time, 0.024)
+        else:
+            air_shape = _smooth_attack(time, 0.002) * math.exp(
+                -time / (spec.body_tau * 0.46)
+            )
+            width_shape = math.exp(-time / 0.024)
+        air = air_mid[index] * air_shape * spec.air_level
+        side = (
+            air_side[index]
+            * air_shape
+            * width_shape
+            * spec.air_level
+            * spec.width
+            + contact_width
         )
-    with wave.open(str(path), 'wb') as w:
-        w.setnchannels(2)
-        w.setsampwidth(2)
-        w.setframerate(RATE)
-        w.writeframes(bytes(frames))
-    size = path.stat().st_size
-    assert size < MAX_BYTES, f'{path.name}: {size} bytes >= {MAX_BYTES}'
+
+        mid = body + veil + contact + air
+        # Gentle saturation rounds the contact without flattening the body.
+        mid = math.tanh(mid * 0.92) / math.tanh(0.92)
+        side = math.tanh(side)
+        left[index] = mid + side
+        right[index] = mid - side
+
+    # Raised-cosine master edges, followed by a short exact-zero pad. No cue
+    # can click even if a platform decoder reads the final frame literally.
+    fade_in = round(0.0015 * RATE)
+    fade_out = round(min(0.014, spec.duration * 0.18) * RATE)
+    for index in range(frame_count):
+        gain = 1.0
+        if index < fade_in:
+            gain *= math.sin((index / fade_in) * math.pi / 2.0) ** 2
+        tail_index = frame_count - 1 - index
+        if tail_index < fade_out:
+            gain *= math.sin((tail_index / fade_out) * math.pi / 2.0) ** 2
+        left[index] *= gain
+        right[index] *= gain
+    for index in range(max(0, frame_count - TERMINAL_ZERO_FRAMES), frame_count):
+        left[index] = 0.0
+        right[index] = 0.0
+
+    # Loudness is an unweighted deterministic proxy for the short cues. The
+    # dBTP value remains a hard ceiling; the shorter transient may naturally
+    # land below it, which is preferable to crushing it with compression.
+    combined = left + right
+    rms = math.sqrt(sum(value * value for value in combined) / len(combined)) or 1.0
+    peak = max(abs(value) for value in combined) or 1.0
+    rms_scale = 10.0 ** (spec.loudness_db / 20.0) / rms
+    peak_scale = 10.0 ** (spec.peak_ceiling_db / 20.0) / peak
+    scale = min(rms_scale, peak_scale)
+    return (
+        [value * scale for value in left],
+        [value * scale for value in right],
+    )
 
 
-def main():
-    out = Path(__file__).resolve().parent.parent / 'assets' / 'audio' / 'ui'
-    out.mkdir(parents=True, exist_ok=True)
-
-    # A three-note bloom for the one genuinely celebratory moment; the notes
-    # walk gently left -> center -> right.
-    # 0.72s, not 0.85: the 64 KB cap allows at most 0.74s of stereo at
-    # this rate, and the exponential tail is inaudible past ~0.7s anyway.
-    render(out / 'room_created.wav', 0.72, [
-        # Pans tightened from ±0.18: with three Haas-delayed notes the
-        # wider image measured 0.18 inter-channel correlation — over the
-        # 0.2 floor this script verifies, and risking a phasey feel on
-        # headphones. ±0.10 keeps the walk audible and the image solid.
-        bell(A4, 0.00, 0.68, level=0.9, pan=-0.10),
-        bell(CS5, 0.11, 0.58, level=0.85, pan=0.0),
-        bell(E5, 0.22, 0.50, pan=0.10, shimmer=True),
-    ])
-    # Rising pair in, mirrored pair out.
-    render(out / 'room_joined.wav', 0.60, [
-        bell(E4, 0.00, 0.42, level=0.8, pan=-0.12),
-        bell(A4, 0.11, 0.49, pan=0.10),
-    ])
-    render(out / 'room_left.wav', 0.50, [
-        bell(A4, 0.00, 0.34, level=0.8, pan=0.10),
-        bell(E4, 0.10, 0.40, pan=-0.12),
-    ])
-    # Single soft pings for other people — present, never demanding.
-    render(out / 'participant_joined.wav', 0.38, [
-        bell(CS5, 0.00, 0.36, pan=0.08),
-    ])
-    render(out / 'participant_left.wav', 0.38, [
-        bell(A4, 0.00, 0.36, tau=0.075, pan=-0.08),
-    ])
-    # The mic pair: the fastest gesture gets the shortest mirrored blips.
-    render(out / 'microphone_unmuted.wav', 0.24, [
-        bell(A4, 0.00, 0.12, level=0.8),
-        bell(CS5, 0.06, 0.17),
-    ])
-    render(out / 'microphone_muted.wav', 0.24, [
-        bell(CS5, 0.00, 0.12, level=0.8),
-        bell(A4, 0.06, 0.17, tau=0.05),
-    ])
-    # The classic two-note chime, gentle: minor third down, long silk ring.
-    render(out / 'notification.wav', 0.70, [
-        bell(E5, 0.00, 0.42, level=0.9, pan=-0.10),
-        bell(CS5, 0.15, 0.54, pan=0.10),
-    ])
-    print('wrote 8 stereo files to', out)
+def _correlation(left: list[float], right: list[float]) -> float:
+    left_mean = sum(left) / len(left)
+    right_mean = sum(right) / len(right)
+    numerator = sum(
+        (l - left_mean) * (r - right_mean) for l, r in zip(left, right)
+    )
+    left_power = sum((value - left_mean) ** 2 for value in left)
+    right_power = sum((value - right_mean) ** 2 for value in right)
+    return numerator / math.sqrt(left_power * right_power)
 
 
-if __name__ == '__main__':
-    main()
+def _render(spec: CueSpec) -> bytes:
+    left, right = _synthesise(spec)
+    peak = max(max(abs(value) for value in left), max(abs(value) for value in right))
+    rms = math.sqrt(
+        sum(value * value for value in left + right) / (len(left) + len(right))
+    )
+    peak_db = 20.0 * math.log10(max(peak, 1e-12))
+    rms_db = 20.0 * math.log10(max(rms, 1e-12))
+    correlation = _correlation(left, right)
+    mono = [(l + r) * 0.5 for l, r in zip(left, right)]
+    side = [(l - r) * 0.5 for l, r in zip(left, right)]
+    mono_rms = math.sqrt(sum(value * value for value in mono) / len(mono))
+    side_rms = math.sqrt(sum(value * value for value in side) / len(side))
+    average_channel_rms = math.sqrt(
+        sum(l * l + r * r for l, r in zip(left, right)) / (2.0 * len(left))
+    )
+    mono_loss_db = 20.0 * math.log10(mono_rms / average_channel_rms)
+    side_below_mid_db = 20.0 * math.log10(max(side_rms, 1e-12) / mono_rms)
+    dc = max(abs(sum(left) / len(left)), abs(sum(right) / len(right)))
+
+    assert abs(rms_db - spec.loudness_db) <= 0.15, (spec.name, rms_db)
+    assert peak_db <= spec.peak_ceiling_db + 0.05, (spec.name, peak_db)
+    assert correlation >= 0.80, (spec.name, correlation)
+    assert mono_loss_db >= -1.0, (spec.name, mono_loss_db)
+    assert side_below_mid_db <= -14.0, (spec.name, side_below_mid_db)
+    assert dc <= 10.0 ** (-60.0 / 20.0), (spec.name, dc)
+    assert left[-TERMINAL_ZERO_FRAMES:] == [0.0] * TERMINAL_ZERO_FRAMES
+    assert right[-TERMINAL_ZERO_FRAMES:] == [0.0] * TERMINAL_ZERO_FRAMES
+
+    # Deterministic triangular dither avoids correlated quantisation grit.
+    # The explicit zero pad is kept untouched.
+    dither = DeterministicNoise(spec.seed ^ 0xDEADBEEF)
+    frames = bytearray()
+    zero_from = len(left) - TERMINAL_ZERO_FRAMES
+    for index, (l_value, r_value) in enumerate(zip(left, right)):
+        encoded = []
+        for value in (l_value, r_value):
+            if index >= zero_from:
+                quantised = 0
+            else:
+                triangular = (dither.sample() + dither.sample()) * 0.5
+                quantised = round(value * 32767.0 + triangular * 0.5)
+                quantised = max(-32768, min(32767, quantised))
+            encoded.append(quantised)
+        frames += struct.pack("<hh", *encoded)
+
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(CHANNELS)
+        wav.setsampwidth(SAMPLE_WIDTH)
+        wav.setframerate(RATE)
+        wav.writeframes(bytes(frames))
+    data = output.getvalue()
+    assert len(data) < MAX_BYTES, (spec.name, len(data))
+    return data
+
+
+def _targets(root: Path, rendered: dict[str, bytes]) -> dict[Path, bytes]:
+    asset_directory = root / "assets" / "audio" / "ui" / ASSET_PACK_VERSION
+    targets = {
+        asset_directory / f"{name}.wav": data for name, data in rendered.items()
+    }
+    notification = rendered["notification"]
+    targets[root / "android/app/src/main/res/raw/yovoice_notification.wav"] = notification
+    targets[root / "ios/Runner/yovoice_notification.wav"] = notification
+    return targets
+
+
+def _unexpected_flutter_assets(
+    root: Path,
+    targets: dict[Path, bytes],
+) -> list[Path]:
+    """Return every UI WAV that is not one of the eight versioned masters."""
+
+    asset_root = root / "assets" / "audio" / "ui"
+    expected_assets = {
+        path for path in targets if path.parent == asset_root / ASSET_PACK_VERSION
+    }
+    return sorted(
+        path for path in asset_root.rglob("*.wav") if path not in expected_assets
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="fail when a checked-in WAV differs; do not write files",
+    )
+    args = parser.parse_args()
+
+    root = Path(__file__).resolve().parent.parent
+    rendered = {spec.name: _render(spec) for spec in CUES}
+    targets = _targets(root, rendered)
+    if args.check:
+        mismatches = [
+            path.relative_to(root)
+            for path, expected in targets.items()
+            if not path.exists() or path.read_bytes() != expected
+        ]
+        mismatches.extend(
+            path.relative_to(root)
+            for path in _unexpected_flutter_assets(root, targets)
+        )
+        if mismatches:
+            print("generated sound assets are stale:", file=sys.stderr)
+            for mismatch in mismatches:
+                print(f"  {mismatch}", file=sys.stderr)
+            return 1
+        print("sound assets match Velvet Prism v3 generator")
+        return 0
+
+    retired_assets = _unexpected_flutter_assets(root, targets)
+    for path in retired_assets:
+        path.unlink()
+    for path, data in targets.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    print(
+        "wrote 8 versioned Velvet Prism cues and 2 bit-identical native copies"
+        f"; retired {len(retired_assets)} stale UI WAV(s)"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

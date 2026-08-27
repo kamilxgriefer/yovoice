@@ -6,7 +6,7 @@ exist; know which one you're relying on before trusting it.
 
 ## Current counts
 
-**As of 2026-08-25.** One table, so there is a single place to correct when
+**As of 2026-08-27.** One table, so there is a single place to correct when
 these move. Every figure is a suite run, not an estimate; file counts are
 `find`. *(The date used to live in the heading; it moved into the body on
 2026-08-20 because three other docs deep-link to this section and every
@@ -14,26 +14,26 @@ correction silently broke all three anchors.)*
 
 | Suite | Command | Count |
 |---|---|---|
-| Firestore rules | `npm --prefix firestore-tests test` | **489** checks |
-| Storage rules | `npm --prefix firestore-tests run test:storage` | **52** checks |
+| Firestore rules | `npm --prefix firestore-tests test` | **494** checks |
+| Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
-| Cloud Functions | `npm --prefix functions test` | **786** tests (64 `*.test.js` files) |
-| Flutter | `flutter test` | **1270** tests (118 `*_test.dart` files) |
+| Cloud Functions | `npm --prefix functions test` | **793** tests (64 `*.test.js` files) |
+| Flutter VM | `flutter test` | **1361** tests (120 VM-compatible files) |
+| Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart` | **1** test (1 browser-only file) |
 
-**Where these numbers came from.** Rules 489, Functions 786 and Flutter 1270
-were measured on 2026-08-25 against the exact Friends-notification
-single-writer source revision. Firestore and Functions used fresh emulators;
-the full Flutter run passed in one 1270-test invocation. `flutter analyze` was
-clean on the same source. The 64 Functions and 118 Flutter file counts are
-current `find` results rather than carried-forward estimates. The earlier
+**Where these numbers came from.** All six rows were re-measured on
+2026-08-27 against the exact current source revision (Voice Moment
+local-review/custom-availability, the More transition fix and Velvet Prism
+product sound). Flutter VM 1361 passed in one invocation, the real Chrome
+Blob lifecycle passed 1/1, and `flutter analyze`
+was clean on the same bytes. Functions 793, Rules 494, Storage 60 and family
+media 11 ran against fresh, isolated emulators rather than the occupied local
+8080 endpoint. Both web release compilation and the dedicated browser preview
+harness compiled successfully. The 64 Functions files and 121 total Flutter
+test files (120 VM-compatible plus one browser-only) are current `find`
+results rather than carried-forward estimates. The earlier
 figures this row used to carry (Rules 485, Functions 783/62, Flutter 1198/114)
-are kept in the movement log below as history. **Storage 52 was re-measured on
-2026-08-24** and is green — and it is now green TWICE IN A ROW against one
-emulator, which it was not before (`64ba59a`): the second run used to report
-five failures because `clearStorage()` deleted nothing at all, `listAll()`
-being non-recursive while every object this suite writes lives under a prefix.
-Family-media 11 was re-measured on 2026-08-24 in the same isolated emulator
-pair.
+are kept in the movement log below as history.
 
 **A trap worth naming, because it cost a full diagnosis pass.**
 `firestore-tests/storage.test.js` used to hardcode Firestore 8080 and Storage
@@ -64,6 +64,68 @@ suite, so isolated ports are real isolation rather than documentation only.
 > cross-account push-token retirement coverage. Storage **52** and
 > family-media **11** were re-run and remain unchanged. Baseline drift is not
 > presented as feature-attributable growth.
+
+> **Movement, 2026-08-27 (avatar crop and stacked Profile Preview).** The
+> immediately preceding local source baseline was **1292/118**. This follow-up
+> adds one five-test crop-screen file plus two Profile Preview route tests:
+> first-pinch cover/export geometry, 44 px single-pointer and keyboard crop
+> controls, stacked-modal Chat routing, visible failure/busy feedback and
+> injected Auth/MessageService optimistic reconciliation. The measured result
+> is **1299/119**. Rules, Storage and Functions are unchanged.
+
+> **Movement, 2026-08-27 (desktop Recent Chats artwork correction).** The
+> immediately preceding measured source baseline was **1299/119**. Three tests
+> added to existing files pin replacement of empty conversation artwork from
+> the current public profile projection, the Desktop Home integration path,
+> and a real white-image/200%-text geometry and contrast boundary with a
+> two-tone focus indicator. The measured result is **1302/119**. Mobile's
+> standard avatar layout, Rules, Storage and Functions are unchanged.
+
+> **Movement, 2026-08-27 (Voice Moment local review, user-sized availability
+> and server authority).** Flutter VM **1302 → 1343** adds local play/pause/seek
+> without upload, cleanup ordering, web Blob URL ownership, arbitrary whole
+> hours/days/permanent, retry-contract locking, voice-reply behavior,
+> validation focus/live announcements, 320×640 at 200% text, and exact
+> no-snapshot deadline removal/stop across feeds, detail, story, sheet,
+> comments, pinned/trending and Creator-management surfaces. Exact-expiry
+> regressions also pin one deduplicated accessibility announcement, focus
+> recovery, nested-route closure and deterministic first-surviving Story
+> selection after a multi-deadline resume. They also cover 30-day browser-timer
+> chunking, overdue parent rebuilds, suppression from cached hidden tabs, and
+> visible/hidden Home plus Following stream races with focused tiles.
+> Functions
+> **786 → 793** pins an exact unbounded active-set check, the per-author
+> capacity mutex, more than 100 newer drafts and concurrent contention for the
+> tenth slot, per-attempt preflight quota with free completed replay, and
+> server deadline refusal for likes and text/voice replies. Rules **489 → 494** make root and engagement mutations
+> server-only while preserving parent-gated reads. Storage **52 → 60** covers
+> canonical private draft upload/read, client-delete denial, published/expired reads and legacy
+> mixed-case object compatibility, plus exact voice-reply reservation binding
+> and finalized-media delete denial. A dedicated real-Chrome case also proves
+> object-URL reuse and revocation, and the voice-reply retry test proves one
+> logical comment after a committed finalize response is lost. Family media
+> remains **11**. The complete measured result is Flutter VM **1343/120** plus
+> browser **1/1** (121 total files), Functions **793/64**, Rules **494**,
+> Storage **60** and family media **11**.
+
+> **Movement, 2026-08-27 (More double-tap navigation).** Flutter VM
+> **1343 → 1347** adds four regressions in existing files: one synchronous
+> single-flight guard, one same-frame dock callback proving exactly one pop and
+> action, one launcher-position retap during sheet entry, and one reverse-
+> animation boundary proving presentation stays locked until the modal route
+> has completely left the Navigator. File counts and every backend suite are
+> unchanged.
+
+> **Movement, 2026-08-27 (Velvet Prism product sound).** Flutter VM
+> **1347 → 1361** adds fourteen regressions in existing files: deterministic
+> 48 kHz/stereo/duration/loudness/tail checks; cache-versioned asset inventory;
+> byte-identical Flutter/Android/iOS notification masters; Android v3 channel
+> parity; completion-bound, no-hard-cut playback; newest-queued-wins and
+> idempotent disposal; foreground FCM/Firestore reservation, failure and
+> messenger retry paths; id-less delivery; and consumption of the initial join
+> cue after room creation. The generator's `--check` command and the focused
+> Functions payload suite pass, while the full Functions count remains
+> **793/64**. File counts and browser coverage are unchanged.
 
 > **Movement, 2026-08-17.** Rules 301 → **318** (`c75720a`, the
 > account-status gating; the suite ran 310 passed / 8 failed against the
@@ -228,9 +290,9 @@ close most of it, and they are cheap:
 
 `firestore-tests/` — a standalone Node project running regression and
 attack-scenario checks against `firestore.rules` via
-`@firebase/rules-unit-testing` and the Firestore emulator — **489 checks
+`@firebase/rules-unit-testing` and the Firestore emulator — **494 checks
 passing** — plus `storage.test.js`, the same treatment for `storage.rules`
-against the Storage emulator (52 checks: path ownership, size caps,
+against the Storage emulator (60 checks: path ownership, size caps,
 content-type allowlists, read gating, default deny), plus 11 combined
 family-media checks. All three run in CI on every push to `main` and gate
 the Hosting release (see [DEPLOYMENT.md](DEPLOYMENT.md)). Full workflow in
@@ -400,7 +462,7 @@ bounded local outbox instead — see the Flutter section below.
 
 ## Cloud Functions — real coverage, unevenly distributed
 
-`functions/test/` — **786 tests across 64 `*.test.js` files**, run with
+`functions/test/` — **793 tests across 64 `*.test.js` files**, run with
 `node --test test/*.test.js` against the Auth + Firestore emulators, and
 gating the Hosting release in CI like the rules suites do. A separate
 `npm --prefix functions run test:smoke` drives two trigger smokes and one
@@ -426,8 +488,9 @@ absolute count over a collection your file does not exclusively own.
 
 ## Dart tests — real, but narrow
 
-`test/` — **1270 tests across 118 `*_test.dart` files**, green in local
-verification, grown mostly
+`test/` — **1361 VM tests across 120 compatible files**, plus **1 real-Chrome
+test** in the repository's one browser-only file (**121 `*_test.dart` files
+total**), green in local verification, grown mostly
 out of real bugs rather than an even coverage discipline. The
 pattern throughout: fake the Firebase backends
 (`firebase_auth_mocks` / `fake_cloud_firestore` /
@@ -466,7 +529,9 @@ pattern throughout: fake the Firebase backends
 - **`error_messages_test.dart`** — no raw exception text can reach the
   UI (includes the exact web-interop wrapper string users once saw).
 - **`more_destination_nav_test.dart`** — More destinations keep the
-  shell bottom navigation; bar taps pop back to the shell first.
+  shell bottom navigation; bar taps pop back to the shell first, commit only
+  once under a same-frame double tap, and wait for the old route to finish
+  before opening another surface.
 - **`image_crop_test.dart`**, **`profile_image_rules_test.dart`** —
   crop geometry / output dimensions, validation budgets.
 - Plus layout-regression suites (message-bubble overflow, profile
@@ -589,15 +654,21 @@ Worth naming plainly rather than leaving implicit:
 - Crash visibility on web: Crashlytics (added 2026-08-08) covers iOS and
   Android only — the Flutter web build still has no crash/error
   reporting channel beyond the browser console.
-- **Real browsers and real microphones.** `flutter test` runs on the VM, so
-  nothing in the suite executes `dart:js_interop`, `MediaRecorder`,
-  `getUserMedia` or a `DOMException`. The web recording path is verified by
-  seam tests plus a manual Chromium 148 check of the MIME negotiation;
+- **Real browsers and real microphones.** The default `flutter test` suite
+  runs on the VM, so that suite does not execute `dart:js_interop`,
+  `MediaRecorder`, `getUserMedia` or a `DOMException`. The separate Chrome
+  case does execute `dart:js_interop` for the local Blob URL lifecycle, but it
+  does not invoke `MediaRecorder` or `getUserMedia`. The web recording path is
+  otherwise verified by seam tests plus a manual Chromium 148 check of MIME
+  negotiation;
   Safari, Firefox, an actual permission refusal, an unplugged or busy
   input device, and an end-to-end publish into production Storage and
-  Firestore are all **UNVERIFIED**. No screen reader has been run against
-  any screen in this project, on any platform; keyboard behavior is
-  widget-tested only.
+  Firestore are all **UNVERIFIED**. The local Voice Moment preview is covered
+  through `audioplayers` test doubles plus a real-Chrome test of Blob object
+  URL creation, reuse and revocation. It still does not prove decoded audible
+  playback on Safari, iOS or Android, which requires a physical browser/device
+  smoke. No screen reader has been run against any screen in this project, on
+  any platform; keyboard behavior is widget-tested only.
 - **No test proves anything about what is deployed.** Every suite above
   runs against an emulator or a fake. A green run is evidence about the
   *repository*, never about production. On 2026-08-16 the deployed
@@ -613,7 +684,7 @@ Worth naming plainly rather than leaving implicit:
   accrual and failure contracts are covered against fakes/emulators. No test
   in this repo has held a real LiveKit connection, so production delivery is
   still a manual integration claim. See [Bugs.md](Bugs.md#achievements).
-- Broad service coverage remains uneven despite the 118 regression files;
+- Broad service coverage remains uneven despite the 120 VM regression files;
   **live audio in particular has none.** The room *liveness* path gained real
   coverage on 2026-08-20, but audio quality, reconnect, device routing and
   the web microphone permission path are untouched and unretested, and no

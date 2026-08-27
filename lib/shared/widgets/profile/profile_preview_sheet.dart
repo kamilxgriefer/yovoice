@@ -38,24 +38,100 @@ Future<void> showProfilePreview(
   FirebaseFirestore? firestore,
   FirebaseAuth? auth,
   FriendService? friendService,
-}) {
-  return showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    backgroundColor: Colors.transparent,
-    showDragHandle: false,
-    barrierColor: Colors.black.withValues(alpha: .72),
-    constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
-    builder: (_) => ProfilePreviewSheet(
-      userId: userId,
-      seedDisplayName: displayName,
-      seedPhotoUrl: photoUrl,
-      firestore: firestore,
-      auth: auth,
-      friendService: friendService,
-    ),
-  );
+  MessageService? messageService,
+}) async {
+  if (messageService != null && auth == null) {
+    throw ArgumentError(
+      'An injected MessageService requires the matching FirebaseAuth.',
+    );
+  }
+
+  // Keep navigation on the launcher Navigator. Looking it up from the sheet
+  // after popping the sheet is unsafe (and used to make Message appear inert
+  // when the preview itself was opened above another modal).
+  final navigator = Navigator.of(context);
+  final resolvedAuth = auth ?? FirebaseAuth.instance;
+  // Production shares the process-wide facade. Dependency-injected previews
+  // get a matching short-lived service; this helper owns and disposes it only
+  // after a pushed Chat route has returned.
+  final ownedMessageService =
+      messageService == null && (firestore != null || auth != null)
+      ? MessageService(firestore: firestore, auth: resolvedAuth)
+      : null;
+  final resolvedMessageService =
+      messageService ?? ownedMessageService ?? MessageService.live;
+
+  try {
+    final destination = await showModalBottomSheet<_ProfilePreviewDestination>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      showDragHandle: false,
+      barrierColor: Colors.black.withValues(alpha: .72),
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
+      builder: (_) => ProfilePreviewSheet(
+        userId: userId,
+        seedDisplayName: displayName,
+        seedPhotoUrl: photoUrl,
+        firestore: firestore,
+        auth: resolvedAuth,
+        friendService: friendService,
+        messageService: resolvedMessageService,
+      ),
+    );
+
+    if (destination == null || !navigator.mounted) return;
+
+    switch (destination) {
+      case _ProfileChatDestination():
+        await navigator.push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => ChatScreen(
+              conversationId: destination.conversationId,
+              otherUserId: destination.profile.uid,
+              otherDisplayName: destination.profile.displayName,
+              otherEmail: destination.profile.email,
+              otherPhotoUrl: destination.profile.photoUrl ?? '',
+              messageService: destination.messageService,
+              auth: destination.auth,
+            ),
+          ),
+        );
+      case _FullProfileDestination():
+        await navigator.push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => FriendProfileScreen(friend: destination.friend),
+          ),
+        );
+    }
+  } finally {
+    await ownedMessageService?.dispose();
+  }
+}
+
+sealed class _ProfilePreviewDestination {
+  const _ProfilePreviewDestination();
+}
+
+class _ProfileChatDestination extends _ProfilePreviewDestination {
+  const _ProfileChatDestination({
+    required this.conversationId,
+    required this.profile,
+    required this.messageService,
+    required this.auth,
+  });
+
+  final String conversationId;
+  final UserProfile profile;
+  final MessageService messageService;
+  final FirebaseAuth auth;
+}
+
+class _FullProfileDestination extends _ProfilePreviewDestination {
+  const _FullProfileDestination(this.friend);
+
+  final FriendUser friend;
 }
 
 class ProfilePreviewSheet extends StatefulWidget {
@@ -64,8 +140,9 @@ class ProfilePreviewSheet extends StatefulWidget {
     this.seedDisplayName,
     this.seedPhotoUrl,
     this.firestore,
-    this.auth,
+    required this.auth,
     this.friendService,
+    required this.messageService,
     super.key,
   });
 
@@ -77,10 +154,11 @@ class ProfilePreviewSheet extends StatefulWidget {
   final String? seedPhotoUrl;
 
   /// Injection seams keep the production route testable without a live app.
-  /// Ordinary call sites leave both null and use the Firebase singletons.
+  /// The route helper resolves one matching Auth/MessageService pair.
   final FirebaseFirestore? firestore;
-  final FirebaseAuth? auth;
+  final FirebaseAuth auth;
   final FriendService? friendService;
+  final MessageService messageService;
 
   @override
   State<ProfilePreviewSheet> createState() => _ProfilePreviewSheetState();
@@ -96,12 +174,12 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
 
   late final FirebaseFirestore _firestore =
       widget.firestore ?? FirebaseFirestore.instance;
-  late final FirebaseAuth _auth = widget.auth ?? FirebaseAuth.instance;
+  late final FirebaseAuth _auth = widget.auth;
   late final _profiles = ProfileService(firestore: _firestore, auth: _auth);
   late final _friends =
       widget.friendService ?? FriendService(firestore: _firestore, auth: _auth);
   late final _follows = FollowService(firestore: _firestore, auth: _auth);
-  late final _messages = MessageService(firestore: _firestore, auth: _auth);
+  late final MessageService _messages = widget.messageService;
   final _socialGraph = SocialGraphService();
 
   FriendRelationshipStatus? _relationship;
@@ -111,6 +189,7 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
   bool _busyFriend = false;
   bool _busyFollow = false;
   bool _busyMessage = false;
+  String? _messageError;
 
   String get _currentUid => _auth.currentUser?.uid ?? '';
   bool get _isSelf => widget.userId == _currentUid;
@@ -178,18 +257,18 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
     );
   }
 
-  Future<void> _openFullProfile(UserProfile profile) async {
-    Navigator.of(context).pop();
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => FriendProfileScreen(friend: _asFriendUser(profile)),
-      ),
+  void _openFullProfile(UserProfile profile) {
+    Navigator.of(context).pop<_ProfilePreviewDestination>(
+      _FullProfileDestination(_asFriendUser(profile)),
     );
   }
 
   Future<void> _message(UserProfile profile) async {
     if (_busyMessage) return;
-    setState(() => _busyMessage = true);
+    setState(() {
+      _busyMessage = true;
+      _messageError = null;
+    });
     try {
       final conversationId = await _messages.openOrCreateConversation(
         otherUserId: profile.uid,
@@ -198,20 +277,23 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
         otherPhotoUrl: profile.photoUrl ?? '',
       );
       if (!mounted) return;
-      Navigator.of(context).pop();
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => ChatScreen(
-            conversationId: conversationId,
-            otherUserId: profile.uid,
-            otherDisplayName: profile.displayName,
-            otherEmail: profile.email,
-            otherPhotoUrl: profile.photoUrl ?? '',
-          ),
+      Navigator.of(context).pop<_ProfilePreviewDestination>(
+        _ProfileChatDestination(
+          conversationId: conversationId,
+          profile: profile,
+          messageService: _messages,
+          auth: _auth,
         ),
       );
     } catch (error) {
-      _snack(error, "Couldn't open this chat. Please try again.");
+      if (mounted) {
+        setState(
+          () => _messageError = intentionalOrFriendly(
+            error,
+            fallback: "Couldn't open this chat. Please try again.",
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _busyMessage = false);
     }
@@ -343,6 +425,7 @@ class _ProfilePreviewSheetState extends State<ProfilePreviewSheet> {
                           mutuals: _mutuals,
                           busyFriend: _busyFriend,
                           busyMessage: _busyMessage,
+                          messageError: _messageError,
                           busyFollow: _busyFollow,
                           followStream: _isSelf
                               ? null
@@ -392,6 +475,7 @@ class _Body extends StatelessWidget {
     required this.mutuals,
     required this.busyFriend,
     required this.busyMessage,
+    required this.messageError,
     required this.busyFollow,
     required this.followStream,
     required this.onOpenFull,
@@ -409,6 +493,7 @@ class _Body extends StatelessWidget {
   final MutualFriendsSummary? mutuals;
   final bool busyFriend;
   final bool busyMessage;
+  final String? messageError;
   final bool busyFollow;
   final Stream<bool>? followStream;
   final ValueChanged<UserProfile> onOpenFull;
@@ -546,6 +631,16 @@ class _Body extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 18),
+        if (messageError != null) ...[
+          _MessageError(message: messageError!),
+          const SizedBox(height: 10),
+        ],
+        if (busyMessage)
+          Semantics(
+            liveRegion: true,
+            label: 'Opening chat…',
+            child: const SizedBox.shrink(),
+          ),
         if (isSelf)
           _SecondaryButton(
             icon: Icons.person_rounded,
@@ -565,7 +660,7 @@ class _Body extends StatelessWidget {
                   MediaQuery.textScalerOf(context).scale(1) >= 1.5;
               final message = _PrimaryButton(
                 icon: Icons.chat_bubble_rounded,
-                label: 'Message',
+                label: busyMessage ? 'Opening…' : 'Message',
                 busy: busyMessage,
                 onPressed: profile == null ? null : () => onMessage(profile!),
               );
@@ -669,6 +764,55 @@ class _Body extends StatelessWidget {
               : () => onFollow(following, profile!),
         );
       },
+    );
+  }
+}
+
+class _MessageError extends StatelessWidget {
+  const _MessageError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: message,
+      excludeSemantics: true,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFF6F91).withValues(alpha: .1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: const Color(0xFFFF8AA6).withValues(alpha: .55),
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(
+              Icons.error_outline_rounded,
+              size: 18,
+              color: Color(0xFFFFA6B9),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(
+                  color: Color(0xFFFFD8E1),
+                  fontSize: 13,
+                  height: 1.35,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

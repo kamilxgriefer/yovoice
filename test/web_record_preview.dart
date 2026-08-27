@@ -20,7 +20,9 @@
 // voice_moment_test_doubles.dart pull in firebase_storage_mocks, which
 // imports dart:io and cannot be compiled for the web.
 import 'dart:async';
+import 'dart:typed_data';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:record/record.dart' show Amplitude, AudioEncoder, RecordConfig;
@@ -35,9 +37,7 @@ import 'package:yovoice/features/moments/data/services/voice_moment_recorder.dar
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 
 void main() {
-  final state = Uri.parse(
-    web.window.location.href,
-  ).queryParameters['state'];
+  final state = Uri.parse(web.window.location.href).queryParameters['state'];
   runApp(_RecordPreviewApp(state: state));
 }
 
@@ -187,9 +187,9 @@ class _ScriptedCaptureState extends State<_ScriptedCapture> {
     if (element == null) return;
     final renderObject = element.renderObject;
     if (renderObject is! RenderBox) return;
-    final centre = renderObject.localToGlobal(renderObject.size.center(
-      Offset.zero,
-    ));
+    final centre = renderObject.localToGlobal(
+      renderObject.size.center(Offset.zero),
+    );
     // A tap has to win the gesture arena: down and up need distinct
     // frames and a consistent pointer id, or the recognizer never fires.
     _pointer += 1;
@@ -269,8 +269,7 @@ class _PreviewBackend implements VoiceRecorderBackend {
   @override
   Future<void> start(RecordConfig config, {required String path}) async {}
   @override
-  Stream<Amplitude> onAmplitudeChanged(Duration interval) =>
-      amplitudes.stream;
+  Stream<Amplitude> onAmplitudeChanged(Duration interval) => amplitudes.stream;
   @override
   Future<String?> stop() async => 'preview-handle';
   @override
@@ -312,8 +311,13 @@ class _PreviewAudio extends RecordedAudio {
   @override
   int get byteLength => 196608;
   @override
-  Future<String> uploadTo(Reference reference, SettableMetadata metadata) async
-      => '1';
+  Source get playbackSource =>
+      BytesSource(Uint8List(byteLength), mimeType: contentType);
+  @override
+  Future<String> uploadTo(
+    Reference reference,
+    SettableMetadata metadata,
+  ) async => '1';
   @override
   Future<void> discard() async {}
 }

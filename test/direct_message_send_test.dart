@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
@@ -83,7 +86,8 @@ void main() {
     });
   }
 
-  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> messageDocs() async {
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
+  messageDocs() async {
     final snapshot = await db
         .collection('conversations')
         .doc(conversationId)
@@ -112,6 +116,176 @@ void main() {
   });
 
   group('the callable answers', () {
+    test(
+      'an auth switch rotates to a different account-scoped queue',
+      () async {
+        final auth = MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(uid: 'account-a'),
+        );
+        final service = MessageService(firestore: db, auth: auth);
+        final accountAQueue = service.outbox;
+        await accountAQueue.enqueue(
+          conversationId: conversationId,
+          recipientId: recipientId,
+          text: 'account A private draft',
+        );
+
+        await auth.signOut();
+        expect(service.outbox.ownerId, isNull);
+        expect(service.outbox.entries, isEmpty);
+
+        await auth.signInWithCustomToken('account-b-token');
+        final accountBQueue = service.outbox;
+        expect(identical(accountAQueue, accountBQueue), isFalse);
+        expect(accountBQueue.ownerId, auth.currentUser!.uid);
+        expect(accountBQueue.entries, isEmpty);
+        expect(accountAQueue.entries.single.text, 'account A private draft');
+        await accountAQueue.clear();
+        await accountBQueue.clear();
+      },
+    );
+
+    test('optimistic id matches the backend SHA-256 contract', () {
+      final service = MessageService(
+        firestore: db,
+        auth: authFor(senderId),
+        functions: _RejectingFunctions(),
+      );
+      final entry = OutboxEntry(
+        id: 'local',
+        requestId: 'request-123',
+        conversationId: conversationId,
+        recipientId: recipientId,
+        text: 'same text can be sent twice',
+        queuedAt: DateTime.utc(2026),
+      );
+
+      expect(
+        service.messageIdForQueuedText(entry),
+        'm_ae97116b386001bd326cc7a28465505aae23b425',
+      );
+    });
+
+    test(
+      'optimistic queue returns while a cold callable is still in flight',
+      () async {
+        final server = _BlockingFunctions();
+        final outbox = MessageOutbox(preferences: null);
+        final service = MessageService(
+          firestore: db,
+          auth: authFor(senderId),
+          functions: server,
+          outbox: outbox,
+        );
+
+        final entry = await service.queueTextMessage(
+          conversationId: conversationId,
+          recipientId: recipientId,
+          text: 'appears immediately',
+        );
+
+        await server.started.future;
+        expect(server.release.isCompleted, isFalse);
+        expect(outbox.entries.single.id, entry.id);
+        expect(outbox.entries.single.text, 'appears immediately');
+
+        final delivered = outbox.delivered.first;
+        server.release.complete(<String, Object?>{
+          'conversationId': conversationId,
+          'messageId': 'server-message',
+          'recipientId': recipientId,
+          'created': true,
+        });
+        expect((await delivered).id, entry.id);
+        expect(outbox.entries, isEmpty);
+      },
+    );
+
+    test(
+      'a rapid second optimistic send follows the in-flight first in FIFO order',
+      () async {
+        final server = _FirstCallBlockingFunctions();
+        final outbox = MessageOutbox(preferences: null);
+        final service = MessageService(
+          firestore: db,
+          auth: authFor(senderId),
+          functions: server,
+          outbox: outbox,
+        );
+
+        await service.queueTextMessage(
+          conversationId: conversationId,
+          recipientId: recipientId,
+          text: 'first',
+        );
+        await server.firstStarted.future;
+        await service.queueTextMessage(
+          conversationId: conversationId,
+          recipientId: recipientId,
+          text: 'second',
+        );
+
+        expect(server.texts, ['first']);
+        expect(outbox.entries.map((entry) => entry.text), ['first', 'second']);
+
+        final delivered = outbox.delivered.take(2).toList();
+        server.releaseFirst.complete();
+        expect((await delivered).map((entry) => entry.text), [
+          'first',
+          'second',
+        ]);
+        expect(server.texts, ['first', 'second']);
+        expect(outbox.entries, isEmpty);
+      },
+    );
+
+    test(
+      'a transient first-send failure cannot let the rapid second overtake it',
+      () async {
+        var now = DateTime.utc(2026, 8, 27, 12);
+        final server = _FirstAttemptUnavailableFunctions();
+        final outbox = MessageOutbox(
+          preferences: null,
+          clock: () => now,
+          baseBackoff: const Duration(seconds: 30),
+          maxBackoff: const Duration(seconds: 30),
+          random: Random(1),
+        );
+        final service = MessageService(
+          firestore: db,
+          auth: authFor(senderId),
+          functions: server,
+          outbox: outbox,
+        );
+        final firstRetried = outbox.changes.firstWhere(
+          (entries) =>
+              entries.isNotEmpty && entries.first.state == OutboxState.retrying,
+        );
+
+        await service.queueTextMessage(
+          conversationId: conversationId,
+          recipientId: recipientId,
+          text: 'first',
+        );
+        await firstRetried;
+        await service.queueTextMessage(
+          conversationId: conversationId,
+          recipientId: recipientId,
+          text: 'second',
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(server.texts, ['first']);
+        expect(outbox.entries.map((entry) => entry.text), ['first', 'second']);
+
+        now = now.add(const Duration(minutes: 1));
+        await service.flushOutbox();
+        expect(server.texts, ['first', 'first', 'second']);
+        expect(outbox.entries, isEmpty);
+      },
+    );
+
     test('one send leaves exactly one message, one unread increment and '
         'one conversation summary — the client adds nothing', () async {
       final server = _ServerSendFunctions(db, senderId: senderId);
@@ -131,7 +305,8 @@ void main() {
       expect(
         docs,
         hasLength(1),
-        reason: 'the callable already created the message; the client batch '
+        reason:
+            'the callable already created the message; the client batch '
             'used to create a second one under an auto-id',
       );
       expect(docs.single.id, server.messageIds.single);
@@ -152,7 +327,8 @@ void main() {
       expect(
         conversation['updatedAt'],
         _ServerSendFunctions.serverClock,
-        reason: 'the summary carries the SERVER write; a client batch '
+        reason:
+            'the summary carries the SERVER write; a client batch '
             'landing after it would have stamped its own clock',
       );
     });
@@ -330,7 +506,8 @@ void main() {
       expect(
         docs.single.data().keys.toSet(),
         canonicalMessageKeys,
-        reason: 'a queued-then-retried message is still a SERVER-written '
+        reason:
+            'a queued-then-retried message is still a SERVER-written '
             'message, so it carries the exact key set validateMessage '
             'demands — queueing changes when it is sent, not what is sent',
       );
@@ -340,11 +517,59 @@ void main() {
       expect(
         server.payloads.single['requestId'],
         queuedRequestId,
-        reason: 'the retry MUST reuse the id the message was queued with — '
+        reason:
+            'the retry MUST reuse the id the message was queued with — '
             'the callable ledger keys on it, so a fresh id would turn a '
             'lost response into a duplicate message',
       );
     });
+
+    test(
+      'a cold restart resumes persisted delivery without a new send',
+      () async {
+        final preferences = await SharedPreferences.getInstance();
+        final beforeRestart = MessageOutbox(
+          preferences: preferences,
+          baseBackoff: Duration.zero,
+          maxBackoff: Duration.zero,
+        );
+        final unavailable = MessageService(
+          firestore: db,
+          auth: authFor(senderId),
+          functions: _UnavailableFunctions('unimplemented'),
+          outbox: beforeRestart,
+        );
+        await unavailable.sendTextMessage(
+          conversationId: conversationId,
+          recipientId: recipientId,
+          text: 'resume me after launch',
+        );
+        await unavailable.dispose();
+
+        final afterRestart = MessageOutbox(
+          preferences: preferences,
+          baseBackoff: Duration.zero,
+          maxBackoff: Duration.zero,
+        );
+        final server = _ServerSendFunctions(db, senderId: senderId);
+        final relaunched = MessageService(
+          firestore: db,
+          auth: authFor(senderId),
+          functions: server,
+          outbox: afterRestart,
+        );
+
+        await relaunched.resumeOutbox();
+
+        expect(server.payloads, hasLength(1));
+        expect(
+          (await messageDocs()).single.data()['content'],
+          'resume me after launch',
+        );
+        expect(afterRestart.entries, isEmpty);
+        await relaunched.dispose();
+      },
+    );
 
     test('a retry of a send that actually landed is deduplicated rather '
         'than duplicated', () async {
@@ -450,8 +675,9 @@ void main() {
       ).flushOutbox();
 
       expect(server.payloads.single['replyToMessageId'], 'm_target');
-      final sent = (await messageDocs())
-          .firstWhere((entry) => entry.id != 'm_target');
+      final sent = (await messageDocs()).firstWhere(
+        (entry) => entry.id != 'm_target',
+      );
       expect(sent.data()['replyToMessageId'], 'm_target');
       expect(sent.data()['replyToSenderId'], recipientId);
     });
@@ -492,7 +718,8 @@ void main() {
       expect(
         server.payloads.map((payload) => payload['text']).toList(),
         ['first', 'second', 'third'],
-        reason: 'a conversation that arrives out of order is not the same '
+        reason:
+            'a conversation that arrives out of order is not the same '
             'conversation',
       );
       expect(outbox.entries, isEmpty);
@@ -573,7 +800,8 @@ void main() {
           text: 'over the limit',
         ),
         throwsA(isA<OutboxFullException>()),
-        reason: 'an unbounded queue turns a long outage into unbounded '
+        reason:
+            'an unbounded queue turns a long outage into unbounded '
             'storage and a rate-limit burst on reconnect; refusing while '
             'the person can still see what they typed is the honest failure',
       );
@@ -614,7 +842,8 @@ void main() {
       expect(
         failed.text,
         'never lands',
-        reason: 'a failed message still holds what was written, so it can '
+        reason:
+            'a failed message still holds what was written, so it can '
             'be retried by hand or copied out',
       );
     });
@@ -814,8 +1043,7 @@ class _ServerSendFunctions implements FirebaseFunctions {
     final conversation = db.collection('conversations').doc(conversationId);
     final snapshot = await conversation.get();
     final data = snapshot.data() ?? <String, dynamic>{};
-    final sequence =
-        ((data['lastMessageSequence'] as num?)?.toInt() ?? 0) + 1;
+    final sequence = ((data['lastMessageSequence'] as num?)?.toInt() ?? 0) + 1;
     final messageId = 'm_server_$sequence';
     messageIds.add(messageId);
 
@@ -949,7 +1177,10 @@ class _LedgerAwareFunctions implements FirebaseFunctions {
 }
 
 class _UnavailableFunctions implements FirebaseFunctions {
-  _UnavailableFunctions(this.code, {this.message = 'The callable is unavailable.'});
+  _UnavailableFunctions(
+    this.code, {
+    this.message = 'The callable is unavailable.',
+  });
 
   final String code;
   final String message;
@@ -957,10 +1188,8 @@ class _UnavailableFunctions implements FirebaseFunctions {
   @override
   HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
       _CallableStub(
-        (_) async => throw FirebaseFunctionsException(
-          code: code,
-          message: message,
-        ),
+        (_) async =>
+            throw FirebaseFunctionsException(code: code, message: message),
       );
 
   @override
@@ -977,6 +1206,71 @@ class _RejectingFunctions implements FirebaseFunctions {
           message: 'You cannot message this person.',
         ),
       );
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _BlockingFunctions implements FirebaseFunctions {
+  final Completer<void> started = Completer<void>();
+  final Completer<Object?> release = Completer<Object?>();
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((_) async {
+        if (!started.isCompleted) started.complete();
+        return release.future;
+      });
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FirstCallBlockingFunctions implements FirebaseFunctions {
+  final Completer<void> firstStarted = Completer<void>();
+  final Completer<void> releaseFirst = Completer<void>();
+  final List<String> texts = <String>[];
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((parameters) async {
+        final payload = parameters! as Map<Object?, Object?>;
+        texts.add(payload['text']! as String);
+        if (texts.length == 1) {
+          firstStarted.complete();
+          await releaseFirst.future;
+        }
+        return <String, Object?>{
+          'conversationId': payload['conversationId'],
+          'messageId': 'server-${texts.length}',
+          'created': true,
+        };
+      });
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FirstAttemptUnavailableFunctions implements FirebaseFunctions {
+  final List<String> texts = <String>[];
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((parameters) async {
+        final payload = parameters! as Map<Object?, Object?>;
+        texts.add(payload['text']! as String);
+        if (texts.length == 1) {
+          throw FirebaseFunctionsException(
+            code: 'unavailable',
+            message: 'temporary transport failure',
+          );
+        }
+        return <String, Object?>{
+          'conversationId': payload['conversationId'],
+          'messageId': 'server-${texts.length}',
+          'created': true,
+        };
+      });
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

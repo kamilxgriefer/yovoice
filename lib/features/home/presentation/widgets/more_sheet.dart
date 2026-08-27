@@ -85,17 +85,43 @@ const Set<MoreDestination> desktopRailDestinations = {
 Future<MoreDestination?> showMoreSheet(
   BuildContext context, {
   SubscriptionEntitlements entitlements = SubscriptionEntitlements.free,
-}) {
-  return showModalBottomSheet<MoreDestination>(
-    context: context,
-    useSafeArea: true,
+  StaffCapabilityService? capabilityService,
+  String? currentUid,
+}) async {
+  assert(debugCheckHasMediaQuery(context));
+  assert(debugCheckHasMaterialLocalizations(context));
+
+  final navigator = Navigator.of(context);
+  final localizations = MaterialLocalizations.of(context);
+  final route = ModalBottomSheetRoute<MoreDestination>(
+    builder: (_) => MoreSheet(
+      entitlements: entitlements,
+      capabilityService: capabilityService,
+      currentUid: currentUid,
+    ),
+    capturedThemes: InheritedTheme.capture(
+      from: context,
+      to: navigator.context,
+    ),
     isScrollControlled: true,
+    barrierLabel: localizations.scrimLabel,
+    barrierOnTapHint: localizations.scrimOnTapHint(
+      localizations.bottomSheetLabel,
+    ),
     backgroundColor: Colors.transparent,
-    showDragHandle: false,
     constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
-    barrierColor: Colors.black.withValues(alpha: 0.72),
-    builder: (_) => MoreSheet(entitlements: entitlements),
+    modalBarrierColor: Colors.black.withValues(alpha: 0.72),
+    showDragHandle: false,
+    useSafeArea: true,
   );
+
+  final destination = await navigator.push(route);
+  // Navigator.push completes when pop STARTS. Keep the caller's transition
+  // guard armed until the reverse animation and modal barrier are actually
+  // gone; otherwise a fast second tap can stack another More sheet beneath
+  // the first destination.
+  await route.completed;
+  return destination;
 }
 
 /// Builds a destination's screen.
@@ -398,7 +424,67 @@ class _MoreSheetState extends State<MoreSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final isVeryNarrow = MediaQuery.sizeOf(context).width <= 350;
+    final productEntries = <_MoreEntry>[
+      const _MoreEntry(
+        destination: MoreDestination.friends,
+        icon: Icons.people_rounded,
+        label: 'Friends',
+        subtitle: 'Your circle',
+      ),
+      const _MoreEntry(
+        destination: MoreDestination.profile,
+        icon: Icons.person_rounded,
+        label: 'Profile',
+        subtitle: 'You',
+      ),
+      const _MoreEntry(
+        destination: MoreDestination.discover,
+        icon: Icons.explore_rounded,
+        label: 'Discover',
+        subtitle: 'Find rooms',
+      ),
+      const _MoreEntry(
+        destination: MoreDestination.findCreators,
+        icon: Icons.person_search_rounded,
+        label: 'Find creators',
+        subtitle: 'People to follow',
+      ),
+      _MoreEntry(
+        destination: MoreDestination.clubs,
+        icon: Icons.groups_2_rounded,
+        label: 'Clubs',
+        subtitle: 'Communities',
+        isLocked: moreDestinationIsLocked(
+          MoreDestination.clubs,
+          widget.entitlements,
+        ),
+      ),
+      const _MoreEntry(
+        destination: MoreDestination.notifications,
+        icon: Icons.notifications_rounded,
+        label: 'Alerts',
+        subtitle: 'Updates',
+      ),
+      const _MoreEntry(
+        destination: MoreDestination.achievements,
+        icon: Icons.emoji_events_rounded,
+        label: 'Awards',
+        subtitle: 'Progress',
+      ),
+      _MoreEntry(
+        destination: MoreDestination.creatorStudio,
+        icon: Icons.auto_graph_rounded,
+        label: 'Creator',
+        subtitle: 'Studio',
+        isLocked: moreDestinationIsLocked(
+          MoreDestination.creatorStudio,
+          widget.entitlements,
+        ),
+      ),
+    ];
+
+    final content = Container(
       decoration: const BoxDecoration(
         color: MoreSheet._surface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
@@ -415,18 +501,23 @@ class _MoreSheetState extends State<MoreSheet> {
           Flexible(
             child: SingleChildScrollView(
               key: const ValueKey('more-sheet-scroll-view'),
-              padding: const EdgeInsets.fromLTRB(18, 18, 18, 22),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                isVeryNarrow ? 8 : 10,
+                16,
+                isVeryNarrow ? 8 : 16,
+              ),
               keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Row(
+                  Row(
                     children: [
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
+                            const Text(
                               'More',
                               style: TextStyle(
                                 color: Colors.white,
@@ -434,42 +525,62 @@ class _MoreSheetState extends State<MoreSheet> {
                                 fontWeight: FontWeight.w900,
                               ),
                             ),
-                            SizedBox(height: 3),
-                            Text(
-                              'Everything else, kept one tap away.',
-                              style: TextStyle(
-                                color: MoreSheet._muted,
-                                fontSize: 13,
+                            if (!isVeryNarrow) ...[
+                              const SizedBox(height: 3),
+                              const Text(
+                                'Everything else, kept one tap away.',
+                                style: TextStyle(
+                                  color: MoreSheet._muted,
+                                  fontSize: 13,
+                                ),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 18),
+                  SizedBox(height: isVeryNarrow ? 8 : 12),
                   LayoutBuilder(
                     builder: (context, constraints) {
-                      final textScale = MediaQuery.textScalerOf(
-                        context,
-                      ).scale(1);
-                      final usesTwoColumns =
-                          constraints.maxWidth < 400 || textScale > 1.3;
-                      final baseExtent = usesTwoColumns
-                          ? (constraints.maxWidth < 350 ? 176.0 : 160.0)
-                          : 170.0;
-                      final tileExtent =
-                          (baseExtent + ((textScale - 1).clamp(0, 1.5) * 104))
-                              .clamp(baseExtent, 272)
-                              .toDouble();
+                      final scaler = MediaQuery.textScalerOf(context);
+                      final textScale = scaler.scale(14) / 14;
+
+                      // A dense launcher grid fits every ordinary action in
+                      // the first expanded phone view. Enlarged text switches
+                      // to intrinsic full-width rows instead of making fixed
+                      // grid cells taller and narrower at the same time.
+                      if (textScale > 1.3) {
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (
+                              var index = 0;
+                              index < productEntries.length;
+                              index++
+                            ) ...[
+                              if (index > 0) const SizedBox(height: 8),
+                              _WideMoreTile(
+                                destination: productEntries[index].destination,
+                                icon: productEntries[index].icon,
+                                label: productEntries[index].label,
+                                subtitle: productEntries[index].subtitle,
+                                isLocked: productEntries[index].isLocked,
+                              ),
+                            ],
+                          ],
+                        );
+                      }
+
+                      final usesTwoColumns = constraints.maxWidth < 480;
 
                       return GridView.count(
                         crossAxisCount: usesTwoColumns ? 2 : 3,
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
-                        mainAxisSpacing: 11,
-                        crossAxisSpacing: 11,
-                        mainAxisExtent: tileExtent,
+                        mainAxisSpacing: 8,
+                        crossAxisSpacing: 8,
+                        mainAxisExtent: 78,
                         children: [
                           // Moments took the dock slot Friends held, so
                           // Friends takes the grid slot Moments held — a
@@ -477,62 +588,14 @@ class _MoreSheetState extends State<MoreSheet> {
                           // Friends also remains primary tab index 2 with
                           // its state alive, and one tap from Home's
                           // "Your circle".
-                          const _MoreTile(
-                            destination: MoreDestination.friends,
-                            icon: Icons.people_rounded,
-                            label: 'Friends',
-                            subtitle: 'Your circle',
-                          ),
-                          const _MoreTile(
-                            destination: MoreDestination.profile,
-                            icon: Icons.person_rounded,
-                            label: 'Profile',
-                            subtitle: 'You',
-                          ),
-                          const _MoreTile(
-                            destination: MoreDestination.discover,
-                            icon: Icons.explore_rounded,
-                            label: 'Discover',
-                            subtitle: 'Find rooms',
-                          ),
-                          const _MoreTile(
-                            destination: MoreDestination.findCreators,
-                            icon: Icons.person_search_rounded,
-                            label: 'Find creators',
-                            subtitle: 'People to follow',
-                          ),
-                          _MoreTile(
-                            destination: MoreDestination.clubs,
-                            icon: Icons.groups_2_rounded,
-                            label: 'Clubs',
-                            subtitle: 'Communities',
-                            isLocked: moreDestinationIsLocked(
-                              MoreDestination.clubs,
-                              widget.entitlements,
+                          for (final entry in productEntries)
+                            _MoreTile(
+                              destination: entry.destination,
+                              icon: entry.icon,
+                              label: entry.label,
+                              subtitle: entry.subtitle,
+                              isLocked: entry.isLocked,
                             ),
-                          ),
-                          const _MoreTile(
-                            destination: MoreDestination.notifications,
-                            icon: Icons.notifications_rounded,
-                            label: 'Alerts',
-                            subtitle: 'Updates',
-                          ),
-                          const _MoreTile(
-                            destination: MoreDestination.achievements,
-                            icon: Icons.emoji_events_rounded,
-                            label: 'Awards',
-                            subtitle: 'Progress',
-                          ),
-                          _MoreTile(
-                            destination: MoreDestination.creatorStudio,
-                            icon: Icons.auto_graph_rounded,
-                            label: 'Creator',
-                            subtitle: 'Studio',
-                            isLocked: moreDestinationIsLocked(
-                              MoreDestination.creatorStudio,
-                              widget.entitlements,
-                            ),
-                          ),
                         ],
                       );
                     },
@@ -542,7 +605,7 @@ class _MoreSheetState extends State<MoreSheet> {
                   // real door. Ordinary and VIP accounts render the exact layout
                   // this sheet always had.
                   ..._staffSection(),
-                  const SizedBox(height: 11),
+                  const SizedBox(height: 8),
                   const _WideMoreTile(
                     destination: MoreDestination.settings,
                     icon: Icons.settings_rounded,
@@ -556,6 +619,20 @@ class _MoreSheetState extends State<MoreSheet> {
         ],
       ),
     );
+
+    final routeAnimation = ModalRoute.of(context)?.animation;
+    if (routeAnimation == null) return content;
+    return AnimatedBuilder(
+      animation: routeAnimation,
+      child: content,
+      builder: (context, child) => AbsorbPointer(
+        // The launcher's second tap can otherwise land on Settings/Creator
+        // while the sheet is still sliding over the same screen coordinate.
+        // Unlock only once the incoming route is completely stationary.
+        absorbing: routeAnimation.status != AnimationStatus.completed,
+        child: child,
+      ),
+    );
   }
 
   List<Widget> _staffSection() {
@@ -563,27 +640,32 @@ class _MoreSheetState extends State<MoreSheet> {
     if (entries.isEmpty) return const [];
     final uid = _currentUid;
     return [
-      const SizedBox(height: 14),
-      Row(
-        children: [
-          const Text(
-            'Staff',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 13,
-              fontWeight: FontWeight.w900,
-              letterSpacing: .3,
+      const SizedBox(height: 12),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            const Text(
+              'Staff',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+                letterSpacing: .3,
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          // The signed-in account's own authoritative badges — same
-          // shared components and repository as every other surface.
-          if (uid.isNotEmpty) Flexible(child: UserIdentityBadges(uid: uid)),
-        ],
+            // The signed-in account's own authoritative badges — same
+            // shared components and repository as every other surface.
+            if (uid.isNotEmpty) UserIdentityBadges(uid: uid),
+          ],
+        ),
       ),
-      const SizedBox(height: 9),
+      const SizedBox(height: 8),
       for (var index = 0; index < entries.length; index++) ...[
-        if (index > 0) const SizedBox(height: 9),
+        if (index > 0) const SizedBox(height: 8),
         _WideMoreTile(
           destination: entries[index].destination,
           icon: entries[index].destination == MoreDestination.staffCenter
@@ -596,6 +678,22 @@ class _MoreSheetState extends State<MoreSheet> {
       ],
     ];
   }
+}
+
+class _MoreEntry {
+  const _MoreEntry({
+    required this.destination,
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    this.isLocked = false,
+  });
+
+  final MoreDestination destination;
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final bool isLocked;
 }
 
 class _MoreTile extends StatelessWidget {
@@ -615,59 +713,93 @@ class _MoreTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: MoreSheet._card,
-      borderRadius: BorderRadius.circular(21),
-      child: InkWell(
-        onTap: () => Navigator.pop(context, destination),
-        borderRadius: BorderRadius.circular(21),
-        child: Container(
-          padding: const EdgeInsets.all(13),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(21),
-            border: Border.all(color: MoreSheet._border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 39,
-                    height: 39,
-                    decoration: BoxDecoration(
-                      color: MoreSheet._primary.withValues(alpha: .18),
-                      borderRadius: BorderRadius.circular(13),
+    final semanticLabel = [
+      label,
+      subtitle,
+      if (isLocked) 'Premium required',
+    ].join(', ');
+    void open() => Navigator.pop(context, destination);
+
+    return Semantics(
+      key: ValueKey('more-destination-${destination.name}'),
+      button: true,
+      enabled: true,
+      label: semanticLabel,
+      onTap: open,
+      excludeSemantics: true,
+      child: Material(
+        color: MoreSheet._card,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: open,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: MoreSheet._border),
+            ),
+            child: Stack(
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: MoreSheet._primary.withValues(alpha: .18),
+                        borderRadius: BorderRadius.circular(11),
+                      ),
+                      child: Icon(
+                        icon,
+                        color: const Color(0xFFD28AFF),
+                        size: 20,
+                      ),
                     ),
-                    child: Icon(icon, color: const Color(0xFFD28AFF), size: 22),
-                  ),
-                  const Spacer(),
-                  if (isLocked)
-                    Icon(
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            label,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 1),
+                          Text(
+                            subtitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: MoreSheet._muted,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                if (isLocked)
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: Icon(
                       Icons.lock_rounded,
                       key: ValueKey('mobile-premium-lock-${destination.name}'),
                       color: const Color(0xFFFFC24D),
-                      size: 17,
+                      size: 16,
                     ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Text(
-                label,
-                maxLines: 2,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                maxLines: 2,
-                style: const TextStyle(color: MoreSheet._muted, fontSize: 11),
-              ),
-            ],
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -682,12 +814,14 @@ class _WideMoreTile extends StatelessWidget {
     required this.label,
     required this.subtitle,
     this.accentColor,
+    this.isLocked = false,
   });
 
   final MoreDestination destination;
   final IconData icon;
   final String label;
   final String subtitle;
+  final bool isLocked;
 
   /// Staff entries carry their tier's color from the theme; everything
   /// else keeps the sheet's violet accent.
@@ -696,58 +830,88 @@ class _WideMoreTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final accent = accentColor ?? const Color(0xFFD28AFF);
-    return Material(
-      color: MoreSheet._card,
-      borderRadius: BorderRadius.circular(19),
-      child: InkWell(
-        onTap: () => Navigator.pop(context, destination),
-        borderRadius: BorderRadius.circular(19),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(19),
-            border: Border.all(
-              color: accentColor?.withValues(alpha: .5) ?? MoreSheet._border,
+    final semanticLabel = [
+      label,
+      subtitle,
+      if (isLocked) 'Premium required',
+    ].join(', ');
+    void open() => Navigator.pop(context, destination);
+
+    return Semantics(
+      key: ValueKey('more-destination-${destination.name}'),
+      button: true,
+      enabled: true,
+      label: semanticLabel,
+      onTap: open,
+      excludeSemantics: true,
+      child: Material(
+        color: MoreSheet._card,
+        borderRadius: BorderRadius.circular(17),
+        child: InkWell(
+          onTap: open,
+          borderRadius: BorderRadius.circular(17),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 58),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(17),
+              border: Border.all(
+                color: accentColor?.withValues(alpha: .5) ?? MoreSheet._border,
+              ),
             ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: (accentColor ?? MoreSheet._primary).withValues(
-                    alpha: .18,
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: (accentColor ?? MoreSheet._primary).withValues(
+                      alpha: .18,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  borderRadius: BorderRadius.circular(14),
+                  child: Icon(icon, color: accent, size: 21),
                 ),
-                child: Icon(icon, color: accent),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      label,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        color: MoreSheet._muted,
-                        fontSize: 11,
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          color: MoreSheet._muted,
+                          fontSize: 11,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              const Icon(Icons.chevron_right_rounded, color: MoreSheet._muted),
-            ],
+                if (isLocked) ...[
+                  const SizedBox(width: 6),
+                  Icon(
+                    Icons.lock_rounded,
+                    key: ValueKey('mobile-premium-lock-${destination.name}'),
+                    color: const Color(0xFFFFC24D),
+                    size: 17,
+                  ),
+                ],
+                const SizedBox(width: 4),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: MoreSheet._muted,
+                ),
+              ],
+            ),
           ),
         ),
       ),

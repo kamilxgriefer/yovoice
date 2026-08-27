@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
@@ -58,7 +59,7 @@ class _ChatScreenState extends State<ChatScreen> {
   static const Color _primary = Color(0xFF9D20FF);
 
   late final MessageService _service =
-      widget.messageService ?? MessageService();
+      widget.messageService ?? MessageService.live;
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
@@ -66,12 +67,22 @@ class _ChatScreenState extends State<ChatScreen> {
   late final Stream<bool> _typing;
   late final Stream<ChatPresence> _presence;
   StreamSubscription<List<Message>>? _messagesSubscription;
+  StreamSubscription<List<OutboxEntry>>? _outboxSubscription;
+  StreamSubscription<OutboxEntry>? _deliveredSubscription;
 
   Timer? _typingTimer;
   Message? _replyTo;
   bool _sending = false;
   bool _sendingMedia = false;
   bool _isMuted = false;
+  bool _typingAnnounced = false;
+  bool _typingUpdateInFlight = false;
+  bool? _pendingTypingState;
+  DateTime? _lastTypingHeartbeat;
+  bool _suppressTypingListener = false;
+  List<OutboxEntry> _outboxEntries = const <OutboxEntry>[];
+  final Map<String, OutboxEntry> _awaitingSnapshots = {};
+  Set<String> _committedMessageIds = const <String>{};
 
   /// Typing presence is pushed on every keystroke, so a broken backend
   /// would otherwise either be silent or produce a snackbar storm. It is
@@ -95,7 +106,13 @@ class _ChatScreenState extends State<ChatScreen> {
     // message list's StreamBuilder can share one service stream.
     _messages = _service
         .watchMessages(widget.conversationId)
-        .asBroadcastStream();
+        .asBroadcastStream(
+          // This screen has two downstream listeners (read receipts and the
+          // list), but it owns only one Firestore subscription. Cancel that
+          // source when both consumers leave; otherwise every closed chat
+          // keeps a live network listener for the rest of the process.
+          onCancel: (subscription) => unawaited(subscription.cancel()),
+        );
     _typing = _service.watchTyping(
       conversationId: widget.conversationId,
       otherUserId: widget.otherUserId,
@@ -107,6 +124,11 @@ class _ChatScreenState extends State<ChatScreen> {
       // subscription only exists to drive read receipts.
       onError: (Object _) {},
     );
+    _outboxSubscription = _service.outbox.changes.listen(_handleOutboxChanged);
+    _deliveredSubscription = _service.outbox.delivered.listen(
+      _handleOutboxDelivered,
+    );
+    unawaited(_loadOutbox());
     _controller.addListener(_handleTyping);
   }
 
@@ -114,27 +136,95 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _typingTimer?.cancel();
     unawaited(_messagesSubscription?.cancel());
+    unawaited(_outboxSubscription?.cancel());
+    unawaited(_deliveredSubscription?.cancel());
     _controller
       ..removeListener(_handleTyping)
       ..dispose();
     _focusNode.dispose();
-    // Leaving the screen: nobody is left to tell, so this one only logs.
-    unawaited(_setTyping(false, announceFailure: false));
+    // Keep teardown in the same single-flight coalescer as ordinary typing.
+    // Otherwise an older slow `true` can arrive after a parallel `false` and
+    // leave this user shown as typing after the route is gone.
+    _pendingTypingState = false;
+    unawaited(_queueTypingUpdate(false));
     super.dispose();
   }
 
   void _handleTyping() {
+    if (_suppressTypingListener) return;
     final hasText = _controller.text.trim().isNotEmpty;
-
-    unawaited(_setTyping(hasText));
-
     _typingTimer?.cancel();
 
     if (hasText) {
+      // Typing is a state transition, not a keystroke event. The previous
+      // implementation sent one callable transaction for every character,
+      // contending with the actual message transaction on the same
+      // conversation document.
+      final now = DateTime.now();
+      final heartbeatDue =
+          _lastTypingHeartbeat == null ||
+          now.difference(_lastTypingHeartbeat!) >= const Duration(seconds: 4);
+      if (!_typingAnnounced || heartbeatDue) {
+        _typingAnnounced = true;
+        _lastTypingHeartbeat = now;
+        unawaited(_queueTypingUpdate(true));
+      }
       _typingTimer = Timer(const Duration(seconds: 4), () {
-        unawaited(_setTyping(false));
+        if (!_typingAnnounced) return;
+        _typingAnnounced = false;
+        _lastTypingHeartbeat = null;
+        unawaited(_queueTypingUpdate(false));
       });
+    } else if (_typingAnnounced) {
+      _typingAnnounced = false;
+      _lastTypingHeartbeat = null;
+      unawaited(_queueTypingUpdate(false));
     }
+  }
+
+  /// Coalesces typing transitions so at most one callable is in flight.
+  /// When the network is slow, only the newest desired state survives.
+  Future<void> _queueTypingUpdate(bool isTyping) async {
+    _pendingTypingState = isTyping;
+    if (_typingUpdateInFlight) return;
+    _typingUpdateInFlight = true;
+    try {
+      while (_pendingTypingState != null) {
+        final next = _pendingTypingState!;
+        _pendingTypingState = null;
+        await _setTyping(next);
+      }
+    } finally {
+      _typingUpdateInFlight = false;
+    }
+  }
+
+  Future<void> _loadOutbox() async {
+    await _service.outbox.load();
+    _handleOutboxChanged(_service.outbox.entries);
+  }
+
+  bool _belongsToThisChat(OutboxEntry entry) =>
+      entry.conversationId == widget.conversationId &&
+      entry.recipientId == widget.otherUserId;
+
+  String _canonicalId(OutboxEntry entry) =>
+      _service.messageIdForQueuedText(entry, senderId: _currentUserId);
+
+  void _handleOutboxChanged(List<OutboxEntry> entries) {
+    if (!mounted) return;
+    setState(() {
+      _outboxEntries = entries
+          .where(_belongsToThisChat)
+          .toList(growable: false);
+    });
+  }
+
+  void _handleOutboxDelivered(OutboxEntry entry) {
+    if (!mounted || !_belongsToThisChat(entry)) return;
+    final canonicalId = _canonicalId(entry);
+    if (_committedMessageIds.contains(canonicalId)) return;
+    setState(() => _awaitingSnapshots[entry.id] = entry);
   }
 
   /// Never let a rejected typing update disappear. It is not worth
@@ -186,6 +276,20 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Fires once per newest-message advance — never per rebuild. Messages
   /// arrive newest-first (watchMessages orders `sentAt` descending).
   void _handleMessagesDelivered(List<Message> messages) {
+    _committedMessageIds = messages.map((message) => message.id).toSet();
+    final acknowledged = _awaitingSnapshots.entries
+        .where(
+          (item) => _committedMessageIds.contains(_canonicalId(item.value)),
+        )
+        .map((item) => item.key)
+        .toList(growable: false);
+    if (acknowledged.isNotEmpty && mounted) {
+      setState(() {
+        for (final id in acknowledged) {
+          _awaitingSnapshots.remove(id);
+        }
+      });
+    }
     if (messages.isEmpty) return;
     final newestId = messages.first.id;
     if (newestId == _newestMarkedMessageId) return;
@@ -219,29 +323,50 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _send() async {
-    final text = _controller.text.trim();
+    final draft = _controller.value;
+    final text = draft.text.trim();
 
     if (text.isEmpty || _sending) {
       return;
     }
 
-    setState(() => _sending = true);
+    final reply = _replyTo;
+    _typingTimer?.cancel();
+    _typingAnnounced = false;
+    _lastTypingHeartbeat = null;
+    unawaited(_queueTypingUpdate(false));
+    _suppressTypingListener = true;
+    _controller.clear();
+    _suppressTypingListener = false;
+    setState(() {
+      _sending = true;
+      _replyTo = null;
+    });
 
     try {
-      await _service.sendTextMessage(
+      await _service.queueTextMessage(
         conversationId: widget.conversationId,
         recipientId: widget.otherUserId,
         text: text,
-        replyTo: _replyTo,
+        replyTo: reply,
       );
-
-      _controller.clear();
-
-      if (mounted) {
-        setState(() => _replyTo = null);
-      }
     } catch (error) {
       if (mounted) {
+        // Enqueue is local and normally completes in one frame. Still, keep
+        // the composer read-only while it is in flight and defensively merge
+        // anything inserted programmatically during that window. A full
+        // outbox must never turn "A, send, type B" into the silent loss of A.
+        final newerDraft = _controller.text;
+        final restoredDraft = newerDraft.isEmpty
+            ? draft.text
+            : newerDraft == draft.text
+            ? newerDraft
+            : '${draft.text.trimRight()}\n${newerDraft.trimLeft()}';
+        _controller.value = TextEditingValue(
+          text: restoredDraft,
+          selection: TextSelection.collapsed(offset: restoredDraft.length),
+        );
+        setState(() => _replyTo ??= reply);
         _showMessage(intentionalOrFriendly(error));
       }
     } finally {
@@ -249,6 +374,33 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() => _sending = false);
       }
     }
+  }
+
+  Future<void> _retryQueuedMessage(OutboxEntry entry) async {
+    try {
+      await _service.retryFailedMessage(entry.id);
+    } catch (error) {
+      if (mounted) _showMessage(intentionalOrFriendly(error));
+    }
+  }
+
+  Future<void> _discardQueuedMessage(OutboxEntry entry) async {
+    await _service.discardQueuedMessage(entry.id);
+  }
+
+  List<OutboxEntry> _visibleOutboxEntries() {
+    final byId = <String, OutboxEntry>{
+      for (final entry in _outboxEntries) entry.id: entry,
+      for (final entry in _awaitingSnapshots.values) entry.id: entry,
+    };
+    final visible =
+        byId.values
+            .where(
+              (entry) => !_committedMessageIds.contains(_canonicalId(entry)),
+            )
+            .toList(growable: false)
+          ..sort((a, b) => b.queuedAt.compareTo(a.queuedAt));
+    return visible;
   }
 
   Future<void> _messageActions(Message message) async {
@@ -577,8 +729,11 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: StreamBuilder<List<Message>>(
                     stream: _messages,
                     builder: (context, snapshot) {
+                      final queuedMessages = _visibleOutboxEntries();
+                      final hasHistoryError = snapshot.hasError;
                       if (snapshot.connectionState == ConnectionState.waiting &&
-                          !snapshot.hasData) {
+                          !snapshot.hasData &&
+                          queuedMessages.isEmpty) {
                         return const Center(
                           child: CircularProgressIndicator(
                             color: _primary,
@@ -587,7 +742,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         );
                       }
 
-                      if (snapshot.hasError) {
+                      if (hasHistoryError && queuedMessages.isEmpty) {
                         return const Center(
                           child: Text(
                             'Could not load this conversation.',
@@ -598,7 +753,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
                       final messages = snapshot.data ?? const <Message>[];
 
-                      if (messages.isEmpty) {
+                      if (messages.isEmpty && queuedMessages.isEmpty) {
                         return _EmptyConversation(
                           name: widget.otherDisplayName,
                           photoUrl: widget.otherPhotoUrl,
@@ -608,11 +763,43 @@ class _ChatScreenState extends State<ChatScreen> {
                       return ListView.builder(
                         reverse: true,
                         padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
-                        itemCount: messages.length,
+                        itemCount:
+                            queuedMessages.length +
+                            messages.length +
+                            (hasHistoryError ? 1 : 0),
                         itemBuilder: (context, index) {
-                          final message = messages[index];
-                          final nextMessage = index + 1 < messages.length
-                              ? messages[index + 1]
+                          // Keep the local outbox visible when the server
+                          // history stream fails, but never let those local
+                          // bubbles imply that the conversation loaded in
+                          // full. In a reversed list index zero is pinned next
+                          // to the composer, so the warning stays visible.
+                          if (hasHistoryError && index == 0) {
+                            return const _ConversationHistoryErrorBanner();
+                          }
+
+                          final contentIndex =
+                              index - (hasHistoryError ? 1 : 0);
+                          if (contentIndex < queuedMessages.length) {
+                            final entry = queuedMessages[contentIndex];
+                            final accepted = !_outboxEntries.any(
+                              (queued) => queued.id == entry.id,
+                            );
+                            return _QueuedTextMessageBubble(
+                              key: ValueKey('queued-message-${entry.id}'),
+                              entry: entry,
+                              accepted: accepted,
+                              onRetry: () =>
+                                  unawaited(_retryQueuedMessage(entry)),
+                              onDiscard: () =>
+                                  unawaited(_discardQueuedMessage(entry)),
+                            );
+                          }
+
+                          final messageIndex =
+                              contentIndex - queuedMessages.length;
+                          final message = messages[messageIndex];
+                          final nextMessage = messageIndex + 1 < messages.length
+                              ? messages[messageIndex + 1]
                               : null;
                           final showDate =
                               nextMessage == null ||
@@ -874,39 +1061,56 @@ class _EmptyConversation extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _Avatar(name: name, url: photoUrl, radius: 43),
-            const SizedBox(height: 17),
-            Text(
-              name,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 21,
-                fontWeight: FontWeight.w900,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final minHeight = constraints.maxHeight > 56
+            ? constraints.maxHeight - 56
+            : 0.0;
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(28),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: minHeight),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _Avatar(name: name, url: photoUrl, radius: 43),
+                  const SizedBox(height: 17),
+                  Text(
+                    name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 21,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'You are friends on YO Voice',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: _ChatScreenState._muted,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  const Text(
+                    'Say hello 👋',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFFD27AFF),
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 6),
-            const Text(
-              'You are friends on YO Voice',
-              style: TextStyle(color: _ChatScreenState._muted, fontSize: 13),
-            ),
-            const SizedBox(height: 18),
-            const Text(
-              'Say hello 👋',
-              style: TextStyle(
-                color: Color(0xFFD27AFF),
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -1104,6 +1308,163 @@ class _ReplyPreview extends StatelessWidget {
   }
 }
 
+class _QueuedTextMessageBubble extends StatelessWidget {
+  const _QueuedTextMessageBubble({
+    required this.entry,
+    required this.accepted,
+    required this.onRetry,
+    required this.onDiscard,
+    super.key,
+  });
+
+  final OutboxEntry entry;
+  final bool accepted;
+  final VoidCallback onRetry;
+  final VoidCallback onDiscard;
+
+  String get _status {
+    if (accepted) return 'Sent';
+    return switch (entry.state) {
+      OutboxState.pending => 'Sending…',
+      OutboxState.retrying => 'Waiting for connection',
+      OutboxState.failed => 'Not sent',
+    };
+  }
+
+  IconData get _statusIcon {
+    if (accepted) return Icons.done_rounded;
+    return switch (entry.state) {
+      OutboxState.pending => Icons.schedule_rounded,
+      OutboxState.retrying => Icons.sync_rounded,
+      OutboxState.failed => Icons.error_outline_rounded,
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final failed = !accepted && entry.state == OutboxState.failed;
+    final statusColor = failed
+        ? const Color(0xFFFF9BB3)
+        : const Color(0xFFD9B7F2);
+
+    return Semantics(
+      container: true,
+      explicitChildNodes: true,
+      label: 'Your message: ${entry.text}.',
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Padding(
+          padding: const EdgeInsets.only(left: 54, bottom: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              ExcludeSemantics(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 11,
+                  ),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [Color(0xFF9026DF), Color(0xFF641CC2)],
+                    ),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(20),
+                      topRight: Radius.circular(20),
+                      bottomLeft: Radius.circular(20),
+                      bottomRight: Radius.circular(5),
+                    ),
+                    border: failed
+                        ? Border.all(color: const Color(0xFFFF668B))
+                        : null,
+                  ),
+                  child: Text(
+                    entry.text,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14.5,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Semantics(
+                liveRegion: true,
+                label: 'Message status: $_status',
+                child: ExcludeSemantics(
+                  child: Wrap(
+                    alignment: WrapAlignment.end,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 5,
+                    runSpacing: 2,
+                    children: [
+                      Text(
+                        MaterialLocalizations.of(context).formatTimeOfDay(
+                          TimeOfDay.fromDateTime(entry.queuedAt.toLocal()),
+                          alwaysUse24HourFormat:
+                              MediaQuery.alwaysUse24HourFormatOf(context),
+                        ),
+                        style: const TextStyle(
+                          color: _ChatScreenState._muted,
+                          fontSize: 10,
+                        ),
+                      ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(_statusIcon, size: 14, color: statusColor),
+                          const SizedBox(width: 3),
+                          Flexible(
+                            child: Text(
+                              _status,
+                              style: TextStyle(
+                                color: statusColor,
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (failed) ...[
+                const SizedBox(height: 2),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextButton(
+                      onPressed: onDiscard,
+                      style: TextButton.styleFrom(
+                        foregroundColor: const Color(0xFFD9B7F2),
+                        minimumSize: const Size(64, 44),
+                      ),
+                      child: const Text('Remove'),
+                    ),
+                    TextButton(
+                      onPressed: onRetry,
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(64, 44),
+                      ),
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _Composer extends StatelessWidget {
   const _Composer({
     required this.controller,
@@ -1172,6 +1533,7 @@ class _Composer extends StatelessWidget {
                     child: TextField(
                       controller: controller,
                       focusNode: focusNode,
+                      readOnly: sending,
                       minLines: 1,
                       maxLines: 5,
                       textCapitalization: TextCapitalization.sentences,
@@ -1192,24 +1554,37 @@ class _Composer extends StatelessWidget {
 
                       return AnimatedSwitcher(
                         duration: const Duration(milliseconds: 180),
-                        child: hasText
+                        // A local-persistence failure can move through
+                        // send -> saving -> send in less than one animation
+                        // frame. Keeping outgoing children in the default
+                        // Stack then duplicates their keys. Fade in only the
+                        // current affordance; the state itself is the useful
+                        // feedback here.
+                        layoutBuilder: (currentChild, _) =>
+                            currentChild ?? const SizedBox.shrink(),
+                        child: sending
+                            ? IconButton(
+                                key: const ValueKey('saving'),
+                                onPressed: null,
+                                tooltip: 'Saving message',
+                                icon: const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              )
+                            : hasText
                             ? IconButton(
                                 key: const ValueKey('send'),
-                                onPressed: sending ? null : onSend,
-                                tooltip: sending ? 'Sending message' : 'Send',
-                                icon: sending
-                                    ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : const Icon(
-                                        Icons.send_rounded,
-                                        color: _ChatScreenState._primary,
-                                      ),
+                                onPressed: onSend,
+                                tooltip: 'Send',
+                                icon: const Icon(
+                                  Icons.send_rounded,
+                                  color: _ChatScreenState._primary,
+                                ),
                               )
                             : IconButton(
                                 key: const ValueKey('voice'),
@@ -1228,6 +1603,63 @@ class _Composer extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ConversationHistoryErrorBanner extends StatelessWidget {
+  const _ConversationHistoryErrorBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    const label =
+        'Could not load this conversation. Your unsent messages are still shown.';
+
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: label,
+      child: ExcludeSemantics(
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: const Color(0xFF28182F),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFB8516A)),
+          ),
+          child: const Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.cloud_off_outlined,
+                size: 20,
+                color: Color(0xFFFFA5B9),
+              ),
+              SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Could not load this conversation.',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Your unsent messages are still shown.',
+                      style: TextStyle(color: Color(0xFFD8CADC)),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

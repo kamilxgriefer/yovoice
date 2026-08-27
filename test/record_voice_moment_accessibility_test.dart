@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -28,23 +29,21 @@ void main() {
     addTearDown(tester.view.reset);
   }
 
-  Widget host(Widget child) => MaterialApp(
-    theme: ThemeData.dark(useMaterial3: true),
-    home: child,
-  );
+  Widget host(Widget child) =>
+      MaterialApp(theme: ThemeData.dark(useMaterial3: true), home: child);
 
   /// Every announcement pushed through `flutter/accessibility` this test.
   List<Map<Object?, Object?>> captureAnnouncements(WidgetTester tester) {
     final captured = <Map<Object?, Object?>>[];
-    tester.binding.defaultBinaryMessenger
-        .setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, (
-          Object? message,
-        ) async {
-          if (message is Map && message['type'] == 'announce') {
-            captured.add(message['data'] as Map<Object?, Object?>);
-          }
-          return null;
-        });
+    tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<Object?>(
+      SystemChannels.accessibility,
+      (Object? message) async {
+        if (message is Map && message['type'] == 'announce') {
+          captured.add(message['data'] as Map<Object?, Object?>);
+        }
+        return null;
+      },
+    );
     addTearDown(
       () => tester.binding.defaultBinaryMessenger
           .setMockDecodedMessageHandler<Object?>(
@@ -93,18 +92,22 @@ void main() {
     FakeRecorderBackend backend,
     FakeAudioCapture capture,
     FakeStopwatch clock,
+    FakePreviewAudioPlayer previewPlayer,
     StubMomentService service,
     Widget screen,
   })
-  build({FakeRecordedAudio? recorded}) {
+  build({FakeRecordedAudio? recorded, FakePreviewAudioPlayer? previewPlayer}) {
     final backend = FakeRecorderBackend();
-    final capture = FakeAudioCapture()..result = recorded ?? FakeRecordedAudio();
+    final capture = FakeAudioCapture()
+      ..result = recorded ?? FakeRecordedAudio();
     final service = StubMomentService();
     final clock = FakeStopwatch();
+    final player = previewPlayer ?? FakePreviewAudioPlayer();
     return (
       backend: backend,
       capture: capture,
       clock: clock,
+      previewPlayer: player,
       service: service,
       screen: RecordVoiceMomentScreen(
         recorder: VoiceMomentRecorder(
@@ -113,6 +116,7 @@ void main() {
           clock: clock,
         ),
         momentService: service,
+        previewPlayerFactory: () => player,
       ),
     );
   }
@@ -226,6 +230,68 @@ void main() {
         expect(
           assertive.map(messageOf).join(' | '),
           contains('could not be uploaded'),
+        );
+        handle.dispose();
+      },
+    );
+
+    testWidgets(
+      'a preview failure keeps one live region and is spoken assertively',
+      (tester) async {
+        useSurface(tester, medium);
+        final handle = tester.ensureSemantics();
+        final announcements = captureAnnouncements(tester);
+        final player = FakePreviewAudioPlayer()
+          ..playError = StateError('decoder details stay private');
+        final harness = build(previewPlayer: player);
+
+        await tester.pumpWidget(host(harness.screen));
+        await tester.pumpAndSettle();
+        await recordFor(tester, harness.clock);
+        await tester.tap(find.byKey(const ValueKey('voice-preview-toggle')));
+        await tester.pumpAndSettle();
+
+        expect(liveRegions(tester), hasLength(1));
+        expect(
+          announcements.where(isAssertive).map(messageOf).join(' | '),
+          contains('Preview could not be played'),
+        );
+        expect(find.textContaining('decoder details'), findsNothing);
+        handle.dispose();
+      },
+    );
+
+    testWidgets(
+      'invalid availability is announced and focuses the duration field',
+      (tester) async {
+        useSurface(tester, medium);
+        final handle = tester.ensureSemantics();
+        final announcements = captureAnnouncements(tester);
+        final harness = build();
+
+        await tester.pumpWidget(host(harness.screen));
+        await tester.pumpAndSettle();
+        await recordFor(tester, harness.clock);
+        await tester.enterText(
+          find.byKey(const ValueKey('availability-amount')),
+          '1',
+        );
+        await tester.tap(find.text('Publish'));
+        await tester.pumpAndSettle();
+
+        expect(liveRegions(tester), hasLength(1));
+        expect(
+          announcements.where(isAssertive).map(messageOf).join(' | '),
+          contains('Choose between 24 and 720 hours'),
+        );
+        expect(
+          tester
+              .widget<TextField>(
+                find.byKey(const ValueKey('availability-amount')),
+              )
+              .focusNode!
+              .hasFocus,
+          isTrue,
         );
         handle.dispose();
       },
@@ -545,7 +611,8 @@ void main() {
       expect(
         button.focusNode!.hasFocus,
         isTrue,
-        reason: 'the retry must not be reachable only by traversing from the '
+        reason:
+            'the retry must not be reachable only by traversing from the '
             'top with no indication anything moved',
       );
     });
@@ -655,30 +722,27 @@ void main() {
     testWidgets('the screen shows the specific refusal, not "blocked"', (
       tester,
     ) async {
-      for (final (access, expected, forbidden) in <(
-        MicrophoneAccess,
-        String,
-        String,
-      )>[
-        (
-          microphoneAccessForError('NotFoundError'),
-          'No microphone was found',
-          'blocked',
-        ),
-        (
-          microphoneAccessForError('NotReadableError'),
-          'another app is probably using it',
-          'blocked',
-        ),
-        (
-          microphoneAccessForError(
-            'NotAllowedError',
-            permissionStateAfter: 'prompt',
-          ),
-          'request was dismissed',
-          'site settings',
-        ),
-      ]) {
+      for (final (access, expected, forbidden)
+          in <(MicrophoneAccess, String, String)>[
+            (
+              microphoneAccessForError('NotFoundError'),
+              'No microphone was found',
+              'blocked',
+            ),
+            (
+              microphoneAccessForError('NotReadableError'),
+              'another app is probably using it',
+              'blocked',
+            ),
+            (
+              microphoneAccessForError(
+                'NotAllowedError',
+                permissionStateAfter: 'prompt',
+              ),
+              'request was dismissed',
+              'site settings',
+            ),
+          ]) {
         useSurface(tester, medium);
         final backend = FakeRecorderBackend();
         final capture = FakeAudioCapture()
@@ -691,10 +755,7 @@ void main() {
               // A distinct key per case: without it Flutter reuses the
               // existing State, which holds the previous recorder.
               key: ValueKey<String>(expected),
-              recorder: VoiceMomentRecorder(
-                backend: backend,
-                capture: capture,
-              ),
+              recorder: VoiceMomentRecorder(backend: backend, capture: capture),
               momentService: StubMomentService(),
             ),
           ),
@@ -739,15 +800,20 @@ void main() {
       await recordFor(tester, harness.clock);
 
       final decoration = tester
-          .widget<TextField>(find.byType(TextField))
+          .widget<TextField>(find.byKey(const ValueKey('voice-moment-caption')))
           .decoration!;
       expect(decoration.labelText, 'Caption');
 
-      await tester.enterText(find.byType(TextField), 'Morning thoughts');
+      await tester.enterText(
+        find.byKey(const ValueKey('voice-moment-caption')),
+        'Morning thoughts',
+      );
       await tester.pumpAndSettle();
 
       // The hint is gone once there is text; the label is what remains.
-      final after = tester.widget<TextField>(find.byType(TextField)).decoration!;
+      final after = tester
+          .widget<TextField>(find.byKey(const ValueKey('voice-moment-caption')))
+          .decoration!;
       expect(after.labelText, 'Caption');
       expect(after.semanticCounterText, '16 of 140 characters');
     });
@@ -762,7 +828,10 @@ void main() {
       await tester.pumpAndSettle();
       await recordFor(tester, harness.clock);
 
-      await tester.enterText(find.byType(TextField), 'x' * 140);
+      await tester.enterText(
+        find.byKey(const ValueKey('voice-moment-caption')),
+        'x' * 140,
+      );
       await tester.pumpAndSettle();
 
       expect(
@@ -772,8 +841,8 @@ void main() {
     });
   });
 
-  group('H3 the two "record again" controls are distinguishable', () {
-    testWidgets('the circular control names its destructive consequence', (
+  group('H3 review has one re-record action and an explicit preview', () {
+    testWidgets('the capture button becomes a labelled preview control', (
       tester,
     ) async {
       useSurface(tester, medium);
@@ -782,17 +851,20 @@ void main() {
       await tester.pumpAndSettle();
       await recordFor(tester, harness.clock);
 
-      final region = tester.widget<AccessibleTapRegion>(
-        find.ancestor(
-          of: find.byIcon(Icons.mic_rounded),
-          matching: find.byType(AccessibleTapRegion),
-        ),
+      expect(find.byIcon(Icons.mic_rounded), findsNothing);
+      expect(
+        tester
+            .getSemantics(find.byKey(const ValueKey('voice-preview-toggle')))
+            .label,
+        contains('Play recording preview'),
       );
-
-      expect(region.semanticLabel, isNot('Record again'));
-      expect(region.semanticLabel, contains('Discard'));
-      // The outlined control keeps the plain name; only one control now
-      // answers to it.
+      expect(
+        tester
+            .getSemantics(find.byKey(const ValueKey('voice-preview-toggle')))
+            .getSemanticsData()
+            .hasAction(ui.SemanticsAction.tap),
+        isTrue,
+      );
       expect(find.text('Record again'), findsOneWidget);
     });
   });

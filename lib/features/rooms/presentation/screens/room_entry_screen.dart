@@ -24,9 +24,19 @@ import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
 /// The routing snapshot and the liveness snapshot are now the SAME document
 /// read, which also removes a second round trip from every room entry.
 class RoomEntryScreen extends StatefulWidget {
-  const RoomEntryScreen({required this.room, this.coordinator, super.key});
+  const RoomEntryScreen({
+    required this.room,
+    this.coordinator,
+    this.playInitialJoinSound = true,
+    super.key,
+  });
 
   final VoiceRoom room;
+
+  /// False only when room creation already played its richer confirmation.
+  /// Connecting LiveKit immediately afterwards must not turn one successful
+  /// action into a two-cue jingle.
+  final bool playInitialJoinSound;
 
   /// Test seam. Production builds the Firebase-backed coordinator lazily, so
   /// this screen can be pumped without a Firebase app.
@@ -105,12 +115,20 @@ class _RoomEntryScreenState extends State<RoomEntryScreen> {
         // liveness decision came from, so routing and voice can never
         // disagree about which room this is.
         if (entry.room.roomExperience == RoomExperience.broadcast) {
-          return BroadcastRoomScreen(room: entry.room, voiceEntry: entry);
+          return BroadcastRoomScreen(
+            room: entry.room,
+            voiceEntry: entry,
+            playInitialJoinSound: widget.playInitialJoinSound,
+          );
         }
         // Straight into the room — the lobby detour is gone. The liveness
         // transition and the roster join have already happened above; the
         // room screen owns the live-audio connection from here.
-        return CommunityVoiceRoomScreen(room: entry.room, voiceEntry: entry);
+        return CommunityVoiceRoomScreen(
+          room: entry.room,
+          voiceEntry: entry,
+          playInitialJoinSound: widget.playInitialJoinSound,
+        );
       },
     );
   }

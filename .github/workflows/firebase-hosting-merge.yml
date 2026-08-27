@@ -43,6 +43,9 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Verify generated product-sound assets
+        run: python3 tool/generate_ui_sounds.py --check
+
       - name: Analyze project
         run: flutter analyze
 

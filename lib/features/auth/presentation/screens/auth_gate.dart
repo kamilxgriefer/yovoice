@@ -16,24 +16,57 @@ class AuthGate extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final authState = ref.watch(authStateChangesProvider);
-
-    return authState.when(
-      loading: () => const StartupLoadingScreen(),
+    final child = authState.when<Widget>(
+      loading: () => const KeyedSubtree(
+        key: ValueKey('auth-loading'),
+        child: StartupLoadingScreen(),
+      ),
       error: (error, stackTrace) {
-        return _AuthErrorScreen(
-          message: error.toString(),
-          onRetry: () {
-            ref.invalidate(authStateChangesProvider);
-          },
+        return KeyedSubtree(
+          key: const ValueKey('auth-error'),
+          child: _AuthErrorScreen(
+            message: error.toString(),
+            onRetry: () {
+              ref.invalidate(authStateChangesProvider);
+            },
+          ),
         );
       },
       data: (user) {
         if (user == null) {
-          return const LoginScreen();
+          return const KeyedSubtree(
+            key: ValueKey('auth-signed-out'),
+            child: LoginScreen(),
+          );
         }
 
-        return const _AuthenticatedEntry();
+        return KeyedSubtree(
+          key: ValueKey('auth-user-${user.uid}'),
+          child: const _AuthenticatedEntry(),
+        );
       },
+    );
+
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return AnimatedSwitcher(
+      duration: reduceMotion
+          ? Duration.zero
+          : const Duration(milliseconds: 220),
+      reverseDuration: reduceMotion
+          ? Duration.zero
+          : const Duration(milliseconds: 180),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeOut,
+      layoutBuilder: (currentChild, previousChildren) {
+        final children = <Widget>[...previousChildren];
+        if (currentChild != null) {
+          children.add(currentChild);
+        }
+        return Stack(fit: StackFit.expand, children: children);
+      },
+      transitionBuilder: (child, animation) =>
+          FadeTransition(opacity: animation, child: child),
+      child: child,
     );
   }
 }

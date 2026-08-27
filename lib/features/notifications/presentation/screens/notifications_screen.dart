@@ -54,7 +54,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   late final FriendService _friendService =
       widget.friendService ?? FriendService();
   late final MessageService _messageService =
-      widget.messageService ?? MessageService();
+      widget.messageService ?? MessageService.live;
   late final NotificationService _notificationService =
       widget.notificationService ?? NotificationService();
 

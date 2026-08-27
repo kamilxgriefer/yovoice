@@ -32,6 +32,16 @@ class MomentService {
   final Map<RecordedAudio, _PendingMomentPublish> _pendingMomentPublishes =
       Map<RecordedAudio, _PendingMomentPublish>.identity();
 
+  /// Forgets the retry identity when the author explicitly abandons a take.
+  ///
+  /// This deliberately does not delete Storage. A finalize response can be
+  /// lost after the server has published the Moment/reply, and client deletion
+  /// cannot be made atomic with that Firestore commit. Unfinished uploads are
+  /// removed by the server's bounded abandoned-draft schedulers instead.
+  void abandonPendingPublish(RecordedAudio audio) {
+    _pendingMomentPublishes.remove(audio);
+  }
+
   FirebaseFunctions? get _functions =>
       _functionsOverride ??
       (() {
@@ -163,9 +173,7 @@ class MomentService {
         reactors.add(
           MomentReactor(
             uid: uid,
-            displayName: name == null || name.isEmpty
-                ? 'YO Voice user'
-                : name,
+            displayName: name == null || name.isEmpty ? 'YO Voice user' : name,
             photoUrl: (data?['photoUrl'] as String?)?.trim(),
           ),
         );
@@ -219,10 +227,11 @@ class MomentService {
   /// [audio] is the platform seam: native passes a temporary file, web
   /// passes the native Blob the browser produced. Everything below — the draft
   /// reservation, the object metadata the Storage rules check, the
-  /// finalize call, and the legacy fallback — is identical either way.
-  /// [availability] names how long the Moment stays live — one of the
-  /// server's whitelisted choices (24h default, 3/7/30 days, or
-  /// permanent). It travels to `finalizeMomentDraft` as
+  /// finalize call, and the server-required failure path — is identical
+  /// either way.
+  /// [availability] names how long the Moment stays live — any whole-hour
+  /// value from 24 through 720 (24h default), or permanent. It travels to
+  /// `finalizeMomentDraft` as
   /// `availabilityHours`; the server validates it and stamps (or, for
   /// permanent, omits) `expiresAt`. The default sends nothing, which the
   /// server reads as 24 hours — today's behaviour, byte for byte.
@@ -262,31 +271,24 @@ class MomentService {
         ? null
         : trimmedReplyToMomentId;
 
+    // Availability belongs only to root Moments. Normalize it before pinning
+    // the retry identity so changing an ignored reply-only argument cannot
+    // make an otherwise identical voice-reply retry look like new content.
+    final pendingAvailability = normalizedReplyToMomentId == null
+        ? availability
+        : MomentAvailability.fallback;
     final existingPending = _pendingMomentPublishes[audio];
     if (existingPending != null &&
         !existingPending.matches(
           caption: normalizedCaption,
           durationSeconds: durationSeconds,
           replyToMomentId: normalizedReplyToMomentId,
-          availability: availability,
+          availability: pendingAvailability,
         )) {
       throw StateError(
         'Publishing already started with a different caption, duration, '
         'availability, or reply target. Restore the original details to '
         'retry this recording, or record again to publish the new version.',
-      );
-    }
-
-    if (normalizedReplyToMomentId != null) {
-      final identity = await _identity(user);
-      return _publishVoiceReply(
-        parentMomentId: normalizedReplyToMomentId,
-        audio: audio,
-        durationSeconds: durationSeconds,
-        caption: normalizedCaption,
-        authorId: user.uid,
-        authorName: identity.displayName,
-        authorPhotoUrl: identity.photoUrl,
       );
     }
 
@@ -297,9 +299,20 @@ class MomentService {
         caption: normalizedCaption,
         durationSeconds: durationSeconds,
         replyToMomentId: normalizedReplyToMomentId,
-        availability: availability,
+        availability: pendingAvailability,
       ),
     );
+
+    if (normalizedReplyToMomentId != null) {
+      return _publishVoiceReply(
+        parentMomentId: normalizedReplyToMomentId,
+        audio: audio,
+        durationSeconds: durationSeconds,
+        caption: normalizedCaption,
+        authorId: user.uid,
+        pending: pending,
+      );
+    }
 
     try {
       final functions = _functions;
@@ -386,7 +399,7 @@ class MomentService {
     // amended availability contract a missing expiresAt means PERMANENT —
     // so the fallback would silently grant every offline publish a
     // forever lifetime the author never chose, bypassing both the
-    // whitelist and the server's active-Moment cap accounting. Publishing
+    // validation and the server's active-Moment cap accounting. Publishing
     // with the wrong contract while reporting success is strictly worse
     // than failing with the truth. The recording itself is retained by
     // the pending-publish map, so a retry when the server is reachable
@@ -413,11 +426,9 @@ class MomentService {
     required int durationSeconds,
     required String caption,
     required String authorId,
-    required String authorName,
-    required String? authorPhotoUrl,
+    required _PendingMomentPublish pending,
   }) async {
     try {
-      final requestId = _newRequestId();
       final functions = _functions;
       if (functions == null) {
         throw FirebaseFunctionsException(
@@ -425,17 +436,21 @@ class MomentService {
           message: 'Cloud Functions unavailable.',
         );
       }
-      final reserve = functions.httpsCallable('reserveVoiceCommentDraft');
-      final reserved = await reserve.call<Map<Object?, Object?>>({
-        'durationSeconds': durationSeconds,
-        'momentId': parentMomentId,
-        'text': caption,
-        'requestId': requestId,
-      });
+      if (pending.commentId == null || pending.storagePath == null) {
+        final reserve = functions.httpsCallable('reserveVoiceCommentDraft');
+        final reserved = await reserve.call<Map<Object?, Object?>>({
+          'durationSeconds': durationSeconds,
+          'momentId': parentMomentId,
+          'text': caption,
+          'requestId': pending.requestId,
+        });
+        pending
+          ..commentId = reserved.data['commentId'] as String?
+          ..storagePath = reserved.data['storagePath'] as String?;
+      }
 
-      final reservedData = reserved.data;
-      final commentId = reservedData['commentId'] as String?;
-      final storagePath = reservedData['storagePath'] as String?;
+      final commentId = pending.commentId;
+      final storagePath = pending.storagePath;
       if (commentId == null ||
           commentId.isEmpty ||
           storagePath == null ||
@@ -443,50 +458,60 @@ class MomentService {
         throw StateError('Malformed server voice-reply reservation.');
       }
       final storageReference = _storage.ref(storagePath);
-      try {
-        final objectGeneration = await audio.uploadTo(
-          storageReference,
-          SettableMetadata(
-            contentType: audio.contentType,
-            customMetadata: {
-              'authorId': authorId,
-              'momentId': parentMomentId,
-              'commentId': commentId,
-            },
-          ),
-        );
 
-        if (objectGeneration.isEmpty) {
-          throw StateError('The upload did not return a valid generation.');
+      if (pending.objectGeneration == null) {
+        try {
+          pending.objectGeneration = await audio.uploadTo(
+            storageReference,
+            SettableMetadata(
+              contentType: audio.contentType,
+              customMetadata: {
+                'authorId': authorId,
+                'momentId': parentMomentId,
+                'commentId': commentId,
+              },
+            ),
+          );
+        } catch (_) {
+          // As for root Moments, an upload response can be lost after Storage
+          // committed the object. Recovering its generation makes the next
+          // step idempotent instead of uploading a second object.
+          pending.objectGeneration = await _uploadedGeneration(
+            storageReference,
+          );
+          if (pending.objectGeneration == null) rethrow;
         }
-
-        final finalize = functions.httpsCallable('finalizeVoiceCommentDraft');
-        await finalize.call<Map<Object?, Object?>>({
-          'momentId': parentMomentId,
-          'commentId': commentId,
-          'objectGeneration': objectGeneration,
-          'requestId': requestId,
-        });
-
-        return commentId;
-      } catch (error) {
-        await storageReference.delete().catchError((_) {});
-        rethrow;
       }
+
+      final objectGeneration = pending.objectGeneration;
+      if (objectGeneration == null || objectGeneration.isEmpty) {
+        throw StateError('The upload did not return a valid generation.');
+      }
+
+      final finalize = functions.httpsCallable('finalizeVoiceCommentDraft');
+      // From this point a thrown transport error is ambiguous: the server may
+      // already have atomically created the comment and its replay ledger.
+      // Never delete the media after an attempted finalize. Retrying the same
+      // recording reuses this request id, reservation and generation, so the
+      // callable safely replays instead of creating a duplicate reply.
+      await finalize.call<Map<Object?, Object?>>({
+        'momentId': parentMomentId,
+        'commentId': commentId,
+        'objectGeneration': objectGeneration,
+        'requestId': pending.requestId,
+      });
+
+      _pendingMomentPublishes.remove(audio);
+      return commentId;
     } catch (error) {
       if (!_isCallableUnavailable(error)) {
         rethrow;
       }
     }
 
-    return _publishVoiceReplyLegacy(
-      parentMomentId: parentMomentId,
-      audio: audio,
-      durationSeconds: durationSeconds,
-      caption: caption,
-      authorId: authorId,
-      authorName: authorName,
-      authorPhotoUrl: authorPhotoUrl,
+    throw StateError(
+      'Posting a voice reply needs the YO Voice server right now and it '
+      'could not be reached. Your recording is kept — try again in a moment.',
     );
   }
 
@@ -532,104 +557,10 @@ class MomentService {
       }
     }
 
-    return _createTextCommentLegacy(
-      momentId: momentId,
-      user: user,
-      text: trimmedText,
+    throw StateError(
+      'Commenting needs the YO Voice server right now and it could not be '
+      'reached. Your comment was not posted — try again in a moment.',
     );
-  }
-
-  Future<String> _createTextCommentLegacy({
-    required String momentId,
-    required User user,
-    required String text,
-  }) async {
-    final userSnapshot = await _firestore
-        .collection('users')
-        .doc(user.uid)
-        .get();
-    final userData = userSnapshot.data();
-    final displayName = (userData?['displayName'] as String?)?.trim();
-    final photoUrl = userData?['photoUrl'] as String?;
-
-    final identityName = displayName?.isNotEmpty == true
-        ? displayName
-        : user.displayName?.trim().isNotEmpty == true
-        ? user.displayName!.trim()
-        : user.email?.split('@').first ?? 'YO Voice user';
-
-    final commentReference = _commentsFor(momentId).doc();
-    final momentReference = _moments.doc(momentId);
-    final batch = _firestore.batch();
-
-    batch.set(commentReference, {
-      'type': 'text',
-      'authorId': user.uid,
-      'authorName': identityName,
-      'authorPhotoUrl': photoUrl ?? user.photoURL,
-      'text': text,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
-    batch.update(momentReference, {
-      'commentCount': FieldValue.increment(1),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-    await batch.commit();
-    return commentReference.id;
-  }
-
-  Future<String> _publishVoiceReplyLegacy({
-    required String parentMomentId,
-    required RecordedAudio audio,
-    required int durationSeconds,
-    required String caption,
-    required String authorId,
-    required String authorName,
-    required String? authorPhotoUrl,
-  }) async {
-    final parentReference = _moments.doc(parentMomentId);
-    final commentReference = parentReference.collection('comments').doc();
-    final storageReference = _storage.ref(
-      'voice_replies/$authorId/$parentMomentId/'
-      '${commentReference.id}.$kVoiceMomentFileExtension',
-    );
-
-    try {
-      await audio.uploadTo(
-        storageReference,
-        SettableMetadata(
-          contentType: audio.contentType,
-          customMetadata: {
-            'authorId': authorId,
-            'momentId': parentMomentId,
-            'commentId': commentReference.id,
-          },
-        ),
-      );
-
-      final downloadUrl = await storageReference.getDownloadURL();
-      final batch = _firestore.batch();
-      batch.set(commentReference, {
-        'type': 'voice',
-        'authorId': authorId,
-        'authorName': authorName,
-        'authorPhotoUrl': authorPhotoUrl,
-        'text': caption,
-        'audioUrl': downloadUrl,
-        'storagePath': storageReference.fullPath,
-        'durationSeconds': durationSeconds,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-      batch.update(parentReference, {
-        'commentCount': FieldValue.increment(1),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      await batch.commit();
-      return commentReference.id;
-    } catch (_) {
-      await storageReference.delete().catchError((_) {});
-      rethrow;
-    }
   }
 
   Future<void> deleteMoment(VoiceMoment moment) async {
@@ -663,20 +594,6 @@ class MomentService {
       'momentId': moment.id,
       'requestId': _newRequestId(),
     });
-  }
-
-  Future<({String displayName, String? photoUrl})> _identity(User user) async {
-    final profile = await _firestore.collection('users').doc(user.uid).get();
-    final profileName = (profile.data()?['displayName'] as String?)?.trim();
-    final profilePhoto = (profile.data()?['photoUrl'] as String?)?.trim();
-    return (
-      displayName: (profileName != null && profileName.isNotEmpty
-          ? profileName
-          : user.displayName?.trim().isNotEmpty == true
-          ? user.displayName!.trim()
-          : user.email?.split('@').first ?? 'YO Voice user'),
-      photoUrl: profilePhoto?.isNotEmpty == true ? profilePhoto : user.photoURL,
-    );
   }
 
   CollectionReference<Map<String, dynamic>> _commentsFor(String momentId) =>
@@ -757,6 +674,7 @@ class _PendingMomentPublish {
   final String? replyToMomentId;
   final MomentAvailability availability;
   String? momentId;
+  String? commentId;
   String? storagePath;
   String? objectGeneration;
 

@@ -50,6 +50,10 @@ code. `LIVEKIT_URL` (`wss://yovoice-3f7j9fb7.livekit.cloud`) is a plain
 > from production. Deployment evidence and the retained recovery runbook are in
 > [DEPLOYMENT.md](DEPLOYMENT.md#friends-notification-single-writer-rollout--executed-2026-08-25).
 
+> **ADR-116 premium product sound is SOURCE ONLY — NOT DEPLOYED.** Production
+> Android remains on `yovoice_activity_v2` until the staged v3 client/channel
+> cutover in [DEPLOYMENT.md](DEPLOYMENT.md#pending-release-velvet-prism-product-sound) is complete.
+
 `onNotificationCreated` (`functions/notifications/push.js`) — a Firestore
 `onDocumentCreated` trigger on `users/{userId}/notifications/{id}`. The
 authoritative server mutation writes the notification document; rules deny
@@ -63,10 +67,15 @@ observe; FCM remains best effort and a resolution can still race the final
 network send after the last read. Has a title-builder per notification type,
 mirroring the in-app copy in `app_notification.dart`, and respects each
 user's per-type notification preferences (`notification_preferences_screen.dart`
-→ `NotificationService.setPreference`). The shared, unit-tested payload uses
-the high-importance `yovoice_activity_v2` Android channel with the custom
+→ `NotificationService.setPreference`). The shared, unit-tested source payload
+uses the high-importance `yovoice_activity_v3` Android channel with the custom
 `yovoice_notification` sound and vibration, the matching APNs sound with active
-interruption level, and web icon/badge metadata.
+interruption level, and web icon/badge metadata. Flutter, Functions and the
+manifest fallback carry the same channel id; v3 is required because Android
+persists a channel's sound. The app/Android/iOS WAVs are byte-identical.
+Foreground FCM and the independent Firestore banner claim the notification id
+through one gate, so only the first presentation owns a sound; a native
+presentation failure falls back to the in-app banner without replaying it.
 The ADR-114 rollout also includes the bounded
 `scrub:retired-social-notifications` Admin command. It runs only after the old
 social triggers are gone, reports aggregate counts, preserves genuine legacy
@@ -175,6 +184,39 @@ to server-authoritative callables:
   `finalizeVoiceCommentDraft`, `createMomentComment`, `deleteMomentComment`,
   `deleteMoment`, `setMomentLike`.
 - `selectMyAchievementTitle`.
+
+### Voice Moment publication contract (ADR-115, source only)
+
+Local review never touches the backend: native playback reads the temporary
+file and web playback owns a temporary Blob URL. The first server operation is
+still `reserveMomentDraft`, followed by Storage upload and
+`finalizeMomentDraft`.
+
+`availabilityHours` is absent/24 for the backward-compatible default, any safe
+whole integer from 24 through 720, or the literal `permanent`. The default
+stays out of the operation hash so deployed replays keep their identity; every
+non-default value participates in the hash. Reserve performs an advisory exact
+published-set capacity check. Finalize repeats that exact check
+authoritatively and advances `momentCapacityLedgers/{uid}` in the same
+transaction. Delete and scheduled expiry advance the same document, forcing a
+finalize racing either operation to retry against current truth. The ledger is
+a mutex/version, never a counter; the complete published set remains the
+reconstructible source of truth.
+
+Root reserve, publication, expiry and deletion have no direct-write fallback.
+Neither do like or comment mutation: their former direct fallbacks could not
+bind a counter change to one canonical edge/comment in Rules and permitted
+negative or fabricated counters. ADR-115 makes that boundary explicit in
+Rules as well as client code. A completed finalize replay returns from its
+operation ledger without another Storage read or quota charge; every
+unfinished retry is charged before its external Storage reads, including a
+retry that already owns a matching preflight. At `expiresAt` (not at the later
+sweeper pass), like, text-comment and voice-comment reserve/finalize callables
+reject new engagement. Root and reply audio are immutable to clients; bounded
+abandoned-upload workers and the cleanup outbox are the only deletion paths.
+This contract and its new
+`(authorId, isPublished)` index are **SOURCE ONLY — NOT DEPLOYED** until the
+ordered rollout in DEPLOYMENT.md completes.
 
 All of these are attempted from the Flutter clients first via callable.
 When a callable is genuinely **absent** — no Firebase app, or

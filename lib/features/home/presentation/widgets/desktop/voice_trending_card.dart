@@ -4,6 +4,8 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_boundary.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
@@ -62,6 +64,10 @@ class VoiceTrendingCard extends StatefulWidget {
 class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
   RoomService? _rooms;
   Future<List<VoiceMoment>>? _topMoments;
+  final FocusNode _expiryRecoveryFocus = FocusNode(
+    debugLabel: 'View all Moments after trending expiry',
+  );
+  final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
 
   @override
   void initState() {
@@ -83,6 +89,27 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
     } catch (_) {
       _topMoments = null;
     }
+  }
+
+  @override
+  void dispose() {
+    _expiryRecoveryFocus.dispose();
+    super.dispose();
+  }
+
+  void _handleExpiryDeadline(DateTime deadline) {
+    final previousFocus = FocusManager.instance.primaryFocus;
+    final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
+    _expiryAnnouncer.announce(
+      context,
+      transition: 'trending-expiry-${deadline.microsecondsSinceEpoch}',
+      message: 'Voice Moment expired and was removed from Most liked.',
+    );
+    recoverMomentExpiryFocusAfterFrame(
+      context: context,
+      fallback: _expiryRecoveryFocus,
+      previousFocus: recoverFocus ? previousFocus : null,
+    );
   }
 
   @override
@@ -176,12 +203,26 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
               if (moments.isEmpty) {
                 return const _SectionNote('No Voice Moments published yet.');
               }
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (final moment in moments)
-                    _MomentRow(moment: moment, onTap: widget.onSeeAll),
-                ],
+              return MomentExpiryListBuilder(
+                moments: moments,
+                onDeadline: _handleExpiryDeadline,
+                builder: (context, now) {
+                  final live = moments
+                      .where((moment) => moment.isActiveAt(now))
+                      .toList(growable: false);
+                  if (live.isEmpty) {
+                    return const _SectionNote(
+                      'No live Voice Moments right now.',
+                    );
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      for (final moment in live)
+                        _MomentRow(moment: moment, onTap: widget.onSeeAll),
+                    ],
+                  );
+                },
               );
             },
           ),
@@ -189,6 +230,7 @@ class _VoiceTrendingCardState extends State<VoiceTrendingCard> {
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton(
+              focusNode: _expiryRecoveryFocus,
               onPressed: widget.onSeeAll,
               style: TextButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 4),
@@ -510,4 +552,3 @@ class _LivePill extends StatelessWidget {
     );
   }
 }
-

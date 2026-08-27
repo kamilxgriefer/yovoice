@@ -53,6 +53,29 @@ import 'package:yovoice/features/rooms/presentation/widgets/room_mini_bar.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
+/// Serializes presentation of the More menu without blocking the destination
+/// subsequently opened from it.
+///
+/// Public only so the navigation regression suite can deterministically pin
+/// the same-frame double-tap contract without booting Firebase-backed
+/// [MainShell].
+final class MoreMenuTransitionGuard {
+  bool _active = false;
+
+  @visibleForTesting
+  bool get isActive => _active;
+
+  Future<T?> run<T>(Future<T?> Function() present) async {
+    if (_active) return null;
+    _active = true;
+    try {
+      return await present();
+    } finally {
+      _active = false;
+    }
+  }
+}
+
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
 
@@ -105,10 +128,11 @@ class _MainShellState extends State<MainShell>
   static const Color _background = Color(0xFF080711);
   static const Color _primary = Color(0xFF9D20FF);
 
-  final MessageService _messageService = MessageService();
+  final MessageService _messageService = MessageService.live;
   final RoomService _roomService = RoomService();
   final AuthService _authService = AuthService();
   final EntitlementService _entitlementService = EntitlementService();
+  final MoreMenuTransitionGuard _moreMenuTransition = MoreMenuTransitionGuard();
   bool _handledInitialRoomLink = false;
 
   Timer? _verificationCheckTimer;
@@ -340,6 +364,7 @@ class _MainShellState extends State<MainShell>
     _conversationsStream = _messageService.watchConversations(
       includeArchived: true,
     );
+    unawaited(_messageService.resumeOutbox());
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _openInitialRoomLink();
@@ -661,22 +686,23 @@ class _MainShellState extends State<MainShell>
   /// Mobile keeps its bottom sheet; desktop gets an anchored popover
   /// beside the rail item — no dimmed page, no drag handle.
   Future<void> _openMoreMenu() async {
-    final MoreDestination? destination;
-    if (MainShell.usesDesktopLayout(MediaQuery.sizeOf(context))) {
-      final box = _moreItemKey.currentContext?.findRenderObject() as RenderBox?;
-      final anchor = box == null
-          ? const Offset(16, 320)
-          : box.localToGlobal(Offset(box.size.width - 8, 0));
-      destination = await showDesktopMoreMenu(
-        context,
-        anchor: anchor,
-        isStaff: _isStaff,
-        isOwner: _isOwner,
-        entitlements: _entitlements,
-      );
-    } else {
-      destination = await showMoreSheet(context, entitlements: _entitlements);
-    }
+    final destination = await _moreMenuTransition.run<MoreDestination>(() {
+      if (MainShell.usesDesktopLayout(MediaQuery.sizeOf(context))) {
+        final box =
+            _moreItemKey.currentContext?.findRenderObject() as RenderBox?;
+        final anchor = box == null
+            ? const Offset(16, 320)
+            : box.localToGlobal(Offset(box.size.width - 8, 0));
+        return showDesktopMoreMenu(
+          context,
+          anchor: anchor,
+          isStaff: _isStaff,
+          isOwner: _isOwner,
+          entitlements: _entitlements,
+        );
+      }
+      return showMoreSheet(context, entitlements: _entitlements);
+    });
     if (!mounted || destination == null) {
       return;
     }
@@ -1176,7 +1202,7 @@ class _DesktopRightColumn extends StatelessWidget {
 ///
 /// Public (unlike the rest of this file's internals) so the navigation
 /// regression test can pump the production wrapper directly.
-class MoreDestinationHost extends StatelessWidget {
+class MoreDestinationHost extends StatefulWidget {
   const MoreDestinationHost({
     required this.body,
     required this.selectedIndex,
@@ -1213,34 +1239,59 @@ class MoreDestinationHost extends StatelessWidget {
   final VoidCallback? onOpenProfileSettings;
 
   @override
+  State<MoreDestinationHost> createState() => _MoreDestinationHostState();
+}
+
+class _MoreDestinationHostState extends State<MoreDestinationHost> {
+  bool _navigationCommitted = false;
+
+  /// Commits exactly one dock/rail action, removes this host completely, and
+  /// only then lets the shell present the next route. This prevents a second
+  /// tap on the still-animating host from popping the newly opened sheet (or
+  /// the shell itself).
+  void _popThen(VoidCallback action) {
+    if (_navigationCommitted) return;
+    _navigationCommitted = true;
+
+    final navigator = Navigator.of(context);
+    if (!navigator.canPop()) {
+      // MoreDestinationHost is normally pushed above MainShell, but keeping
+      // its public/test harness contract safe at a root route costs nothing:
+      // there is no transition to wait for in that shape.
+      action();
+      return;
+    }
+    final route = ModalRoute.of(context);
+    navigator.pop();
+    if (route == null) {
+      action();
+      return;
+    }
+    unawaited(route.completed.then<void>((_) => action()));
+  }
+
+  @override
   Widget build(BuildContext context) {
     final viewport = MediaQuery.sizeOf(context);
     final isDesktop = MainShell.usesDesktopLayout(viewport);
 
-    if (isDesktop && onDesktopNavSelected != null) {
-      // Rail taps pop this route FIRST, then act, so the shell's own
-      // state stays the single source of truth (same contract the mobile
-      // bar below already uses).
-      void popThen(VoidCallback action) {
-        Navigator.of(context).pop();
-        action();
-      }
-
+    if (isDesktop && widget.onDesktopNavSelected != null) {
       return Scaffold(
         backgroundColor: _MainShellState._background,
         body: Row(
           key: const ValueKey('desktop-shell-row'),
           children: [
             DesktopSidebar(
-              active: activeDesktopItem,
-              unreadConversationCount: unreadConversationCount,
-              unreadNotificationCount: unreadNotificationCount,
-              onSelect: (item) => popThen(() => onDesktopNavSelected!(item)),
-              onCreateRoom: () => popThen(onCreateRoom ?? () {}),
-              onCreateMoment: () => popThen(onCreateMoment ?? () {}),
-              onOpenProfile: () => popThen(onOpenProfile ?? () {}),
+              active: widget.activeDesktopItem,
+              unreadConversationCount: widget.unreadConversationCount,
+              unreadNotificationCount: widget.unreadNotificationCount,
+              onSelect: (item) =>
+                  _popThen(() => widget.onDesktopNavSelected!(item)),
+              onCreateRoom: () => _popThen(widget.onCreateRoom ?? () {}),
+              onCreateMoment: () => _popThen(widget.onCreateMoment ?? () {}),
+              onOpenProfile: () => _popThen(widget.onOpenProfile ?? () {}),
               onOpenProfileSettings: () =>
-                  popThen(onOpenProfileSettings ?? () {}),
+                  _popThen(widget.onOpenProfileSettings ?? () {}),
             ),
             Expanded(
               child: Column(
@@ -1249,7 +1300,7 @@ class MoreDestinationHost extends StatelessWidget {
                   Expanded(
                     child: ResponsiveContentFrame(
                       width: ResponsiveContentWidth.workbench,
-                      child: body,
+                      child: widget.body,
                     ),
                   ),
                   // Same full-height-rail contract as the primary shell.
@@ -1264,26 +1315,18 @@ class MoreDestinationHost extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: _MainShellState._background,
-      body: body,
+      body: widget.body,
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           const RoomMiniBar(),
           _BottomNavigation(
-            selectedIndex: selectedIndex,
-            unreadConversationCount: unreadConversationCount,
-            onDestinationSelected: (index) {
-              Navigator.of(context).pop();
-              onDestinationSelected(index);
-            },
-            onVoicePressed: () {
-              Navigator.of(context).pop();
-              onVoicePressed();
-            },
-            onMorePressed: () {
-              Navigator.of(context).pop();
-              onMorePressed();
-            },
+            selectedIndex: widget.selectedIndex,
+            unreadConversationCount: widget.unreadConversationCount,
+            onDestinationSelected: (index) =>
+                _popThen(() => widget.onDestinationSelected(index)),
+            onVoicePressed: () => _popThen(widget.onVoicePressed),
+            onMorePressed: () => _popThen(widget.onMorePressed),
           ),
         ],
       ),

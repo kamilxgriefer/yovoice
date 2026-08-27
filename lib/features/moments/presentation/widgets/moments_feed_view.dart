@@ -14,10 +14,12 @@ import 'package:yovoice/features/moderation/presentation/report_content_flow.dar
 import 'package:yovoice/features/moments/data/models/moment_chain.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
+import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_sheet.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels.dart';
@@ -75,6 +77,8 @@ class MomentsFeedView extends StatefulWidget {
     this.isVisible,
     this.onOpenDetail,
     this.playerFactory,
+    this.expiryClock,
+    this.expiryTimerFactory,
     super.key,
   });
 
@@ -99,6 +103,12 @@ class MomentsFeedView extends StatefulWidget {
 
   @visibleForTesting
   final AudioPlayer Function()? playerFactory;
+
+  @visibleForTesting
+  final MomentExpiryClock? expiryClock;
+
+  @visibleForTesting
+  final MomentExpiryTimerFactory? expiryTimerFactory;
 
   @override
   State<MomentsFeedView> createState() => _MomentsFeedViewState();
@@ -153,6 +163,13 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   Duration? _duration;
   String? _playbackError;
 
+  late final MomentExpiryScheduler _expiry;
+  DateTime? _expiredThrough;
+  final FocusNode _expiryRecoveryFocus = FocusNode(
+    debugLabel: 'Reload Moments after expiry',
+  );
+  final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
+
   String get _uid {
     try {
       return (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
@@ -164,6 +181,11 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   @override
   void initState() {
     super.initState();
+    _expiry = MomentExpiryScheduler(
+      onDeadline: _expireAt,
+      clock: widget.expiryClock,
+      timerFactory: widget.expiryTimerFactory,
+    );
     _discovery = widget.discoveryService ?? MomentDiscoveryService();
     // Each seam guarded separately: one service that cannot be
     // constructed must not take the others down with it.
@@ -177,6 +199,12 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       _moments = widget.momentService ?? MomentService();
       _mineSubscription = _moments!.watchMyMoments().listen(
         (moments) {
+          if (!mounted) return;
+          final now = _expiry.now();
+          // The exact timer can make the service emit a list with the dead
+          // item already removed. Expire the previous cache first, while its
+          // focused row and playback id are still identifiable.
+          _expireAt(now);
           if (!mounted) return;
           setState(() {
             // A previously-seen own Moment that vanished from the stream
@@ -192,6 +220,9 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
             _mineData = moments;
             if (removed.isNotEmpty) _pruneFromPool(removed);
           });
+          // Validate and schedule the incoming snapshot as well; this also
+          // protects against a stale backend emission at the boundary.
+          _expireAt(now);
         },
         onError: (Object _) {
           // Own Moments are additive to the personal slice; when this
@@ -236,10 +267,17 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
     _socialSubscription = _feed!.watchSocialMoments().listen(
       (moments) {
         if (mounted) {
+          final now = _expiry.now();
+          // HomeFeedService's exact wake-up emits the already-pruned list.
+          // Process the previous cache before replacing it so a social-only
+          // focused row still participates in announcement/focus recovery.
+          _expireAt(now);
+          if (!mounted) return;
           setState(() {
             _socialData = moments;
             _socialError = null;
           });
+          _expireAt(now);
         }
       },
       onError: (Object error) {
@@ -264,6 +302,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   @override
   void dispose() {
     widget.isVisible?.removeListener(_handleVisibility);
+    _expiry.dispose();
     unawaited(_engagementSubscription?.cancel());
     unawaited(_viewedSubscription?.cancel());
     unawaited(_socialSubscription?.cancel());
@@ -272,6 +311,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       unawaited(subscription.cancel());
     }
     _player?.dispose();
+    _expiryRecoveryFocus.dispose();
     super.dispose();
   }
 
@@ -292,6 +332,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
         _result = result;
         _phase = _Phase.ready;
       });
+      _expireAt(_expiry.now());
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -432,6 +473,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
           .where((mine) => mine.id != moment.id)
           .toList(growable: false);
     });
+    _scheduleExpiry();
   }
 
   Future<void> _openChain(MomentChain chain) async {
@@ -449,6 +491,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       onOpenDetail: _openDetail,
       onDeleted: _handleDeletedElsewhere,
       playerFactory: widget.playerFactory,
+      expiryClock: widget.expiryClock,
+      expiryTimerFactory: widget.expiryTimerFactory,
     );
   }
 
@@ -466,6 +510,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       momentService: _moments,
       contentReportService: widget.contentReportService,
       playerFactory: widget.playerFactory,
+      expiryClock: widget.expiryClock,
+      expiryTimerFactory: widget.expiryTimerFactory,
     );
   }
 
@@ -495,6 +541,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
               onOpenDetail: _openDetail,
               onDeleted: _handleDeletedElsewhere,
               playerFactory: widget.playerFactory,
+              expiryClock: widget.expiryClock,
+              expiryTimerFactory: widget.expiryTimerFactory,
             ),
           );
           return;
@@ -516,6 +564,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
           moment: moment,
           momentService: _moments,
           contentReportService: widget.contentReportService,
+          expiryClock: widget.expiryClock,
+          expiryTimerFactory: widget.expiryTimerFactory,
         ),
       ),
     );
@@ -583,6 +633,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
             contentReportService: widget.contentReportService,
             auth: widget.auth,
             playerFactory: widget.playerFactory,
+            expiryClock: widget.expiryClock,
+            expiryTimerFactory: widget.expiryTimerFactory,
           ),
         ),
       ),
@@ -646,6 +698,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
           .where((mine) => mine.id != moment.id)
           .toList(growable: false);
     });
+    _scheduleExpiry();
     messenger
       ?..hideCurrentSnackBar()
       ..showSnackBar(
@@ -657,6 +710,124 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
   }
 
   // ------------------------------------------------------------- ordering
+
+  DateTime _effectiveNow() {
+    final now = _expiry.now();
+    final floor = _expiredThrough;
+    return floor != null && floor.isAfter(now) ? floor : now;
+  }
+
+  Iterable<VoiceMoment> get _expiryCandidates sync* {
+    yield* _result?.moments ?? const <VoiceMoment>[];
+    yield* _socialData ?? const <VoiceMoment>[];
+    yield* _mineData;
+  }
+
+  void _scheduleExpiry() => _expiry.schedule(_expiryCandidates);
+
+  /// Removes every Moment dead at [deadline] from the frozen discovery,
+  /// own-Moment and cached social lists, then arms the next exact deadline.
+  /// The discovery corpus count stays unchanged: expiry did not erase the
+  /// published document, it only made it ineligible for this live surface.
+  void _expireAt(DateTime deadline) {
+    if (!mounted) return;
+    if (_expiredThrough == null || deadline.isAfter(_expiredThrough!)) {
+      _expiredThrough = deadline;
+    }
+    final now = _effectiveNow();
+    final result = _result;
+    final expiredPool = result == null
+        ? const <VoiceMoment>[]
+        : result.moments
+              .where((moment) => !moment.isActiveAt(now))
+              .toList(growable: false);
+    final nextMine = _mineData
+        .where(
+          (moment) =>
+              moment.isActiveAt(now) ||
+              (!moment.isPublished &&
+                  !moment.isDeleted &&
+                  moment.status != 'expired'),
+        )
+        .toList(growable: false);
+    final social = _socialData;
+    final nextSocial = social
+        ?.where((moment) => moment.isActiveAt(now))
+        .toList(growable: false);
+    final removedIds = <String>{
+      ...expiredPool.map((moment) => moment.id),
+      ..._mineData
+          .where((moment) => !nextMine.any((kept) => kept.id == moment.id))
+          .map((moment) => moment.id),
+      if (social != null && nextSocial != null)
+        ...social
+            .where((moment) => !nextSocial.any((kept) => kept.id == moment.id))
+            .map((moment) => moment.id),
+    };
+    final changed =
+        expiredPool.isNotEmpty ||
+        nextMine.length != _mineData.length ||
+        nextSocial?.length != social?.length;
+
+    if (changed) {
+      final previousFocus = FocusManager.instance.primaryFocus;
+      final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
+      final stopPlaying = _playingId != null && removedIds.contains(_playingId);
+      if (stopPlaying) {
+        final player = _player;
+        if (player != null) {
+          unawaited(player.stop().catchError((Object _) {}));
+        }
+      }
+      setState(() {
+        if (result != null && expiredPool.isNotEmpty) {
+          final expiredIds = expiredPool.map((moment) => moment.id).toSet();
+          _result = MomentDiscoveryFeed(
+            moments: result.moments
+                .where((moment) => !expiredIds.contains(moment.id))
+                .toList(growable: false),
+            fetchedCount: result.fetchedCount,
+            drops: <String, MomentDropReason>{
+              ...result.drops,
+              for (final id in expiredIds) id: MomentDropReason.expired,
+            },
+            seed: result.seed,
+            poolExhausted: result.poolExhausted,
+          );
+        }
+        _mineData = nextMine;
+        if (social != null) _socialData = nextSocial;
+        if (_selectedId != null && removedIds.contains(_selectedId)) {
+          _selectedId = null;
+        }
+        if (stopPlaying) {
+          _isPlaying = false;
+          _playingId = null;
+          _position = Duration.zero;
+          _duration = null;
+        }
+      });
+      if (widget.isVisible?.value != false) {
+        final count = removedIds.length;
+        final transitionIds = removedIds.toList()..sort();
+        _expiryAnnouncer.announce(
+          context,
+          transition:
+              'feed-expiry-${deadline.microsecondsSinceEpoch}:'
+              '${transitionIds.join(',')}',
+          message: count == 1
+              ? 'One Voice Moment expired and was removed.'
+              : '$count Voice Moments expired and were removed.',
+        );
+        recoverMomentExpiryFocusAfterFrame(
+          context: context,
+          fallback: _expiryRecoveryFocus,
+          previousFocus: recoverFocus ? previousFocus : null,
+        );
+      }
+    }
+    _scheduleExpiry();
+  }
 
   List<VoiceMoment> _byCreatedDesc(List<VoiceMoment> moments) {
     final sorted = List<VoiceMoment>.of(moments);
@@ -672,7 +843,10 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
 
   /// The list the selected chip shows, before live-counter merging.
   List<VoiceMoment> _currentList() {
-    final pool = _result?.moments ?? const <VoiceMoment>[];
+    final now = _effectiveNow();
+    final pool = (_result?.moments ?? const <VoiceMoment>[])
+        .where((moment) => moment.isActiveAt(now))
+        .toList(growable: false);
     return switch (_filter) {
       MomentsFilter.discover => _byCreatedDesc(pool),
       MomentsFilter.recent => _byCreatedDesc(pool),
@@ -687,7 +861,9 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
       // Following renders from the cached personal slice; this path is
       // only used for chain lookups after it has rendered.
       MomentsFilter.following => _byCreatedDesc(
-        _socialData ?? const <VoiceMoment>[],
+        (_socialData ?? const <VoiceMoment>[])
+            .where((moment) => moment.isActiveAt(now))
+            .toList(growable: false),
       ),
     };
   }
@@ -724,6 +900,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
                 onFilter: _setFilter,
                 onRefresh: _load,
                 compact: compact,
+                recoveryFocusNode: _expiryRecoveryFocus,
               ),
               Expanded(
                 child: _filter == MomentsFilter.following
@@ -849,7 +1026,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView> {
     final social = _socialData ?? const <VoiceMoment>[];
     final uid = _uid;
 
-    final now = DateTime.now();
+    final now = _effectiveNow();
     // Own Moments: everything still alive, plus drafts that are still
     // uploading — losing sight of a stuck upload is how a broken
     // pipeline hides.
@@ -955,12 +1132,14 @@ class _FilterChips extends StatelessWidget {
     required this.onFilter,
     required this.onRefresh,
     required this.compact,
+    required this.recoveryFocusNode,
   });
 
   final MomentsFilter filter;
   final ValueChanged<MomentsFilter> onFilter;
   final VoidCallback onRefresh;
   final bool compact;
+  final FocusNode recoveryFocusNode;
 
   static const _labels = <MomentsFilter, (String, IconData)>{
     MomentsFilter.discover: ('Discover', Icons.explore_outlined),
@@ -997,6 +1176,7 @@ class _FilterChips extends StatelessWidget {
           ),
           IconButton(
             key: const ValueKey('moments-discovery-refresh'),
+            focusNode: recoveryFocusNode,
             onPressed: onRefresh,
             tooltip: 'Reload Moments',
             icon: const Icon(

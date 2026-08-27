@@ -15,6 +15,178 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Pending release: Voice Moment local review, custom availability and authoritative capacity
+
+**SOURCE ONLY — NOT DEPLOYED. This is not a Hosting-only release.** The new
+client can send any whole `availabilityHours` value from 24 through 720, while
+the deployed Function accepts only the old presets. The exact capacity check
+also depends on a new composite index, and the root/Storage authority changes
+must follow working callables rather than strand an older direct client
+halfway through publication.
+
+The load-bearing order is:
+
+> **Index READY and query-proved → Functions ACTIVE and
+> callable/concurrency-smoked → Firestore Rules read back → Storage Rules
+> IAM/read-smoked → client/Hosting.**
+
+1. Run the full Flutter VM suite **and** the separate Flutter browser suite
+   listed in [TESTING.md](TESTING.md#current-counts), plus Functions, Firestore
+   Rules, Storage Rules, family media, `flutter analyze` and a release web
+   build. Pin the release commit. Capture the live Firestore and Storage Rules
+   sources and the current
+   serving revisions/traffic of `reserveMomentDraft`, `finalizeMomentDraft`,
+   `deleteMoment`, `expireVoiceMomentsSchedule`, `setMomentLike`,
+   `createMomentComment`, `reserveVoiceCommentDraft` and
+   `finalizeVoiceCommentDraft`, plus `deleteMomentComment`. Also record the
+   ACTIVE revisions of
+   `expireAbandonedMomentDraftsSchedule`,
+   `expireAbandonedVoiceCommentDraftsSchedule`,
+   `processPendingContentCleanupSchedule` and
+   `onContentCleanupOutboxCreated`: stricter Storage Rules deliberately leave
+   all media deletion to these Admin workers. Use the revision procedure in
+   the Friends runbook below; `firebase functions:list` alone is not serving
+   revision evidence.
+2. Deploy indexes only:
+
+   ```bash
+   firebase deploy --only firestore:indexes --project yovoice-ec54a
+   ```
+
+   Wait until `voiceMoments(authorId ASC, isPublished ASC)` is READY/Enabled.
+   Then execute the exact production query
+   `where('authorId','==',SMOKE_UID).where('isPublished','==',true)` with an
+   Admin SDK smoke account. READY without a successful real query is not a
+   release gate.
+3. Deploy the nine compatible Moment owners and the four cleanup exports that
+   bundle the same integrity implementation, then verify all thirteen new ACTIVE
+   latest-ready revisions and 100% traffic:
+
+   ```bash
+   firebase deploy --only functions:reserveMomentDraft,functions:finalizeMomentDraft,functions:deleteMoment,functions:expireVoiceMomentsSchedule,functions:setMomentLike,functions:createMomentComment,functions:reserveVoiceCommentDraft,functions:finalizeVoiceCommentDraft,functions:deleteMomentComment,functions:expireAbandonedMomentDraftsSchedule,functions:expireAbandonedVoiceCommentDraftsSchedule,functions:processPendingContentCleanupSchedule,functions:onContentCleanupOutboxCreated --project yovoice-ec54a
+   ```
+
+4. With controlled test accounts, verify: absent/default 24 hours; at least one
+   non-preset value such as 25 or 48 hours; `permanent` with no `expiresAt`;
+   exact request replay; two concurrent finalizations competing for the tenth
+   slot; and delete releasing a slot. Retry the same unfinished invalid root
+   and reply finalize through its attempt budget and prove the next attempt is
+   rejected before another Storage read; replay one completed finalize and
+   prove it is free and performs no second Storage read. Against a controlled
+   finite deadline, prove like/text-comment/voice-reserve/voice-finalize work at
+   deadline minus 1 ms and fail at the deadline and after it, while owner delete
+   remains available. Verify `deleteMomentComment` and all four cleanup exports
+   captured in step 1 are ACTIVE on their new revisions; smoke like/unlike plus
+   text/voice comment create/delete, one event-driven cleanup-outbox deletion,
+   and one abandoned root/reply cleanup through the deployed schedules. The
+   next Rules stages remove every direct engagement and media-delete fallback.
+   Do not continue if any required callable revision, cleanup worker or smoke
+   is ambiguous.
+5. Deploy Firestore Rules only and read the released source back byte-for-byte
+   using the standard Rules API procedure in this document:
+
+   ```bash
+   firebase deploy --only firestore:rules --project yovoice-ec54a
+   ```
+
+   Smoke author draft reads, foreign draft denial, published signed-in reads,
+   and denial of client root create/update/delete plus capacity-ledger access.
+6. Confirm the Firebase Storage service agent still has the narrow
+   `roles/firebaserules.firestoreServiceAgent` grant, then deploy and read-smoke
+   Storage Rules:
+
+   ```bash
+   firebase deploy --only storage --project yovoice-ec54a
+   ```
+
+   Require author draft upload/read, outsider draft denial, published signed-in
+   read, expired outsider denial, and refusal by both author and outsider to
+   client-delete an uploading, published or expired object. Seed one existing
+   20-character mixed-case legacy Moment id and prove its published signed-in
+   read plus author-only uploading-draft read remain compatible; every client
+   delete and new mixed-case allocation must still be denied.
+   For voice replies, seed one canonical unexpired server reservation and prove
+   allowed-MIME upload and refusal of client deletion even before finalize;
+   refuse missing, expired and identity/path-mismatched reservations. After
+   simulating finalize (comment created, reservation removed), continue to
+   refuse owner deletion while preserving signed-in read. A seeded mixed-case
+   legacy reply remains read-only (including when its allowed MIME is M4A): it
+   receives neither a new-allocation nor a client-cleanup exception; a
+   lowercase exactly reserved M4A upload remains valid. Finally prove the
+   deployed abandoned-upload worker can remove the unfinished canonical root
+   and reply as Admin authority; Rules success alone does not prove cleanup.
+7. Only after all backend gates pass, dispatch the pinned Hosting build. On a
+   physical mobile device and a real browser, prove preview play/pause/seek
+   creates no Firestore draft or Storage object, publish a non-preset duration
+   and an Until deleted Moment, then delete one and verify cleanup. Keep a
+   finite Moment surface open across a controlled deadline (or use the pinned
+   short-deadline staging fixture) and prove it disappears/stops playing while
+   the server refuses new engagement without waiting for the sweeper. Headless
+   widget/player doubles do not prove real `audioplayers` behavior.
+
+Rollback uses the captured live rule sources and serving revisions, never a
+guessed commit. Before the Functions stage, indexes may remain harmlessly. If
+the Functions stage must be rolled back, withdraw the new client first; old
+Functions cannot accept non-preset values. The server-only mutex documents may
+remain because they are version records, not capacity data. Once stricter
+Rules are live, restore the captured Firestore/Storage sources only as part of
+an explicit coordinated rollback; do not mix an old permissive root writer
+with a new client and call that a safe intermediate state.
+
+### Pending release: Velvet Prism product sound
+
+**SOURCE ONLY — NOT DEPLOYED.** ADR-116 changes native app bundles, Hosting and
+the `onNotificationCreated` payload. Android notification-channel sounds are
+immutable, so this is not a same-id asset replacement and Functions must not
+move old clients onto v3 before they can create that channel.
+
+1. Run the full Flutter/Functions gates plus:
+
+   ```bash
+   python3 tool/generate_ui_sounds.py --check
+   flutter test test/ui_sound_service_test.dart \
+     test/foreground_stream_banner_test.dart \
+     test/room_voice_entry_screen_test.dart
+   node --test functions/test/push_payload.test.js
+   ```
+
+   Require exactly eight app WAVs under `assets/audio/ui/v3/` and no legacy
+   root-level UI WAVs; 48 kHz/stereo/duration/loudness/tail checks;
+   byte-identical app, Android and iOS notification masters; and one common
+   `yovoice_activity_v3` value in Flutter, Functions and AndroidManifest.
+   Delete ignored native build output before the acceptance build so an old
+   archived v1/v2 Flutter asset cannot be mistaken for the new source.
+2. Build Hosting from a clean artifact and confirm it contains only the eight
+   `assets/audio/ui/v3/` WAVs. Ship the mobile clients and Hosting **before**
+   changing the server payload.
+   On an upgraded Android device prove v3 exists with the custom sound. On a
+   fresh install, while Functions still sends v2, prove the missing requested
+   channel safely falls back to the manifest's v3 channel. Verify the iOS
+   bundle contains the new `yovoice_notification.wav` bytes.
+3. On phone speaker and headphones listen to all eight cues, then repeat with
+   an active LiveKit room, Bluetooth/AirPods, iOS silent switch and Android
+   DND. Confirm create-room produces one cue, participant bursts remain quiet,
+   and one foreground notification produces exactly one sound. Automated PCM
+   checks do not replace this operator approval.
+4. Only when the minimum supported Android population has created v3 (or a
+   forced upgrade excludes older builds), deploy the payload owner and verify
+   its serving revision/traffic:
+
+   ```bash
+   firebase deploy --only functions:onNotificationCreated \
+     --project yovoice-ec54a
+   ```
+
+   Send one controlled Android background push, one iOS background push and
+   one focused-platform push. Verify v3/custom sound on Android, the packaged
+   APNs sound on iOS, and exactly one focused presentation.
+
+Rollback is asymmetric. The v3 client/channel and new WAVs are harmless while
+Functions still targets v2. If post-cutover delivery fails, restore only the
+captured `onNotificationCreated` revision so Android payloads target v2 again;
+do not try to mutate or delete channels already owned by the OS. A later
+client rollback may leave v3 installed, which is expected.
+
 ### Friends notification single-writer rollout — executed 2026-08-25
 
 ADR-114 is **DEPLOYED** from commit `5377aa688b030211ea36ba600142b82c792ae227`.

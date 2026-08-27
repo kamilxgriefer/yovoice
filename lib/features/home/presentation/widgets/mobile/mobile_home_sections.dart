@@ -4,6 +4,7 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart'
     show RoomVisual;
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/premium/data/premium_plans.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
@@ -106,6 +107,7 @@ class MobileMomentsStrip extends StatelessWidget {
     required this.onCreateMoment,
     required this.onDiscover,
     this.onOpenOwnChain,
+    this.expiryClock,
     super.key,
   });
 
@@ -120,6 +122,9 @@ class MobileMomentsStrip extends StatelessWidget {
   /// Optional so existing callers keep working; when null the bubble
   /// falls back to [onOpenMoment] with the newest.
   final ValueChanged<List<VoiceMoment>>? onOpenOwnChain;
+
+  /// Uses the same instant as an injected [HomeFeedService] in widget tests.
+  final DateTime Function()? expiryClock;
 
   static const double _tile = 66;
 
@@ -140,69 +145,89 @@ class MobileMomentsStrip extends StatelessWidget {
               .toList(growable: false);
     final mine = mineAll.isEmpty ? null : mineAll.first;
 
-    final yours = _MomentBubble(
-      key: const ValueKey('home-your-moment'),
-      label: 'Your Moment',
-      photoUrl: mine?.authorPhotoUrl ?? profile?.photoUrl,
-      displayName: profile?.displayName,
-      showAdd: true,
-      // A real count of YOUR live Moments — the chain badge.
-      count: mineAll.length > 1 ? mineAll.length : null,
-      semanticLabel: mine == null
-          ? 'Record your first Voice Moment'
-          : (mineAll.length > 1
-                ? 'Play your ${mineAll.length} Voice Moments'
-                : 'Play your Voice Moment'),
-      onTap: mine == null
-          ? onCreateMoment
-          : (onOpenOwnChain != null
-                ? () => onOpenOwnChain!(mineAll)
-                : () => onOpenMoment(mine)),
-      onAddTap: onCreateMoment,
-    );
+    return MomentExpiryListTransition(
+      moments: moments,
+      clock: expiryClock ?? DateTime.now,
+      transitionScope: 'mobile-home-moments',
+      announcementBuilder: (count) => count == 1
+          ? 'One Voice Moment expired and was removed from Home.'
+          : '$count Voice Moments expired and were removed from Home.',
+      builder: (context, recoveryFocus, tileFocusNode) {
+        final yours = _MomentBubble(
+          key: const ValueKey('home-your-moment'),
+          focusNode: mine == null ? null : tileFocusNode(mine.id),
+          label: 'Your Moment',
+          photoUrl: mine?.authorPhotoUrl ?? profile?.photoUrl,
+          displayName: profile?.displayName,
+          showAdd: true,
+          // A real count of YOUR live Moments — the chain badge.
+          count: mineAll.length > 1 ? mineAll.length : null,
+          semanticLabel: mine == null
+              ? 'Record your first Voice Moment'
+              : (mineAll.length > 1
+                    ? 'Play your ${mineAll.length} Voice Moments'
+                    : 'Play your Voice Moment'),
+          onTap: mine == null
+              ? onCreateMoment
+              : (onOpenOwnChain != null
+                    ? () => onOpenOwnChain!(mineAll)
+                    : () => onOpenMoment(mine)),
+          onAddTap: onCreateMoment,
+        );
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const MobileSectionHeader(title: 'Moments from your circle'),
-        if (others.isEmpty)
-          // Your tile stays even when the circle is quiet: it is the one
-          // real thing on the row, and hiding it was why a phone had no
-          // entry point to your own Moment.
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              yours,
-              const SizedBox(width: 12),
-              Expanded(
-                child: _EmptyMoments(
-                  onDiscover: onDiscover,
-                  onCreate: onCreateMoment,
-                ),
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            MomentExpiryFocusTarget(
+              key: const ValueKey('mobile-home-moments-heading'),
+              focusNode: recoveryFocus,
+              semanticLabel: 'Moments from your circle',
+              child: const MobileSectionHeader(
+                title: 'Moments from your circle',
               ),
-            ],
-          )
-        else
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            clipBehavior: Clip.none,
-            child: Row(
-              children: [
-                yours,
-                for (final moment in others.take(12)) ...[
+            ),
+            if (others.isEmpty)
+              // Your tile stays even when the circle is quiet: it is the one
+              // real thing on the row, and hiding it was why a phone had no
+              // entry point to your own Moment.
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  yours,
                   const SizedBox(width: 12),
-                  _MomentBubble(
-                    label: moment.authorName,
-                    photoUrl: moment.authorPhotoUrl,
-                    displayName: moment.authorName,
-                    onTap: () => onOpenMoment(moment),
+                  Expanded(
+                    child: _EmptyMoments(
+                      onDiscover: onDiscover,
+                      onCreate: onCreateMoment,
+                    ),
                   ),
                 ],
-              ],
-            ),
-          ),
-      ],
+              )
+            else
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                clipBehavior: Clip.none,
+                child: Row(
+                  children: [
+                    yours,
+                    for (final moment in others.take(12)) ...[
+                      const SizedBox(width: 12),
+                      _MomentBubble(
+                        key: ValueKey('home-moment-${moment.id}'),
+                        focusNode: tileFocusNode(moment.id),
+                        label: moment.authorName,
+                        photoUrl: moment.authorPhotoUrl,
+                        displayName: moment.authorName,
+                        onTap: () => onOpenMoment(moment),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -217,6 +242,7 @@ class _MomentBubble extends StatelessWidget {
     this.count,
     this.semanticLabel,
     this.onAddTap,
+    this.focusNode,
     super.key,
   });
 
@@ -237,6 +263,7 @@ class _MomentBubble extends StatelessWidget {
   /// which is right for a person who has never posted and wrong for one
   /// who has.
   final VoidCallback? onAddTap;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -244,6 +271,7 @@ class _MomentBubble extends StatelessWidget {
       button: true,
       label: semanticLabel ?? label,
       child: InkWell(
+        focusNode: focusNode,
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
         child: SizedBox(

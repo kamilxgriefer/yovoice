@@ -36,6 +36,53 @@ someone decide what to pick up next.
 > [ADR-082](Decisions.md#adr-082-a-feature-is-not-shipped-until-a-user-can-reach-it--reachability-is-part-of-done-and-a-green-suite-cannot-prove-it)
 > for why that distinction is the whole point of this wave.
 
+- **Voice Moments can be reviewed before publish and use a user-sized
+  availability window** (2026-08-27, ADR-115, **SOURCE ONLY — NOT DEPLOYED**):
+  finished audio can be played, paused and sought locally before any draft or
+  Storage upload exists. Timed availability is any whole 24–720 hours or 1–30
+  days, plus Until deleted. Publish retries keep the original caption and
+  lifetime. The backend validates the same range, enforces the exact 10-active
+  cap through a per-author transaction mutex, and makes root lifecycle plus
+  canonical media state server-only. Exact deadline timers remove an already
+  open Moment and stop playback without waiting for a new Firestore snapshot;
+  the visible transition is announced once, keyboard focus recovers to a
+  stable target, and Story selects the first surviving successor after a
+  multi-deadline resume. Home circle strips and the Following feed preserve
+  that contract even when their source stream emits the already-pruned list.
+  Engagement callables reject at that same deadline.
+  Client media deletion is disabled so it cannot race finalization; bounded
+  server cleanup owns both explicit deletion and abandoned uploads.
+
+- **Desktop Recent Chats keeps profile artwork current and recognizable**
+  (2026-08-27, ADR-111 corrective follow-up, **SOURCE ONLY — NOT DEPLOYED**):
+  the cards now refresh an empty or stale conversation avatar from the other
+  participant's server-owned `publicProfiles` projection while retaining the
+  conversation copy as a loading/error fallback. The portrait is a sharp,
+  face-biased full-bleed cover under a lower text scrim instead of a heavily
+  blurred color band. Missing/broken photos use a deliberate hashed accent and
+  monogram, the redundant chat glyph is gone, and unread remains the only
+  top-corner status. Desktop stays 116 px, 200% text stays 212 px, and the
+  shared mobile avatar presentation is unchanged.
+
+- **Avatar cropping keeps the selected photo covering its frame through the
+  first pinch** (2026-08-27, ADR-025 corrective follow-up, **SOURCE ONLY — NOT
+  DEPLOYED**): the editor now seeds a uniform XYZ cover transform instead of
+  leaving Z at 1, which had made Flutter apply the below-1 cover scale twice
+  and shrink the image into the upper-left corner. Named 44 px Zoom −/+ and
+  directional controls add single-pointer and keyboard equivalents to pinch
+  and drag, while the crop preview reports its zoom semantically.
+  Portrait/landscape tests pin reset, both control paths and final output
+  geometry at normal and 200% text.
+
+- **Profile Preview's Message action survives stacked modal sheets**
+  (2026-08-27, ADR-113 corrective follow-up, **SOURCE ONLY — NOT DEPLOYED**):
+  Preview returns a typed Chat/Profile destination to its launcher's navigator
+  and navigation begins only after the sheet is gone. Callable refusal remains
+  visibly actionable inside the preview instead of placing a snackbar under
+  the modal barriers. A route-level test reproduces Profile Preview above an
+  already-open modal, then pins a delayed double tap, announced opening state,
+  one routed Chat, Back behavior and 320 px/200% failure feedback.
+
 - **Modal sheets have one attached drag cue and an explicit Close action**
   (2026-08-24, ADR-113, **DEPLOYED 2026-08-25**, Hosting byte-verified): the
   global Material drag handle is disabled and all 26 production bottom-sheet routes use the
@@ -57,7 +104,9 @@ someone decide what to pick up next.
   legibility scrim. Missing or broken photos resolve to deterministic brand
   gradients with a quiet initial. Name, preview and unread state remain, and
   the whole card is a named keyboard-accessible chat action. Mobile retains
-  its established avatar presentation and dimensions.
+  its established avatar presentation and dimensions. The source-only
+  2026-08-27 corrective follow-up above supersedes the deployed blur and
+  conversation-only artwork details without changing this compact geometry.
 
 - **Desktop People & Moments keeps discovery, but no longer embeds Follow
   buttons** (2026-08-24, ADR-110, **DEPLOYED 2026-08-25**, Hosting
@@ -364,12 +413,19 @@ someone decide what to pick up next.
   older than this release: their fallback sends will be denied with no queue
   to catch them.
 
-  **Follow-up, not yet built:** no UI renders the outbox. `MessageService.outbox`
-  exposes the queue and a `changes` stream, and the states are covered by
-  tests, but a queued message currently looks sent in the chat. Surfacing
-  Pending / Retrying / Failed on the message bubble — with a manual retry
-  and discard affordance, across mobile, tablet and desktop — is the next
-  piece of work.
+  **Follow-up completed in source 2026-08-27 — NOT YET DEPLOYED:** Chat now
+  renders the bounded outbox optimistically, reconciles it against the exact
+  deterministic server message id, and keeps Pending / Waiting for connection /
+  Failed visible with manual Retry and Remove. The composer clears after local
+  persistence rather than callable latency, and typing presence is
+  transition/heartbeat based rather than one write per character. The one live
+  service owns a serialized `messages.outbox.v2.<uid>` queue, resumes it at
+  authenticated cold start, preserves FIFO per conversation while allowing an
+  unrelated chat through another chat's backoff, and never reassigns the
+  ownerless v1 queue across accounts. Enqueue refusal cannot erase a draft,
+  local bubbles cannot mask a failed history stream, and leaving the screen
+  cancels its shared Firestore listener. The recovery UI passes 320 px and 200%
+  text coverage.
 
 - **The 2026-08-18 production-regression wave: room callables, friend
   lists, legacy DM roots, missing indexes** (2026-08-18, `3f28462` →
@@ -700,6 +756,10 @@ someone decide what to pick up next.
   a responsive lock-screen-style depth effect. It disappears after the first
   Flutter frame/Auth resolution rather than after a fabricated countdown. See
   [ADR-052](Decisions.md#adr-052-the-app-origin-owns-the-only-startup-surface-and-no-startup-animation-imposes-a-minimum-delay).
+  Follow-up in source (2026-08-27, not deployed) replaces transparent/missing
+  native launch art, matches one centred 170 logical-pixel mark through the first Flutter
+  frame, smooths ring/wave boundaries, and crossfades Auth state without adding
+  a minimum delay.
 
 - One canonical logo across favicon and app launchers (2026-08-16): replaced
   the retired black-square source used by native generation with the exact
@@ -723,6 +783,18 @@ someone decide what to pick up next.
   Android/iOS notification payloads use the matching packaged cue, while the
   web foreground banner uses the in-app player. See
   [ADR-076](Decisions.md#adr-076-product-sounds-are-original-bounded-and-reserved-for-meaningful-events).
+
+- Velvet Prism product-sound redesign (2026-08-27, **SOURCE ONLY — NOT
+  DEPLOYED**): replaced the rejected glass-bell/pentatonic jingles with eight
+  95–360 ms material cues built from a filtered contact, muted inharmonic body
+  and quiet air layer. One deterministic Python authority now writes the app,
+  Android and iOS masters; notification bytes are identical, Android moves to
+  the versioned v3 channel, native FCM and the Firestore banner cannot both
+  sound, and room creation no longer chains into a second join cue. Playback
+  is serialized per channel and Android UI cues request no media audio focus.
+  Physical phone/headphone/LiveKit/Bluetooth listening remains the release
+  gate. See
+  [ADR-116](Decisions.md#adr-116-product-sound-is-a-material-feedback-system-not-a-set-of-jingles).
 
 - Achievement ledger incident repair (2026-08-19): ended three infinite
   trigger retry loops (`activeDay` dedup entries fingerprinted the exact
@@ -791,6 +863,10 @@ someone decide what to pick up next.
   full-width detail drawers, verified at 320/390/430 with rendered and
   live 390×844 inspections. See
   [ADR-046](Decisions.md#adr-046-user-search-lives-in-a-server-only-directory-behind-an-owner-callable-staff-center-becomes-seven-capability-gated-sections).
+  A 2026-08-27 source-only density follow-up reduces ordinary More destinations
+  to 78 px tiles and staff/settings to 58 px rows: ordinary 320×568 and owner
+  390×844/430×932 sheets fit without scrolling, while enlarged text reflows to
+  full-width scrollable rows.
 
 - Authoritative identity badges on every surface (2026-08-15): one
   shared badge system (`OfficialRoleBadge` / `VipBadge` /

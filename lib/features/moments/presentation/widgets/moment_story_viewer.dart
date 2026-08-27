@@ -11,9 +11,11 @@ import 'package:yovoice/features/moderation/data/services/content_report_service
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/models/moment_chain.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -38,6 +40,8 @@ Future<void> showMomentStoryViewer(
   void Function(VoiceMoment moment)? onOpenDetail,
   void Function(VoiceMoment moment)? onDeleted,
   AudioPlayer Function()? playerFactory,
+  MomentExpiryClock? expiryClock,
+  MomentExpiryTimerFactory? expiryTimerFactory,
 }) async {
   final viewer = MomentStoryViewer(
     chain: chain,
@@ -50,6 +54,9 @@ Future<void> showMomentStoryViewer(
     onOpenDetail: onOpenDetail,
     onDeleted: onDeleted,
     playerFactory: playerFactory,
+    expiryClock: expiryClock,
+    expiryTimerFactory: expiryTimerFactory,
+    removeOwnRouteOnEmpty: true,
   );
 
   final wide = MediaQuery.sizeOf(context).width >= 1100;
@@ -111,6 +118,9 @@ class MomentStoryViewer extends StatefulWidget {
     this.onDeleted,
     this.playerFactory,
     this.autoPlay = true,
+    this.expiryClock,
+    this.expiryTimerFactory,
+    this.removeOwnRouteOnEmpty = false,
     super.key,
   });
 
@@ -148,6 +158,18 @@ class MomentStoryViewer extends StatefulWidget {
   @visibleForTesting
   final AudioPlayer Function()? playerFactory;
 
+  @visibleForTesting
+  final MomentExpiryClock? expiryClock;
+
+  @visibleForTesting
+  final MomentExpiryTimerFactory? expiryTimerFactory;
+
+  /// The public opener sets this because it gives the viewer a dedicated
+  /// dialog/page route. Removing that exact route is important when a child
+  /// route (for example Comments) is above it at the expiry deadline.
+  @visibleForTesting
+  final bool removeOwnRouteOnEmpty;
+
   /// True in production: tapping a chain means "play this person".
   /// Tests turn it off to drive playback explicitly.
   final bool autoPlay;
@@ -169,16 +191,17 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
   /// author deletes a link mid-story, the remaining links keep playing —
   /// the immutable [MomentChain] the caller handed over cannot express
   /// that.
-  late final List<VoiceMoment> _chainMoments = List<VoiceMoment>.of(
-    widget.chain.moments,
-  );
-
-  late int _index = widget.initialIndex.clamp(0, _chainMoments.length - 1);
+  late final List<VoiceMoment> _chainMoments;
+  late int _index;
+  late final MomentExpiryScheduler _expiry;
+  DateTime? _expiredThrough;
   bool _isPlaying = false;
   Duration _position = Duration.zero;
   Duration? _duration;
   String? _playbackError;
   bool _deleting = false;
+  final FocusNode _storyFocus = FocusNode(debugLabel: 'Voice Moment story');
+  final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
 
   String get _uid {
     try {
@@ -190,9 +213,48 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
 
   VoiceMoment get _current => _chainMoments[_index];
 
+  /// Maps an index from [source] into [survivors] without changing story
+  /// order. Keep the same link when possible; otherwise move to the first
+  /// surviving successor, then fall back to the nearest predecessor.
+  int _survivingIndex(
+    List<VoiceMoment> source,
+    int sourceIndex,
+    List<VoiceMoment> survivors,
+  ) {
+    if (source.isEmpty || survivors.isEmpty) return 0;
+    final normalized = sourceIndex.clamp(0, source.length - 1);
+
+    int mappedIndexAt(int index) =>
+        survivors.indexWhere((survivor) => survivor.id == source[index].id);
+
+    final same = mappedIndexAt(normalized);
+    if (same >= 0) return same;
+    for (var index = normalized + 1; index < source.length; index += 1) {
+      final mapped = mappedIndexAt(index);
+      if (mapped >= 0) return mapped;
+    }
+    for (var index = normalized - 1; index >= 0; index -= 1) {
+      final mapped = mappedIndexAt(index);
+      if (mapped >= 0) return mapped;
+    }
+    return 0;
+  }
+
   @override
   void initState() {
     super.initState();
+    _expiry = MomentExpiryScheduler(
+      onDeadline: _expireAt,
+      clock: widget.expiryClock,
+      timerFactory: widget.expiryTimerFactory,
+    );
+    final source = widget.chain.moments;
+    final now = _effectiveNow();
+    _chainMoments = source
+        .where((moment) => moment.isActiveAt(now))
+        .toList(growable: true);
+    _index = _survivingIndex(source, widget.initialIndex, _chainMoments);
+    _expiry.schedule(_chainMoments);
     // Each seam guarded separately, matching MomentsScreen: one service
     // that cannot be constructed (no Firebase app, a preview harness)
     // must not take the others down with it.
@@ -211,7 +273,11 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
     } catch (_) {
       _feed = null;
     }
-    if (widget.autoPlay) {
+    if (_chainMoments.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _closeEmptyViewer();
+      });
+    } else if (widget.autoPlay) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_play(_current));
       });
@@ -220,10 +286,12 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
 
   @override
   void dispose() {
+    _expiry.dispose();
     for (final subscription in _subscriptions) {
       unawaited(subscription.cancel());
     }
     _player?.dispose();
+    _storyFocus.dispose();
     super.dispose();
   }
 
@@ -255,6 +323,113 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
         }),
       );
     return player;
+  }
+
+  DateTime _effectiveNow() {
+    final now = _expiry.now();
+    final floor = _expiredThrough;
+    return floor != null && floor.isAfter(now) ? floor : now;
+  }
+
+  void _closeEmptyViewer() {
+    if (!mounted) return;
+    final navigator = Navigator.of(context);
+    if (widget.removeOwnRouteOnEmpty) {
+      final ownRoute = ModalRoute.of(context);
+      if (ownRoute != null && ownRoute.isActive) {
+        navigator.removeRoute(ownRoute);
+        return;
+      }
+    }
+    unawaited(navigator.maybePop());
+  }
+
+  /// Removes every link dead at [deadline]. If the currently playing link
+  /// expires, its subtree disappears and `stop()` is invoked in the same
+  /// callback; the next live link then starts, or an empty viewer closes.
+  void _expireAt(DateTime deadline) {
+    if (!mounted) return;
+    if (_expiredThrough == null || deadline.isAfter(_expiredThrough!)) {
+      _expiredThrough = deadline;
+    }
+    final now = _effectiveNow();
+    if (_chainMoments.isEmpty) {
+      _expiry.schedule(const <VoiceMoment>[]);
+      return;
+    }
+    final currentId = _current.id;
+    final kept = _chainMoments
+        .where((moment) => moment.isActiveAt(now))
+        .toList(growable: false);
+    if (kept.length == _chainMoments.length) {
+      _expiry.schedule(_chainMoments);
+      return;
+    }
+
+    final expiredCount = _chainMoments.length - kept.length;
+    final previousFocus = FocusManager.instance.primaryFocus;
+    final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
+    final currentSurvives = kept.any((moment) => moment.id == currentId);
+    // A suspended app can wake after more than one deadline. Mapping through
+    // the old order keeps the first live successor even when earlier links
+    // disappear in the same callback.
+    final replacementIndex = _survivingIndex(_chainMoments, _index, kept);
+    Future<void> stopped = Future<void>.value();
+    if (!currentSurvives && _player != null) {
+      stopped = _player!.stop().catchError((Object _) {});
+    }
+
+    setState(() {
+      _chainMoments
+        ..clear()
+        ..addAll(kept);
+      if (_chainMoments.isNotEmpty) {
+        _index = replacementIndex;
+      } else {
+        _index = 0;
+      }
+      if (!currentSurvives) {
+        _isPlaying = false;
+        _position = Duration.zero;
+        _duration = null;
+        _playbackError = null;
+      }
+    });
+    _expiry.schedule(_chainMoments);
+
+    if (_chainMoments.isEmpty) {
+      _expiryAnnouncer.announce(
+        context,
+        transition: 'story-expiry-${deadline.microsecondsSinceEpoch}',
+        message: 'Voice Moment expired. Closing story.',
+      );
+      _closeEmptyViewer();
+      return;
+    }
+    _expiryAnnouncer.announce(
+      context,
+      transition: 'story-expiry-${deadline.microsecondsSinceEpoch}',
+      message: currentSurvives
+          ? expiredCount == 1
+                ? 'One Voice Moment expired.'
+                : '$expiredCount Voice Moments expired.'
+          : widget.autoPlay
+          ? 'Voice Moment expired. Playing the next Moment.'
+          : 'Voice Moment expired. The next Moment is ready.',
+    );
+    recoverMomentExpiryFocusAfterFrame(
+      context: context,
+      fallback: _storyFocus,
+      previousFocus: recoverFocus ? previousFocus : null,
+    );
+    if (!currentSurvives && widget.autoPlay) {
+      final nextId = _current.id;
+      unawaited(() async {
+        await stopped;
+        if (!mounted || _chainMoments.isEmpty || _current.id != nextId) return;
+        await _play(_current);
+      }());
+    }
   }
 
   /// Auto-advance: the finished Moment fills its bar and the next one
@@ -363,6 +538,8 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
           momentService: widget.momentService,
           auth: widget.auth,
           contentReportService: widget.contentReportService,
+          expiryClock: widget.expiryClock,
+          expiryTimerFactory: widget.expiryTimerFactory,
         ),
       ),
     );
@@ -475,6 +652,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
 
     final index = _chainMoments.indexWhere((m) => m.id == moment.id);
     if (index >= 0) _chainMoments.removeAt(index);
+    _expiry.schedule(_chainMoments);
     if (_chainMoments.isEmpty) {
       await navigator.maybePop();
       return;
@@ -532,6 +710,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
     final live = _moments?.watchMoment(loaded.id);
 
     return Focus(
+      focusNode: _storyFocus,
       autofocus: true,
       onKeyEvent: _handleKey,
       child: StreamBuilder<VoiceMoment>(
@@ -540,8 +719,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer> {
         builder: (context, snapshot) {
           // A failed or empty document stream keeps the Moment the chain
           // carried: real, just not live.
-          final moment =
-              (snapshot.hasData && snapshot.data!.id == loaded.id)
+          final moment = (snapshot.hasData && snapshot.data!.id == loaded.id)
               ? snapshot.data!
               : loaded;
           final isOwn = uid.isNotEmpty && uid == moment.authorId;
@@ -934,9 +1112,36 @@ class StoryWaveform extends StatelessWidget {
   final double height;
 
   static const bars = <double>[
-    .3, .55, .4, .75, .5, .85, .45, .6, .35, .7,
-    .5, .9, .4, .65, .3, .55, .8, .45, .6, .35,
-    .5, .7, .4, .85, .55, .3, .65, .5, .75, .4,
+    .3,
+    .55,
+    .4,
+    .75,
+    .5,
+    .85,
+    .45,
+    .6,
+    .35,
+    .7,
+    .5,
+    .9,
+    .4,
+    .65,
+    .3,
+    .55,
+    .8,
+    .45,
+    .6,
+    .35,
+    .5,
+    .7,
+    .4,
+    .85,
+    .55,
+    .3,
+    .65,
+    .5,
+    .75,
+    .4,
   ];
 
   @override
@@ -1058,8 +1263,7 @@ class _StoryActions extends StatelessWidget {
                           semanticLabel: liked
                               ? 'Unlike this Moment'
                               : 'Like this Moment',
-                          onTap: () =>
-                              unawaited(_toggleLike(context, service)),
+                          onTap: () => unawaited(_toggleLike(context, service)),
                         );
                       },
                     ),

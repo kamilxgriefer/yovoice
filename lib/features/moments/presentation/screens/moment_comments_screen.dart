@@ -6,7 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_boundary.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
@@ -17,6 +20,8 @@ class MomentCommentsScreen extends StatefulWidget {
     this.auth,
     this.momentService,
     this.contentReportService,
+    this.expiryClock,
+    this.expiryTimerFactory,
     super.key,
   });
 
@@ -31,6 +36,8 @@ class MomentCommentsScreen extends StatefulWidget {
   final FirebaseAuth? auth;
   final MomentService? momentService;
   final ContentReportService? contentReportService;
+  final MomentExpiryClock? expiryClock;
+  final MomentExpiryTimerFactory? expiryTimerFactory;
 
   @override
   State<MomentCommentsScreen> createState() => _MomentCommentsScreenState();
@@ -48,6 +55,10 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
       widget.firestore ?? FirebaseFirestore.instance;
   late final FirebaseAuth? _auth = _resolveAuth();
   late final MomentService? _momentService = _resolveMomentService();
+  final FocusNode _goneBackFocus = FocusNode(
+    debugLabel: 'Expired Moment comments back',
+  );
+  final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
   bool _sending = false;
 
   /// Both guarded the way MomentsScreen guards its services: without a
@@ -81,21 +92,41 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
   @override
   void dispose() {
     _controller.dispose();
+    _goneBackFocus.dispose();
     super.dispose();
+  }
+
+  void _handleExpired() {
+    final previousFocus = FocusManager.instance.primaryFocus;
+    final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
+    _expiryAnnouncer.announce(
+      context,
+      transition: 'comments-gone-${widget.moment.id}',
+      message: 'Voice Moment expired. Comments are now unavailable.',
+    );
+    recoverMomentExpiryFocusAfterFrame(
+      context: context,
+      fallback: _goneBackFocus,
+      previousFocus: recoverFocus ? previousFocus : null,
+    );
   }
 
   Future<void> _sendComment() async {
     final text = _controller.text.trim();
     final user = _auth?.currentUser;
     final service = _momentService;
-    if (text.isEmpty || user == null || service == null || _sending) return;
+    final now = (widget.expiryClock ?? DateTime.now)();
+    if (text.isEmpty ||
+        user == null ||
+        service == null ||
+        _sending ||
+        !widget.moment.isActiveAt(now)) {
+      return;
+    }
 
     setState(() => _sending = true);
     try {
-      await service.createTextComment(
-        momentId: widget.moment.id,
-        text: text,
-      );
+      await service.createTextComment(momentId: widget.moment.id, text: text);
       _controller.clear();
     } catch (error) {
       if (!mounted) return;
@@ -119,111 +150,140 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen> {
         title: const Text('Comments'),
       ),
       body: SafeArea(
-        child: ResponsiveContentFrame(
-          width: ResponsiveContentWidth.form,
-          child: Column(
-            children: [
-              Expanded(
-                child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                  stream: _comments
-                      .orderBy('createdAt', descending: false)
-                      .snapshots(),
-                  builder: (context, snapshot) {
-                    if (snapshot.hasError) {
-                      return const Center(
-                        child: Text(
-                          'Could not load comments.',
-                          style: TextStyle(color: _muted),
-                        ),
-                      );
-                    }
-                    if (!snapshot.hasData) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    final comments = snapshot.data!.docs;
-                    if (comments.isEmpty) {
-                      return const Center(
-                        child: Text(
-                          'Be the first to comment.',
-                          style: TextStyle(color: _muted),
-                        ),
-                      );
-                    }
-                    return ListView.separated(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: comments.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 10),
-                      itemBuilder: (context, index) {
-                        final data = comments[index].data();
-                        final name =
-                            data['authorName'] as String? ?? 'YO Voice user';
-                        final photo = data['authorPhotoUrl'] as String?;
-                        final type = data['type'] as String? ?? 'text';
-                        final authorId = data['authorId'] as String? ?? '';
-                        return _CommentCard(
-                          name: name,
-                          authorId: authorId,
-                          photo: photo,
-                          data: data,
-                          isVoice: type == 'voice',
-                          momentId: widget.moment.id,
-                          commentId: comments[index].id,
-                          isOwn:
-                              authorId.isNotEmpty && authorId == _currentUid,
-                          contentReportService: widget.contentReportService,
-                        );
-                      },
-                    );
-                  },
-                ),
+        child: MomentExpiryBoundary(
+          moment: widget.moment,
+          clock: widget.expiryClock,
+          timerFactory: widget.expiryTimerFactory,
+          onExpired: _handleExpired,
+          expired: Center(
+            key: const ValueKey('moment-comments-gone'),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'This Voice Moment is no longer available.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: _muted),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    key: const ValueKey('moment-comments-gone-back'),
+                    focusNode: _goneBackFocus,
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    child: const Text('Back to Moments'),
+                  ),
+                ],
               ),
-              Container(
-                padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-                decoration: const BoxDecoration(
-                  color: _surface,
-                  border: Border(top: BorderSide(color: _border)),
+            ),
+          ),
+          child: ResponsiveContentFrame(
+            width: ResponsiveContentWidth.form,
+            child: Column(
+              children: [
+                Expanded(
+                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                    stream: _comments
+                        .orderBy('createdAt', descending: false)
+                        .snapshots(),
+                    builder: (context, snapshot) {
+                      if (snapshot.hasError) {
+                        return const Center(
+                          child: Text(
+                            'Could not load comments.',
+                            style: TextStyle(color: _muted),
+                          ),
+                        );
+                      }
+                      if (!snapshot.hasData) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      final comments = snapshot.data!.docs;
+                      if (comments.isEmpty) {
+                        return const Center(
+                          child: Text(
+                            'Be the first to comment.',
+                            style: TextStyle(color: _muted),
+                          ),
+                        );
+                      }
+                      return ListView.separated(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: comments.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        itemBuilder: (context, index) {
+                          final data = comments[index].data();
+                          final name =
+                              data['authorName'] as String? ?? 'YO Voice user';
+                          final photo = data['authorPhotoUrl'] as String?;
+                          final type = data['type'] as String? ?? 'text';
+                          final authorId = data['authorId'] as String? ?? '';
+                          return _CommentCard(
+                            name: name,
+                            authorId: authorId,
+                            photo: photo,
+                            data: data,
+                            isVoice: type == 'voice',
+                            momentId: widget.moment.id,
+                            commentId: comments[index].id,
+                            isOwn:
+                                authorId.isNotEmpty && authorId == _currentUid,
+                            contentReportService: widget.contentReportService,
+                          );
+                        },
+                      );
+                    },
+                  ),
                 ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _controller,
-                        minLines: 1,
-                        maxLines: 4,
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: (_) => _sendComment(),
-                        style: const TextStyle(color: Colors.white),
-                        decoration: InputDecoration(
-                          hintText: 'Write a comment...',
-                          hintStyle: const TextStyle(color: _muted),
-                          filled: true,
-                          fillColor: _background,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(18),
-                            borderSide: BorderSide.none,
+                Container(
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+                  decoration: const BoxDecoration(
+                    color: _surface,
+                    border: Border(top: BorderSide(color: _border)),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _controller,
+                          minLines: 1,
+                          maxLines: 4,
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: (_) => _sendComment(),
+                          style: const TextStyle(color: Colors.white),
+                          decoration: InputDecoration(
+                            hintText: 'Write a comment...',
+                            hintStyle: const TextStyle(color: _muted),
+                            filled: true,
+                            fillColor: _background,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(18),
+                              borderSide: BorderSide.none,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    IconButton.filled(
-                      onPressed: _sending ? null : _sendComment,
-                      style: IconButton.styleFrom(backgroundColor: _primary),
-                      icon: _sending
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.send_rounded),
-                    ),
-                  ],
+                      const SizedBox(width: 10),
+                      IconButton.filled(
+                        onPressed: _sending ? null : _sendComment,
+                        style: IconButton.styleFrom(backgroundColor: _primary),
+                        icon: _sending
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Icons.send_rounded),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -416,10 +476,7 @@ class _CommentCardState extends State<_CommentCard> {
           if (!widget.isOwn && widget.commentId.isNotEmpty)
             IconButton(
               key: ValueKey('report-comment-${widget.commentId}'),
-              constraints: const BoxConstraints.tightFor(
-                width: 40,
-                height: 40,
-              ),
+              constraints: const BoxConstraints.tightFor(width: 40, height: 40),
               padding: EdgeInsets.zero,
               tooltip: 'Report this comment',
               onPressed: _report,

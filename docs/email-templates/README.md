@@ -1,58 +1,77 @@
 # Firebase Auth email templates
 
-Branded HTML bodies for the Authentication emails, plus the one console
-setting that makes emailed links open YO Voice's own action pages instead
-of Firebase's generic white `__/auth/action` page.
+Branded HTML bodies for Firebase Authentication emails and the project-wide
+action callback that replaces Firebase's generic white `__/auth/action` page.
 
-**Why these are paste-into-console files instead of code:** Firebase Auth
-has no deploy/CLI/API surface in our toolchain for email templates — they
-live in Console state. The message body is editable **only because this
-project sends through a custom SMTP server** (Resend — configured and
-verified working; the SMTP username must stay literally `resend`, see
-docs/Decisions.md). On the default Firebase sender, the body is locked
-for anti-phishing reasons and only the action URL / sender name are
-customizable.
+> **SOURCE READY — NOT DEPLOYED (2026-08-27):** the website handlers and these
+> templates are tested locally, but production still points at Firebase's
+> default handler. Deploy the website first; only then change Auth config.
 
-## One-time console steps (in order)
+The project uses custom SMTP through Resend, so Firebase permits custom HTML.
+The SMTP username must remain literally `resend` (see `docs/Decisions.md`).
+Never export or overwrite the write-only SMTP password while changing email
+templates.
 
-All under **Firebase Console → Authentication**.
+## Mandatory rollout order
 
-1. **Settings → Authorized domains** — confirm `yovoice.app` is listed
-   (it should be already: the website performs sign-in on that domain).
+1. Deploy `yovoice-website` with all five token routes:
+   `/auth/action`, `/reset-password`, `/verify-email`, `/recover-email`, and
+   `/revert-second-factor`.
+2. Probe those production routes and confirm `private, no-store`,
+   `no-referrer`, and `noindex` headers. Confirm every supported Firebase mode
+   reaches the intended branded page. In particular,
+   `revertSecondFactorAddition` must reach `/revert-second-factor`; otherwise a
+   global callback change would break Firebase's protective MFA-revert email.
+3. Take a restricted pre-change snapshot of only the callback and template
+   fields. Do not include SMTP credentials.
+4. Patch only the following leaf fields through the Identity Toolkit Admin
+   API:
 
-2. **Templates → any template → pencil → "Customize action URL"** — set:
-
+   ```text
+   notification.sendEmail.callbackUri
+   notification.sendEmail.resetPasswordTemplate.senderDisplayName
+   notification.sendEmail.resetPasswordTemplate.subject
+   notification.sendEmail.resetPasswordTemplate.bodyFormat
+   notification.sendEmail.resetPasswordTemplate.body
+   notification.sendEmail.verifyEmailTemplate.senderDisplayName
+   notification.sendEmail.verifyEmailTemplate.subject
+   notification.sendEmail.verifyEmailTemplate.bodyFormat
+   notification.sendEmail.verifyEmailTemplate.body
    ```
-   https://yovoice.app/auth/action
-   ```
 
-   This is ONE project-wide setting shared by password reset, email
-   verification and email-change emails. After saving it, every emailed
-   link goes straight to the website's `/auth/action` dispatcher, which
-   routes by `mode` to `/reset-password`, `/verify-email` or
-   `/recover-email`. Nothing user-facing remains on
-   `yovoice-ec54a.firebaseapp.com`.
+   Set `callbackUri` to `https://yovoice.app/auth/action`. Use a narrow
+   `updateMask`; never patch the parent `notification` or `sendEmail` object.
+5. Read the configuration back immediately and compare the callback, sender
+   names, subjects, body formats, and complete HTML bodies to the intended
+   values. Roll back with the restricted snapshot and the same leaf mask on
+   any mismatch.
+6. Run a real password-reset smoke using a controlled non-staff account, then
+   a fresh verification-email smoke. Do not log, paste, capture, or retain an
+   `oobCode`, email address, or password. Probe the MFA-revert route with a
+   non-production diagnostic code; applying a real MFA-revert action requires
+   separate explicit authorization.
 
-3. **Templates → Password reset**
-   - Sender name: `YO Voice`
-   - Subject: `Reset your YO Voice password`
-   - Message: paste `password-reset.html` (switch the editor to HTML).
+The Firebase Console remains an emergency manual recovery path, but the API
+procedure above is the reproducible release path. Confirm `yovoice.app`
+remains in Auth authorized domains and CUSTOM_SMTP remains enabled before and
+after the change.
 
-4. **Templates → Email address verification**
-   - Sender name: `YO Voice`
-   - Subject: `Verify your email — YO Voice`
-   - Message: paste `verify-email.html`.
+## Template values
+
+Password reset:
+
+- Sender name: `YO Voice`
+- Subject: `Reset your YO Voice password`
+- Body: `password-reset.html` in HTML mode
+
+Email verification:
+
+- Sender name: `YO Voice`
+- Subject: `Verify your email — YO Voice`
+- Body: `verify-email.html` in HTML mode
 
 Keep `%LINK%` and `%EMAIL%` exactly as written — Firebase substitutes
 them at send time.
-
-## After changing the action URL, send yourself both emails
-
-The full loop needs a real inbox, which no automated session here has:
-request a password reset from the app or website, click the emailed
-button, and confirm you land on `yovoice.app/reset-password` (dark page,
-YO Voice logo) — not on a white firebaseapp.com page. Do the same for a
-fresh registration's verification email.
 
 ## Rendering caveats
 

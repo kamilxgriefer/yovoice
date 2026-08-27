@@ -19,7 +19,7 @@ test("push payload requests an audible visible notification on every platform", 
     body: "Tap to open YO Voice",
   });
   assert.equal(message.android.priority, "high");
-  assert.equal(message.android.notification.channelId, "yovoice_activity_v2");
+  assert.equal(message.android.notification.channelId, "yovoice_activity_v3");
   assert.equal(message.android.notification.sound, "yovoice_notification");
   assert.equal(message.android.notification.defaultVibrateTimings, true);
   assert.equal(message.apns.payload.aps.sound, "yovoice_notification.wav");

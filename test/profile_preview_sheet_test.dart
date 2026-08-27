@@ -1,13 +1,72 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/services/message_outbox.dart';
+import 'package:yovoice/features/messages/data/services/message_service.dart';
+import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+
+typedef _OpenConversation =
+    Future<String> Function({
+      required String otherUserId,
+      required String otherDisplayName,
+      required String otherEmail,
+      required String otherPhotoUrl,
+    });
+
+class _PreviewMessageService extends MessageService {
+  _PreviewMessageService({
+    required FirebaseFirestore firestore,
+    required FirebaseAuth auth,
+    required _OpenConversation openConversation,
+    MessageOutbox? outbox,
+  }) : _openConversation = openConversation,
+       super(
+         firestore: firestore,
+         auth: auth,
+         outbox: outbox ?? MessageOutbox(preferences: null),
+       );
+
+  final _OpenConversation _openConversation;
+
+  @override
+  Future<String> openOrCreateConversation({
+    required String otherUserId,
+    required String otherDisplayName,
+    required String otherEmail,
+    required String otherPhotoUrl,
+  }) => _openConversation(
+    otherUserId: otherUserId,
+    otherDisplayName: otherDisplayName,
+    otherEmail: otherEmail,
+    otherPhotoUrl: otherPhotoUrl,
+  );
+
+  @override
+  Future<OutboxEntry> queueTextMessage({
+    required String conversationId,
+    required String recipientId,
+    required String text,
+    Message? replyTo,
+  }) {
+    return outbox.enqueue(
+      conversationId: conversationId,
+      recipientId: recipientId,
+      text: text,
+      replyToMessageId: replyTo?.id,
+    );
+  }
+}
 
 Future<FocusNode> _openPreview(
   WidgetTester tester, {
@@ -15,6 +74,7 @@ Future<FocusNode> _openPreview(
   TextScaler textScaler = TextScaler.noScaling,
   ThemeData? theme,
   FriendMutationInvoker? friendMutationInvoker,
+  _OpenConversation? openConversation,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -70,6 +130,13 @@ Future<FocusNode> _openPreview(
                           firestore: firestore,
                           auth: auth,
                           mutationInvoker: friendMutationInvoker,
+                        ),
+                  messageService: openConversation == null
+                      ? null
+                      : _PreviewMessageService(
+                          firestore: firestore,
+                          auth: auth,
+                          openConversation: openConversation,
                         ),
                 ),
               ),
@@ -171,5 +238,214 @@ void main() {
     expect(calls.single.data, {'targetUserId': 'creator'});
     expect(find.text('Friends'), findsWidgets);
     expect(find.text('Requested'), findsNothing);
+  });
+
+  testWidgets(
+    'Message from a nested sheet closes the preview and opens one chat',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final firestore = FakeFirebaseFirestore();
+      final auth = MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(uid: 'me', email: 'me@yovoice.app'),
+      );
+      await firestore.collection('users').doc('me').set({
+        'uid': 'me',
+        'displayName': 'Me',
+      });
+      await firestore.collection('publicProfiles').doc('creator').set({
+        'uid': 'creator',
+        'displayName': 'Otee',
+        'username': 'Otee',
+        'email': 'otee@yovoice.app',
+        'accountType': 'user',
+        'isOnline': false,
+      });
+      await firestore.collection('conversations').doc('me_creator').set({
+        'participantIds': ['me', 'creator'],
+        'unreadCounts': {'me': 0, 'creator': 0},
+        'typing': <String, Object?>{},
+      });
+
+      var openCalls = 0;
+      final openConversation = Completer<String>();
+      SharedPreferences.setMockInitialValues({});
+      final preferences = await SharedPreferences.getInstance();
+      final messages = _PreviewMessageService(
+        firestore: firestore,
+        auth: auth,
+        outbox: MessageOutbox(preferences: preferences, storageKey: null),
+        openConversation:
+            ({
+              required otherUserId,
+              required otherDisplayName,
+              required otherEmail,
+              required otherPhotoUrl,
+            }) async {
+              openCalls += 1;
+              expect(otherUserId, 'creator');
+              return openConversation.future;
+            },
+      );
+      addTearDown(messages.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.darkTheme,
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => FilledButton(
+                onPressed: () => unawaited(
+                  showModalBottomSheet<void>(
+                    context: context,
+                    builder: (parentSheetContext) => Material(
+                      child: Center(
+                        child: FilledButton(
+                          onPressed: () => unawaited(
+                            showProfilePreview(
+                              parentSheetContext,
+                              userId: 'creator',
+                              displayName: 'Otee',
+                              firestore: firestore,
+                              auth: auth,
+                              messageService: messages,
+                            ),
+                          ),
+                          child: const Text('Open nested profile'),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                child: const Text('Open parent sheet'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open parent sheet'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open nested profile'));
+      await tester.pumpAndSettle();
+
+      final message = find.widgetWithText(FilledButton, 'Message');
+      expect(message, findsOneWidget);
+      await tester.tap(message);
+      await tester.tap(message);
+      await tester.pump();
+
+      expect(openCalls, 1);
+      expect(find.byType(ProfilePreviewSheet), findsOneWidget);
+      expect(find.text('Opening…'), findsOneWidget);
+      expect(find.bySemanticsLabel('Opening chat…'), findsOneWidget);
+
+      openConversation.complete('me_creator');
+      await tester.pumpAndSettle();
+
+      expect(openCalls, 1);
+      expect(find.byType(ProfilePreviewSheet), findsNothing);
+      expect(find.byType(ChatScreen), findsOneWidget);
+
+      final chat = tester.widget<ChatScreen>(find.byType(ChatScreen));
+      expect(identical(chat.messageService, messages), isTrue);
+      expect(identical(chat.auth, auth), isTrue);
+
+      // The routed Chat must reconcile optimistic and server messages under
+      // the same injected UID. Using global Auth here would leave two bubbles
+      // (and could render the committed one as somebody else's message).
+      const text = 'same injected identity';
+      final entry = await messages.queueTextMessage(
+        conversationId: 'me_creator',
+        recipientId: 'creator',
+        text: text,
+      );
+      await tester.pump();
+      expect(find.text(text), findsOneWidget);
+      final messageId = messages.messageIdForQueuedText(entry, senderId: 'me');
+      await firestore
+          .collection('conversations')
+          .doc('me_creator')
+          .collection('messages')
+          .doc(messageId)
+          .set({
+            'conversationId': 'me_creator',
+            'senderId': 'me',
+            'type': 'text',
+            'content': text,
+            'sentAt': Timestamp.fromDate(DateTime.utc(2026, 8, 27)),
+            'readBy': ['me'],
+            'reactions': <String, String>{},
+            'isDeleted': false,
+          });
+      await tester.pumpAndSettle();
+      expect(find.text(text), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Open actions for your message'),
+        findsOneWidget,
+      );
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('Open nested profile'), findsOneWidget);
+      semantics.dispose();
+    },
+  );
+
+  testWidgets('Message failure remains visible inside the profile preview', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    var openCalls = 0;
+    await _openPreview(
+      tester,
+      size: const Size(320, 640),
+      textScaler: const TextScaler.linear(2),
+      openConversation:
+          ({
+            required otherUserId,
+            required otherDisplayName,
+            required otherEmail,
+            required otherPhotoUrl,
+          }) async {
+            openCalls += 1;
+            throw Exception('network connection unavailable');
+          },
+    );
+
+    final message = find.widgetWithText(FilledButton, 'Message');
+    await tester.ensureVisible(message);
+    await tester.tap(message);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    const error = 'This is taking longer than expected. Please try again.';
+    expect(openCalls, 1);
+    expect(find.byType(ProfilePreviewSheet), findsOneWidget);
+    expect(find.text(error), findsOneWidget);
+    expect(find.bySemanticsLabel(error), findsOneWidget);
+    expect(find.textContaining('Exception'), findsNothing);
+    await tester.scrollUntilVisible(
+      find.text(error),
+      120,
+      scrollable: find.descendant(
+        of: find.byType(ProfilePreviewSheet),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    final errorRect = tester.getRect(find.text(error));
+    final sheetRect = tester.getRect(find.byType(ProfilePreviewSheet));
+    expect(errorRect.top, greaterThanOrEqualTo(0));
+    expect(
+      errorRect.bottom,
+      lessThanOrEqualTo(640),
+      reason: 'error=$errorRect sheet=$sheetRect',
+    );
+    semantics.dispose();
   });
 }

@@ -37,7 +37,8 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 ///  - `Your active rooms`   → [RoomService.watchOwnedRooms]
 ///  - greeting identity     → [ProfileService.watchCurrentProfile]
 ///  - Moments from the circle → [HomeFeedService.watchSocialMoments]
-///  - recent chats preview → [MessageService.watchConversations]
+///  - recent chats preview → [MessageService.watchConversations] plus the
+///    current public avatar from [ProfileService.watchProfile]
 ///
 /// Navigation is delegated: the callbacks below are wired by MainShell
 /// to the SAME fixed-shell content-slot mechanism the rail uses, so
@@ -128,6 +129,8 @@ class _DesktopHomeState extends State<DesktopHome> {
   Stream<UserProfile>? _profile;
   Stream<List<VoiceRoom>>? _owned;
   Stream<List<Conversation>>? _conversations;
+  ProfileService? _profiles;
+  final Map<String, Stream<String>> _recentChatPhotoStreams = {};
 
   /// Hosts this account follows — the top ranking tier for the board.
   final Set<String> _followedHostIds = <String>{};
@@ -149,15 +152,16 @@ class _DesktopHomeState extends State<DesktopHome> {
       _owned = null;
     }
     try {
-      _conversations = (widget.messageService ?? MessageService())
+      _conversations = (widget.messageService ?? MessageService.live)
           .watchConversations();
     } catch (_) {
       _conversations = null;
     }
     try {
-      _profile = (widget.profileService ?? ProfileService())
-          .watchCurrentProfile();
+      _profiles = widget.profileService ?? ProfileService();
+      _profile = _profiles!.watchCurrentProfile();
     } catch (_) {
+      _profiles = null;
       _profile = null;
     }
     // Feeds the board's top ranking tier. One subscription for the whole
@@ -190,6 +194,21 @@ class _DesktopHomeState extends State<DesktopHome> {
   void dispose() {
     _followingSub?.cancel();
     super.dispose();
+  }
+
+  Stream<String> _recentChatPhotoStream(String userId) {
+    final profiles = _profiles;
+    if (profiles == null) return const Stream<String>.empty();
+    // At most three of these cold point-read streams are subscribed at once.
+    // Caching keeps rebuilds from replacing Firestore listeners, while
+    // StreamBuilder owns cancellation when a card leaves the tree.
+    return _recentChatPhotoStreams.putIfAbsent(
+      userId,
+      () => profiles
+          .watchProfile(userId)
+          .map((profile) => profile.photoUrl?.trim() ?? '')
+          .distinct(),
+    );
   }
 
   void _openRoomSettings(VoiceRoom room) {
@@ -325,6 +344,9 @@ class _DesktopHomeState extends State<DesktopHome> {
                     onOpenConversation: widget.onOpenConversation,
                     onFindFriends: widget.onViewAllFriends,
                     style: RecentChatsStyle.desktopBackdrop,
+                    photoStreamForUser: _profiles == null
+                        ? null
+                        : _recentChatPhotoStream,
                   ),
                 ),
                 if (widget.trailingContent != null) ...[

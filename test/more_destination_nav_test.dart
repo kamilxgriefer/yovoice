@@ -1,8 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/home/presentation/screens/main_shell.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
+
+class _CountingNavigatorObserver extends NavigatorObserver {
+  int popCount = 0;
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    popCount += 1;
+    super.didPop(route, previousRoute);
+  }
+}
 
 /// Regression suite for the P0 "bottom navigation randomly disappears"
 /// bug: main destinations opened from "More" are hosted in the
@@ -16,10 +28,12 @@ void main() {
     required ValueChanged<int> onDestinationSelected,
     VoidCallback? onVoicePressed,
     VoidCallback? onMorePressed,
+    List<NavigatorObserver> navigatorObservers = const [],
   }) async {
     await tester.pumpWidget(
       MaterialApp(
         navigatorKey: navigatorKey,
+        navigatorObservers: navigatorObservers,
         home: const Scaffold(body: Text('SHELL')),
       ),
     );
@@ -112,5 +126,68 @@ void main() {
 
     expect(voiceOpened, isTrue);
     expect(find.text('SHELL'), findsOneWidget);
+  });
+
+  testWidgets('a same-frame double tap on More pops and opens exactly once', (
+    tester,
+  ) async {
+    final navigatorKey = GlobalKey<NavigatorState>();
+    final observer = _CountingNavigatorObserver();
+    var moreOpenCount = 0;
+    await pumpHost(
+      tester,
+      navigatorKey: navigatorKey,
+      navigatorObservers: [observer],
+      onDestinationSelected: (_) {},
+      onMorePressed: () => moreOpenCount += 1,
+    );
+
+    final moreTap = tester.widget<InkWell>(
+      find
+          .ancestor(of: find.text('More'), matching: find.byType(InkWell))
+          .first,
+    );
+    moreTap.onTap!();
+    moreTap.onTap!();
+
+    // Popping starts immediately, but the next action waits until the host's
+    // reverse transition and overlay have completely left the Navigator.
+    await tester.pump();
+    expect(observer.popCount, 1);
+    expect(moreOpenCount, 0);
+
+    await tester.pumpAndSettle();
+    expect(observer.popCount, 1);
+    expect(moreOpenCount, 1);
+    expect(find.text('SHELL'), findsOneWidget);
+    expect(find.text('DESTINATION'), findsNothing);
+  });
+
+  test('the More transition guard rejects concurrent presentations', () async {
+    final guard = MoreMenuTransitionGuard();
+    final presentation = Completer<MoreDestination?>();
+    var presentationCount = 0;
+
+    final first = guard.run<MoreDestination>(() {
+      presentationCount += 1;
+      return presentation.future;
+    });
+    final duplicate = guard.run<MoreDestination>(() async {
+      presentationCount += 1;
+      return MoreDestination.settings;
+    });
+
+    expect(await duplicate, isNull);
+    expect(guard.isActive, isTrue);
+    expect(presentationCount, 1);
+
+    presentation.complete(MoreDestination.profile);
+    expect(await first, MoreDestination.profile);
+    expect(guard.isActive, isFalse);
+
+    expect(
+      await guard.run<MoreDestination>(() async => MoreDestination.settings),
+      MoreDestination.settings,
+    );
   });
 }

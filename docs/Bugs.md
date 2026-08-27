@@ -20,6 +20,45 @@ about things that are broken, risky, or need verification.
 
 ## Security
 
+- **FIXED IN SOURCE 2026-08-27 — the product sound was a retro synth-jingle
+  system and one foreground notification could play two different cues.** All
+  eight effects used notes, pentatonic rise/fall pairs, glass-bell partials,
+  detune or a two-note chime. Worse, native push still packaged the much louder
+  original mono WAV while the focused app used a later stereo file; native FCM
+  and the Firestore banner could sound together. Velvet Prism replaces the
+  entire pack with short, non-musical material cues, removes the conflicting
+  Dart generator, derives all native copies from one deterministic 48 kHz
+  master, serializes channel playback, dedupes foreground ownership and makes
+  room creation one confirmation rather than create+join. Android uses a new
+  immutable `yovoice_activity_v3` channel consistently in Flutter, Functions
+  and the manifest fallback. **SOURCE ONLY — NOT DEPLOYED.** Mobile clients
+  must create v3 before the Functions payload cutover; physical-device
+  listening is still required. See ADR-116.
+
+- **FIXED IN SOURCE 2026-08-27 — Voice Moment root lifecycle and the active
+  cap could be bypassed by a modified or legacy client.** Production rules
+  still permit a direct root create with no `expiresAt` (which now means
+  permanent), broad author updates that can forge publish/media/status state,
+  and direct root deletion that skips the cleanup outbox. The deployed cap
+  also scans only the newest 100 authored documents and has no shared write on
+  which two finalizations of different drafts must conflict. ADR-115 makes
+  root and engagement mutation server authority, queries the complete
+  published set and serializes
+  finalize/delete/expiry through a server-only per-author revision document.
+  Draft and retired roots plus their audio become author-private, and all root
+  and reply audio becomes client-immutable so deletion cannot race a publish
+  transaction. Bounded server workers remove abandoned uploads. Every
+  unfinished finalize retry is rate-charged before Storage reads, exact client
+  timers stop open playback at the deadline, announce visible transitions
+  once, restore focus and preserve the first surviving Story successor;
+  engagement callables refuse the same deadline before the sweeper runs.
+  Emulator coverage includes direct
+  lifecycle/counter/comment attacks, more than 100 newer drafts, concurrent
+  publication into the tenth slot, retry-budget attacks and deadline edges.
+  **SOURCE ONLY — NOT DEPLOYED; production
+  retains the old integrity/abuse surface until the coordinated ADR-115
+  rollout.**
+
 - **OPEN, pre-existing, found while auditing the DM rules — the conversation
   ROOT update rule pins only `participantIds`.** `firestore.rules:2132` lets
   any participant rewrite `lastMessage`, `participantNames` and — the part
@@ -31,14 +70,57 @@ about things that are broken, risky, or need verification.
   a field allowlist pinning the caller's own keys, plus emulator cases for
   cross-participant counter writes.
 
-- **OPEN — the message outbox has no user interface.** `MessageOutbox` queues
-  a send when the callable is unreachable and retries it, but
-  `retryFailedMessage`, `discardQueuedMessage` and `.outbox` have **zero
-  callers** anywhere in `lib/` outside the service itself. The immediate send
-  error IS shown (`chat_screen.dart:242` catches it and preserves the typed
-  text), so a first failure is visible — but everything after that, including
-  a permanent failure after the retry budget, is invisible. Independent of the
-  rules decision; worth its own ticket.
+- **FIXED IN SOURCE 2026-08-27 — the message outbox existed but the chat waited
+  for the network and rendered none of its states.** A text send now clears the
+  composer after durable local enqueue, renders an optimistic outgoing bubble,
+  and drains oldest-first under the original idempotent `requestId`. Pending,
+  offline/retrying, server-accepted and terminal failure states remain visible;
+  a terminal bubble preserves the words and exposes 44 px Retry/Remove actions
+  without showing raw backend errors. The callable response and Firestore
+  snapshot are reconciled by the backend's deterministic SHA-256 message id, so
+  their arrival order cannot flash or duplicate a bubble. Typing presence is a
+  transition/heartbeat instead of one callable transaction per keystroke, and
+  expires locally after eight seconds even without another snapshot. One live
+  `MessageService` owns one serialized, UID-scoped queue
+  (`messages.outbox.v2.<uid>`); the ownerless v1 value is retired rather than
+  attributed to whichever account opens the upgrade. MainShell resumes it on a
+  cold start, backoff preserves FIFO inside a conversation without blocking a
+  different chat, and closing Chat cancels its shared Firestore listener. An
+  enqueue refusal restores every draft word, while a local bubble can no longer
+  hide a failed server-history stream. FIFO, restart/account-switch,
+  cold-callable, 320 px/200% and recovery paths are regression-tested. **SOURCE
+  ONLY — NOT DEPLOYED.** See ADR-105.
+
+- **FIXED IN SOURCE 2026-08-27 — the avatar cropper could shrink a picked
+  photo into the upper-left corner on the first pinch.** The initial cover
+  transform scaled X/Y below 1 for a large source image but left Z at 1.
+  `InteractiveViewer.getMaxScaleOnAxis()` therefore reported 1 instead of the
+  real cover scale; the first zoom gesture applied that cover factor again,
+  producing the quarter-sized image and empty circular frame visible on iOS.
+  The editor now uses one uniform XYZ scale, so reset, pinch and drag preserve
+  full cover and the exported JPEG matches the visible crop. Named 44 px
+  Zoom −/+ and directional controls provide the same operation without a
+  multi-pointer gesture and work from the keyboard; the crop preview exposes
+  its current zoom to assistive technology. Gesture- and control-level
+  regressions cover portrait and landscape inputs on phone layouts, including
+  200% text. **SOURCE ONLY — NOT DEPLOYED.** This is a corrective amendment to
+  ADR-025.
+
+- **FIXED IN SOURCE 2026-08-27 — Message in Profile Preview appeared to do
+  nothing when the preview was opened above another sheet.** The callback
+  popped Profile Preview and immediately looked up a navigator through that
+  closing route; an `openDirectConversation` refusal was even less visible,
+  because its snackbar painted in the root Scaffold underneath both modal
+  barriers. Profile Preview now returns a typed destination to the navigator
+  captured by its launcher, waits for dismissal, and only then pushes Chat or
+  the full profile. The same resolved Auth identity and MessageService follow
+  the route so optimistic reconciliation cannot switch users; an internally
+  constructed test/preview service is disposed after Chat returns. A failed
+  open stays in the preview as a friendly inline
+  live-region message; while the request is pending, the button and a concise
+  live status both say that the chat is opening. The real two-sheet route,
+  delayed/double tap, Back behavior and 320 px/200% failure state are
+  regression-tested. **SOURCE ONLY — NOT DEPLOYED.**
 
 - **OPEN, noted not fixed — `enforceAppCheck: false` on the Stage B callables,
   including `sendDirectMessage`.** App Check is supported but not enforced
@@ -680,6 +762,17 @@ permission flags).
   startup surface that exists only while the engine/Auth state genuinely
   resolves. Its shared responsive layout uses a larger, lowered logo with the
   title layered across the mark's lower edge instead of floating too high.
+- **FIXED IN SOURCE 2026-08-27 — the remaining native-to-Flutter launch handoff
+  visibly jumped.** iOS launch images were 1×1 transparent, Android's mark was
+  commented out (and Android 12 had no matching system-splash theme), the ring
+  opacity reset at its modulo boundary, and Auth replaced the loading surface
+  without a transition. Native iOS/Android and Flutter now share the same
+  #0D0618 surface, centred 170 logical-pixel mark and Android light/dark API-31 themes;
+  the ring envelope reaches zero on both sides of its wrap and Auth crossfades
+  for 220 ms (or instantly under Reduce Motion). The mark is positioned in its
+  own centred layer, so text metrics and 200% scaling cannot move it. **SOURCE
+  ONLY — NOT DEPLOYED; physical iOS and Android 12+ handoff still needs device
+  verification.** See ADR-052.
 
 ## Notifications
 
@@ -1011,6 +1104,14 @@ permission flags).
   super moderators saw Staff Center but lost the separate Moderation entry
   available on desktop. Mobile now lists every destination their server
   capabilities grant; ordinary accounts remain unchanged.
+- **FIXED IN SOURCE 2026-08-27 — Mobile More used four rows of oversized
+  160–176 px destination cards and forced a normal expanded sheet to scroll.**
+  At ordinary text scale destinations are now compact 78 px two-/three-column
+  tiles and staff/settings are 58 px rows; a 320×568 ordinary sheet and
+  390×844/430×932 owner sheets fit without scrolling. At enlarged text the
+  sheet deliberately reflows to full-width rows and keeps scrolling as the
+  accessible safety valve. Every action and capability gate remains intact,
+  with named ≥44 px targets. **SOURCE ONLY — NOT DEPLOYED.**
 - **`adminAuditLogs` has no BROAD staff-facing view.** Entries are
   written deterministically and stay unreadable by every client, staff
   included. A moderator can now see one report's own history through the
@@ -1060,6 +1161,44 @@ permission flags).
   rate.
 
 ## UI
+
+- **FIXED IN SOURCE 2026-08-27 — a rapid double tap on More could stack
+  sheets or pop two different routes.** The shell previously started a new
+  modal for every callback, while a More destination's persistent dock
+  unconditionally popped and acted on every tap before the first reverse
+  transition had removed its overlay. A burst could therefore leave one More
+  sheet hidden under another destination, close the newly opened sheet with a
+  stale second callback, or pop the shell itself. More presentation is now
+  single-flight through the complete modal transition. Destination dock/rail
+  actions commit once, pop once, wait for `Route.completed`, and only then
+  invoke the shell action. Regressions cover a same-frame double callback,
+  launcher-position retap during entry and the closing-animation boundary.
+  **SOURCE ONLY — NOT DEPLOYED.**
+
+- **FIXED IN SOURCE 2026-08-27 — a Voice Moment could not be heard before it
+  was published, and availability was limited to fixed presets.** Review now
+  plays, pauses and seeks the temporary native file or browser Blob locally,
+  before Firestore reservation or Storage upload. The author chooses any whole
+  24–720 hours, 1–30 days, or Until deleted; the 24-hour wire default remains
+  compatible. Playback is stopped and disposed before publish, record-again,
+  Back or discard, and caption/lifetime lock after a first publish attempt so
+  an idempotent retry cannot silently change its contract. Voice replies gain
+  preview without their own lifetime selector. **SOURCE ONLY — NOT DEPLOYED.**
+
+- **FIXED IN SOURCE 2026-08-27 — desktop Recent Chats could show a ghost
+  initial or turn a real portrait into an unrecognizable color stripe.** The
+  desktop card trusted only `conversations.participantPhotoUrls`, so an older
+  empty/stale denormalized value disagreed with profile surfaces already
+  reading the current public projection. A loaded image was then enlarged
+  1.14×, blurred at sigma 12 with low-quality filtering and covered by a scrim
+  reaching 98%, erasing identity. Desktop Home now keeps at most three active
+  public-profile point listeners for visible chat partners and falls back to
+  conversation metadata on load/error. Artwork uses a sharp, face-biased
+  full-bleed cover, medium filtering and a lower text scrim; missing/broken
+  photos get a deliberate branded accent/monogram. Mobile remains unchanged.
+  Widget/integration coverage pins the live-photo repair, image treatment,
+  fallback, semantics, keyboard path and 200% layout; a production-theme frame
+  was rendered and inspected. **SOURCE ONLY — NOT DEPLOYED.** See ADR-111.
 
 - **FIXED AND DEPLOYED 2026-08-25 — modal sheets drew two detached
   drag handles and offered no obvious universal way to close them.** The app
@@ -1116,13 +1255,21 @@ permission flags).
   ADR-101, deliberately: (1) playback through the row sheet / MomentCard
   does not write the viewed-mark, so a chain fully heard there keeps its
   gradient "unviewed" ring (the story viewer marks correctly); (2) the
-  website's `yovoice.app/?moment=` share links outlive the 24h life and land
-  on an `isPublished:false/status:'expired'` doc — the website's rendering of
-  that shape is unverified; (3) `users/{uid}/momentViews` accepts unbounded
+  website's `yovoice.app/?moment=` share links outlive the chosen finite
+  availability and land on an `isPublished:false/status:'expired'` doc — the
+  website's rendering of that shape is unverified; (3)
+  `users/{uid}/momentViews` accepts unbounded
   self-writes (same accepted class as the sibling owner-writable
-  subcollections); (4) the 10-cap's parallel-reserve race safety rests on
-  Firestore serializable isolation — sequential test only, worst case a
-  brief over-admit.
+  subcollections).
+
+- **OPEN — Voice Moment expiry is feed visibility, not bearer-media
+  revocation.** Published Moments store a Firebase download-token URL. After
+  the exact deadline the client hides the Moment and the server refuses new
+  engagement; only after the scheduled sweeper retires it do the root and
+  authenticated Storage path become private again. A previously copied token
+  URL remains usable until explicit deletion/cleanup or token rotation.
+  Product copy therefore says how long a Moment stays visible in the feed; it
+  does not promise that expiry destroys the bytes.
 
 - **FIXED AND DEPLOYED 2026-08-21 — the redesign's three post-release reviews
   returned FIX_FIRST; every high and medium is closed.** Highlights: the
@@ -2071,19 +2218,25 @@ permission flags).
   same value from one Firestore listener, and a screen opened after the
   first emission renders immediately instead of flashing a placeholder.
   Cleared on sign-out via `resetCurrentProfileCache()`.
-- **Fixed: password reset / email verification links dumped users on
-  Firebase's generic white `__/auth/action` page.** Not a bug in
+- **SOURCE READY 2026-08-27 — password reset / email verification links still
+  dump production users on Firebase's generic white `__/auth/action` page.**
+  Not a bug in
   ActionCodeSettings — its `url` only ever becomes the post-action
   continueUrl (established empirically in a prior session). The user-facing
   handler simply didn't exist for reset (`/reset-password` on the website
   was an empty directory) and the console's action URL was never
-  customized. Now: `yovoice.app/auth/action` dispatcher → branded
-  `/reset-password`, `/verify-email`, `/recover-email` pages; full reset
+  customized. Source now provides a tested `yovoice.app/auth/action`
+  dispatcher → branded `/reset-password`, `/verify-email`, `/recover-email`
+  and `/revert-second-factor` pages; full reset
   lifecycle verified against the Firebase Auth emulator (old password
   rejected, new accepted, code replay rejected, reused link shows a
-  branded error, hostile continueUrl stripped by allowlist). Requires the
-  one-time console steps in docs/email-templates/README.md before it's
-  live for real emails. See ADR-022.
+  branded error, hostile continueUrl stripped by allowlist). Token routes are
+  private/no-store, no-referrer and noindex; the MFA recovery path validates
+  the exact operation and requires a deliberate click so a mail scanner cannot
+  remove an authenticator. **The website diff and narrow Identity Toolkit PATCH
+  are NOT DEPLOYED; production callbackUri is still the Firebase handler.** The
+  required website-first rollout, leaf field mask, read-back and rollback are
+  documented in docs/email-templates/README.md. See ADR-022.
 - **Fixed: login's "Forgot password?" required the login form's email and
   only answered with a SnackBar.** It now opens a dedicated responsive
   reset-password route with its own email form, then a neutral "Check your

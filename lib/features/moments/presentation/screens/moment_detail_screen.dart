@@ -10,8 +10,10 @@ import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart'
     show StoryWaveform;
 import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels.dart';
@@ -45,6 +47,8 @@ class MomentDetailScreen extends StatefulWidget {
     this.contentReportService,
     this.auth,
     this.playerFactory,
+    this.expiryClock,
+    this.expiryTimerFactory,
     super.key,
   });
 
@@ -57,6 +61,12 @@ class MomentDetailScreen extends StatefulWidget {
 
   @visibleForTesting
   final AudioPlayer Function()? playerFactory;
+
+  @visibleForTesting
+  final MomentExpiryClock? expiryClock;
+
+  @visibleForTesting
+  final MomentExpiryTimerFactory? expiryTimerFactory;
 
   @override
   State<MomentDetailScreen> createState() => _MomentDetailScreenState();
@@ -76,6 +86,9 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
   bool _missing = false;
   bool _selfDeleted = false;
   bool _deleting = false;
+  late final MomentExpiryScheduler _expiry;
+  DateTime? _expiredThrough;
+  bool _expiredByDeadline = false;
 
   Future<List<MomentReactor>>? _reactions;
 
@@ -90,6 +103,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
 
   final TextEditingController _composer = TextEditingController();
   final FocusNode _composerFocus = FocusNode(debugLabel: 'Moment comment');
+  final FocusNode _goneBackFocus = FocusNode(debugLabel: 'Expired Moment back');
+  final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
   bool _sending = false;
 
   String get _uid {
@@ -105,6 +120,13 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
   @override
   void initState() {
     super.initState();
+    _expiry = MomentExpiryScheduler(
+      onDeadline: _handleExpiryDeadline,
+      clock: widget.expiryClock,
+      timerFactory: widget.expiryTimerFactory,
+    );
+    _expiredByDeadline = !_moment.isActiveAt(_effectiveNow());
+    if (!_expiredByDeadline) _expiry.schedule([_moment]);
     // Each seam guarded separately, matching the other Moment surfaces:
     // one service that cannot be constructed must not take the others
     // down with it.
@@ -131,14 +153,38 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
           .listen(
             (moment) {
               if (!mounted) return;
+              if (moment == null) {
+                final previousFocus = FocusManager.instance.primaryFocus;
+                final recoverFocus = momentExpiryFocusIsWithin(
+                  context,
+                  previousFocus,
+                );
+                _expiry.schedule(const <VoiceMoment>[]);
+                _stopPlaybackForGone();
+                setState(() => _missing = true);
+                _announceGone(
+                  previousFocus: recoverFocus ? previousFocus : null,
+                );
+                return;
+              }
+              final expired = !moment.isActiveAt(_effectiveNow());
+              final previousFocus = expired
+                  ? FocusManager.instance.primaryFocus
+                  : null;
+              final recoverFocus =
+                  expired && momentExpiryFocusIsWithin(context, previousFocus);
               setState(() {
-                if (moment == null) {
-                  _missing = true;
-                } else {
-                  _missing = false;
-                  _moment = moment;
-                }
+                _missing = false;
+                _moment = moment;
+                _expiredByDeadline = expired;
               });
+              _expiry.schedule(expired ? const <VoiceMoment>[] : [moment]);
+              if (expired) {
+                _stopPlaybackForGone();
+                _announceGone(
+                  previousFocus: recoverFocus ? previousFocus : null,
+                );
+              }
             },
             onError: (Object _) {
               // A dead stream keeps the Moment the caller passed: real,
@@ -153,6 +199,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
 
   @override
   void dispose() {
+    _expiry.dispose();
     unawaited(_liveSubscription?.cancel());
     for (final subscription in _playerSubscriptions) {
       unawaited(subscription.cancel());
@@ -160,10 +207,60 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
     _player?.dispose();
     _composer.dispose();
     _composerFocus.dispose();
+    _goneBackFocus.dispose();
     super.dispose();
   }
 
   // ------------------------------------------------------------- playback
+
+  DateTime _effectiveNow() {
+    final now = _expiry.now();
+    final floor = _expiredThrough;
+    return floor != null && floor.isAfter(now) ? floor : now;
+  }
+
+  void _stopPlaybackForGone() {
+    final player = _player;
+    if (player != null) {
+      unawaited(player.stop().catchError((Object _) {}));
+    }
+    if (!mounted) return;
+    setState(() {
+      _isPlaying = false;
+      _position = Duration.zero;
+      _duration = null;
+    });
+  }
+
+  void _handleExpiryDeadline(DateTime deadline) {
+    if (!mounted) return;
+    if (_expiredThrough == null || deadline.isAfter(_expiredThrough!)) {
+      _expiredThrough = deadline;
+    }
+    if (_moment.isActiveAt(_effectiveNow())) {
+      _expiry.schedule([_moment]);
+      return;
+    }
+    final previousFocus = FocusManager.instance.primaryFocus;
+    final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
+    _stopPlaybackForGone();
+    setState(() => _expiredByDeadline = true);
+    _expiry.schedule(const <VoiceMoment>[]);
+    _announceGone(previousFocus: recoverFocus ? previousFocus : null);
+  }
+
+  void _announceGone({required FocusNode? previousFocus}) {
+    _expiryAnnouncer.announce(
+      context,
+      transition: 'detail-gone-${widget.moment.id}',
+      message: 'Voice Moment is no longer available.',
+    );
+    recoverMomentExpiryFocusAfterFrame(
+      context: context,
+      fallback: _goneBackFocus,
+      previousFocus: previousFocus,
+    );
+  }
 
   AudioPlayer _ensurePlayer() {
     final existing = _player;
@@ -381,13 +478,18 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final gone =
-        (_missing && !_selfDeleted) || !_moment.isActiveAt(DateTime.now());
+        (_missing && !_selfDeleted) ||
+        _expiredByDeadline ||
+        !_moment.isActiveAt(_effectiveNow());
 
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: gone
-            ? _GoneState(onBack: () => Navigator.of(context).maybePop())
+            ? _GoneState(
+                backFocus: _goneBackFocus,
+                onBack: () => Navigator.of(context).maybePop(),
+              )
             : LayoutBuilder(
                 builder: (context, constraints) {
                   // One readable column at every width: the page is a
@@ -581,11 +683,8 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
                 behavior: HitTestBehavior.opaque,
                 onTapDown: hasTotal && waveWidth > 0
                     ? (details) {
-                        final fraction =
-                            (details.localPosition.dx / waveWidth).clamp(
-                              0.0,
-                              1.0,
-                            );
+                        final fraction = (details.localPosition.dx / waveWidth)
+                            .clamp(0.0, 1.0);
                         unawaited(
                           _seek(
                             Duration(
@@ -615,9 +714,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
                   width: 62,
                   height: 62,
                   child: Icon(
-                    _isPlaying
-                        ? Icons.pause_rounded
-                        : Icons.play_arrow_rounded,
+                    _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
                     color: AppColors.textPrimary,
                     size: 34,
                   ),
@@ -883,8 +980,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  for (final comment in comments)
-                    _CommentRow(comment: comment),
+                  for (final comment in comments) _CommentRow(comment: comment),
                 ],
               );
             },
@@ -931,7 +1027,9 @@ class _MomentDetailScreenState extends State<MomentDetailScreen> {
           const SizedBox(width: 8),
           IconButton.filled(
             key: const ValueKey('moment-detail-comment-send'),
-            onPressed: _sending || _moments == null ? null : () => unawaited(_send()),
+            onPressed: _sending || _moments == null
+                ? null
+                : () => unawaited(_send()),
             style: IconButton.styleFrom(backgroundColor: AppColors.primary),
             icon: _sending
                 ? const SizedBox(
@@ -1013,8 +1111,9 @@ class _Header extends StatelessWidget {
 /// loaded. A real explanation and a way back — never a spinner that spins
 /// forever and never a stale page pretending the audio still exists.
 class _GoneState extends StatelessWidget {
-  const _GoneState({required this.onBack});
+  const _GoneState({required this.backFocus, required this.onBack});
 
+  final FocusNode backFocus;
   final VoidCallback onBack;
 
   @override
@@ -1055,6 +1154,7 @@ class _GoneState extends StatelessWidget {
             const SizedBox(height: 20),
             FilledButton(
               key: const ValueKey('moment-detail-gone-back'),
+              focusNode: backFocus,
               onPressed: onBack,
               child: const Text('Back to Moments'),
             ),

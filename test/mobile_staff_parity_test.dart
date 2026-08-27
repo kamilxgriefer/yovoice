@@ -14,6 +14,8 @@
 //     double-submit) work at phone widths, and 320/390/430 lay out
 //     without overflow, safe areas and keyboard included.
 
+import 'dart:async';
+
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -220,13 +222,20 @@ Widget sheetHost(Widget sheet) => MaterialApp(
 
 Widget modalSheetHost({
   SubscriptionEntitlements entitlements = SubscriptionEntitlements.free,
+  StaffCapabilityService? capabilityService,
+  String? currentUid,
 }) => MaterialApp(
   home: Builder(
     builder: (context) => Scaffold(
       body: TextButton(
         key: const ValueKey('open-more-sheet'),
         onPressed: () async {
-          await showMoreSheet(context, entitlements: entitlements);
+          await showMoreSheet(
+            context,
+            entitlements: entitlements,
+            capabilityService: capabilityService,
+            currentUid: currentUid,
+          );
         },
         child: const Text('Open More'),
       ),
@@ -239,6 +248,17 @@ Future<void> settle(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 60));
   await tester.pump(const Duration(milliseconds: 400));
 }
+
+ScrollPosition moreSheetScrollPosition(WidgetTester tester) => tester
+    .state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byKey(const ValueKey('more-sheet-scroll-view')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    )
+    .position;
 
 void main() {
   group('staff entry derivation (capabilities only, never a role string)', () {
@@ -299,6 +319,147 @@ void main() {
   });
 
   group('mobile More sheet', () {
+    testWidgets('a second tap at the launcher position cannot select a tile '
+        'during entry', (tester) async {
+      useSize(tester, const Size(390, 844));
+      for (final delay in const [100, 180, 200, 220]) {
+        MoreDestination? selected;
+        await tester.pumpWidget(
+          MaterialApp(
+            key: ValueKey('entry-delay-$delay'),
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: Align(
+                  alignment: Alignment.bottomRight,
+                  child: SizedBox(
+                    width: 78,
+                    height: 64,
+                    child: TextButton(
+                      key: const ValueKey('bottom-more-launcher'),
+                      onPressed: () async {
+                        selected = await showMoreSheet(
+                          context,
+                          capabilityService: _FakeCapabilities(
+                            StaffCapabilities.none,
+                          ),
+                          currentUid: 'ordinary-uid',
+                        );
+                      },
+                      child: const Text('More'),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        final launcherPosition = tester.getCenter(
+          find.byKey(const ValueKey('bottom-more-launcher')),
+        );
+        await tester.tapAt(launcherPosition);
+        await tester.pump();
+        await tester.pump(Duration(milliseconds: delay));
+        await tester.tapAt(launcherPosition);
+        await tester.pumpAndSettle();
+
+        expect(selected, isNull, reason: 'entry delay: $delay ms');
+        expect(find.byType(MoreSheet), findsOneWidget);
+        expect(tester.takeException(), isNull);
+
+        await tester.tap(find.byKey(const ValueKey('modal-sheet-close')));
+        await tester.pumpAndSettle();
+      }
+    });
+
+    testWidgets('the presenter stays active through the closing animation', (
+      tester,
+    ) async {
+      var presentationCompleted = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () {
+                  unawaited(
+                    showMoreSheet(
+                      context,
+                      capabilityService: _FakeCapabilities(
+                        StaffCapabilities.none,
+                      ),
+                      currentUid: 'ordinary-uid',
+                    ).then((_) => presentationCompleted = true),
+                  );
+                },
+                child: const Text('Open More'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open More'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('modal-sheet-close')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
+
+      expect(
+        presentationCompleted,
+        isFalse,
+        reason: 'the guard must remain armed while the barrier reverses',
+      );
+
+      await tester.pumpAndSettle();
+      expect(presentationCompleted, isTrue);
+      expect(find.byType(MoreSheet, skipOffstage: false), findsNothing);
+    });
+
+    testWidgets('the compact ordinary sheet fits 320x568 without scrolling', (
+      tester,
+    ) async {
+      useSize(tester, const Size(320, 568));
+      await tester.pumpWidget(
+        modalSheetHost(
+          capabilityService: _FakeCapabilities(StaffCapabilities.none),
+          currentUid: 'ordinary-uid',
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('open-more-sheet')));
+      await settle(tester);
+
+      expect(moreSheetScrollPosition(tester).maxScrollExtent, 0);
+      expect(find.text('More').hitTestable(), findsOneWidget);
+      expect(find.text('Settings').hitTestable(), findsOneWidget);
+      final compactActions = <MoreDestination, String>{
+        MoreDestination.friends: 'Friends, Your circle',
+        MoreDestination.profile: 'Profile, You',
+        MoreDestination.discover: 'Discover, Find rooms',
+        MoreDestination.findCreators: 'Find creators, People to follow',
+        MoreDestination.clubs: 'Clubs, Communities, Premium required',
+        MoreDestination.notifications: 'Alerts, Updates',
+        MoreDestination.achievements: 'Awards, Progress',
+        MoreDestination.creatorStudio: 'Creator, Studio, Premium required',
+        MoreDestination.settings:
+            'Settings, Privacy, account and application preferences',
+      };
+      for (final entry in compactActions.entries) {
+        final target = find.byKey(
+          ValueKey('more-destination-${entry.key.name}'),
+        );
+        final size = tester.getSize(target);
+        expect(size.width, greaterThanOrEqualTo(44), reason: entry.key.name);
+        expect(size.height, greaterThanOrEqualTo(44), reason: entry.key.name);
+        expect(
+          find.bySemanticsLabel(entry.value),
+          findsOneWidget,
+          reason: entry.key.name,
+        );
+      }
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets("an ordinary account's sheet keeps all product destinations, "
         'Settings, no staff section, no gap', (tester) async {
       useSize(tester, const Size(390, 844));
@@ -435,6 +596,52 @@ void main() {
       }
     });
 
+    testWidgets('the owner sheet fits without scrolling at 390 and 430px', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final previous = PublicIdentityRepository.instance;
+      addTearDown(() => PublicIdentityRepository.instance = previous);
+      PublicIdentityRepository.instance = PublicIdentityRepository(
+        auth: MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(uid: 'owner-uid'),
+        ),
+        fetchOverride: (uids) async => {
+          for (final uid in uids)
+            uid: {'staffRole': 'superAdmin', 'isVip': true},
+        },
+        flushDelay: const Duration(milliseconds: 1),
+      );
+
+      for (final size in const [Size(390, 844), Size(430, 932)]) {
+        tester.view.physicalSize = size;
+        await tester.pumpWidget(
+          modalSheetHost(
+            capabilityService: _FakeCapabilities(_ownerCaps),
+            currentUid: 'owner-uid',
+          ),
+        );
+        await tester.tap(find.byKey(const ValueKey('open-more-sheet')));
+        await settle(tester);
+
+        expect(
+          moreSheetScrollPosition(tester).maxScrollExtent,
+          0,
+          reason: 'owner More sheet should fit at ${size.width}x${size.height}',
+        );
+        expect(find.text('More').hitTestable(), findsOneWidget);
+        expect(find.text('Moderation').hitTestable(), findsOneWidget);
+        expect(find.text('Staff Center').hitTestable(), findsOneWidget);
+        expect(find.text('Settings').hitTestable(), findsOneWidget);
+        expect(tester.takeException(), isNull);
+
+        await tester.tap(find.byKey(const ValueKey('modal-sheet-close')));
+        await tester.pumpAndSettle();
+      }
+    });
+
     testWidgets('the forged superAdmin sheet gets the coral entry, and the '
         'sheet fits 320x640 without overflow', (tester) async {
       useSize(tester, const Size(320, 640));
@@ -460,21 +667,14 @@ void main() {
       final handleBefore = tester.getCenter(
         find.byKey(const ValueKey('more-sheet-drag-handle')),
       );
-      final scrollable = tester.state<ScrollableState>(
-        find
-            .descendant(
-              of: find.byKey(const ValueKey('more-sheet-scroll-view')),
-              matching: find.byType(Scrollable),
-            )
-            .first,
-      );
-      expect(scrollable.position.maxScrollExtent, greaterThan(0));
+      final scrollable = moreSheetScrollPosition(tester);
+      expect(scrollable.maxScrollExtent, greaterThan(0));
       await tester.drag(
         find.byKey(const ValueKey('more-sheet-scroll-view')),
         const Offset(0, -120),
       );
       await tester.pumpAndSettle();
-      expect(scrollable.position.pixels, greaterThan(0));
+      expect(scrollable.pixels, greaterThan(0));
       expect(
         tester.getCenter(find.byKey(const ValueKey('more-sheet-drag-handle'))),
         handleBefore,

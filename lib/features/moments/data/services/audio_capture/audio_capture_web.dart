@@ -1,6 +1,7 @@
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:web/web.dart' as web;
 
@@ -16,8 +17,8 @@ extension type _PermissionDescriptor._(JSObject _) implements JSObject {
 }
 
 /// Web capture: `record_web` drives a `MediaRecorder` and hands back a blob
-/// object URL. There is no filesystem, so the bytes are read out of the
-/// blob and uploaded with `putData`.
+/// object URL. There is no filesystem, so the native Blob is retained and
+/// uploaded directly with `putBlob`.
 class WebAudioCapture implements AudioCapture {
   const WebAudioCapture();
 
@@ -205,6 +206,18 @@ class BlobRecordedAudio extends RecordedAudio {
   @override
   int get byteLength => blob.size;
 
+  String? _playbackUrl;
+  bool _discarded = false;
+
+  @override
+  Source get playbackSource {
+    if (_discarded) {
+      throw StateError('This Voice Moment recording has been discarded.');
+    }
+    final url = _playbackUrl ??= web.URL.createObjectURL(blob);
+    return UrlSource(url, mimeType: contentType);
+  }
+
   @override
   Future<String> uploadTo(
     Reference reference,
@@ -223,8 +236,11 @@ class BlobRecordedAudio extends RecordedAudio {
 
   @override
   Future<void> discard() async {
-    // Nothing retained outside the Dart heap: the object URL is revoked in
-    // `materialize`, and the bytes go with this object.
+    if (_discarded) return;
+    _discarded = true;
+    final url = _playbackUrl;
+    _playbackUrl = null;
+    if (url != null) web.URL.revokeObjectURL(url);
   }
 }
 

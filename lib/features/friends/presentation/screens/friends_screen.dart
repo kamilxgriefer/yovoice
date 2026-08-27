@@ -45,7 +45,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
   late final FriendService _friendService =
       widget.friendService ?? FriendService();
   late final MessageService _messageService =
-      widget.messageService ?? MessageService();
+      widget.messageService ?? MessageService.live;
   final TextEditingController _searchController = TextEditingController();
 
   late final Stream<List<FriendUser>> _friendsStream;

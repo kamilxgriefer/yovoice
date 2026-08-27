@@ -4,12 +4,16 @@ const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 
 const { db } = require("../utils/firestore");
 const { timestampMillis } = require("../integrity/guards");
+const {
+  momentCapacityLedgerReference,
+  touchMomentCapacityLedger,
+} = require("./capacity");
 
 const REGION = "europe-west1";
 
 /**
  * The scan bound, and a real bound rather than a formality: candidates are
- * published Moments whose 24-hour deadline has already passed, and the
+ * published Moments whose chosen deadline has already passed, and the
  * product caps every author at 10 simultaneously live Moments, so a backlog
  * of 200 means twenty authors' complete story shelves all expired inside
  * one 10-minute cadence — already far beyond current production volume. If
@@ -97,7 +101,11 @@ async function expireVoiceMoments({
 
   for (const document of candidates) {
     try {
-      const outcome = await expireOne(document.ref, startedAt);
+      const outcome = await expireOne(
+        document.ref,
+        startedAt,
+        document.data()?.authorId,
+      );
       if (outcome === "expired") {
         expired.push(document.id);
       } else {
@@ -153,7 +161,11 @@ async function expireVoiceMoments({
  * published, non-deleted document with a still-passed deadline is flipped;
  * anything else reports "changed" and is left exactly as it is.
  */
-async function expireMomentIfStillPastDeadline(momentReference, cutoff) {
+async function expireMomentIfStillPastDeadline(
+  momentReference,
+  cutoff,
+  expectedAuthorId = null,
+) {
   const cutoffMillis = cutoff.toMillis();
   return db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(momentReference);
@@ -166,9 +178,26 @@ async function expireMomentIfStillPastDeadline(momentReference, cutoff) {
         expiresAtMillis > cutoffMillis) {
       return "changed";
     }
+    if (expectedAuthorId !== null && moment.authorId !== expectedAuthorId) {
+      return "changed";
+    }
+
+    // Expiry and finalization affect the same per-author capacity shelf even
+    // though they update different Moment documents. Reading and advancing
+    // the shared mutex in this transaction makes a finalize racing the sweep
+    // retry against the post-expiry truth instead of making a stale decision.
+    const capacityRef = momentCapacityLedgerReference(db, moment.authorId);
+    const capacity = await transaction.get(capacityRef);
 
     // The whole flip. Everything else on the document — audio, caption,
     // counters, expiresAt itself — stays untouched; see the header.
+    touchMomentCapacityLedger(
+      transaction,
+      capacityRef,
+      capacity,
+      moment.authorId,
+      cutoff,
+    );
     transaction.update(momentReference, {
       isPublished: false,
       status: "expired",
@@ -180,8 +209,8 @@ async function expireMomentIfStillPastDeadline(momentReference, cutoff) {
 
 /**
  * Every 10 minutes: one indexed query plus one tiny transaction per newly
- * passed deadline, and a Moment outlives its 24 hours by at most one
- * cadence — during which the client filter already hides it.
+ * passed deadline, and a Moment outlives its chosen availability by at most
+ * one cadence — during which the client filter already hides it.
  * `maxInstances: 1` keeps two runs from racing each other onto the same
  * Moment; the per-document transaction would make that correct anyway, but
  * not free.

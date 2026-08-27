@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:audioplayers/audioplayers.dart' show BytesSource;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show MissingPluginException;
 import 'package:flutter_test/flutter_test.dart';
@@ -35,9 +36,9 @@ void main() {
     return MaterialApp(
       theme: ThemeData.dark(useMaterial3: true),
       builder: (context, inner) => MediaQuery(
-        data: MediaQuery.of(context).copyWith(
-          textScaler: TextScaler.linear(textScale),
-        ),
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(textScale)),
         child: inner!,
       ),
       home: child,
@@ -49,23 +50,28 @@ void main() {
     FakeAudioCapture capture,
     FakeStopwatch clock,
     StubMomentService service,
+    FakePreviewAudioPlayer previewPlayer,
     Widget screen,
   })
   build({
     CaptureSupport? support,
     FakeRecordedAudio? recorded,
     String? replyToMomentId,
+    FakePreviewAudioPlayer? previewPlayer,
   }) {
     final backend = FakeRecorderBackend();
-    final capture = FakeAudioCapture()..result = recorded ?? FakeRecordedAudio();
+    final capture = FakeAudioCapture()
+      ..result = recorded ?? FakeRecordedAudio();
     if (support != null) capture.support = support;
     final service = StubMomentService();
     final clock = FakeStopwatch();
+    final preview = previewPlayer ?? FakePreviewAudioPlayer();
     return (
       backend: backend,
       capture: capture,
       clock: clock,
       service: service,
+      previewPlayer: preview,
       screen: RecordVoiceMomentScreen(
         replyToMomentId: replyToMomentId,
         recorder: VoiceMomentRecorder(
@@ -74,6 +80,7 @@ void main() {
           clock: clock,
         ),
         momentService: service,
+        previewPlayerFactory: () => preview,
       ),
     );
   }
@@ -84,12 +91,18 @@ void main() {
     FakeStopwatch clock, {
     int seconds = 3,
   }) async {
-    await tester.tap(find.byIcon(Icons.mic_rounded));
+    final microphone = find.byIcon(Icons.mic_rounded);
+    await tester.ensureVisible(microphone);
+    await tester.pump();
+    await tester.tap(microphone);
     await tester.pump();
     await tester.pump();
     clock.value = Duration(seconds: seconds);
     await tester.pump(const Duration(milliseconds: 200));
-    await tester.tap(find.byIcon(Icons.stop_rounded));
+    final stop = find.byIcon(Icons.stop_rounded);
+    await tester.ensureVisible(stop);
+    await tester.pump();
+    await tester.tap(stop);
     await tester.pump();
     await tester.pump();
   }
@@ -115,34 +128,182 @@ void main() {
     });
 
     for (final (label, size) in sizes) {
-      testWidgets('$label: an unsupported browser explains itself specifically',
-          (tester) async {
-        useSurface(tester, size);
-        final harness = build(
-          support: const CaptureSupport.unsupported(
-            reason:
-                'This browser cannot record MP4/AAC audio, which is the only '
-                'format YO Voice can publish a Voice Moment in.',
-            action: 'Open YO Voice in Chrome, Edge or Safari to record.',
-          ),
-        );
-        await tester.pumpWidget(host(harness.screen));
-        await tester.pumpAndSettle();
+      testWidgets(
+        '$label: an unsupported browser explains itself specifically',
+        (tester) async {
+          useSurface(tester, size);
+          final harness = build(
+            support: const CaptureSupport.unsupported(
+              reason:
+                  'This browser cannot record MP4/AAC audio, which is the only '
+                  'format YO Voice can publish a Voice Moment in.',
+              action: 'Open YO Voice in Chrome, Edge or Safari to record.',
+            ),
+          );
+          await tester.pumpWidget(host(harness.screen));
+          await tester.pumpAndSettle();
 
-        expect(find.text('Recording is not available here'), findsOneWidget);
-        expect(find.textContaining('MP4/AAC'), findsOneWidget);
-        expect(find.textContaining('Chrome, Edge or Safari'), findsOneWidget);
+          expect(find.text('Recording is not available here'), findsOneWidget);
+          expect(find.textContaining('MP4/AAC'), findsOneWidget);
+          expect(find.textContaining('Chrome, Edge or Safari'), findsOneWidget);
 
-        // The two things this project forbids for an unavailable capability.
-        expect(find.textContaining('Coming soon'), findsNothing);
-        expect(find.textContaining('Could not start recording'), findsNothing);
+          // The two things this project forbids for an unavailable capability.
+          expect(find.textContaining('Coming soon'), findsNothing);
+          expect(
+            find.textContaining('Could not start recording'),
+            findsNothing,
+          );
 
-        // And no dead record button that would fail when tapped.
-        expect(find.byIcon(Icons.mic_rounded), findsNothing);
-        expect(find.text('Go back'), findsOneWidget);
-        expect(tester.takeException(), isNull);
-      });
+          // And no dead record button that would fail when tapped.
+          expect(find.byIcon(Icons.mic_rounded), findsNothing);
+          expect(find.text('Go back'), findsOneWidget);
+          expect(tester.takeException(), isNull);
+        },
+      );
     }
+
+    testWidgets('local preview can play, pause and seek without uploading', (
+      tester,
+    ) async {
+      useSurface(tester, medium);
+      final recorded = FakeRecordedAudio();
+      final harness = build(recorded: recorded);
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+      await recordFor(tester, harness.clock, seconds: 5);
+
+      await tester.tap(find.byKey(const ValueKey('voice-preview-toggle')));
+      await tester.pump();
+      expect(harness.previewPlayer.playCalls, 1);
+      expect(harness.previewPlayer.lastSource, isA<BytesSource>());
+      expect(harness.service.publishCalls, 0);
+      expect(recorded.uploadCalls, 0);
+
+      await tester.tap(find.byKey(const ValueKey('voice-preview-toggle')));
+      await tester.pump();
+      expect(harness.previewPlayer.pauseCalls, 1);
+
+      final slider = tester.widget<Slider>(
+        find.byKey(const ValueKey('voice-preview-seek')),
+      );
+      slider.onChanged!(2500);
+      slider.onChangeEnd!(2500);
+      await tester.pump();
+      expect(
+        harness.previewPlayer.lastSeekPosition,
+        const Duration(milliseconds: 2500),
+      );
+      expect(harness.service.publishCalls, 0);
+    });
+
+    testWidgets('a preview failure is honest and keeps publish available', (
+      tester,
+    ) async {
+      useSurface(tester, medium);
+      final harness = build();
+      harness.previewPlayer.playError = StateError('decoder unavailable');
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+      await recordFor(tester, harness.clock, seconds: 5);
+
+      await tester.tap(find.byKey(const ValueKey('voice-preview-toggle')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('Preview could not be played'),
+        findsOneWidget,
+      );
+      expect(find.text('Publish'), findsOneWidget);
+      expect(find.textContaining('decoder unavailable'), findsNothing);
+    });
+
+    testWidgets('publish stops and disposes preview before discarding audio', (
+      tester,
+    ) async {
+      useSurface(tester, medium);
+      final lifecycle = <String>[];
+      final recorded = FakeRecordedAudio(lifecycle: lifecycle);
+      final preview = FakePreviewAudioPlayer(lifecycle: lifecycle);
+      final harness = build(recorded: recorded, previewPlayer: preview);
+      harness.service.lifecycle = lifecycle;
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+      await recordFor(tester, harness.clock, seconds: 5);
+      await tester.tap(find.byKey(const ValueKey('voice-preview-toggle')));
+      await tester.pump();
+
+      await tester.tap(find.text('Publish'));
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      expect(
+        lifecycle,
+        containsAllInOrder([
+          'player.stop',
+          'player.dispose',
+          'service.publish',
+          'audio.discard',
+        ]),
+      );
+      expect(
+        lifecycle.indexOf('player.dispose'),
+        lessThan(lifecycle.indexOf('service.publish')),
+      );
+    });
+
+    testWidgets('record again releases preview before the old take', (
+      tester,
+    ) async {
+      useSurface(tester, medium);
+      final lifecycle = <String>[];
+      final recorded = FakeRecordedAudio(lifecycle: lifecycle);
+      final preview = FakePreviewAudioPlayer(lifecycle: lifecycle);
+      final harness = build(recorded: recorded, previewPlayer: preview);
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+      await recordFor(tester, harness.clock, seconds: 5);
+      await tester.tap(find.byKey(const ValueKey('voice-preview-toggle')));
+      await tester.pump();
+
+      await tester.tap(find.text('Record again'));
+      await tester.pumpAndSettle();
+
+      expect(lifecycle.take(3), [
+        'player.stop',
+        'player.dispose',
+        'audio.discard',
+      ]);
+      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+    });
+
+    testWidgets('back releases preview before discarding the take', (
+      tester,
+    ) async {
+      useSurface(tester, medium);
+      final lifecycle = <String>[];
+      final recorded = FakeRecordedAudio(lifecycle: lifecycle);
+      final preview = FakePreviewAudioPlayer(lifecycle: lifecycle);
+      final harness = build(recorded: recorded, previewPlayer: preview);
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+      await recordFor(tester, harness.clock, seconds: 5);
+      await tester.tap(find.byKey(const ValueKey('voice-preview-toggle')));
+      await tester.pump();
+
+      await tester.tap(
+        find.byWidgetPredicate(
+          (widget) => widget is IconButton && widget.tooltip == 'Back',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(lifecycle.take(3), [
+        'player.stop',
+        'player.dispose',
+        'audio.discard',
+      ]);
+    });
 
     testWidgets('an insecure-origin refusal names the real cause', (
       tester,
@@ -180,10 +341,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('is blocked in this browser'), findsOneWidget);
-      expect(
-        find.textContaining("browser's site settings"),
-        findsOneWidget,
-      );
+      expect(find.textContaining("browser's site settings"), findsOneWidget);
       // Recoverable: the screen stays usable rather than becoming terminal.
       expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
       expect(find.text('Recording is not available here'), findsNothing);
@@ -309,11 +467,14 @@ void main() {
 
         await recordFor(tester, harness.clock, seconds: 3);
 
-        expect(find.byType(TextField), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('voice-moment-caption')),
+          findsOneWidget,
+        );
         expect(find.text('Publish'), findsOneWidget);
         expect(find.text('Record again'), findsOneWidget);
         expect(
-          find.text('Add a caption, then publish — or record again.'),
+          find.text('Preview your take, then publish — or record again.'),
           findsOneWidget,
         );
         expect(tester.takeException(), isNull);
@@ -331,7 +492,10 @@ void main() {
 
       await recordFor(tester, harness.clock, seconds: 5);
 
-      await tester.enterText(find.byType(TextField), 'Morning thoughts');
+      await tester.enterText(
+        find.byKey(const ValueKey('voice-moment-caption')),
+        'Morning thoughts',
+      );
       await tester.pump();
       await tester.tap(find.text('Publish'));
       await tester.pumpAndSettle();
@@ -362,7 +526,11 @@ void main() {
       expect(find.text('Publishing…'), findsOneWidget);
       expect(find.text('Publishing your Voice Moment…'), findsOneWidget);
       expect(
-        tester.widget<TextField>(find.byType(TextField)).enabled,
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('voice-moment-caption')),
+            )
+            .enabled,
         false,
       );
       expect(
@@ -413,6 +581,63 @@ void main() {
       expect(harness.service.publishCalls, 2);
     });
 
+    testWidgets(
+      'record again after failed publish abandons retry identity before Blob discard',
+      (tester) async {
+        useSurface(tester, medium);
+        final lifecycle = <String>[];
+        final recorded = FakeRecordedAudio(lifecycle: lifecycle);
+        final harness = build(recorded: recorded);
+        harness.service
+          ..lifecycle = lifecycle
+          ..failure = StateError('publish failed');
+        await tester.pumpWidget(host(harness.screen));
+        await tester.pumpAndSettle();
+
+        await recordFor(tester, harness.clock, seconds: 3);
+        await tester.tap(find.text('Publish'));
+        await tester.pumpAndSettle();
+        expect(recorded.discarded, false);
+
+        await tester.ensureVisible(find.text('Record again'));
+        await tester.tap(find.text('Record again'));
+        await tester.pumpAndSettle();
+
+        expect(harness.service.abandonCalls, 1);
+        expect(harness.service.abandonedAudio, same(recorded));
+        expect(recorded.discarded, true);
+        expect(
+          lifecycle.indexOf('service.abandon'),
+          lessThan(lifecycle.indexOf('audio.discard')),
+        );
+      },
+    );
+
+    testWidgets('Back after failed publish abandons the retained retry', (
+      tester,
+    ) async {
+      useSurface(tester, medium);
+      final recorded = FakeRecordedAudio();
+      final harness = build(recorded: recorded);
+      harness.service.failure = StateError('publish failed');
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+
+      await recordFor(tester, harness.clock, seconds: 3);
+      await tester.tap(find.text('Publish'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byWidgetPredicate(
+          (widget) => widget is IconButton && widget.tooltip == 'Back',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(harness.service.abandonCalls, 1);
+      expect(harness.service.abandonedAudio, same(recorded));
+      expect(recorded.discarded, true);
+    });
+
     testWidgets('a raw upload exception never reaches the user verbatim', (
       tester,
     ) async {
@@ -449,7 +674,7 @@ void main() {
 
       expect(recorded.discarded, true);
       expect(find.text('Publish'), findsNothing);
-      expect(find.text('Tap the microphone to start.'), findsOneWidget);
+      expect(find.text('Recording — tap to stop.'), findsOneWidget);
     });
   });
 
@@ -567,7 +792,7 @@ void main() {
 
       await recordFor(tester, harness.clock, seconds: 3);
       await tester.enterText(
-        find.byType(TextField),
+        find.byKey(const ValueKey('voice-moment-caption')),
         'A caption that runs all the way to the one hundred and forty '
         'character limit that this field allows, wrapping across lines.',
       );
@@ -603,6 +828,36 @@ void main() {
       expect(find.text('Recording is not available here'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets('review controls survive a 320px viewport at 2x text', (
+      tester,
+    ) async {
+      const surface = Size(320, 640);
+      useSurface(tester, surface);
+      final harness = build();
+      await tester.pumpWidget(host(harness.screen, textScale: 2));
+      await tester.pumpAndSettle();
+      await recordFor(tester, harness.clock, seconds: 5);
+
+      final controls = <Finder>[
+        find.byKey(const ValueKey('voice-preview-toggle')),
+        find.byKey(const ValueKey('availability-timed')),
+        find.byKey(const ValueKey('availability-permanent')),
+        find.byKey(const ValueKey('availability-amount')),
+        find.byKey(const ValueKey('availability-unit')),
+        find.text('Publish'),
+        find.text('Record again'),
+      ];
+      for (final control in controls) {
+        expect(control, findsOneWidget);
+        await tester.ensureVisible(control);
+        await tester.pumpAndSettle();
+        final rect = tester.getRect(control);
+        expect(rect.top, greaterThanOrEqualTo(0));
+        expect(rect.bottom, lessThanOrEqualTo(surface.height));
+      }
+      expect(tester.takeException(), isNull);
+    });
   });
 
   group('visual regressions from the rendered-UI audit', () {
@@ -629,7 +884,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('0:60 / 1:00'), findsNothing);
-      expect(find.text('1:00 / 1:00'), findsOneWidget);
+      expect(find.text('1:00'), findsWidgets);
       expect(find.text('Publish'), findsOneWidget, reason: 'auto-stopped');
     });
 
@@ -694,28 +949,30 @@ void main() {
       );
     });
 
-    testWidgets('V4: the desktop column reports the take, not pre-flight tips',
-        (tester) async {
-      useSurface(tester, wide);
-      final harness = build();
-      await tester.pumpWidget(host(harness.screen));
-      await tester.pumpAndSettle();
+    testWidgets(
+      'V4: the desktop column reports the take, not pre-flight tips',
+      (tester) async {
+        useSurface(tester, wide);
+        final harness = build();
+        await tester.pumpWidget(host(harness.screen));
+        await tester.pumpAndSettle();
 
-      expect(find.text('Before you start'), findsOneWidget);
+        expect(find.text('Before you start'), findsOneWidget);
 
-      await tester.tap(find.byIcon(Icons.mic_rounded));
-      await tester.pump();
-      await tester.pump();
+        await tester.tap(find.byIcon(Icons.mic_rounded));
+        await tester.pump();
+        await tester.pump();
 
-      expect(
-        find.text('Before you start'),
-        findsNothing,
-        reason: 'advice for a moment that has already passed',
-      );
-      expect(find.text('Recording'), findsOneWidget);
-      expect(find.text('Input level'), findsOneWidget);
-      expect(find.text('Remaining'), findsOneWidget);
-    });
+        expect(
+          find.text('Before you start'),
+          findsNothing,
+          reason: 'advice for a moment that has already passed',
+        );
+        expect(find.text('Recording'), findsOneWidget);
+        expect(find.text('Input level'), findsOneWidget);
+        expect(find.text('Remaining'), findsOneWidget);
+      },
+    );
 
     testWidgets('V4: the desktop stage shares one alignment axis', (
       tester,

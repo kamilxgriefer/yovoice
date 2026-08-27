@@ -3,8 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/features/creator/data/models/creator_pinned_post.dart';
 import 'package:yovoice/features/creator/data/services/creator_pinned_post_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_boundary.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
@@ -19,12 +22,20 @@ class CreatorPinnedPostsScreen extends StatefulWidget {
     this.pinnedPostService,
     this.momentService,
     this.isRootTab = false,
+    this.expiryClock,
+    this.expiryTimerFactory,
     super.key,
   });
 
   final CreatorPinnedPostService? pinnedPostService;
   final MomentService? momentService;
   final bool isRootTab;
+
+  @visibleForTesting
+  final MomentExpiryClock? expiryClock;
+
+  @visibleForTesting
+  final MomentExpiryTimerFactory? expiryTimerFactory;
 
   @override
   State<CreatorPinnedPostsScreen> createState() =>
@@ -40,6 +51,31 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
       .watchMyMoments();
   String? _pendingMomentId;
   bool _unpinning = false;
+  final FocusNode _expiryRecoveryFocus = FocusNode(
+    debugLabel: 'Pinned posts heading after expiry',
+  );
+  final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
+
+  @override
+  void dispose() {
+    _expiryRecoveryFocus.dispose();
+    super.dispose();
+  }
+
+  void _handleExpiryDeadline(DateTime deadline) {
+    final previousFocus = FocusManager.instance.primaryFocus;
+    final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
+    _expiryAnnouncer.announce(
+      context,
+      transition: 'pinned-management-${deadline.microsecondsSinceEpoch}',
+      message: 'Voice Moment expired and is no longer available to pin.',
+    );
+    recoverMomentExpiryFocusAfterFrame(
+      context: context,
+      fallback: _expiryRecoveryFocus,
+      previousFocus: recoverFocus ? previousFocus : null,
+    );
+  }
 
   Future<void> _setPin(String? momentId) async {
     if (_pendingMomentId != null || _unpinning) return;
@@ -105,13 +141,25 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
                       child: CircularProgressIndicator(color: _accent),
                     );
                   }
-                  final moments = momentSnapshot.data!
+                  final snapshotMoments = momentSnapshot.data!;
+                  final canonicalMoments = snapshotMoments
                       .where((moment) => moment.isCanonicalPublished)
                       .toList(growable: false);
-                  return _body(
-                    context,
-                    moments: moments,
-                    pin: pinSnapshot.data,
+                  return MomentExpiryListBuilder(
+                    moments: canonicalMoments,
+                    onDeadline: _handleExpiryDeadline,
+                    clock: widget.expiryClock,
+                    timerFactory: widget.expiryTimerFactory,
+                    builder: (context, now) {
+                      final moments = canonicalMoments
+                          .where((moment) => moment.isActiveAt(now))
+                          .toList(growable: false);
+                      return _body(
+                        context,
+                        moments: moments,
+                        pin: pinSnapshot.data,
+                      );
+                    },
                   );
                 },
               );
@@ -143,24 +191,28 @@ class _CreatorPinnedPostsScreenState extends State<CreatorPinnedPostsScreen> {
               ),
               const SizedBox(width: 12),
             ],
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Pinned post',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -.5,
+            Expanded(
+              child: MomentExpiryFocusTarget(
+                focusNode: _expiryRecoveryFocus,
+                semanticLabel: 'Pinned post',
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Pinned post',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -.5,
+                      ),
                     ),
-                  ),
-                  Text(
-                    'Put one real Voice Moment at the top of your profile.',
-                    style: TextStyle(color: _muted, fontSize: 12.5),
-                  ),
-                ],
+                    Text(
+                      'Put one real Voice Moment at the top of your profile.',
+                      style: TextStyle(color: _muted, fontSize: 12.5),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],

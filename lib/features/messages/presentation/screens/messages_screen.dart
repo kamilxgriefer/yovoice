@@ -79,7 +79,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
   static const Color _primary = Color(0xFF9D20FF);
 
   late final MessageService _messageService =
-      widget.messageService ?? MessageService();
+      widget.messageService ?? MessageService.live;
   late final FriendService _friendService =
       widget.friendService ?? FriendService();
   final TextEditingController _searchController = TextEditingController();

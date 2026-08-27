@@ -6,6 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/features/creator/data/models/creator_pinned_post.dart';
 import 'package:yovoice/features/creator/data/services/creator_pinned_post_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_boundary.dart';
 
 const _pinAccent = Color(0xFFB932FF);
 const _pinSurface = Color(0xFF17101F);
@@ -21,6 +24,9 @@ class CreatorPinnedMomentCard extends StatefulWidget {
     this.onOpen,
     this.compact = false,
     this.outerPadding = EdgeInsets.zero,
+    this.playerFactory,
+    this.expiryClock,
+    this.expiryTimerFactory,
     super.key,
   });
 
@@ -29,6 +35,15 @@ class CreatorPinnedMomentCard extends StatefulWidget {
   final ValueChanged<VoiceMoment>? onOpen;
   final bool compact;
   final EdgeInsetsGeometry outerPadding;
+
+  @visibleForTesting
+  final AudioPlayer Function()? playerFactory;
+
+  @visibleForTesting
+  final MomentExpiryClock? expiryClock;
+
+  @visibleForTesting
+  final MomentExpiryTimerFactory? expiryTimerFactory;
 
   @override
   State<CreatorPinnedMomentCard> createState() =>
@@ -39,6 +54,7 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
   late CreatorPinnedPostService _service;
   late Stream<PinnedVoiceMoment?> _stream;
   final GlobalKey<_PinnedMomentPlayButtonState> _playButtonKey = GlobalKey();
+  final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
 
   @override
   void initState() {
@@ -65,6 +81,27 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
     if (mounted) widget.onOpen?.call(moment);
   }
 
+  void _handleExpired(VoiceMoment moment) {
+    final previousFocus = FocusManager.instance.primaryFocus;
+    final recoverFocus = momentExpiryFocusIsWithin(context, previousFocus);
+    final player = _playButtonKey.currentState;
+    if (player != null) unawaited(player.stopPlayback());
+    _expiryAnnouncer.announce(
+      context,
+      transition: 'public-pin-${moment.id}',
+      message: 'Pinned Voice Moment expired.',
+    );
+    if (!recoverFocus || previousFocus == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          previousFocus.hasFocus ||
+          !momentExpirySurfaceIsVisible(context)) {
+        return;
+      }
+      FocusScope.of(context).nextFocus();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<PinnedVoiceMoment?>(
@@ -89,7 +126,11 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
           ),
           child: Row(
             children: [
-              _PinnedMomentPlayButton(key: _playButtonKey, moment: moment),
+              _PinnedMomentPlayButton(
+                key: _playButtonKey,
+                moment: moment,
+                playerFactory: widget.playerFactory,
+              ),
               const SizedBox(width: 13),
               Expanded(
                 child: Column(
@@ -160,16 +201,27 @@ class _CreatorPinnedMomentCardState extends State<CreatorPinnedMomentCard> {
             ],
           ),
         );
-        return Padding(padding: widget.outerPadding, child: content);
+        return MomentExpiryBoundary(
+          moment: moment,
+          clock: widget.expiryClock,
+          timerFactory: widget.expiryTimerFactory,
+          onExpired: () => _handleExpired(moment),
+          child: Padding(padding: widget.outerPadding, child: content),
+        );
       },
     );
   }
 }
 
 class _PinnedMomentPlayButton extends StatefulWidget {
-  const _PinnedMomentPlayButton({required this.moment, super.key});
+  const _PinnedMomentPlayButton({
+    required this.moment,
+    this.playerFactory,
+    super.key,
+  });
 
   final VoiceMoment moment;
+  final AudioPlayer Function()? playerFactory;
 
   @override
   State<_PinnedMomentPlayButton> createState() =>
@@ -177,7 +229,7 @@ class _PinnedMomentPlayButton extends StatefulWidget {
 }
 
 class _PinnedMomentPlayButtonState extends State<_PinnedMomentPlayButton> {
-  final AudioPlayer _player = AudioPlayer();
+  late final AudioPlayer _player = (widget.playerFactory ?? AudioPlayer.new)();
   late final StreamSubscription<void> _completeSubscription;
   bool _playing = false;
   bool _changingPlayback = false;

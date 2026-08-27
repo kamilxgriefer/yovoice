@@ -266,7 +266,10 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
       if (!mounted) return;
       unawaited(UiSoundService.instance.play(UiSound.roomCreated));
       await Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(builder: (_) => RoomEntryScreen(room: room)),
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              RoomEntryScreen(room: room, playInitialJoinSound: false),
+        ),
       );
     } catch (error) {
       if (!mounted) return;

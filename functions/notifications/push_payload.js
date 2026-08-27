@@ -18,7 +18,7 @@ function buildPushMessage({
     android: {
       priority: "high",
       notification: {
-        channelId: "yovoice_activity_v2",
+        channelId: "yovoice_activity_v3",
         sound: "yovoice_notification",
         defaultVibrateTimings: true,
       },

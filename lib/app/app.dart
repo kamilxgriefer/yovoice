@@ -184,13 +184,23 @@ class ForegroundNotificationStreamSource {
   /// Called lazily on each sign-in, never before one — the feed query
   /// requires a signed-in user.
   final Stream<List<AppNotification>> Function() watchNotifications;
-  final void Function(AppNotification notification) showBanner;
+
+  /// Returns true only after the app-level messenger accepted the banner.
+  /// False keeps the notification pending so a later frame/snapshot can retry.
+  final bool Function(AppNotification notification) showBanner;
 
   StreamSubscription<User?>? _authSubscription;
   StreamSubscription<List<AppNotification>>? _feedSubscription;
   bool _baselineRecorded = false;
   final Set<String> _knownIds = <String>{};
   final Set<String> _banneredIds = <String>{};
+  final Map<String, int> _pushClaims = <String, int>{};
+  final Set<String> _retryFromFirestoreIds = <String>{};
+  final Map<String, AppNotification> _pendingNotifications =
+      <String, AppNotification>{};
+  final Map<String, AppNotification> _latestNotifications =
+      <String, AppNotification>{};
+  int _nextClaimGeneration = 0;
 
   void start() {
     _authSubscription ??= authStates.listen(_handleAuthState);
@@ -201,6 +211,11 @@ class ForegroundNotificationStreamSource {
     _feedSubscription = null;
     _baselineRecorded = false;
     _knownIds.clear();
+    _banneredIds.clear();
+    _pushClaims.clear();
+    _retryFromFirestoreIds.clear();
+    _pendingNotifications.clear();
+    _latestNotifications.clear();
     if (user == null) return;
     _feedSubscription = watchNotifications().listen(
       _handleSnapshot,
@@ -211,29 +226,133 @@ class ForegroundNotificationStreamSource {
   }
 
   void _handleSnapshot(List<AppNotification> notifications) {
+    final snapshotIds = notifications
+        .map((notification) => notification.id)
+        .toSet();
+    _latestNotifications.removeWhere((id, _) => !snapshotIds.contains(id));
+    for (final notification in notifications) {
+      _latestNotifications[notification.id] = notification;
+    }
     if (!_baselineRecorded) {
       _baselineRecorded = true;
       for (final notification in notifications) {
         _knownIds.add(notification.id);
+        // A failed/unfinished FCM presentation proves this document is a live
+        // foreground arrival rather than old backlog. Preserve the normal
+        // baseline rule for every other document.
+        if (_pushClaims.containsKey(notification.id) ||
+            _retryFromFirestoreIds.contains(notification.id)) {
+          _considerForBanner(notification);
+        }
       }
       return;
     }
     for (final notification in notifications) {
-      if (!_knownIds.add(notification.id)) continue;
-      if (notification.isRead || notification.bellSuppressed) continue;
-      if (!_banneredIds.add(notification.id)) continue;
-      showBanner(notification);
+      final isNew = _knownIds.add(notification.id);
+      if (!isNew &&
+          !_pendingNotifications.containsKey(notification.id) &&
+          !_retryFromFirestoreIds.contains(notification.id)) {
+        continue;
+      }
+      _considerForBanner(notification);
     }
   }
 
-  /// Dedupe gate for the FCM foreground path: false when [notificationId]
-  /// already produced a banner this session (either path); records it as
-  /// shown otherwise. A payload without an id cannot be deduped and is
-  /// always allowed through.
-  bool registerPushBanner(String? notificationId) {
-    if (notificationId == null || notificationId.isEmpty) return true;
-    _knownIds.add(notificationId);
-    return _banneredIds.add(notificationId);
+  void _considerForBanner(AppNotification notification) {
+    final id = notification.id;
+    if (notification.isRead || notification.bellSuppressed) {
+      _pendingNotifications.remove(id);
+      _retryFromFirestoreIds.remove(id);
+      return;
+    }
+    if (_banneredIds.contains(id)) {
+      _pendingNotifications.remove(id);
+      _retryFromFirestoreIds.remove(id);
+      return;
+    }
+    if (_pushClaims.containsKey(id)) {
+      _pendingNotifications[id] = notification;
+      return;
+    }
+    _tryShowBanner(notification);
+  }
+
+  void _tryShowBanner(AppNotification notification) {
+    final id = notification.id;
+    var presented = false;
+    try {
+      presented = showBanner(notification);
+    } catch (error) {
+      debugPrint(
+        'ForegroundNotificationStreamSource: banner presentation failed '
+        '(${error.runtimeType}).',
+      );
+    }
+    if (presented) {
+      _banneredIds.add(id);
+      _pendingNotifications.remove(id);
+      _retryFromFirestoreIds.remove(id);
+      return;
+    }
+    _pendingNotifications[id] = notification;
+    _retryFromFirestoreIds.add(id);
+  }
+
+  /// Reserves an id for FCM without marking it as shown. The returned token
+  /// commits only after a native or in-app surface accepted the presentation;
+  /// failure releases the reservation and immediately hands any deferred
+  /// Firestore document back to the stream path.
+  ForegroundNotificationClaimDecision claimPushBanner(String? notificationId) {
+    if (notificationId == null || notificationId.isEmpty) {
+      return const ForegroundNotificationClaimDecision.allowUntracked();
+    }
+    if (_banneredIds.contains(notificationId) ||
+        _pushClaims.containsKey(notificationId)) {
+      return const ForegroundNotificationClaimDecision.skip();
+    }
+    final generation = ++_nextClaimGeneration;
+    _pushClaims[notificationId] = generation;
+    return ForegroundNotificationClaimDecision.claimed(
+      ForegroundNotificationClaim(
+        (presented) => _completePushBanner(
+          notificationId,
+          generation: generation,
+          presented: presented,
+        ),
+      ),
+    );
+  }
+
+  void _completePushBanner(
+    String notificationId, {
+    required int generation,
+    required bool presented,
+  }) {
+    // An old platform Future may finish after sign-out/sign-in or after a new
+    // delivery claimed the same id. A generation token cannot settle that
+    // newer account/delivery's reservation.
+    if (_pushClaims[notificationId] != generation) return;
+    _pushClaims.remove(notificationId);
+    if (presented) {
+      _banneredIds.add(notificationId);
+      _pendingNotifications.remove(notificationId);
+      _retryFromFirestoreIds.remove(notificationId);
+      return;
+    }
+    _retryFromFirestoreIds.add(notificationId);
+    final pending =
+        _pendingNotifications[notificationId] ??
+        _latestNotifications[notificationId];
+    if (pending != null) _considerForBanner(pending);
+  }
+
+  /// Retries only notifications whose prior presentation returned false. The
+  /// app calls this after the first frame when ScaffoldMessenger becomes ready.
+  void retryPendingBanners() {
+    final pending = _pendingNotifications.values.toList(growable: false);
+    for (final notification in pending) {
+      _considerForBanner(notification);
+    }
   }
 
   Future<void> dispose() async {
@@ -256,6 +375,7 @@ class YoVoiceApp extends StatefulWidget {
 class _YoVoiceAppState extends State<YoVoiceApp> {
   final _messengerKey = GlobalKey<ScaffoldMessengerState>();
   ForegroundNotificationStreamSource? _streamNotifications;
+  bool _foregroundRetryScheduled = false;
 
   @override
   void initState() {
@@ -277,20 +397,23 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
     final streamNotifications = ForegroundNotificationStreamSource(
       authStates: FirebaseAuth.instance.authStateChanges(),
       watchNotifications: () => NotificationService().watchNotifications(),
-      showBanner: (notification) => _showForegroundBanner(
-        title: notification.title,
-        body: null,
-        type: notification.type,
-        targetId: notification.targetId,
-        actorId: notification.actorId,
-        notificationId: notification.id,
-      ),
+      showBanner: (notification) {
+        return _showForegroundBanner(
+          title: notification.title,
+          body: null,
+          type: notification.type,
+          targetId: notification.targetId,
+          actorId: notification.actorId,
+          notificationId: notification.id,
+        );
+      },
     )..start();
     _streamNotifications = streamNotifications;
-    PushNotificationService.instance.onWebForegroundNotification =
+    PushNotificationService.instance.claimForegroundNotification =
+        streamNotifications.claimPushBanner;
+    PushNotificationService.instance.onInAppForegroundNotification =
         (title, body, type, targetId, actorId, notificationId) {
-          if (!streamNotifications.registerPushBanner(notificationId)) return;
-          _showForegroundBanner(
+          return _showForegroundBanner(
             title: title,
             body: body,
             type: type,
@@ -303,11 +426,13 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
 
   @override
   void dispose() {
+    PushNotificationService.instance.claimForegroundNotification = null;
+    PushNotificationService.instance.onInAppForegroundNotification = null;
     unawaited(_streamNotifications?.dispose());
     super.dispose();
   }
 
-  void _showForegroundBanner({
+  bool _showForegroundBanner({
     required String title,
     required String? body,
     required NotificationType type,
@@ -315,9 +440,11 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
     required String? actorId,
     String? notificationId,
   }) {
-    unawaited(UiSoundService.instance.play(UiSound.notification));
     final messenger = _messengerKey.currentState;
-    if (messenger == null) return;
+    if (messenger == null) {
+      _scheduleForegroundBannerRetry();
+      return false;
+    }
     final navigatorContext = notificationNavigatorKey.currentContext;
     // Voice-room control docks grow with accessibility text scaling.
     // Keep foreground notifications above them instead of covering the
@@ -327,19 +454,42 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
           ? TextScaler.noScaling
           : MediaQuery.textScalerOf(navigatorContext),
     );
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        buildForegroundNotificationBanner(
-          title: title,
-          body: body,
-          type: type,
-          targetId: targetId,
-          actorId: actorId,
-          notificationId: notificationId,
-          bottomClearance: bottomClearance,
-        ),
+    try {
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          buildForegroundNotificationBanner(
+            title: title,
+            body: body,
+            type: type,
+            targetId: targetId,
+            actorId: actorId,
+            notificationId: notificationId,
+            bottomClearance: bottomClearance,
+          ),
+        );
+    } catch (error) {
+      debugPrint(
+        'YoVoiceApp: foreground banner was not accepted '
+        '(${error.runtimeType}).',
       );
+      _scheduleForegroundBannerRetry();
+      return false;
+    }
+    // Play only after the visible, deep-linkable surface was accepted. This
+    // keeps the completion signal equivalent to one audible + visible event.
+    unawaited(UiSoundService.instance.play(UiSound.notification));
+    return true;
+  }
+
+  void _scheduleForegroundBannerRetry() {
+    if (_foregroundRetryScheduled) return;
+    _foregroundRetryScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _foregroundRetryScheduled = false;
+      if (!mounted) return;
+      _streamNotifications?.retryPendingBanners();
+    });
   }
 
   @override

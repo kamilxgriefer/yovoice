@@ -24,6 +24,13 @@ const {
   timestampMillis,
   transactionGetAll,
 } = require("../integrity/guards");
+const {
+  MAX_ACTIVE_MOMENTS,
+  assertActiveMomentCapacity,
+  exactPublishedMomentsQuery,
+  momentCapacityLedgerReference,
+  touchMomentCapacityLedger,
+} = require("./capacity");
 
 const DEFAULT_LIMITS = Object.freeze({
   uploadReserve: { maxEvents: 5, windowMs: 10 * 60_000 },
@@ -40,8 +47,9 @@ const DEFAULT_LIMITS = Object.freeze({
 //
 // A published Voice Moment carries `expiresAt = createdAt + availability`,
 // stamped by finalizeMomentDraft inside the publish transaction. The
-// availability is the caller's `availabilityHours` — exactly one of
-// MOMENT_AVAILABILITY_HOURS, defaulting to 24 when absent (the original
+// availability is the caller's `availabilityHours` — any safe whole-hour
+// value from MIN_MOMENT_AVAILABILITY_HOURS through
+// MAX_MOMENT_AVAILABILITY_HOURS, defaulting to 24 when absent (the original
 // contract, byte for byte) — or the literal string "permanent", which
 // writes NO expiresAt field at all: null-or-missing expiresAt MEANS a
 // Moment that stays published until its author deletes it, everywhere
@@ -57,32 +65,35 @@ const DEFAULT_LIMITS = Object.freeze({
 //
 // MAX_ACTIVE_MOMENTS caps how many simultaneously live (published, not yet
 // expired — permanent counts, forever) Moments one author may hold — the
-// story-shelf size the product is designed around. ACTIVE_MOMENT_SCAN_LIMIT
-// bounds the cap's counting query over the author's newest documents.
-// Reserves are rate-limited to 5 per 10 minutes, so pushing a live story
-// past the newest 100 author documents requires a deliberate, sustained
-// draft flood (a permanent Moment CAN be arbitrarily old, but every
-// non-live document above it in the scan was flood-manufactured) — and the
-// only failure direction is an UNDER-count, which lets a determined flooder
-// briefly exceed the cap rather than ever locking an honest author out.
+// story-shelf size the product is designed around. The cap is checked both
+// when a draft is reserved (an advisory fast refusal when already full) and,
+// critically, again in the publish transaction. Both checks query EVERY
+// published Moment for the author, so no number of newer draft documents can
+// hide an old permanent story. The authoritative finalization also reads and
+// advances the author's server-only capacity ledger: one shared mutex makes
+// competing finalizations, deletions and expirations serialize even though
+// each writes a different Moment document. Expired deadlines are filtered in
+// memory immediately, before the scheduled sweep catches up.
 // ---------------------------------------------------------------------------
 const HOUR_MS = 60 * 60_000;
 const MOMENT_TTL_MS = 24 * HOUR_MS;
-const MOMENT_AVAILABILITY_HOURS = Object.freeze([24, 72, 168, 720]);
+const MIN_MOMENT_AVAILABILITY_HOURS = 24;
+const MAX_MOMENT_AVAILABILITY_HOURS = 720;
 const PERMANENT_AVAILABILITY = "permanent";
-const MAX_ACTIVE_MOMENTS = 10;
-const ACTIVE_MOMENT_SCAN_LIMIT = 100;
 
 /// The operator-chosen availability of a finalize request. Strict on
-/// purpose: a whitelisted hour count or the exact string "permanent" —
-/// not null, not "24", not an arbitrary number of hours. Absent defaults
-/// to 24, which is precisely the deployed behaviour, so pre-availability
-/// clients keep publishing 24-hour stories without changing a byte.
+/// purpose: a safe whole-hour count in the supported range or the exact
+/// string "permanent" — not null, not "24", and not a fractional value.
+/// Absent defaults to 24, which is precisely the deployed behaviour, so
+/// pre-availability clients keep publishing 24-hour stories without
+/// changing a byte.
 function momentAvailability(value) {
-  if (value === undefined) return 24;
+  if (value === undefined) return MIN_MOMENT_AVAILABILITY_HOURS;
   if (value === PERMANENT_AVAILABILITY) return PERMANENT_AVAILABILITY;
-  if (MOMENT_AVAILABILITY_HOURS.includes(value)) return value;
-  return fail("invalid-argument", "availabilityHours is invalid.");
+  return requireSafeInteger(value, "availabilityHours", {
+    min: MIN_MOMENT_AVAILABILITY_HOURS,
+    max: MAX_MOMENT_AVAILABILITY_HOURS,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +249,7 @@ function reportIdentityInput(target, reason, note) {
 function validateMoment(snapshot, momentId, {
   published = undefined,
   allowExpired = false,
+  activeAtMs = null,
 } = {}) {
   if (!snapshot.exists) fail("not-found", "The Voice Moment does not exist.");
   const data = snapshot.data() ?? {};
@@ -332,6 +344,20 @@ function validateMoment(snapshot, momentId, {
         !AUDIO_TYPES.has(data.mediaContentType) ||
         timestampMillis(data.publishedAt) === null) {
       fail("data-loss", "The published Voice Moment media state is malformed.");
+    }
+    // The scheduled sweep is the durable state transition, not a grace
+    // period. Engagement callables pass their server request time here so a
+    // Moment stops accepting new likes/comments exactly at its deadline even
+    // if the ten-minute sweeper has not flipped `status` yet. A missing
+    // expiresAt remains the explicit permanent shape.
+    if (activeAtMs !== null) {
+      if (!Number.isSafeInteger(activeAtMs) || activeAtMs < 0) {
+        throw new TypeError("activeAtMs must be epoch milliseconds.");
+      }
+      const expiresAtMs = hasExpiresAt ? timestampMillis(data.expiresAt) : null;
+      if (expiresAtMs !== null && expiresAtMs <= activeAtMs) {
+        fail("failed-precondition", "This Voice Moment has expired.");
+      }
     }
   } else if (data.status !== "uploading" || data.audioUrl !== null ||
       data.mediaGeneration !== null || data.mediaSize !== null ||
@@ -527,6 +553,37 @@ function createMomentIntegrityService({
     });
   }
 
+  // A reserve can be rejected only after an exact published-set query. Keep
+  // that query outside the rate-limit transaction so a refusal cannot roll
+  // the quota write back with the rest of the operation. A completed
+  // operation ledger is still a free idempotent replay: it returns before the
+  // attempt budget is touched.
+  async function beginOperationAttempt({
+    identity,
+    kind,
+    uid,
+    scope,
+    timing,
+  }) {
+    return db.runTransaction(async (transaction) => {
+      const ledgerRef = ledgerReference(identity);
+      const rateRef = limitReference(scope, uid);
+      const [ledger, rate] = await transactionGetAll(
+        transaction,
+        ledgerRef,
+        rateRef,
+      );
+      const replay = assertLedgerReplay(ledger, {
+        kind,
+        uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return { replay };
+      consume(transaction, rate, rateRef, scope, uid, timing);
+      return { replay: null };
+    });
+  }
+
   async function beginStoragePreflight({
     identity,
     kind,
@@ -557,17 +614,22 @@ function createMomentIntegrityService({
             existing.inputHash !== identity.inputHash) {
           fail("already-exists", "requestId was reused for another upload.");
         }
-        return { replay: null };
+      } else {
+        transaction.create(preflightRef, {
+          schemaVersion: 1,
+          kind,
+          ownerId: uid,
+          requestId,
+          inputHash: identity.inputHash,
+          createdAt: timing.now,
+        });
       }
+      // An existing preflight is not a completed operation. Every retry that
+      // may proceed to Storage therefore consumes another attempt; only the
+      // operation-ledger replay above is free. This prevents one permanently
+      // invalid upload and requestId from becoming an unbounded Storage-read
+      // oracle.
       consume(transaction, rate, rateRef, scope, uid, timing);
-      transaction.create(preflightRef, {
-        schemaVersion: 1,
-        kind,
-        ownerId: uid,
-        requestId,
-        inputHash: identity.inputHash,
-        createdAt: timing.now,
-      });
       return { replay: null };
     });
   }
@@ -597,15 +659,22 @@ function createMomentIntegrityService({
     const identity = operationIdentity("moment.reserve", auth.uid, requestId, input);
     const timing = time();
 
+    const attempt = await beginOperationAttempt({
+      identity,
+      kind: "moment.reserve",
+      uid: auth.uid,
+      scope: "uploadReserve",
+      timing,
+    });
+    if (attempt.replay) return attempt.replay;
+
     return db.runTransaction(async (transaction) => {
       const ledgerRef = ledgerReference(identity);
-      const rateRef = limitReference("uploadReserve", auth.uid);
       const momentRef = db.doc(`voiceMoments/${momentId}`);
-      const [ledger, rate, existing, profileSnapshot, publicProfile, restriction] =
+      const [ledger, existing, profileSnapshot, publicProfile, restriction] =
         await transactionGetAll(
           transaction,
           ledgerRef,
-          rateRef,
           momentRef,
           db.doc(`users/${auth.uid}`),
           db.doc(`publicProfiles/${auth.uid}`),
@@ -619,54 +688,14 @@ function createMomentIntegrityService({
       if (replay) return replay;
       activeProfile(profileSnapshot, "Your");
       assertNotRestricted(restriction, "Your", timing.nowMs);
-      // ACTIVE-STORY CAP. Counted inside the transaction so the count and
-      // the reservation commit or abort together, and counted in MEMORY
-      // over a bounded newest-first scan rather than in the query — the
-      // filter is `isPublished && (expiresAt missing || expiresAt > now)`,
-      // and `now` moves while missing fields never match a range filter,
-      // so no index can serve it directly. The query itself needs the
-      // deployed (authorId ASC, createdAt DESC) composite — the same one
-      // the client's story-chain reads use. A refusal aborts the
-      // transaction, so a capped attempt consumes neither the ledger nor
-      // rate budget: the identical requestId succeeds once a slot frees.
+      // Advisory active-story cap. The query contains published documents
+      // only and has no limit, so unpublished filler drafts cannot hide an
+      // older permanent Moment. Finalize repeats this under the capacity
+      // mutex and remains the authoritative enforcement point.
       const authoredMoments = await transaction.get(
-        db.collection("voiceMoments")
-          .where("authorId", "==", auth.uid)
-          .orderBy("createdAt", "desc")
-          .limit(ACTIVE_MOMENT_SCAN_LIMIT),
+        exactPublishedMomentsQuery(db, auth.uid),
       );
-      let activeCount = 0;
-      for (const candidate of authoredMoments.docs) {
-        const candidateData = candidate.data() ?? {};
-        const candidateExpiresAtMs = timestampMillis(candidateData.expiresAt);
-        // Active means published and not yet past a deadline — and a
-        // published Moment with NO deadline is the "permanent"
-        // availability (the shape legacy pre-expiry documents share),
-        // which stays live until its author deletes it. It occupies a cap
-        // slot for as long as it exists: the honest reading of "10
-        // simultaneously active", and deletion is the documented exit.
-        if (candidateData.isPublished === true &&
-            (candidateExpiresAtMs === null ||
-              candidateExpiresAtMs > timing.nowMs)) {
-          activeCount += 1;
-        }
-      }
-      if (activeCount >= MAX_ACTIVE_MOMENTS) {
-        fail(
-          "resource-exhausted",
-          `You already have ${MAX_ACTIVE_MOMENTS} active Voice Moments. ` +
-            "Wait for one to expire, or delete one to make room for a " +
-            "new recording.",
-        );
-      }
-      consume(
-        transaction,
-        rate,
-        rateRef,
-        "uploadReserve",
-        auth.uid,
-        timing,
-      );
+      assertActiveMomentCapacity(authoredMoments, timing.nowMs);
       if (existing.exists) {
         fail("data-loss", "A Voice Moment exists without its reservation ledger.");
       }
@@ -737,7 +766,9 @@ function createMomentIntegrityService({
     // already-exists rather than silently replaying the original deadline
     // as if the new one had taken effect.
     const input = { momentId, objectGeneration };
-    if (availability !== 24) input.availabilityHours = availability;
+    if (availability !== MIN_MOMENT_AVAILABILITY_HOURS) {
+      input.availabilityHours = availability;
+    }
     const identity = operationIdentity("moment.finalize", auth.uid, requestId, input);
     const timing = time();
     const preflight = await beginStoragePreflight({
@@ -766,7 +797,8 @@ function createMomentIntegrityService({
       const ledgerRef = ledgerReference(identity);
       const preflightRef = db.doc(`integrityPreflightLedgers/${identity.id}`);
       const momentRef = db.doc(`voiceMoments/${momentId}`);
-      const [ledger, preflightLedger, moment, profile, restriction] =
+      const capacityRef = momentCapacityLedgerReference(db, auth.uid);
+      const [ledger, preflightLedger, moment, profile, restriction, capacity] =
         await transactionGetAll(
           transaction,
           ledgerRef,
@@ -774,6 +806,7 @@ function createMomentIntegrityService({
           momentRef,
           db.doc(`users/${auth.uid}`),
           db.doc(`restrictions/${auth.uid}`),
+          capacityRef,
         );
       const replay = assertLedgerReplay(ledger, {
         kind: "moment.finalize",
@@ -796,6 +829,17 @@ function createMomentIntegrityService({
           momentData.audioUrl !== null || momentData.mediaGeneration !== null) {
         fail("permission-denied", "Only the canonical draft author can publish it.");
       }
+      // AUTHORITATIVE ACTIVE-STORY CAP. Reservation intentionally ignores
+      // unpublished drafts, so an author may prepare several recordings.
+      // This exact published-only query cannot be starved by draft filler.
+      // Advancing the shared ledger below serializes two finalizations at the
+      // tenth slot and finalization races with delete/expiry.
+      const authoredMoments = await transaction.get(
+        exactPublishedMomentsQuery(db, auth.uid),
+      );
+      assertActiveMomentCapacity(authoredMoments, timing.nowMs, {
+        excludeMomentId: momentId,
+      });
       // The deadline anchors on the STORED createdAt (the reserve
       // transaction's request time), not on this request's clock: the
       // contract the client builds chains and countdowns on is the exact
@@ -821,6 +865,13 @@ function createMomentIntegrityService({
           timestampMillis(momentData.createdAt) + availability * HOUR_MS,
         );
       }
+      touchMomentCapacityLedger(
+        transaction,
+        capacityRef,
+        capacity,
+        auth.uid,
+        timing.now,
+      );
       transaction.update(momentRef, publishUpdate);
       const result = { momentId, published: true };
       transaction.create(ledgerRef, ledgerData({
@@ -867,7 +918,10 @@ function createMomentIntegrityService({
         inputHash: identity.inputHash,
       });
       if (replay) return replay;
-      const momentData = validateMoment(moment, momentId, { published: true });
+      const momentData = validateMoment(moment, momentId, {
+        published: true,
+        activeAtMs: timing.nowMs,
+      });
       const authorId = momentData.authorId;
       const [actorProfile, authorProfile, actorRestriction, authorRestriction,
         actorBlock, authorBlock] = await transactionGetAll(
@@ -985,7 +1039,10 @@ function createMomentIntegrityService({
         inputHash: identity.inputHash,
       });
       if (replay) return replay;
-      const momentData = validateMoment(moment, momentId, { published: true });
+      const momentData = validateMoment(moment, momentId, {
+        published: true,
+        activeAtMs: timing.nowMs,
+      });
       const authorId = momentData.authorId;
       const [authorProfile, authorRestriction, actorBlock, authorBlock] =
         await transactionGetAll(
@@ -1131,7 +1188,10 @@ function createMomentIntegrityService({
           preflightData.inputHash !== identity.inputHash) {
         fail("failed-precondition", "The upload preflight is not canonical.");
       }
-      const momentData = validateMoment(moment, momentId, { published: true });
+      const momentData = validateMoment(moment, momentId, {
+        published: true,
+        activeAtMs: timing.nowMs,
+      });
       const reservationData = currentReservation.exists
         ? currentReservation.data() ?? {}
         : {};
@@ -1231,7 +1291,10 @@ function createMomentIntegrityService({
         inputHash: identity.inputHash,
       });
       if (replay) return replay;
-      const momentData = validateMoment(moment, momentId, { published: true });
+      const momentData = validateMoment(moment, momentId, {
+        published: true,
+        activeAtMs: timing.nowMs,
+      });
       const authorId = momentData.authorId;
       const [authorProfile, authorRestriction, actorBlock, authorBlock] =
         await transactionGetAll(
@@ -1324,8 +1387,8 @@ function createMomentIntegrityService({
       if (replay) return replay;
       activeProfile(profile, "Your");
       // allowExpired: your own comment stays deletable after the Moment's
-      // 24 hours pass — expiry retires a story from feeds, it does not
-      // freeze other people's words in place.
+      // chosen availability passes — expiry retires a story from feeds; it
+      // does not freeze other people's words in place.
       const momentData = validateMoment(moment, momentId, { allowExpired: true });
       const commentData = validateComment(comment, momentId);
       if (commentData.authorId !== auth.uid) {
@@ -1390,12 +1453,14 @@ function createMomentIntegrityService({
       const ledgerRef = ledgerReference(identity);
       const rateRef = limitReference("delete", auth.uid);
       const momentRef = db.doc(`voiceMoments/${momentId}`);
-      const [ledger, rate, moment, profile] = await transactionGetAll(
+      const capacityRef = momentCapacityLedgerReference(db, auth.uid);
+      const [ledger, rate, moment, profile, capacity] = await transactionGetAll(
         transaction,
         ledgerRef,
         rateRef,
         momentRef,
         db.doc(`users/${auth.uid}`),
+        capacityRef,
       );
       const replay = assertLedgerReplay(ledger, {
         kind: "moment.delete",
@@ -1412,6 +1477,13 @@ function createMomentIntegrityService({
         fail("permission-denied", "You can only delete your own Voice Moment.");
       }
       consume(transaction, rate, rateRef, "delete", auth.uid, timing);
+      touchMomentCapacityLedger(
+        transaction,
+        capacityRef,
+        capacity,
+        auth.uid,
+        timing.now,
+      );
       transaction.update(momentRef, {
         isDeleted: true,
         isPublished: false,
@@ -2070,10 +2142,10 @@ function createBucketStorageAdapter(bucket) {
 }
 
 module.exports = {
-  ACTIVE_MOMENT_SCAN_LIMIT,
   DEFAULT_LIMITS,
+  MAX_MOMENT_AVAILABILITY_HOURS,
   MAX_ACTIVE_MOMENTS,
-  MOMENT_AVAILABILITY_HOURS,
+  MIN_MOMENT_AVAILABILITY_HOURS,
   MOMENT_TTL_MS,
   PERMANENT_AVAILABILITY,
   canonicalCommentId,

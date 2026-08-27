@@ -146,7 +146,7 @@ class _MobileHomeState extends State<MobileHome> {
       _feed = null;
     }
     try {
-      _conversations = (widget.messageService ?? MessageService())
+      _conversations = (widget.messageService ?? MessageService.live)
           .watchConversations();
     } catch (_) {
       _conversations = null;

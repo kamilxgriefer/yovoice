@@ -50,7 +50,125 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     final dy = (viewport.height - _imageHeight * scale) / 2;
     _controller.value = Matrix4.identity()
       ..translateByDouble(dx, dy, 0, 1)
-      ..scaleByDouble(scale, scale, 1, 1);
+      // InteractiveViewer reads getMaxScaleOnAxis(), including Z, when it
+      // clamps a pinch. Keeping Z at 1 while X/Y are below 1 makes it think
+      // the covered image is still at 1x; the first pinch-out then applies
+      // the cover scale a second time and shrinks the photo into a corner.
+      ..scaleByDouble(scale, scale, scale, 1);
+  }
+
+  void _setTransform({required double scale, required Offset translation}) {
+    if (_viewport == Size.zero) return;
+    final rawMinX = _viewport.width - (_imageWidth * scale);
+    final rawMinY = _viewport.height - (_imageHeight * scale);
+    final minX = rawMinX < 0 ? rawMinX : 0.0;
+    final minY = rawMinY < 0 ? rawMinY : 0.0;
+    final dx = translation.dx.clamp(minX, 0.0).toDouble();
+    final dy = translation.dy.clamp(minY, 0.0).toDouble();
+    _controller.value = Matrix4.identity()
+      ..translateByDouble(dx, dy, 0, 1)
+      ..scaleByDouble(scale, scale, scale, 1);
+  }
+
+  void _adjustZoom(double factor) {
+    if (_viewport == Size.zero) return;
+    final cover = _coverScale(_viewport);
+    final current = _controller.value.getMaxScaleOnAxis();
+    final next = (current * factor).clamp(cover, cover * 6).toDouble();
+    if ((next - current).abs() < 1e-9) return;
+
+    // Keep the source point under the frame centre stationary while the
+    // single-tap/keyboard zoom changes scale.
+    final sourceAtCentre = MatrixUtils.transformPoint(
+      Matrix4.inverted(_controller.value),
+      _viewport.center(Offset.zero),
+    );
+    _setTransform(
+      scale: next,
+      translation: Offset(
+        _viewport.width / 2 - sourceAtCentre.dx * next,
+        _viewport.height / 2 - sourceAtCentre.dy * next,
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  void _nudge(Offset delta) {
+    if (_viewport == Size.zero) return;
+    final matrix = _controller.value;
+    final translation = matrix.getTranslation();
+    _setTransform(
+      scale: matrix.getMaxScaleOnAxis(),
+      translation: Offset(translation.x, translation.y) + delta,
+    );
+    if (mounted) setState(() {});
+  }
+
+  Widget _cropControls() {
+    final ready = _viewport != Size.zero;
+    final cover = ready ? _coverScale(_viewport) : 1.0;
+    final matrix = _controller.value;
+    final scale = matrix.getMaxScaleOnAxis();
+    final translation = matrix.getTranslation();
+    final rawMinX = _viewport.width - (_imageWidth * scale);
+    final rawMinY = _viewport.height - (_imageHeight * scale);
+    final minX = rawMinX < 0 ? rawMinX : 0.0;
+    final minY = rawMinY < 0 ? rawMinY : 0.0;
+    const epsilon = .1;
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        _CropControlButton(
+          key: const ValueKey('crop-zoom-out'),
+          tooltip: 'Zoom out',
+          icon: Icons.remove_rounded,
+          onPressed: ready && !_processing && scale > cover + epsilon
+              ? () => _adjustZoom(1 / 1.2)
+              : null,
+        ),
+        _CropControlButton(
+          key: const ValueKey('crop-zoom-in'),
+          tooltip: 'Zoom in',
+          icon: Icons.add_rounded,
+          onPressed: ready && !_processing && scale < cover * 6 - epsilon
+              ? () => _adjustZoom(1.2)
+              : null,
+        ),
+        _CropControlButton(
+          key: const ValueKey('crop-move-left'),
+          tooltip: 'Move photo left',
+          icon: Icons.arrow_left_rounded,
+          onPressed: ready && !_processing && translation.x > minX + epsilon
+              ? () => _nudge(const Offset(-20, 0))
+              : null,
+        ),
+        _CropControlButton(
+          key: const ValueKey('crop-move-up'),
+          tooltip: 'Move photo up',
+          icon: Icons.arrow_drop_up_rounded,
+          onPressed: ready && !_processing && translation.y > minY + epsilon
+              ? () => _nudge(const Offset(0, -20))
+              : null,
+        ),
+        _CropControlButton(
+          key: const ValueKey('crop-move-down'),
+          tooltip: 'Move photo down',
+          icon: Icons.arrow_drop_down_rounded,
+          onPressed: ready && !_processing && translation.y < -epsilon
+              ? () => _nudge(const Offset(0, 20))
+              : null,
+        ),
+        _CropControlButton(
+          key: const ValueKey('crop-move-right'),
+          tooltip: 'Move photo right',
+          icon: Icons.arrow_right_rounded,
+          onPressed: ready && !_processing && translation.x < -epsilon
+              ? () => _nudge(const Offset(20, 0))
+              : null,
+        ),
+      ],
+    );
   }
 
   Future<void> _confirm() async {
@@ -139,8 +257,14 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
                     if (_viewport != viewport) {
                       _viewport = viewport;
                       _resetTo(viewport);
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted && _viewport == viewport) setState(() {});
+                      });
                     }
                     final cover = _coverScale(viewport);
+                    final percent =
+                        (_controller.value.getMaxScaleOnAxis() / cover * 100)
+                            .round();
 
                     return ClipRRect(
                       borderRadius: BorderRadius.circular(_isAvatar ? 0 : 22),
@@ -150,19 +274,29 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
                         child: Stack(
                           fit: StackFit.expand,
                           children: [
-                            InteractiveViewer(
-                              transformationController: _controller,
-                              constrained: false,
-                              boundaryMargin: EdgeInsets.zero,
-                              minScale: cover,
-                              maxScale: cover * 6,
-                              clipBehavior: Clip.hardEdge,
-                              child: SizedBox(
-                                width: _imageWidth,
-                                height: _imageHeight,
-                                child: RawImage(
-                                  image: widget.image,
-                                  fit: BoxFit.fill,
+                            Semantics(
+                              container: true,
+                              label: _isAvatar
+                                  ? 'Avatar crop preview'
+                                  : 'Banner crop preview',
+                              value: 'Zoom $percent percent',
+                              child: InteractiveViewer(
+                                transformationController: _controller,
+                                constrained: false,
+                                boundaryMargin: EdgeInsets.zero,
+                                minScale: cover,
+                                maxScale: cover * 6,
+                                clipBehavior: Clip.hardEdge,
+                                onInteractionUpdate: (_) {
+                                  if (mounted) setState(() {});
+                                },
+                                child: SizedBox(
+                                  width: _imageWidth,
+                                  height: _imageHeight,
+                                  child: RawImage(
+                                    image: widget.image,
+                                    fit: BoxFit.fill,
+                                  ),
                                 ),
                               ),
                             ),
@@ -198,11 +332,21 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Semantics(
+              container: true,
+              explicitChildNodes: true,
+              label: 'Crop controls',
+              child: _cropControls(),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 2, 20, 8),
             child: Text(
-              'Pinch to zoom · drag to reposition',
+              'Pinch or use controls · drag or use arrows',
+              textAlign: TextAlign.center,
               style: TextStyle(
-                color: Colors.white.withValues(alpha: .45),
+                color: Colors.white.withValues(alpha: .55),
                 fontSize: 12.5,
               ),
             ),
@@ -261,6 +405,37 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _CropControlButton extends StatelessWidget {
+  const _CropControlButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+    super.key,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      style: IconButton.styleFrom(
+        fixedSize: const Size(44, 44),
+        minimumSize: const Size(44, 44),
+        maximumSize: const Size(44, 44),
+        padding: EdgeInsets.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      icon: Icon(icon, size: 22),
+      color: const Color(0xFFD7A8FF),
+      disabledColor: const Color(0xFF62586C),
     );
   }
 }

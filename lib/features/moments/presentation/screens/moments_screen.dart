@@ -10,6 +10,7 @@ import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
+import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
@@ -58,6 +59,8 @@ class MomentsScreen extends StatefulWidget {
     this.initialFilter,
     this.onOpenDetail,
     this.playerFactory,
+    this.expiryClock,
+    this.expiryTimerFactory,
     super.key,
   });
 
@@ -98,6 +101,12 @@ class MomentsScreen extends StatefulWidget {
 
   @visibleForTesting
   final AudioPlayer Function()? playerFactory;
+
+  @visibleForTesting
+  final MomentExpiryClock? expiryClock;
+
+  @visibleForTesting
+  final MomentExpiryTimerFactory? expiryTimerFactory;
 
   @override
   State<MomentsScreen> createState() => _MomentsScreenState();
@@ -148,6 +157,8 @@ class _MomentsScreenState extends State<MomentsScreen> {
                 isVisible: widget.isVisible,
                 onOpenDetail: widget.onOpenDetail,
                 playerFactory: widget.playerFactory,
+                expiryClock: widget.expiryClock,
+                expiryTimerFactory: widget.expiryTimerFactory,
                 onRecord: () => unawaited(_createMoment()),
               ),
             ),
@@ -179,9 +190,9 @@ class _MomentsHeader extends StatelessWidget {
         // would squeeze the title into a per-character vertical wrap on
         // a 768 pt tablet. The icon CTA keeps its 48 pt target either
         // way.
-        final scale = MediaQuery.textScalerOf(context)
-            .scale(14)
-            .clamp(14.0, 28.0);
+        final scale = MediaQuery.textScalerOf(
+          context,
+        ).scale(14).clamp(14.0, 28.0);
         final compact = constraints.maxWidth < 600 * (scale / 14);
         return Padding(
           padding: EdgeInsets.fromLTRB(

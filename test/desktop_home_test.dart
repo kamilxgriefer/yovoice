@@ -526,6 +526,42 @@ void main() {
     expect(find.text('Friend 0'), findsNothing);
   });
 
+  testWidgets(
+    'recent chats refreshes an empty conversation avatar from publicProfiles',
+    (tester) async {
+      useDesktop(tester, const Size(1440, 2600));
+      await seedConversation(
+        id: 'c-photo',
+        otherId: 'friend-photo',
+        otherName: 'Fresh Portrait',
+        lastMessage: 'The conversation copy has no avatar.',
+      );
+      await db.collection('publicProfiles').doc('friend-photo').set({
+        'uid': 'friend-photo',
+        'displayName': 'Fresh Portrait',
+        'username': 'freshportrait',
+        'photoUrl': 'https://cdn.example.invalid/fresh-portrait.jpg',
+        'premiumIdentity': false,
+      });
+
+      await tester.pumpWidget(host(buildHome()));
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+
+      final artwork = find.byKey(const ValueKey('recent-chat-photo-c-photo'));
+      expect(artwork, findsOneWidget);
+      final image = tester.widget<Image>(artwork);
+      expect(image.image, isA<NetworkImage>());
+      expect(
+        (image.image as NetworkImage).url,
+        'https://cdn.example.invalid/fresh-portrait.jpg',
+      );
+      expect(find.byType(ImageFiltered), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   group('Moments from your circle', () {
     testWidgets('keeps typical full names readable at 1100 and 1440', (
       tester,

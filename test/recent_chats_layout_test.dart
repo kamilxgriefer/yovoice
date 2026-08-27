@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/recent_chats.dart';
@@ -36,6 +39,16 @@ Conversation _conversation(
     archivedBy: const [],
     mutedBy: const [],
   );
+}
+
+MemoryImage _solidWhiteImage() {
+  final raster = img.Image(width: 4, height: 4, numChannels: 4);
+  for (var y = 0; y < raster.height; y++) {
+    for (var x = 0; x < raster.width; x++) {
+      raster.setPixelRgba(x, y, 255, 255, 255, 255);
+    }
+  }
+  return MemoryImage(Uint8List.fromList(img.encodePng(raster)));
 }
 
 void main() {
@@ -111,7 +124,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('recent chats uses a full-card blurred portrait, not a small '
+  testWidgets('recent chats uses a sharp full-card portrait, not a small '
       'avatar', (tester) async {
     tester.view.physicalSize = const Size(1440, 700);
     tester.view.devicePixelRatio = 1;
@@ -148,7 +161,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byType(ImageFiltered), findsOneWidget);
+    expect(find.byType(ImageFiltered), findsNothing);
     expect(find.byType(UserAvatar), findsNothing);
     expect(
       find.byKey(const ValueKey('recent-chat-photo-conversation-0')),
@@ -165,6 +178,19 @@ void main() {
       ),
       findsOneWidget,
     );
+    final portrait = tester.widget<Image>(
+      find.byKey(const ValueKey('recent-chat-photo-conversation-0')),
+    );
+    expect(portrait.fit, BoxFit.cover);
+    expect(portrait.alignment, const Alignment(0, -.20));
+    expect(portrait.filterQuality, FilterQuality.medium);
+    expect(
+      find.descendant(
+        of: find.byType(RecentChats),
+        matching: find.byIcon(Icons.chat_bubble_rounded),
+      ),
+      findsNothing,
+    );
     final chat = find.bySemanticsLabel(
       'Open chat with A very long display name for a close friend number 0. '
       '123 unread messages. Last message: A longer preview that must remain '
@@ -174,31 +200,106 @@ void main() {
     expect(tester.getSize(chat).height, 116);
     expect(find.bySemanticsLabel(RegExp(r'^123$')), findsNothing);
 
-    final scrim = tester
+    final textSeat = tester
         .widgetList<DecoratedBox>(find.byType(DecoratedBox))
         .where((box) {
           final decoration = box.decoration;
           return decoration is BoxDecoration &&
               decoration.gradient is LinearGradient &&
-              (decoration.gradient! as LinearGradient).colors.length == 3;
+              (decoration.gradient! as LinearGradient).colors.length == 2 &&
+              (decoration.gradient! as LinearGradient).colors.first ==
+                  const Color(0xC4090712);
         })
         .single;
     final gradient =
-        (scrim.decoration as BoxDecoration).gradient! as LinearGradient;
+        (textSeat.decoration as BoxDecoration).gradient! as LinearGradient;
+    // The seat grows with the actual text, so its lightest top color remains
+    // behind every possible name/preview line at both 100% and 200%.
     final brightestNameBackdrop = Color.alphaBlend(
-      gradient.colors[1],
+      gradient.colors.first,
       Colors.white,
     );
     final whiteNameContrast =
         (Colors.white.computeLuminance() + .05) /
         (brightestNameBackdrop.computeLuminance() + .05);
     expect(whiteNameContrast, greaterThanOrEqualTo(4.5));
+    final previewContrast =
+        (const Color(0xFFD8CEE1).computeLuminance() + .05) /
+        (brightestNameBackdrop.computeLuminance() + .05);
+    expect(previewContrast, greaterThanOrEqualTo(4.5));
 
     await tester.tap(find.textContaining('A very long display name'));
     await tester.pump();
     expect(opened, 1);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'desktop backdrop replaces stale conversation artwork with the live '
+    'public profile photo',
+    (tester) async {
+      tester.view.physicalSize = const Size(1100, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final profilePhotos = StreamController<String>();
+      addTearDown(profilePhotos.close);
+      const decodedProfilePhoto = AssetImage(
+        'assets/images/home page assets.jpg',
+      );
+      String? requestedUserId;
+      String? resolvedUrl;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: RecentChats(
+              snapshot: AsyncSnapshot.withData(ConnectionState.active, [
+                _conversation(0),
+              ]),
+              currentUserId: 'me',
+              onOpenConversation: (_) {},
+              onFindFriends: () {},
+              style: RecentChatsStyle.desktopBackdrop,
+              photoStreamForUser: (userId) {
+                requestedUserId = userId;
+                return profilePhotos.stream;
+              },
+              backdropImageProvider: (url) {
+                resolvedUrl = url;
+                return decodedProfilePhoto;
+              },
+            ),
+          ),
+        ),
+      );
+      expect(requestedUserId, 'friend-0');
+      expect(
+        find.byKey(const ValueKey('recent-chat-fallback-conversation-0')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('recent-chat-photo-conversation-0')),
+        findsNothing,
+      );
+
+      await tester.runAsync(
+        () => precacheImage(
+          decodedProfilePhoto,
+          tester.element(find.byType(RecentChats)),
+        ),
+      );
+      profilePhotos.add('fixture://fresh-public-profile-photo');
+      await tester.pumpAndSettle();
+
+      expect(resolvedUrl, 'fixture://fresh-public-profile-photo');
+      expect(
+        find.byKey(const ValueKey('recent-chat-photo-conversation-0')),
+        findsOneWidget,
+      );
+      expect(find.byType(ImageFiltered), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'desktop backdrop preserves its loading and stream error states',
@@ -327,19 +428,97 @@ void main() {
     expect(opened, 2);
 
     final firstRegion = find.byType(AccessibleTapRegion).first;
-    final focusRing = tester.widget<AnimatedContainer>(
-      find.descendant(
-        of: firstRegion,
-        matching: find.byType(AnimatedContainer),
-      ),
-    );
-    final focusDecoration = focusRing.decoration! as BoxDecoration;
+    final focusColors = tester
+        .widgetList<AnimatedContainer>(
+          find.descendant(
+            of: firstRegion,
+            matching: find.byType(AnimatedContainer),
+          ),
+        )
+        .map(
+          (ring) =>
+              ((ring.decoration! as BoxDecoration).border! as Border).top.color,
+        );
+    expect(focusColors, contains(Colors.black));
+    expect(focusColors, contains(Colors.white));
+
+    double contrast(Color foreground, Color background) {
+      final lighter =
+          foreground.computeLuminance() > background.computeLuminance()
+          ? foreground
+          : background;
+      final darker = identical(lighter, foreground) ? background : foreground;
+      return (lighter.computeLuminance() + .05) /
+          (darker.computeLuminance() + .05);
+    }
+
+    // A black/white pair has 21:1 mutual contrast. Therefore every possible
+    // image pixel has >= sqrt(21):1 contrast against at least one ring. Pin a
+    // middle luminance explicitly — the former dark/violet pair failed here.
+    expect(contrast(Colors.black, Colors.white), greaterThanOrEqualTo(9));
+    const middleArtwork = Color(0xFF5A5A5A);
     expect(
-      (focusDecoration.border! as Border).top.color,
-      const Color(0xFFD28AFF),
+      [
+        contrast(Colors.black, middleArtwork),
+        contrast(Colors.white, middleArtwork),
+      ].reduce((best, value) => best > value ? best : value),
+      greaterThanOrEqualTo(3),
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'desktop 200% text stays inside its guaranteed dark seat over white art',
+    (tester) async {
+      tester.view.physicalSize = const Size(1100, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final whitePixel = _solidWhiteImage();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+            child: Scaffold(
+              body: RecentChats(
+                snapshot: AsyncSnapshot.withData(ConnectionState.active, [
+                  _conversation(0, photoUrl: 'fixture://white-pixel'),
+                ]),
+                currentUserId: 'me',
+                onOpenConversation: (_) {},
+                onFindFriends: () {},
+                style: RecentChatsStyle.desktopBackdrop,
+                backdropImageProvider: (_) => whitePixel,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.runAsync(
+        () =>
+            precacheImage(whitePixel, tester.element(find.byType(RecentChats))),
+      );
+      await tester.pumpAndSettle();
+
+      final seat = find.byKey(
+        const ValueKey('recent-chat-text-seat-conversation-0'),
+      );
+      final name = find.text(
+        'A very long display name for a close friend number 0',
+      );
+      final preview = find.text(
+        'A longer preview that must remain readable at increased text scale.',
+      );
+      final seatRect = tester.getRect(seat);
+      expect(tester.getRect(name).top, greaterThanOrEqualTo(seatRect.top));
+      expect(
+        tester.getRect(preview).bottom,
+        lessThanOrEqualTo(seatRect.bottom),
+      );
+      expect(tester.getSize(find.byType(RecentChats)).height, 212);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('desktop backdrop localizes Polish unread plurals and preview', (
     tester,

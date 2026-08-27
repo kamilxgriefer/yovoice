@@ -285,17 +285,19 @@ service firebase.storage {
     }
 
     match /voice_moments/{userId}/{fileName} {
-      function validUnpublishedDraft() {
-        let momentId = request.resource.metadata.get('momentId', '');
+      function canonicalUploadingDraft(momentId) {
         let momentPath = /databases/(default)/documents/voiceMoments/$(momentId);
-        return request.resource.metadata.keys().hasOnly(['authorId', 'momentId']) &&
-            request.resource.metadata.get('authorId', '') == userId &&
-            momentId.matches('[A-Za-z0-9]{20}') &&
-            fileName == momentId + '.m4a' &&
-            firestore.exists(momentPath) &&
+        return firestore.exists(momentPath) &&
+            firestore.get(momentPath).data.schemaVersion == 2 &&
             firestore.get(momentPath).data.authorId == userId &&
             firestore.get(momentPath).data.get('isPublished', true) == false &&
+            firestore.get(momentPath).data.get('isDeleted', true) == false &&
+            firestore.get(momentPath).data.get('status', '') == 'uploading' &&
             firestore.get(momentPath).data.get('audioUrl', null) == null &&
+            firestore.get(momentPath).data.get('publishedAt', null) == null &&
+            firestore.get(momentPath).data.get('mediaGeneration', null) == null &&
+            firestore.get(momentPath).data.get('mediaSize', null) == null &&
+            firestore.get(momentPath).data.get('mediaContentType', null) == null &&
             firestore.get(momentPath).data.storagePath ==
                 'voice_moments/' + userId + '/' + fileName &&
             firestore.get(momentPath).data.durationSeconds is int &&
@@ -303,40 +305,88 @@ service firebase.storage {
             firestore.get(momentPath).data.durationSeconds <= 60;
       }
 
-      allow read: if isSignedIn();
+      function validUnpublishedDraft() {
+        let momentId = request.resource.metadata.get('momentId', '');
+        return request.resource.metadata.keys().hasOnly(['authorId', 'momentId']) &&
+            request.resource.metadata.get('authorId', '') == userId &&
+            momentId.matches('[a-f0-9]{20}') &&
+            fileName == momentId + '.m4a' &&
+            canonicalUploadingDraft(momentId);
+      }
+
+      function canReadMomentAudio() {
+        let momentId = resource.metadata.get('momentId', '');
+        let momentPath = /databases/(default)/documents/voiceMoments/$(momentId);
+        return isSignedIn() &&
+            resource.metadata.keys().hasOnly(['authorId', 'momentId']) &&
+            momentId.matches('[A-Za-z0-9]{20}') &&
+            fileName == momentId + '.m4a' &&
+            resource.metadata.get('authorId', '') == userId &&
+            firestore.exists(momentPath) &&
+            firestore.get(momentPath).data.authorId == userId &&
+            firestore.get(momentPath).data.storagePath ==
+                'voice_moments/' + userId + '/' + fileName &&
+            (
+              request.auth.uid == userId ||
+              firestore.get(momentPath).data.get('isPublished', false) == true
+            );
+      }
+
+      allow read: if canReadMomentAudio();
       allow create: if resource == null &&
           isVerified() &&
           isActiveUser(userId) &&
           isValidAudioPayload() &&
           validUnpublishedDraft();
-      allow update: if false;
-      allow delete: if isActiveUser(userId);
+      // Existing media is immutable to clients. Cleanup remains scheduler/Admin
+      // authority outside Storage Rules, including failed uploading drafts.
+      allow update, delete: if false;
     }
 
     match /voice_replies/{userId}/{momentId}/{fileName} {
-      function validPublishedParent() {
-        let parentPath = /databases/(default)/documents/voiceMoments/$(momentId);
+      function uploadReservationPath() {
         let commentId = request.resource.metadata.get('commentId', '');
+        return /databases/(default)/documents/voiceMomentUploadReservations/$(commentId);
+      }
+
+      function validReservedVoiceReplyUpload() {
+        let commentId = request.resource.metadata.get('commentId', '');
+        let reservation = firestore.get(uploadReservationPath()).data;
         return request.resource.metadata.keys().hasOnly([
               'authorId', 'momentId', 'commentId'
             ]) &&
             request.resource.metadata.get('authorId', '') == userId &&
             request.resource.metadata.get('momentId', '') == momentId &&
-            commentId.matches('[A-Za-z0-9]{20}') &&
+            commentId.matches('[a-f0-9]{20}') &&
             fileName == commentId + '.m4a' &&
-            firestore.exists(parentPath) &&
-            firestore.get(parentPath).data.get('isPublished', false) == true &&
-            firestore.get(parentPath).data.get('isDeleted', false) != true;
+            firestore.exists(uploadReservationPath()) &&
+            reservation.schemaVersion == 1 &&
+            reservation.kind == 'voiceMomentComment' &&
+            reservation.status == 'uploading' &&
+            reservation.ownerId == userId &&
+            reservation.momentId == momentId &&
+            reservation.commentId == commentId &&
+            reservation.storagePath ==
+                'voice_replies/' + userId + '/' + momentId + '/' + fileName &&
+            reservation.durationSeconds is int &&
+            reservation.durationSeconds >= 1 &&
+            reservation.durationSeconds <= 60 &&
+            reservation.expiresAt is timestamp &&
+            reservation.expiresAt > request.time;
       }
 
+      // Existing reply media remains signed-in readable, including legacy
+      // mixed-case object ids. New allocation remains a deliberately lowercase,
+      // reservation-bound operation.
       allow read: if isSignedIn();
       allow create: if resource == null &&
           isVerified() &&
           isActiveUser(userId) &&
           isValidAudioPayload() &&
-          validPublishedParent();
-      allow update: if false;
-      allow delete: if isActiveUser(userId);
+          validReservedVoiceReplyUpload();
+      // Existing media is immutable to clients. Cleanup remains scheduler/Admin
+      // authority outside Storage Rules, including still-reserved uploads.
+      allow update, delete: if false;
     }
   }
 }

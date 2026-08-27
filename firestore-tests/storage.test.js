@@ -10,7 +10,7 @@ const {
   assertSucceeds,
   assertFails,
 } = require("@firebase/rules-unit-testing");
-const { doc, setDoc } = require("firebase/firestore");
+const { deleteDoc, doc, setDoc } = require("firebase/firestore");
 const {
   ref, uploadBytes, getBytes, deleteObject, listAll,
 } = require("firebase/storage");
@@ -92,9 +92,15 @@ const MALLORY = "mallory-uid";
 const NEWBIE = "newbie-uid";
 const BANNED = "banned-uid";
 const DISABLED = "disabled-uid";
-const MOMENT = "AbCdEfGhIjKlMnOpQrSt";
-const PARENT = "ZyXwVuTsRqPoNmLkJiHg";
-const COMMENT = "0123456789AbCdEfGhIj";
+const MOMENT = "abcdef0123456789abcd";
+const LEGACY_MIXED_MOMENT = "AbCdEfGhIjKlMnOpQrSt";
+const PARENT = "1234567890abcdefabcd";
+const COMMENT = "fedcba0987654321fedc";
+const REPLY_CONTRACT = "aaaaaaaaaaaaaaaaaaaa";
+const REPLY_ORPHAN = "bbbbbbbbbbbbbbbbbbbb";
+const LEGACY_REPLY = "AbCdEfGhIjKlMnOpQrSt";
+const LEGACY_REPLY_NEW = "ZyXwVuTsRqPoNmLkJiHg";
+const LEGACY_REPLY_M4A = "LmNoPqRsTuVwXyZaBcDe";
 const DIRECT_CONVERSATION = "dm_storage_test";
 const DIRECT_IMAGE_MESSAGE = `m_${"a".repeat(40)}`;
 const DIRECT_CONTRACT_IMAGE = `m_${"d".repeat(40)}`;
@@ -113,6 +119,25 @@ function replyMetadata(authorId, momentId, commentId, extra = {}) {
   return {
     contentType: "audio/mp4",
     customMetadata: { authorId, momentId, commentId, ...extra },
+  };
+}
+
+function voiceReplyReservation(ownerId, momentId, commentId, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    kind: "voiceMomentComment",
+    ownerId,
+    momentId,
+    commentId,
+    storagePath: `voice_replies/${ownerId}/${momentId}/${commentId}.m4a`,
+    durationSeconds: 7,
+    text: "Reserved voice reply",
+    authorName: "Reserved author",
+    authorPhotoUrl: null,
+    status: "uploading",
+    createdAt: new Date(),
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    ...overrides,
   };
 }
 
@@ -257,16 +282,40 @@ async function seed(testEnv) {
     });
 
     await setDoc(doc(db, `voiceMoments/${MOMENT}`), {
+      schemaVersion: 2,
       authorId: ALICE,
       audioUrl: null,
       storagePath: `voice_moments/${ALICE}/${MOMENT}.m4a`,
       durationSeconds: 30,
       isPublished: false,
+      isDeleted: false,
+      status: "uploading",
+      publishedAt: null,
+      mediaGeneration: null,
+      mediaSize: null,
+      mediaContentType: null,
+    });
+    await setDoc(doc(db, `voiceMoments/${LEGACY_MIXED_MOMENT}`), {
+      schemaVersion: 2,
+      authorId: ALICE,
+      audioUrl: null,
+      storagePath:
+        `voice_moments/${ALICE}/${LEGACY_MIXED_MOMENT}.m4a`,
+      durationSeconds: 30,
+      isPublished: false,
+      isDeleted: false,
+      status: "uploading",
+      publishedAt: null,
+      mediaGeneration: null,
+      mediaSize: null,
+      mediaContentType: null,
     });
     await setDoc(doc(db, `voiceMoments/${PARENT}`), {
       authorId: BOB,
       isPublished: true,
     });
+    await setDoc(doc(db, `voiceMomentUploadReservations/${COMMENT}`),
+      voiceReplyReservation(ALICE, PARENT, COMMENT));
     await setDoc(doc(db, "voiceMoments/UnpublishedParent01"), {
       authorId: BOB,
       isPublished: false,
@@ -854,35 +903,213 @@ async function main() {
       momentMetadata(ALICE, MOMENT),
     ));
   });
-  await check("signed-in users can read, anonymous users cannot read Voice Moments", async () => {
+  await check("an unpublished Voice Moment object is private to its author", async () => {
+    await assertSucceeds(getBytes(ref(alice, momentPath)));
+    await assertFails(getBytes(ref(mallory, momentPath)));
+    await assertFails(getBytes(ref(anon, momentPath)));
+  });
+  await check("clients cannot delete a canonical uploading Voice Moment draft", async () => {
+    await assertFails(deleteObject(ref(mallory, momentPath)));
+    await assertFails(deleteObject(ref(alice, momentPath)));
+  });
+  await check("a published Voice Moment object is readable by signed-in users", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `voiceMoments/${MOMENT}`), {
+        isPublished: true,
+        status: "published",
+      }, { merge: true });
+    });
     await assertSucceeds(getBytes(ref(mallory, momentPath)));
     await assertFails(getBytes(ref(anon, momentPath)));
   });
-  await check("only active author can delete a Voice Moment object", async () => {
+  await check("neither owner nor outsider can delete published Moment audio", async () => {
     await assertFails(deleteObject(ref(mallory, momentPath)));
-    await assertSucceeds(deleteObject(ref(alice, momentPath)));
+    await assertFails(deleteObject(ref(alice, momentPath)));
+  });
+  await check("an expired Voice Moment object becomes author-private again", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `voiceMoments/${MOMENT}`), {
+        isPublished: false,
+        status: "expired",
+      }, { merge: true });
+    });
+    await assertSucceeds(getBytes(ref(alice, momentPath)));
+    await assertFails(getBytes(ref(mallory, momentPath)));
+    await assertFails(
+      deleteObject(ref(alice, momentPath)),
+      "expired media cleanup remains server authority",
+    );
   });
 
-  // --- Voice replies: published parent + exact author/path/metadata. ---
+  const legacyMixedPath =
+    `voice_moments/${ALICE}/${LEGACY_MIXED_MOMENT}.m4a`;
+  await check(
+    "legacy mixed-case Moment IDs remain readable and client-delete-proof",
+    async () => {
+      // New reservations are generated as lowercase hex and creation stays
+      // pinned to that canonical namespace.
+      await assertFails(uploadBytes(
+        ref(alice, legacyMixedPath),
+        smallAudio,
+        momentMetadata(ALICE, LEGACY_MIXED_MOMENT),
+      ));
+
+      // Model an object produced by a legacy client before lowercase IDs
+      // became canonical. Existing-object checks still bind its exact path,
+      // metadata and Firestore root.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await uploadBytes(
+          ref(ctx.storage(), legacyMixedPath),
+          smallAudio,
+          momentMetadata(ALICE, LEGACY_MIXED_MOMENT),
+        );
+      });
+      await assertSucceeds(getBytes(ref(alice, legacyMixedPath)));
+      await assertFails(getBytes(ref(mallory, legacyMixedPath)));
+      await assertFails(deleteObject(ref(mallory, legacyMixedPath)));
+      await assertFails(deleteObject(ref(alice, legacyMixedPath)));
+    },
+  );
+  await check(
+    "mixed-case draft deletion rejects extra or mismatched author metadata",
+    async () => {
+      // Broadening the legacy ID alphabet must not broaden object identity:
+      // an existing object with attacker-added custom metadata stays denied
+      // for both reads and owner cleanup.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await uploadBytes(
+          ref(ctx.storage(), legacyMixedPath),
+          smallAudio,
+          momentMetadata(ALICE, LEGACY_MIXED_MOMENT, { extra: "forged" }),
+        );
+      });
+      await assertFails(getBytes(ref(alice, legacyMixedPath)));
+      await assertFails(deleteObject(ref(alice, legacyMixedPath)));
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await deleteObject(ref(ctx.storage(), legacyMixedPath));
+        await uploadBytes(
+          ref(ctx.storage(), legacyMixedPath),
+          smallAudio,
+          momentMetadata(BOB, LEGACY_MIXED_MOMENT),
+        );
+      });
+      await assertFails(deleteObject(ref(alice, legacyMixedPath)));
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await deleteObject(ref(ctx.storage(), legacyMixedPath));
+      });
+    },
+  );
+  await check(
+    "mixed-case draft deletion requires the exact canonical Firestore root",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await uploadBytes(
+          ref(ctx.storage(), legacyMixedPath),
+          smallAudio,
+          momentMetadata(ALICE, LEGACY_MIXED_MOMENT),
+        );
+        await setDoc(doc(
+          ctx.firestore(),
+          `voiceMoments/${LEGACY_MIXED_MOMENT}`,
+        ), {
+          storagePath: `voice_moments/${ALICE}/different.m4a`,
+        }, { merge: true });
+      });
+      await assertFails(deleteObject(ref(alice, legacyMixedPath)));
+
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(
+          ctx.firestore(),
+          `voiceMoments/${LEGACY_MIXED_MOMENT}`,
+        ), {
+          authorId: BOB,
+          storagePath: legacyMixedPath,
+        }, { merge: true });
+      });
+      await assertFails(deleteObject(ref(alice, legacyMixedPath)));
+
+      // Even with `status: uploading`, a draft that already carries finalized
+      // media state is not client-deletable.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(
+          ctx.firestore(),
+          `voiceMoments/${LEGACY_MIXED_MOMENT}`,
+        ), {
+          schemaVersion: 2,
+          authorId: ALICE,
+          audioUrl: "https://attacker.invalid/already-finalized.m4a",
+          storagePath: legacyMixedPath,
+          durationSeconds: 30,
+          isPublished: false,
+          isDeleted: false,
+          status: "uploading",
+          publishedAt: null,
+          mediaGeneration: null,
+          mediaSize: null,
+          mediaContentType: null,
+        }, { merge: true });
+      });
+      await assertFails(deleteObject(ref(alice, legacyMixedPath)));
+
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await deleteObject(ref(ctx.storage(), legacyMixedPath));
+        await setDoc(doc(
+          ctx.firestore(),
+          `voiceMoments/${LEGACY_MIXED_MOMENT}`,
+        ), {
+          authorId: ALICE,
+          audioUrl: null,
+          storagePath: legacyMixedPath,
+        }, { merge: true });
+      });
+    },
+  );
+  await check(
+    "published mixed-case legacy audio is signed-in readable and server-delete-only",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await uploadBytes(
+          ref(ctx.storage(), legacyMixedPath),
+          smallAudio,
+          momentMetadata(ALICE, LEGACY_MIXED_MOMENT),
+        );
+        await setDoc(doc(
+          ctx.firestore(),
+          `voiceMoments/${LEGACY_MIXED_MOMENT}`,
+        ), {
+          isPublished: true,
+          status: "published",
+        }, { merge: true });
+      });
+      await assertSucceeds(getBytes(ref(mallory, legacyMixedPath)));
+      await assertFails(getBytes(ref(anon, legacyMixedPath)));
+      await assertFails(deleteObject(ref(mallory, legacyMixedPath)));
+      await assertFails(deleteObject(ref(alice, legacyMixedPath)));
+
+      // The Firestore root must name this exact object; an author-matching
+      // published root cannot act as a read token for a different path.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(
+          ctx.firestore(),
+          `voiceMoments/${LEGACY_MIXED_MOMENT}`,
+        ), {
+          storagePath: `voice_moments/${ALICE}/different.m4a`,
+        }, { merge: true });
+      });
+      await assertFails(getBytes(ref(alice, legacyMixedPath)));
+      await assertFails(getBytes(ref(mallory, legacyMixedPath)));
+    },
+  );
+
+  // --- Voice replies: exact server reservation + immutable published media. ---
   const replyPath = `voice_replies/${ALICE}/${PARENT}/${COMMENT}.m4a`;
-  await check("verified active author can create a reply for a published parent", () =>
+  await check("verified active author can upload an exactly reserved reply", () =>
     assertSucceeds(uploadBytes(
       ref(alice, replyPath),
       smallAudio,
       replyMetadata(ALICE, PARENT, COMMENT),
     )),
   );
-  await check("legacy exact M4A MIME remains compatible for replies", async () => {
-    const second = "aBcDeFgHiJkLmNoPqRsT";
-    await assertSucceeds(uploadBytes(
-      ref(bob, `voice_replies/${BOB}/${PARENT}/${second}.m4a`),
-      smallAudio,
-      {
-        ...legacyAudio,
-        customMetadata: { authorId: BOB, momentId: PARENT, commentId: second },
-      },
-    ));
-  });
   await check("reply overwrite is rejected", () =>
     assertFails(uploadBytes(
       ref(alice, replyPath),
@@ -890,39 +1117,202 @@ async function main() {
       replyMetadata(ALICE, PARENT, COMMENT),
     )),
   );
-  await check("unpublished or missing parent rejects reply allocation", async () => {
-    const unpublished = "UnpublishedParent01";
-    await assertFails(uploadBytes(
-      ref(alice, `voice_replies/${ALICE}/${unpublished}/${COMMENT}.m4a`),
-      smallAudio,
-      replyMetadata(ALICE, unpublished, COMMENT),
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `voice_replies/${ALICE}/MissingParentId00001/${COMMENT}.m4a`),
-      smallAudio,
-      replyMetadata(ALICE, "MissingParentId00001", COMMENT),
-    ));
-  });
-  await check("reply filename and all metadata dimensions must match", async () => {
-    await assertFails(uploadBytes(
-      ref(alice, `voice_replies/${ALICE}/${PARENT}/short.m4a`),
-      smallAudio,
-      replyMetadata(ALICE, PARENT, "short"),
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `voice_replies/${ALICE}/${PARENT}/${COMMENT}.m4a`),
-      smallAudio,
-      replyMetadata(BOB, PARENT, COMMENT),
-    ));
-    await assertFails(uploadBytes(
-      ref(alice, `voice_replies/${ALICE}/${PARENT}/${COMMENT}.m4a`),
-      smallAudio,
-      replyMetadata(ALICE, PARENT, COMMENT, { extra: "x" }),
-    ));
-  });
-  await check("only reply author can delete their reply object", async () => {
+
+  await check("clients cannot delete a still-reserved reply", async () => {
     await assertFails(deleteObject(ref(bob, replyPath)));
-    await assertSucceeds(deleteObject(ref(alice, replyPath)));
+    await assertFails(deleteObject(ref(alice, replyPath)));
+  });
+
+  await check("a finalized reply is readable but client-delete-proof", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(
+        doc(ctx.firestore(), `voiceMoments/${PARENT}/comments/${COMMENT}`),
+        {
+          schemaVersion: 2,
+          type: "voice",
+          authorId: ALICE,
+          storagePath: replyPath,
+        },
+      );
+      // finalizeVoiceCommentDraft removes this in the same transaction that
+      // creates the comment.
+      await deleteDoc(doc(
+        ctx.firestore(),
+        `voiceMomentUploadReservations/${COMMENT}`,
+      ));
+    });
+    await assertSucceeds(getBytes(ref(alice, replyPath)));
+    await assertSucceeds(getBytes(ref(bob, replyPath)));
+    await assertFails(getBytes(ref(anon, replyPath)));
+    await assertFails(deleteObject(ref(alice, replyPath)));
+    await assertFails(deleteObject(ref(bob, replyPath)));
+  });
+
+  await check("a missing reservation cannot be used as an orphan reply store", () =>
+    assertFails(uploadBytes(
+      ref(
+        alice,
+        `voice_replies/${ALICE}/${PARENT}/${REPLY_ORPHAN}.m4a`,
+      ),
+      smallAudio,
+      replyMetadata(ALICE, PARENT, REPLY_ORPHAN),
+    )),
+  );
+
+  const contractReplyPath =
+    `voice_replies/${ALICE}/${PARENT}/${REPLY_CONTRACT}.m4a`;
+  await check("reply reservation identity and lifecycle are exact", async () => {
+    const writeReservation = (overrides = {}) =>
+      testEnv.withSecurityRulesDisabled((ctx) => setDoc(
+        doc(
+          ctx.firestore(),
+          `voiceMomentUploadReservations/${REPLY_CONTRACT}`,
+        ),
+        voiceReplyReservation(ALICE, PARENT, REPLY_CONTRACT, overrides),
+      ));
+    const canonicalUpload = () => uploadBytes(
+      ref(alice, contractReplyPath),
+      smallAudio,
+      replyMetadata(ALICE, PARENT, REPLY_CONTRACT),
+    );
+
+    for (const overrides of [
+      { schemaVersion: 2 },
+      { kind: "forgedKind" },
+      { status: "finalized" },
+      { ownerId: BOB },
+      { momentId: MOMENT },
+      { commentId: COMMENT },
+      { storagePath: `voice_replies/${ALICE}/${PARENT}/different.m4a` },
+      { durationSeconds: 0 },
+      { durationSeconds: 61 },
+      { durationSeconds: "7" },
+      { expiresAt: new Date(Date.now() - 60 * 1000) },
+    ]) {
+      await writeReservation(overrides);
+      await assertFails(canonicalUpload());
+    }
+
+    await writeReservation();
+    await assertFails(uploadBytes(
+      ref(alice, contractReplyPath),
+      smallAudio,
+      replyMetadata(ALICE, PARENT, REPLY_CONTRACT, { extra: "forged" }),
+    ));
+    await assertFails(uploadBytes(
+      ref(alice, contractReplyPath),
+      smallAudio,
+      replyMetadata(BOB, PARENT, REPLY_CONTRACT),
+    ));
+    await assertFails(uploadBytes(
+      ref(alice, contractReplyPath),
+      smallAudio,
+      replyMetadata(ALICE, MOMENT, REPLY_CONTRACT),
+    ));
+    await assertFails(uploadBytes(
+      ref(alice, contractReplyPath),
+      smallAudio,
+      { ...pdf, customMetadata: replyMetadata(
+        ALICE,
+        PARENT,
+        REPLY_CONTRACT,
+      ).customMetadata },
+    ));
+    await assertFails(uploadBytes(
+      ref(alice, contractReplyPath),
+      tooSmallAudio,
+      replyMetadata(ALICE, PARENT, REPLY_CONTRACT),
+    ));
+    await assertSucceeds(uploadBytes(
+      ref(alice, contractReplyPath),
+      smallAudio,
+      {
+        ...legacyAudio,
+        customMetadata: replyMetadata(
+          ALICE,
+          PARENT,
+          REPLY_CONTRACT,
+        ).customMetadata,
+      },
+    ));
+
+    // Delete remains denied regardless of reservation or finalize state.
+    await writeReservation({ ownerId: BOB });
+    await assertFails(deleteObject(ref(alice, contractReplyPath)));
+    await writeReservation({ storagePath: "voice_replies/wrong/path.m4a" });
+    await assertFails(deleteObject(ref(alice, contractReplyPath)));
+    await writeReservation();
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(
+        doc(
+          ctx.firestore(),
+          `voiceMoments/${PARENT}/comments/${REPLY_CONTRACT}`,
+        ),
+        { type: "voice", authorId: ALICE, storagePath: contractReplyPath },
+      );
+    });
+    await assertFails(deleteObject(ref(alice, contractReplyPath)));
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await deleteDoc(doc(
+        ctx.firestore(),
+        `voiceMoments/${PARENT}/comments/${REPLY_CONTRACT}`,
+      ));
+    });
+    await assertFails(deleteObject(ref(alice, contractReplyPath)));
+  });
+
+  await check("legacy mixed-case reply objects are read-only", async () => {
+    const legacyPath =
+      `voice_replies/${ALICE}/${PARENT}/${LEGACY_REPLY}.m4a`;
+    const legacyM4aPath =
+      `voice_replies/${ALICE}/${PARENT}/${LEGACY_REPLY_M4A}.m4a`;
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await uploadBytes(
+        ref(ctx.storage(), legacyPath),
+        smallAudio,
+        replyMetadata(ALICE, PARENT, LEGACY_REPLY),
+      );
+      await uploadBytes(
+        ref(ctx.storage(), legacyM4aPath),
+        smallAudio,
+        {
+          ...legacyAudio,
+          customMetadata: replyMetadata(
+            ALICE,
+            PARENT,
+            LEGACY_REPLY_M4A,
+          ).customMetadata,
+        },
+      );
+      await setDoc(
+        doc(
+          ctx.firestore(),
+          `voiceMomentUploadReservations/${LEGACY_REPLY}`,
+        ),
+        voiceReplyReservation(ALICE, PARENT, LEGACY_REPLY),
+      );
+      await setDoc(
+        doc(
+          ctx.firestore(),
+          `voiceMomentUploadReservations/${LEGACY_REPLY_NEW}`,
+        ),
+        voiceReplyReservation(ALICE, PARENT, LEGACY_REPLY_NEW),
+      );
+    });
+    await assertSucceeds(getBytes(ref(alice, legacyPath)));
+    await assertSucceeds(getBytes(ref(bob, legacyPath)));
+    await assertSucceeds(getBytes(ref(bob, legacyM4aPath)));
+    await assertFails(getBytes(ref(anon, legacyPath)));
+    await assertFails(deleteObject(ref(alice, legacyPath)));
+    await assertFails(deleteObject(ref(alice, legacyM4aPath)));
+    await assertFails(uploadBytes(
+      ref(
+        alice,
+        `voice_replies/${ALICE}/${PARENT}/${LEGACY_REPLY_NEW}.m4a`,
+      ),
+      smallAudio,
+      replyMetadata(ALICE, PARENT, LEGACY_REPLY_NEW),
+    ));
   });
 
   await check("writes outside every matched path are rejected", () =>

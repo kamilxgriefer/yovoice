@@ -91,7 +91,9 @@ class OutboxEntry {
       queuedAt: queuedAt,
       state: state ?? this.state,
       attempts: attempts ?? this.attempts,
-      nextAttemptAt: clearNextAttempt ? null : (nextAttemptAt ?? this.nextAttemptAt),
+      nextAttemptAt: clearNextAttempt
+          ? null
+          : (nextAttemptAt ?? this.nextAttemptAt),
       lastError: lastError ?? this.lastError,
     );
   }
@@ -187,6 +189,9 @@ class OutboxFullException implements Exception {
 class MessageOutbox {
   MessageOutbox({
     SharedPreferences? preferences,
+    String? storageKey = legacyStorageKey,
+    this.ownerId,
+    Iterable<String> retiredStorageKeys = const <String>[],
     this.capacity = 50,
     this.maxAttempts = 6,
     Duration baseBackoff = const Duration(seconds: 2),
@@ -194,10 +199,43 @@ class MessageOutbox {
     DateTime Function()? clock,
     Random? random,
   }) : _preferences = preferences,
+       _storageKey = storageKey,
+       _retiredStorageKeys = List<String>.unmodifiable(retiredStorageKeys),
        _baseBackoff = baseBackoff,
        _maxBackoff = maxBackoff,
        _clock = clock ?? DateTime.now,
        _random = random ?? Random.secure();
+
+  /// The pre-account-scoping key used by older app builds and by isolated
+  /// tests that construct their own outbox.
+  static const String legacyStorageKey = 'messages.outbox.v1';
+
+  static final Map<String, MessageOutbox> _sharedByOwner =
+      <String, MessageOutbox>{};
+
+  /// The process-wide production queue for one authenticated account.
+  ///
+  /// Multiple screens create lightweight [MessageService] facades. They must
+  /// still observe and mutate one queue, or two chats can overwrite the same
+  /// preference value. The owner is part of both the in-memory registry and
+  /// the storage key so an account switch can never flush somebody else's
+  /// unsent text.
+  static MessageOutbox sharedForUser(String userId) {
+    if (userId.isEmpty) {
+      throw ArgumentError.value(userId, 'userId', 'Must not be empty.');
+    }
+    return _sharedByOwner.putIfAbsent(
+      userId,
+      () => MessageOutbox(
+        storageKey: 'messages.outbox.v2.$userId',
+        ownerId: userId,
+        // v1 had no sender/owner field. Assigning it to whichever account
+        // happens to open the upgraded app would expose one account's draft
+        // to another on a shared device, so retire it instead of guessing.
+        retiredStorageKeys: const <String>[legacyStorageKey],
+      ),
+    );
+  }
 
   /// The largest number of messages that may wait at once.
   final int capacity;
@@ -205,7 +243,13 @@ class MessageOutbox {
   /// How many transient failures an entry survives before becoming [OutboxState.failed].
   final int maxAttempts;
 
+  /// Auth uid that owns this queue. Null only for isolated legacy/test
+  /// instances; live app queues are always account-scoped.
+  final String? ownerId;
+
   final SharedPreferences? _preferences;
+  final String? _storageKey;
+  final List<String> _retiredStorageKeys;
   final Duration _baseBackoff;
   final Duration _maxBackoff;
   final DateTime Function() _clock;
@@ -214,10 +258,12 @@ class MessageOutbox {
   final List<OutboxEntry> _entries = [];
   final StreamController<List<OutboxEntry>> _changes =
       StreamController<List<OutboxEntry>>.broadcast();
+  final StreamController<OutboxEntry> _delivered =
+      StreamController<OutboxEntry>.broadcast();
 
-  bool _loaded = false;
-
-  static const String _storageKey = 'messages.outbox.v1';
+  Future<void>? _loadFuture;
+  Future<void> _mutationTail = Future<void>.value();
+  bool _deliveryActive = false;
 
   /// Every queued message, oldest first.
   List<OutboxEntry> get entries => List.unmodifiable(_entries);
@@ -233,6 +279,15 @@ class MessageOutbox {
   /// pending and failed messages without polling.
   Stream<List<OutboxEntry>> get changes => _changes.stream;
 
+  /// Emits an entry after the server accepted it but before the chat's
+  /// Firestore listener necessarily rendered the canonical message.
+  ///
+  /// HTTPS callable responses and Firestore snapshots travel over separate
+  /// streams, so either can arrive first. Keeping this tiny hand-off signal
+  /// prevents an optimistic bubble from disappearing for a frame between
+  /// the outbox removal and the committed message snapshot.
+  Stream<OutboxEntry> get delivered => _delivered.stream;
+
   Future<SharedPreferences?> _prefs() async {
     if (_preferences != null) {
       return _preferences;
@@ -247,14 +302,22 @@ class MessageOutbox {
     }
   }
 
-  Future<void> load() async {
-    if (_loaded) {
+  /// Loads once and shares the exact in-flight Future with every caller.
+  ///
+  /// Setting a boolean before awaiting SharedPreferences lets an enqueue race
+  /// ahead, only to be cleared when the older load completes. Sharing the
+  /// Future makes every first mutation wait for the same completed load.
+  Future<void> load() => _loadFuture ??= _loadFromPreferences();
+
+  Future<void> _loadFromPreferences() async {
+    final prefs = await _prefs();
+    final storageKey = _storageKey;
+    if (prefs == null || storageKey == null) {
       return;
     }
-    _loaded = true;
-    final prefs = await _prefs();
-    final raw = prefs?.getString(_storageKey);
+    final raw = prefs.getString(storageKey);
     if (raw == null || raw.isEmpty) {
+      await _retireUnscopedStorage(prefs);
       return;
     }
     try {
@@ -274,22 +337,52 @@ class MessageOutbox {
     } catch (_) {
       // A corrupt queue is dropped rather than propagated. It is a cache of
       // unsent work, not a source of truth.
+    } finally {
+      await _retireUnscopedStorage(prefs);
+    }
+  }
+
+  Future<void> _retireUnscopedStorage(SharedPreferences prefs) async {
+    for (final key in _retiredStorageKeys) {
+      if (key == _storageKey) continue;
+      try {
+        await prefs.remove(key);
+      } catch (_) {
+        // Privacy cleanup is retried on the next process start. Failure to
+        // remove a retired key must not make the scoped queue unusable.
+      }
     }
   }
 
   Future<void> _persist() async {
+    final storageKey = _storageKey;
+    if (storageKey == null) {
+      return;
+    }
     final prefs = await _prefs();
     if (prefs == null) {
       return;
     }
     try {
       await prefs.setString(
-        _storageKey,
+        storageKey,
         jsonEncode(_entries.map((entry) => entry.toJson()).toList()),
       );
     } catch (_) {
       // Best effort: an unwritable preference store must not fail the send.
     }
+  }
+
+  Future<T> _serialize<T>(Future<T> Function() mutation) {
+    final result = Completer<T>();
+    _mutationTail = _mutationTail.then((_) async {
+      try {
+        result.complete(await mutation());
+      } catch (error, stackTrace) {
+        result.completeError(error, stackTrace);
+      }
+    });
+    return result.future;
   }
 
   void _notify() {
@@ -317,7 +410,7 @@ class MessageOutbox {
     required String recipientId,
     required String text,
     String? replyToMessageId,
-  }) async {
+  }) => _serialize(() async {
     await load();
 
     if (_entries.length >= capacity) {
@@ -343,78 +436,87 @@ class MessageOutbox {
     await _persist();
     _notify();
     return entry;
-  }
+  });
 
   int _indexOf(String id) => _entries.indexWhere((entry) => entry.id == id);
 
   /// Removes a delivered message from the queue.
-  Future<void> markSent(String id) async {
+  Future<void> markSent(String id) => _serialize(() async {
+    await load();
     final index = _indexOf(id);
     if (index < 0) {
       return;
     }
-    _entries.removeAt(index);
+    final delivered = _entries.removeAt(index);
     await _persist();
+    if (!_delivered.isClosed) {
+      _delivered.add(delivered);
+    }
     _notify();
-  }
+  });
 
   /// Records a transient failure and schedules the next attempt.
   ///
   /// Returns the updated entry, which becomes [OutboxState.failed] once
   /// [maxAttempts] is reached — a retry loop that never gives up is how a
   /// permanently-broken send becomes a permanent battery and quota drain.
-  Future<OutboxEntry?> markRetry(String id, String error) async {
-    final index = _indexOf(id);
-    if (index < 0) {
-      return null;
-    }
-    final current = _entries[index];
-    final attempts = current.attempts + 1;
-    final OutboxEntry updated;
-    if (attempts >= maxAttempts) {
-      updated = current.copyWith(
-        state: OutboxState.failed,
-        attempts: attempts,
-        lastError: error,
-        clearNextAttempt: true,
-      );
-    } else {
-      updated = current.copyWith(
-        state: OutboxState.retrying,
-        attempts: attempts,
-        lastError: error,
-        nextAttemptAt: _clock().add(_backoffFor(attempts)),
-      );
-    }
-    _entries[index] = updated;
-    await _persist();
-    _notify();
-    return updated;
-  }
+  Future<OutboxEntry?> markRetry(String id, String error) =>
+      _serialize(() async {
+        await load();
+        final index = _indexOf(id);
+        if (index < 0) {
+          return null;
+        }
+        final current = _entries[index];
+        final attempts = current.attempts + 1;
+        final OutboxEntry updated;
+        if (attempts >= maxAttempts) {
+          updated = current.copyWith(
+            state: OutboxState.failed,
+            attempts: attempts,
+            lastError: error,
+            clearNextAttempt: true,
+          );
+        } else {
+          updated = current.copyWith(
+            state: OutboxState.retrying,
+            attempts: attempts,
+            lastError: error,
+            nextAttemptAt: _clock().add(_backoffFor(attempts)),
+          );
+        }
+        _entries[index] = updated;
+        await _persist();
+        _notify();
+        return updated;
+      });
 
   /// Records a refusal the server will give again for the same input.
-  Future<OutboxEntry?> markFailed(String id, String error) async {
-    final index = _indexOf(id);
-    if (index < 0) {
-      return null;
-    }
-    final updated = _entries[index].copyWith(
-      state: OutboxState.failed,
-      lastError: error,
-      clearNextAttempt: true,
-    );
-    _entries[index] = updated;
-    await _persist();
-    _notify();
-    return updated;
-  }
+  Future<OutboxEntry?> markFailed(String id, String error) =>
+      _serialize(() async {
+        await load();
+        final index = _indexOf(id);
+        if (index < 0) {
+          return null;
+        }
+        final updated = _entries[index].copyWith(
+          state: OutboxState.failed,
+          lastError: error,
+          clearNextAttempt: true,
+        );
+        _entries[index] = updated;
+        await _persist();
+        _notify();
+        return updated;
+      });
 
   /// Moves a failed entry back into the queue at the caller's request.
   ///
   /// The attempt counter resets because this is a deliberate human decision,
   /// not the automatic loop; the requestId does NOT change, so a manual retry
   /// is still deduplicated against an attempt that secretly succeeded.
-  Future<OutboxEntry?> retryNow(String id) async {
+  Future<OutboxEntry?> retryNow(String id) => _serialize(() async {
+    await load();
     final index = _indexOf(id);
     if (index < 0) {
       return null;
@@ -428,16 +530,57 @@ class MessageOutbox {
     await _persist();
     _notify();
     return updated;
+  });
+
+  Future<void> discard(String id) => _serialize(() async {
+    await load();
+    final index = _indexOf(id);
+    if (index < 0) {
+      return;
+    }
+    _entries.removeAt(index);
+    await _persist();
+    _notify();
+  });
+
+  /// Claims the delivery loop shared by every service facade for this queue.
+  bool tryBeginDelivery() {
+    if (_deliveryActive) return false;
+    _deliveryActive = true;
+    return true;
   }
 
-  Future<void> discard(String id) => markSent(id);
+  void endDelivery() {
+    _deliveryActive = false;
+  }
 
   /// Entries due for another attempt, oldest first.
   ///
   /// Ordering matters: messages must arrive in the order they were written.
   List<OutboxEntry> due() {
     final now = _clock();
-    return _entries.where((entry) => entry.isDue(now)).toList(growable: false);
+    final blockedConversations = <String>{};
+    final due = <OutboxEntry>[];
+    for (final entry in _entries) {
+      if (entry.isTerminal) {
+        // A terminal entry needs a human decision and must not freeze every
+        // later send forever. It is visibly retained, but no longer belongs
+        // to the automatic delivery order.
+        continue;
+      }
+      if (blockedConversations.contains(entry.conversationId)) {
+        continue;
+      }
+      if (!entry.isDue(now)) {
+        // Preserve order within one conversation. A later message in the
+        // same chat must never overtake an older one during its backoff, but
+        // an unrelated chat remains free to drain.
+        blockedConversations.add(entry.conversationId);
+        continue;
+      }
+      due.add(entry);
+    }
+    return due;
   }
 
   Duration _backoffFor(int attempts) {
@@ -458,14 +601,17 @@ class MessageOutbox {
     return Duration(milliseconds: _random.nextInt(max(ceiling, 1)) + 1);
   }
 
-  Future<void> clear() async {
+  Future<void> clear() => _serialize(() async {
+    await load();
     _entries.clear();
     await _persist();
     _notify();
-  }
+  });
 
   Future<void> dispose() async {
+    await _mutationTail;
     await _changes.close();
+    await _delivered.close();
   }
 }
 

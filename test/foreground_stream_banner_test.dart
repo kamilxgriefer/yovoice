@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/app/app.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 
 /// The global in-app notification banner must not depend on FCM: any
 /// unread notification document arriving on the Firestore feed after the
@@ -56,6 +57,7 @@ void main() {
               actorId: arrival.actorId,
             ),
           );
+        return true;
       },
     )..start();
     addTearDown(source.dispose);
@@ -82,10 +84,7 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(shown, ['fresh']);
-    expect(
-      find.text('Actor fresh started following you'),
-      findsOneWidget,
-    );
+    expect(find.text('Actor fresh started following you'), findsOneWidget);
 
     // Firestore re-delivers the whole window on any change: no duplicate.
     feed.add([notification('fresh'), notification('pre-existing')]);
@@ -106,7 +105,10 @@ void main() {
     final source = ForegroundNotificationStreamSource(
       authStates: auth.stream,
       watchNotifications: () => feed.stream,
-      showBanner: (arrival) => shown.add(arrival.id),
+      showBanner: (arrival) {
+        shown.add(arrival.id);
+        return true;
+      },
     )..start();
     addTearDown(source.dispose);
 
@@ -134,7 +136,10 @@ void main() {
     final source = ForegroundNotificationStreamSource(
       authStates: auth.stream,
       watchNotifications: () => feed.stream,
-      showBanner: (arrival) => shown.add(arrival.id),
+      showBanner: (arrival) {
+        shown.add(arrival.id);
+        return true;
+      },
     )..start();
     addTearDown(source.dispose);
 
@@ -143,21 +148,227 @@ void main() {
     feed.add(const <AppNotification>[]); // baseline
     await Future<void>.delayed(Duration.zero);
 
-    // Push beat Firestore: the FCM banner shows, the stream stays quiet.
-    expect(source.registerPushBanner('n1'), isTrue);
+    // Push beat Firestore: reserve first, then commit only after the platform
+    // accepted its presentation. The stream defers the matching document.
+    final pushFirst = source.claimPushBanner('n1');
+    expect(pushFirst.shouldPresent, isTrue);
+    expect(pushFirst.claim, isNotNull);
+    expect(source.claimPushBanner('n1').shouldPresent, isFalse);
     feed.add([notification('n1')]);
     await Future<void>.delayed(Duration.zero);
+    expect(shown, isEmpty);
+    pushFirst.claim!.complete(presented: true);
     expect(shown, isEmpty);
 
     // Firestore beat push: the stream banner shows, the FCM one is vetoed.
     feed.add([notification('n2'), notification('n1')]);
     await Future<void>.delayed(Duration.zero);
     expect(shown, ['n2']);
-    expect(source.registerPushBanner('n2'), isFalse);
+    expect(source.claimPushBanner('n2').shouldPresent, isFalse);
 
-    // A payload without an id cannot be deduped and stays allowed.
-    expect(source.registerPushBanner(null), isTrue);
+    // A legacy payload without an id cannot be deduped, but must not vanish.
+    final idless = source.claimPushBanner(null);
+    expect(idless.shouldPresent, isTrue);
+    expect(idless.claim, isNull);
   });
+
+  test(
+    'a failed FCM presentation releases its deferred Firestore banner',
+    () async {
+      final auth = StreamController<User?>.broadcast();
+      final feed = StreamController<List<AppNotification>>.broadcast();
+      final shown = <String>[];
+      final source = ForegroundNotificationStreamSource(
+        authStates: auth.stream,
+        watchNotifications: () => feed.stream,
+        showBanner: (arrival) {
+          shown.add(arrival.id);
+          return true;
+        },
+      )..start();
+      addTearDown(source.dispose);
+
+      auth.add(MockUser(uid: 'me-uid'));
+      await Future<void>.delayed(Duration.zero);
+      feed.add(const <AppNotification>[]); // baseline
+      await Future<void>.delayed(Duration.zero);
+
+      final decision = source.claimPushBanner('failed-native');
+      feed.add([notification('failed-native')]);
+      await Future<void>.delayed(Duration.zero);
+      expect(shown, isEmpty);
+
+      decision.claim!.complete(presented: false);
+      expect(shown, ['failed-native']);
+
+      // Completion and Firestore re-emission are both idempotent.
+      decision.claim!.complete(presented: false);
+      feed.add([notification('failed-native')]);
+      await Future<void>.delayed(Duration.zero);
+      expect(shown, ['failed-native']);
+    },
+  );
+
+  test('messenger rejection stays pending and retries exactly once', () async {
+    final auth = StreamController<User?>.broadcast();
+    final feed = StreamController<List<AppNotification>>.broadcast();
+    final shown = <String>[];
+    var messengerReady = false;
+    var attempts = 0;
+    final source = ForegroundNotificationStreamSource(
+      authStates: auth.stream,
+      watchNotifications: () => feed.stream,
+      showBanner: (arrival) {
+        attempts++;
+        if (!messengerReady) return false;
+        shown.add(arrival.id);
+        return true;
+      },
+    )..start();
+    addTearDown(source.dispose);
+
+    auth.add(MockUser(uid: 'me-uid'));
+    await Future<void>.delayed(Duration.zero);
+    feed.add(const <AppNotification>[]); // baseline
+    await Future<void>.delayed(Duration.zero);
+
+    final decision = source.claimPushBanner('not-mounted-yet');
+    feed.add([notification('not-mounted-yet')]);
+    await Future<void>.delayed(Duration.zero);
+    decision.claim!.complete(presented: false);
+    expect(attempts, 1);
+    expect(shown, isEmpty);
+
+    source.retryPendingBanners();
+    expect(attempts, 2);
+    expect(shown, isEmpty);
+
+    messengerReady = true;
+    source.retryPendingBanners();
+    expect(shown, ['not-mounted-yet']);
+    expect(source.claimPushBanner('not-mounted-yet').shouldPresent, isFalse);
+
+    source.retryPendingBanners();
+    feed.add([notification('not-mounted-yet')]);
+    await Future<void>.delayed(Duration.zero);
+    expect(shown, ['not-mounted-yet']);
+  });
+
+  test(
+    'failed push before the first snapshot is not mistaken for backlog',
+    () async {
+      final auth = StreamController<User?>.broadcast();
+      final feed = StreamController<List<AppNotification>>.broadcast();
+      final shown = <String>[];
+      final source = ForegroundNotificationStreamSource(
+        authStates: auth.stream,
+        watchNotifications: () => feed.stream,
+        showBanner: (arrival) {
+          shown.add(arrival.id);
+          return true;
+        },
+      )..start();
+      addTearDown(source.dispose);
+
+      auth.add(MockUser(uid: 'me-uid'));
+      await Future<void>.delayed(Duration.zero);
+      final decision = source.claimPushBanner('startup-arrival');
+      decision.claim!.complete(presented: false);
+
+      // This is technically the baseline snapshot, but the failed FCM claim
+      // proves this one id is a live arrival that still needs presentation.
+      feed.add([notification('startup-arrival'), notification('old-backlog')]);
+      await Future<void>.delayed(Duration.zero);
+      expect(shown, ['startup-arrival']);
+    },
+  );
+
+  test(
+    'a delayed failed push can fall back to an already-known document',
+    () async {
+      final auth = StreamController<User?>.broadcast();
+      final feed = StreamController<List<AppNotification>>.broadcast();
+      final shown = <String>[];
+      final source = ForegroundNotificationStreamSource(
+        authStates: auth.stream,
+        watchNotifications: () => feed.stream,
+        showBanner: (arrival) {
+          shown.add(arrival.id);
+          return true;
+        },
+      )..start();
+      addTearDown(source.dispose);
+
+      auth.add(MockUser(uid: 'me-uid'));
+      await Future<void>.delayed(Duration.zero);
+      feed.add([notification('already-in-baseline')]);
+      await Future<void>.delayed(Duration.zero);
+      expect(shown, isEmpty);
+
+      // The FCM delivery may lag behind the snapshot. Its presentation failure
+      // must reuse the cached source-of-truth document immediately; there may be
+      // no second Firestore emission to wake a retry.
+      final decision = source.claimPushBanner('already-in-baseline');
+      decision.claim!.complete(presented: false);
+      expect(shown, ['already-in-baseline']);
+    },
+  );
+
+  test(
+    'presentation decisions preserve id-less delivery and settle claims',
+    () async {
+      var presentations = 0;
+      expect(
+        await presentForegroundNotificationDecision(
+          decision: const ForegroundNotificationClaimDecision.allowUntracked(),
+          present: () async {
+            presentations++;
+            return true;
+          },
+        ),
+        isTrue,
+      );
+      expect(
+        presentations,
+        1,
+        reason: 'an id-less legacy push must not vanish',
+      );
+
+      expect(
+        await presentForegroundNotificationDecision(
+          decision: const ForegroundNotificationClaimDecision.skip(),
+          present: () async {
+            presentations++;
+            return true;
+          },
+        ),
+        isFalse,
+      );
+      expect(presentations, 1, reason: 'a duplicate decision must not present');
+
+      final outcomes = <bool>[];
+      final successClaim = ForegroundNotificationClaim(outcomes.add);
+      expect(
+        await presentForegroundNotificationDecision(
+          decision: ForegroundNotificationClaimDecision.claimed(successClaim),
+          present: () async => true,
+        ),
+        isTrue,
+      );
+      successClaim.complete(presented: false);
+      expect(outcomes, [true], reason: 'a claim is single-use');
+
+      final failedClaim = ForegroundNotificationClaim(outcomes.add);
+      await expectLater(
+        presentForegroundNotificationDecision(
+          decision: ForegroundNotificationClaimDecision.claimed(failedClaim),
+          present: () async => throw StateError('platform unavailable'),
+        ),
+        throwsStateError,
+      );
+      expect(outcomes, [true, false]);
+    },
+  );
 
   test('signing out and back in resets the baseline', () async {
     final auth = StreamController<User?>.broadcast();
@@ -167,7 +378,10 @@ void main() {
     final source = ForegroundNotificationStreamSource(
       authStates: auth.stream,
       watchNotifications: () => feed.stream,
-      showBanner: (arrival) => shown.add(arrival.id),
+      showBanner: (arrival) {
+        shown.add(arrival.id);
+        return true;
+      },
     )..start();
     addTearDown(source.dispose);
 

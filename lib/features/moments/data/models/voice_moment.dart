@@ -33,7 +33,7 @@ class VoiceMoment {
 
   /// When this Moment stops being publicly alive. Written by
   /// `finalizeMomentDraft` as `createdAt + availabilityHours` (24 by
-  /// default; 24/72/168/720 are the whitelisted choices); enforced
+  /// default; any whole-hour value from 24 through 720 is accepted); enforced
   /// server-side by the expiry sweeper AND client-side by [isActiveAt] so
   /// the sweep gap (up to 10 minutes) never surfaces a dead Moment.
   ///

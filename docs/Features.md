@@ -45,7 +45,11 @@ caller's actual participant role — never trusted from the client.
 Meaningful voice actions have original, short YO Voice cues: room creation,
 the local join/leave transition, remote participant join/leave, and confirmed
 microphone mute/unmute. The cues are throttled during bursts and can be turned
-off with the device-local **Sound effects** setting.
+off with the device-local **Sound effects** setting. In source, ADR-116 replaces
+the deployed melodic cues with the non-musical Velvet Prism material system;
+room creation consumes its immediate join confirmation instead of producing a
+two-cue jingle. **SOURCE ONLY — NOT DEPLOYED.** User speech, Voice Moments and
+voice messages are media and are deliberately outside this effects system.
 
 **Legacy note**: room documents may still contain `experience: 'podcast'`
 from before the room-type rename; the client maps that to `broadcast` for
@@ -146,11 +150,11 @@ comments including voice replies, a public feed
 Studio. Like/comment counters are transactionally validated against the
 actual `likes` subcollection — not client-settable to an arbitrary value.
 
-**Moments is a primary destination** (source `cef05e6`, **not yet released
-and not yet rendered**): it sits directly above Discover in the desktop rail
-and takes a slot in the mobile dock, which displaced Friends from the
-five-slot dock — Friends keeps its desktop rail entry, its More entry, its
-screen and its state. The screen behind it is a global discovery feed showing
+**Moments is a primary destination** (source `cef05e6`, deployed
+2026-08-20): it sits directly above Discover in the desktop rail and takes a
+slot in the mobile dock, which displaced Friends from the five-slot dock —
+Friends keeps its desktop rail entry, its More entry, its screen and its state.
+The screen behind it is a global discovery feed showing
 Moments from every user rather than only people you follow: a bounded popular
 pool weighted by engagement, shuffled under a held seed so paging stays
 stable, with authors spaced apart. Ranking happens client-side because
@@ -170,6 +174,26 @@ now preserves the native Blob and uploads it with `putBlob`; retry reuses the
 same draft, request id and object generation. Browser/native seams and the
 complete reservation/rules contract are automated, but a real post-deploy
 iPhone Safari publish remains a release verification step.
+
+**Review-before-publish and custom availability** (2026-08-27, **SOURCE ONLY —
+NOT DEPLOYED**): a completed take can be played, paused and sought from its
+local file/Blob without reserving a Firestore draft or uploading bytes. The
+author chooses any whole 24–720 hours, 1–30 days, or Until deleted; 24 hours
+remains the backward-compatible default. Voice replies receive preview but no
+separate lifetime. The server validates the duration and owns root publication,
+expiry and deletion. A single nearest-deadline timer removes a Moment from an
+already-open feed/detail/story/sheet/comments surface and stops playback at the
+deadline. A visible transition is announced once to assistive technology and
+keyboard focus moves to a stable surviving control or heading; Story keeps the
+first surviving successor even when several links expire while the app is
+suspended. Long waits are chunked below the browser timer limit, and cached
+hidden tabs neither announce nor steal focus. Server callables independently
+refuse new engagement at that same instant. A deadline does not delete the
+stored document or audio. The mobile and desktop Home circle strips observe
+the exact stream transition too, so a focused tile cannot disappear silently.
+Root/reply
+objects are client-immutable, and bounded server cleanup removes abandoned
+uploads without racing finalization.
 
 **Offline playback is live in the web/PWA client as of 2026-08-18; the same
 source is ready for the next signed native release.** Published, non-deleted

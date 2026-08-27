@@ -589,11 +589,7 @@ void main() {
         key: _capture,
         child: MaterialApp(
           debugShowCheckedModeBanner: false,
-          theme: ThemeData(
-            brightness: Brightness.dark,
-            useMaterial3: true,
-            fontFamily: 'Roboto',
-          ),
+          theme: AppTheme.darkTheme,
           home: Scaffold(
             backgroundColor: const Color(0xFF080711),
             body: Padding(

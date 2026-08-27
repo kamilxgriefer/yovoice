@@ -132,6 +132,7 @@ async function reset() {
       db.doc(`users/${uid}`).delete(),
       db.doc(`publicProfiles/${uid}`).delete(),
       db.doc(`restrictions/${uid}`).delete(),
+      db.doc(`momentCapacityLedgers/${uid}`).delete(),
       deleteQuery(db.collection("voiceMoments").where("authorId", "==", uid)),
       deleteQuery(db.collection("integrityOperationLedgers").where("ownerId", "==", uid)),
       deleteQuery(db.collection("integrityPreflightLedgers").where("ownerId", "==", uid)),
@@ -653,6 +654,9 @@ test("Moment deletion queues canonical cleanup and ignores forged storage paths"
     momentId,
     requestId: "moment-delete1",
   }));
+  const capacity = (await db.doc(`momentCapacityLedgers/${A}`).get()).data();
+  assert.equal(capacity.ownerId, A);
+  assert.equal(capacity.revision, 2, "publish + delete each advance the mutex");
   const outbox = await db.doc(`contentCleanupOutbox/${deletion.outboxId}`).get();
   assert.deepEqual(outbox.data().objectPaths, [storagePath]);
   assert.equal(outbox.data().status, "pending");
@@ -1302,7 +1306,7 @@ test("expired voice reservation cannot finalize and scheduler deletes its orphan
   );
 });
 
-test("invalid finalize preflights consume server quota before Storage reads", async () => {
+test("the same invalid root finalize retry consumes quota before every Storage read", async () => {
   const service = momentService({
     finalize: { maxEvents: 2, windowMs: 60_000 },
   });
@@ -1316,12 +1320,12 @@ test("invalid finalize preflights consume server quota before Storage reads", as
     momentId: reserved.momentId,
     generation: "8801",
   });
-  for (const id of ["preflight-bad1", "preflight-bad2"]) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
     await assert.rejects(
       service.finalizeMomentDraft(request(A, {
         momentId: reserved.momentId,
         objectGeneration: "8801",
-        requestId: id,
+        requestId: "preflight-bad1",
       })),
       (error) => error.code === "failed-precondition",
     );
@@ -1331,11 +1335,114 @@ test("invalid finalize preflights consume server quota before Storage reads", as
     service.finalizeMomentDraft(request(A, {
       momentId: reserved.momentId,
       objectGeneration: "8801",
-      requestId: "preflight-bad3",
+      requestId: "preflight-bad1",
     })),
     (error) => error.code === "resource-exhausted",
   );
   assert.equal(storage.metadataReads, 2);
+});
+
+test("completed root finalize replay is free and performs no second Storage read", async () => {
+  const service = momentService({
+    finalize: { maxEvents: 1, windowMs: 60_000 },
+  });
+  const reserved = await service.reserveMomentDraft(request(A, {
+    caption: "completed preflight",
+    durationSeconds: 8,
+    requestId: "preflight-done-res1",
+  }));
+  storage.put(reserved.storagePath, {
+    authorId: A,
+    momentId: reserved.momentId,
+    generation: "8802",
+  });
+  const finalizeRequest = request(A, {
+    momentId: reserved.momentId,
+    objectGeneration: "8802",
+    requestId: "preflight-done-fin1",
+  });
+  const first = await service.finalizeMomentDraft(finalizeRequest);
+  assert.equal(storage.metadataReads, 1);
+  assert.deepEqual(await service.finalizeMomentDraft(finalizeRequest), first);
+  assert.equal(storage.metadataReads, 1);
+});
+
+test("the same invalid voice-reply finalize retry is bounded before Storage", async () => {
+  const service = momentService({
+    finalize: { maxEvents: 2, windowMs: 60_000 },
+  });
+  const { momentId } = await publish(service, {
+    uid: B,
+    reserveRequestId: "reply-quota-parent-r1",
+    finalizeRequestId: "reply-quota-parent-f1",
+  });
+  const reserved = await service.reserveVoiceCommentDraft(request(A, {
+    durationSeconds: 5,
+    momentId,
+    requestId: "reply-quota-res1",
+    text: "bounded reply",
+  }));
+  storage.put(reserved.storagePath, {
+    authorId: B,
+    commentId: reserved.commentId,
+    momentId,
+    generation: "8803",
+  });
+  const baselineReads = storage.metadataReads;
+  const finalizeRequest = request(A, {
+    commentId: reserved.commentId,
+    momentId,
+    objectGeneration: "8803",
+    requestId: "reply-quota-fin1",
+  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(
+      service.finalizeVoiceCommentDraft(finalizeRequest),
+      (error) => error.code === "failed-precondition",
+    );
+  }
+  assert.equal(storage.metadataReads, baselineReads + 2);
+  await assert.rejects(
+    service.finalizeVoiceCommentDraft(finalizeRequest),
+    (error) => error.code === "resource-exhausted",
+  );
+  assert.equal(storage.metadataReads, baselineReads + 2);
+});
+
+test("completed voice-reply finalize replay is free and skips Storage", async () => {
+  const service = momentService({
+    finalize: { maxEvents: 1, windowMs: 60_000 },
+  });
+  const { momentId } = await publish(service, {
+    uid: B,
+    reserveRequestId: "reply-replay-parent-r1",
+    finalizeRequestId: "reply-replay-parent-f1",
+  });
+  const reserved = await service.reserveVoiceCommentDraft(request(A, {
+    durationSeconds: 5,
+    momentId,
+    requestId: "reply-replay-res1",
+    text: "replayed reply",
+  }));
+  storage.put(reserved.storagePath, {
+    authorId: A,
+    commentId: reserved.commentId,
+    momentId,
+    generation: "8804",
+  });
+  const finalizeRequest = request(A, {
+    commentId: reserved.commentId,
+    momentId,
+    objectGeneration: "8804",
+    requestId: "reply-replay-fin1",
+  });
+  const first = await service.finalizeVoiceCommentDraft(finalizeRequest);
+  const readsAfterFirst = storage.metadataReads;
+  assert.deepEqual(
+    await service.finalizeVoiceCommentDraft(finalizeRequest),
+    first,
+  );
+  assert.equal(storage.metadataReads, readsAfterFirst);
 });
 
 test("cleanup paginates comments and quarantines malformed voice identities", async () => {
@@ -1666,6 +1773,52 @@ test("finalize stamps expiresAt exactly 24 hours after the stored createdAt", as
   assert.equal(replayed.expiresAt.toMillis(), moment.expiresAt.toMillis());
 });
 
+test("a full active shelf consumes reserve quota before its exact cap query", async () => {
+  const batch = db.batch();
+  for (let index = 0; index < 10; index += 1) {
+    batch.set(db.doc(`voiceMoments/quota-cap-${index}`), {
+      authorId: A,
+      isPublished: true,
+    });
+  }
+  await batch.commit();
+  const service = momentService({
+    uploadReserve: { maxEvents: 2, windowMs: 60_000 },
+  });
+  const reserveRequest = request(A, {
+    caption: "Quota-bound eleventh",
+    durationSeconds: 5,
+    requestId: "quota-cap-reserve1",
+  });
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(
+      service.reserveMomentDraft(reserveRequest),
+      (error) => error.code === "resource-exhausted" &&
+        /10 active/u.test(error.message),
+    );
+  }
+  const rate = await db.collection("privateRateLimits")
+    .where("ownerId", "==", A)
+    .where("scope", "==", "moment.uploadReserve")
+    .get();
+  assert.equal(rate.size, 1);
+  assert.equal(rate.docs[0].data().count, 2);
+
+  await assert.rejects(
+    service.reserveMomentDraft(reserveRequest),
+    (error) => error.code === "resource-exhausted" &&
+      /Too many requests/u.test(error.message),
+  );
+
+  // The same logical reserve may succeed once both the quota window and a
+  // capacity slot have genuinely opened.
+  nowMs += 60_001;
+  await db.doc("voiceMoments/quota-cap-0").delete();
+  const reserved = await service.reserveMomentDraft(reserveRequest);
+  assert.equal(reserved.created, true);
+});
+
 test("the active-story cap refuses an eleventh live Moment and frees on expiry", async () => {
   const service = momentService({
     uploadReserve: { maxEvents: 100, windowMs: 60_000 },
@@ -1711,8 +1864,9 @@ test("the active-story cap refuses an eleventh live Moment and frees on expiry",
   assert.equal(other.created, true);
 
   // T0 + 24h + 1min: only the FIRST story has expired (the other nine run
-  // until T0 + 26h), so exactly one active slot is free — and the refused
-  // transaction consumed nothing, so the very same requestId succeeds now.
+  // until T0 + 26h), so exactly one active slot is free. The earlier refused
+  // attempt was metered, but its quota window has also elapsed, so the same
+  // logical request may now succeed safely.
   nowMs += 22 * 60 * 60_000 + 60_000;
   const eleventh = await service.reserveMomentDraft(request(A, {
     caption: "Eleventh story",
@@ -1736,6 +1890,160 @@ test("unpublished drafts do not count against the active-story cap", async () =>
     }));
     assert.equal(reserved.created, true);
   }
+});
+
+test("concurrent finalize caps eleven pre-reserved drafts at ten active Moments", async () => {
+  const service = momentService({
+    uploadReserve: { maxEvents: 100, windowMs: 60_000 },
+    finalize: { maxEvents: 100, windowMs: 60_000 },
+  });
+  const drafts = [];
+
+  // Reservation deliberately ignores unpublished drafts. Reserve every
+  // recording first to reproduce the old reserve-many/finalize-many bypass.
+  for (let index = 0; index < 11; index += 1) {
+    const suffix = String(index).padStart(2, "0");
+    const reserved = await service.reserveMomentDraft(request(A, {
+      caption: `Prepared draft ${index}`,
+      durationSeconds: 5,
+      requestId: `final-cap-r-${suffix}`,
+    }));
+    const generation = `87${suffix}`;
+    storage.put(reserved.storagePath, {
+      authorId: A,
+      momentId: reserved.momentId,
+      generation,
+    });
+    drafts.push({ ...reserved, generation, suffix });
+  }
+
+  // Nine fill all but one slot. The cap is re-evaluated in every publish
+  // transaction, and the current unpublished draft is not counted as an
+  // already-active Moment.
+  for (const draft of drafts.slice(0, 9)) {
+    const result = await service.finalizeMomentDraft(request(A, {
+      momentId: draft.momentId,
+      objectGeneration: draft.generation,
+      requestId: `final-cap-f-${draft.suffix}`,
+    }));
+    assert.equal(result.published, true);
+  }
+
+  // Both remaining drafts race for the final slot. The query read belongs to
+  // the same transaction as the publish write, so exactly one wins and the
+  // other retries against a full shelf before returning resource-exhausted.
+  const boundaryResults = await Promise.allSettled(
+    drafts.slice(9).map((draft) => service.finalizeMomentDraft(request(A, {
+      momentId: draft.momentId,
+      objectGeneration: draft.generation,
+      requestId: `final-cap-f-${draft.suffix}`,
+    }))),
+  );
+  const published = boundaryResults.filter((result) => result.status === "fulfilled");
+  const refused = boundaryResults.filter((result) => result.status === "rejected");
+  assert.equal(published.length, 1, "exactly one transaction fills slot ten");
+  assert.equal(refused.length, 1, "exactly one transaction is refused");
+  assert.equal(refused[0].reason.code, "resource-exhausted");
+  assert.match(refused[0].reason.message, /10 active/u);
+
+  const snapshots = await Promise.all(
+    drafts.map((draft) => db.doc(`voiceMoments/${draft.momentId}`).get()),
+  );
+  assert.equal(
+    snapshots.filter((snapshot) => snapshot.data().isPublished === true).length,
+    10,
+  );
+  const unpublished = snapshots.filter(
+    (snapshot) => snapshot.data().isPublished === false,
+  );
+  assert.equal(unpublished.length, 1);
+  assert.equal(unpublished[0].data().status, "uploading");
+  const capacity = (await db.doc(`momentCapacityLedgers/${A}`).get()).data();
+  assert.equal(capacity.revision, 10, "only successful publishes advance the mutex");
+});
+
+test("more than 100 newer drafts cannot hide old active Moments from capacity", async () => {
+  const service = momentService({
+    uploadReserve: { maxEvents: 200, windowMs: 60_000 },
+    finalize: { maxEvents: 200, windowMs: 60_000 },
+  });
+
+  // Nine canonical published Moments establish the old shelf and revision.
+  for (let index = 0; index < 9; index += 1) {
+    const suffix = String(index).padStart(2, "0");
+    await publish(service, {
+      uid: A,
+      reserveRequestId: `deep-cap-r-${suffix}`,
+      finalizeRequestId: `deep-cap-f-${suffix}`,
+      generation: `88${suffix}`,
+      availabilityHours: "permanent",
+    });
+  }
+
+  // These are all newer than the active shelf. The former newest-100 scan
+  // saw only filler and under-counted nine permanent Moments as zero.
+  const fillerBatch = db.batch();
+  for (let index = 0; index < 120; index += 1) {
+    const suffix = String(index).padStart(3, "0");
+    fillerBatch.set(db.doc(`voiceMoments/deep-filler-${suffix}`), {
+      schemaVersion: 2,
+      authorId: A,
+      isPublished: false,
+      isDeleted: false,
+      status: "uploading",
+      createdAt: Timestamp.fromMillis(nowMs + index + 1),
+    });
+  }
+  await fillerBatch.commit();
+
+  const contenders = [];
+  for (let index = 0; index < 2; index += 1) {
+    const reserved = await service.reserveMomentDraft(request(A, {
+      caption: `Deep contender ${index}`,
+      durationSeconds: 5,
+      requestId: `deep-contender-r-0${index}`,
+    }));
+    const generation = `889${index}`;
+    storage.put(reserved.storagePath, {
+      authorId: A,
+      momentId: reserved.momentId,
+      generation,
+    });
+    contenders.push({ ...reserved, generation, index });
+  }
+
+  const results = await Promise.allSettled(
+    contenders.map((draft) => service.finalizeMomentDraft(request(A, {
+      momentId: draft.momentId,
+      objectGeneration: draft.generation,
+      requestId: `deep-contender-f-0${draft.index}`,
+    }))),
+  );
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  const refused = results.filter((result) => result.status === "rejected");
+  assert.equal(refused.length, 1);
+  assert.equal(refused[0].reason.code, "resource-exhausted");
+
+  const published = await db.collection("voiceMoments")
+    .where("authorId", "==", A)
+    .where("isPublished", "==", true)
+    .get();
+  assert.equal(published.size, 10, "the deep shelf never exceeds ten");
+  assert.equal(
+    (await db.doc(`momentCapacityLedgers/${A}`).get()).data().revision,
+    10,
+  );
+
+  // Reserve is advisory, but it uses the same exact query and should now
+  // refuse despite all 120 newer unpublished documents.
+  await assert.rejects(
+    service.reserveMomentDraft(request(A, {
+      caption: "Hidden eleventh",
+      durationSeconds: 5,
+      requestId: "deep-cap-eleventh",
+    })),
+    (error) => error.code === "resource-exhausted",
+  );
 });
 
 test("a sweeper-expired Moment refuses likes and comments but the author still deletes it", async () => {
@@ -1779,6 +2087,116 @@ test("a sweeper-expired Moment refuses likes and comments but the author still d
   assert.equal(deleted.deletionQueued, true);
 });
 
+test("the deadline itself stops all engagement before the sweeper runs", async () => {
+  const service = momentService();
+  const reserved = await publish(service, {
+    uid: B,
+    reserveRequestId: "deadline-root-r1",
+    finalizeRequestId: "deadline-root-f1",
+  });
+  const momentRef = db.doc(`voiceMoments/${reserved.momentId}`);
+  const deadlineMs = (await momentRef.get()).data().expiresAt.toMillis();
+
+  // Every engagement path remains available one millisecond before the
+  // server-authored deadline.
+  nowMs = deadlineMs - 1;
+  await service.setMomentLike(request(A, {
+    liked: true,
+    momentId: reserved.momentId,
+    requestId: "deadline-like-before",
+  }));
+  await service.createMomentComment(request(A, {
+    momentId: reserved.momentId,
+    requestId: "deadline-text-before",
+    text: "just in time",
+  }));
+  const voiceBefore = await service.reserveVoiceCommentDraft(request(A, {
+    durationSeconds: 5,
+    momentId: reserved.momentId,
+    requestId: "deadline-voice-before",
+    text: "before",
+  }));
+  storage.put(voiceBefore.storagePath, {
+    authorId: A,
+    commentId: voiceBefore.commentId,
+    momentId: reserved.momentId,
+    generation: "910001",
+  });
+  await service.finalizeVoiceCommentDraft(request(A, {
+    commentId: voiceBefore.commentId,
+    momentId: reserved.momentId,
+    objectGeneration: "910001",
+    requestId: "deadline-final-before",
+  }));
+  const voiceAfter = await service.reserveVoiceCommentDraft(request(A, {
+    durationSeconds: 5,
+    momentId: reserved.momentId,
+    requestId: "deadline-voice-pending",
+    text: "pending",
+  }));
+  storage.put(voiceAfter.storagePath, {
+    authorId: A,
+    commentId: voiceAfter.commentId,
+    momentId: reserved.momentId,
+    generation: "910002",
+  });
+
+  async function assertEngagementRejected(suffix) {
+    await assert.rejects(
+      service.setMomentLike(request(A, {
+        liked: false,
+        momentId: reserved.momentId,
+        requestId: `deadline-like-${suffix}`,
+      })),
+      (error) => error.code === "failed-precondition" &&
+        /expired/u.test(error.message),
+    );
+    await assert.rejects(
+      service.createMomentComment(request(A, {
+        momentId: reserved.momentId,
+        requestId: `deadline-text-${suffix}`,
+        text: "too late",
+      })),
+      (error) => error.code === "failed-precondition" &&
+        /expired/u.test(error.message),
+    );
+    await assert.rejects(
+      service.reserveVoiceCommentDraft(request(A, {
+        durationSeconds: 5,
+        momentId: reserved.momentId,
+        requestId: `deadline-reserve-${suffix}`,
+        text: "too late",
+      })),
+      (error) => error.code === "failed-precondition" &&
+        /expired/u.test(error.message),
+    );
+    await assert.rejects(
+      service.finalizeVoiceCommentDraft(request(A, {
+        commentId: voiceAfter.commentId,
+        momentId: reserved.momentId,
+        objectGeneration: "910002",
+        requestId: `deadline-final-${suffix}`,
+      })),
+      (error) => error.code === "failed-precondition" &&
+        /expired/u.test(error.message),
+    );
+  }
+
+  // The root is still `published`: this proves callable-time enforcement,
+  // not the scheduled status flip.
+  nowMs = deadlineMs;
+  await assertEngagementRejected("exact");
+  assert.equal((await momentRef.get()).data().status, "published");
+  nowMs = deadlineMs + 1;
+  await assertEngagementRejected("after");
+
+  const deleted = await service.deleteMoment(request(B, {
+    momentId: reserved.momentId,
+    requestId: "deadline-delete-after",
+  }));
+  assert.equal(deleted.deletionQueued, true);
+});
+
 test("a legacy published Moment without expiresAt stays canonical and likeable", async () => {
   const service = momentService();
   const reserved = await publish(service, {
@@ -1816,24 +2234,25 @@ test("a legacy published Moment without expiresAt stays canonical and likeable",
 // ---------------------------------------------------------------------------
 // Operator-chosen availability (2026-08, amends the 24h contract above).
 //
-// finalizeMomentDraft accepts an OPTIONAL `availabilityHours`: exactly one of
-// 24 / 72 / 168 / 720 stamps `expiresAt = createdAt + hours`, the literal
-// string "permanent" writes NO expiresAt field at all, absent defaults to 24
-// (the deployed behaviour, byte for byte), and anything else is
+// finalizeMomentDraft accepts an OPTIONAL `availabilityHours`: any safe whole
+// number from 24 through 720 stamps `expiresAt = createdAt + hours`, the
+// literal string "permanent" writes NO expiresAt field at all, absent defaults
+// to 24 (the deployed behaviour, byte for byte), and anything else is
 // invalid-argument. Null expiresAt now MEANS permanent — visible until the
 // author deletes it — so a permanent Moment occupies an active-cap slot
-// forever and only deletion frees it. The whitelist numbers below are the
-// contract's numbers on purpose; they must not silently follow a constant.
+// forever and only deletion frees it. The boundary and arbitrary numbers
+// below are the contract's numbers on purpose; they must not silently follow
+// an implementation constant.
 // ---------------------------------------------------------------------------
 
 const HOUR_MS = 60 * 60 * 1000;
 
-test("each whitelisted availability stamps exactly createdAt + hours", async () => {
+test("boundary and arbitrary availability hours stamp exact deadlines", async () => {
   const service = momentService({
     uploadReserve: { maxEvents: 100, windowMs: 60_000 },
     finalize: { maxEvents: 100, windowMs: 60_000 },
   });
-  for (const hours of [24, 72, 168, 720]) {
+  for (const hours of [24, 25, 48, 719, 720]) {
     const reserved = await service.reserveMomentDraft(request(A, {
       caption: `Available ${hours}h`,
       durationSeconds: 6,
@@ -1906,7 +2325,7 @@ test("'permanent' publishes with no expiresAt field written at all", async () =>
   assert.equal(liked.likeCount, 1);
 });
 
-test("every availabilityHours outside the strict whitelist is refused", async () => {
+test("availabilityHours rejects out-of-range, fractional, and non-number values", async () => {
   const service = momentService();
   const reserved = await service.reserveMomentDraft(request(A, {
     caption: "Never publishes",
@@ -1919,7 +2338,9 @@ test("every availabilityHours outside the strict whitelist is refused", async ()
     generation: "92001",
   });
   const invalid = [
-    48, 0, -24, 23.5, 1, 8760, Number.NaN,
+    23, 721, 0, -24, 23.5, 720.5, 1, 8760,
+    Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY,
+    Number.MAX_SAFE_INTEGER + 1,
     "24", "720", "Permanent", "PERMANENT", "forever",
     null, true, false, [24], { hours: 24 },
   ];
@@ -1984,6 +2405,11 @@ test("absent and explicit 24 share the deployed operation identity", async () =>
     })),
     finalized,
   );
+  assert.equal(
+    (await db.doc(`momentCapacityLedgers/${A}`).get()).data().revision,
+    1,
+    "an idempotent finalize replay must not advance the capacity mutex",
+  );
   const moment = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
   assert.equal(
     moment.expiresAt.toMillis() - moment.createdAt.toMillis(),
@@ -1995,7 +2421,7 @@ test("absent and explicit 24 share the deployed operation identity", async () =>
 test("a finalize retry with a different availability is refused, never silently replayed", async () => {
   const service = momentService();
   const reserved = await service.reserveMomentDraft(request(A, {
-    caption: "Seventy-two hours",
+    caption: "Forty-eight hours",
     durationSeconds: 8,
     requestId: "avail-replay-r-01",
   }));
@@ -2005,7 +2431,7 @@ test("a finalize retry with a different availability is refused, never silently 
     generation: "95001",
   });
   const finalized = await service.finalizeMomentDraft(request(A, {
-    availabilityHours: 72,
+    availabilityHours: 48,
     momentId: reserved.momentId,
     objectGeneration: "95001",
     requestId: "avail-replay-f-01",
@@ -2014,7 +2440,7 @@ test("a finalize retry with a different availability is refused, never silently 
   // Same requestId, same value: an honest retry replays the stored result.
   assert.deepEqual(
     await service.finalizeMomentDraft(request(A, {
-      availabilityHours: 72,
+      availabilityHours: 48,
       momentId: reserved.momentId,
       objectGeneration: "95001",
       requestId: "avail-replay-f-01",
@@ -2025,7 +2451,7 @@ test("a finalize retry with a different availability is refused, never silently 
   // Same requestId, DIFFERENT availability: a different request wearing a
   // used id. It must answer already-exists — silently returning the stored
   // result would let a caller believe the new duration took effect.
-  for (const changed of [168, "permanent", undefined]) {
+  for (const changed of [49, 720, "permanent", undefined]) {
     await assert.rejects(
       service.finalizeMomentDraft(request(A, {
         momentId: reserved.momentId,
@@ -2038,11 +2464,12 @@ test("a finalize retry with a different availability is refused, never silently 
     );
   }
 
-  // The document kept the original 72-hour deadline through all of it.
+  // The document kept the original arbitrary 48-hour deadline through all
+  // of it.
   const moment = (await db.doc(`voiceMoments/${reserved.momentId}`).get()).data();
   assert.equal(
     moment.expiresAt.toMillis() - moment.createdAt.toMillis(),
-    72 * HOUR_MS,
+    48 * HOUR_MS,
   );
 });
 
@@ -2080,9 +2507,9 @@ test("permanent Moments hold active-cap slots forever and free them only on dele
     "ten permanent Moments still fill the cap a year later",
   );
 
-  // Deletion is the author's only exit from a permanent Moment, and it
-  // frees the slot immediately — and the refused reserve consumed neither
-  // ledger nor rate budget, so the very same requestId succeeds now.
+  // Deletion is the author's only exit from a permanent Moment and frees the
+  // slot immediately. A year has also moved the metered refusal into a fresh
+  // quota window, so the same logical requestId may now succeed.
   await service.deleteMoment(request(A, {
     momentId: permanentIds[0],
     requestId: "permcap-del-01",

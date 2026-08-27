@@ -1,3 +1,4 @@
+import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 /// The upload contract for Voice Moment audio, shared by every platform.
@@ -119,8 +120,8 @@ class VoiceRecordingException implements Exception {
 /// the one operation the publish flow needs from it.
 ///
 /// This is the platform seam. Native holds a file on disk and uploads it
-/// with `putFile`; web holds the bytes the browser handed back and uploads
-/// them with `putData`. Everything above this — reservation, metadata,
+/// with `putFile`; web keeps the browser-native Blob and uploads it with
+/// `putBlob`. Everything above this — reservation, metadata,
 /// finalization, error handling, UI — is identical on both.
 abstract class RecordedAudio {
   const RecordedAudio();
@@ -131,6 +132,15 @@ abstract class RecordedAudio {
 
   /// Size of the recording in bytes, known before the upload starts.
   int get byteLength;
+
+  /// A device-local source for pre-publish playback.
+  ///
+  /// Native recordings resolve to their temporary file and web recordings
+  /// resolve to an object URL owned by this object. Reading this property must
+  /// not upload the recording.
+  Source get playbackSource => throw UnsupportedError(
+    '${runtimeType.toString()} does not expose a local playback source.',
+  );
 
   /// Uploads this recording to [reference] with [metadata] and returns the
   /// stored object's generation, which `finalizeMomentDraft` requires.

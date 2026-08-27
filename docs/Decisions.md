@@ -77,6 +77,8 @@ given a false-precision date.
 | [088](#adr-088-entering-a-room-performs-the-liveness-transition-through-one-ordered-coordinator-that-mirrors-the-deployed-rule) | Entering a room performs the liveness transition, through one ordered coordinator | Accepted in source | 2026-08-20 |
 | [089](#adr-089-moments-is-a-primary-destination-and-its-discovery-feed-ranks-client-side-because-firestore-can-neither-order-by-a-computed-sum-nor-randomise) | Moments is a primary destination; its discovery feed ranks client-side | Accepted in source | 2026-08-19 |
 | [090](#adr-090-session-cleanup-converges-on-authservicesignout-because-a-write-the-rules-authorize-by-session-cannot-live-after-the-session-ends) | Session cleanup converges on `AuthService.signOut()` | Accepted in source | 2026-08-19 |
+| [115](#adr-115-voice-moment-review-stays-local-availability-is-user-sized-the-root-lifecycle-is-server-authoritative) | Voice Moment review stays local; availability is user-sized; the root lifecycle is server-authoritative | Accepted in source | 2026-08-27 |
+| [116](#adr-116-product-sound-is-a-material-feedback-system-not-a-set-of-jingles) | Product sound is a material feedback system, not a set of jingles | Accepted in source | 2026-08-27 |
 
 > **The index is incomplete and has been for a while**: rows for ADR-020
 > through ADR-052 were never added, and neither were ADR-062–065,
@@ -1192,11 +1194,15 @@ dispatcher at `yovoice.app/auth/action` (Next.js route handler) receives
 `mode`/`oobCode`/`continueUrl`/`lang` and fans out to branded pages:
 `/reset-password` (verifyPasswordResetCode → form → confirmPasswordReset),
 `/verify-email` (existing applyActionCode handler), `/recover-email`
-(recoverEmail + verifyAndChangeEmail). The console action URL must be set
-to `https://yovoice.app/auth/action` — a one-time manual step documented
-in docs/email-templates/README.md, because Firebase exposes no
-CLI/deploy surface for it in our toolchain. Firebase stays the sole
-source of truth for code validity; nothing is faked client-side.
+(recoverEmail + verifyAndChangeEmail), and `/revert-second-factor` for
+`revertSecondFactorAddition`. The last route checks the exact action-code
+operation on load but calls `applyActionCode` only after a deliberate click;
+mail scanners must not remove a legitimate authenticator. All token-bearing
+routes send private/no-store, no-referrer and noindex headers. The project-wide
+action URL must be set to `https://yovoice.app/auth/action` through a narrowly
+field-masked Identity Toolkit Admin API PATCH after the website routes are
+deployed and probed. Firebase stays the sole source of truth for code validity;
+nothing is faked client-side.
 
 **Reasoning.** One dispatcher (the console allows exactly one custom
 action URL) keeps every mode on a branded page, including the
@@ -1206,6 +1212,13 @@ out of rendered HTML and needs no client JS to dispatch. `continueUrl`
 is allowlist-validated (`safe-continue-url.ts`) at the dispatcher AND at
 each consuming page — it is attacker-controllable input on a page
 reached from an email, i.e. a textbook open-redirect vector.
+
+The callback setting is global across reset, verification, email-change and
+MFA recovery. Therefore the safe rollout order is website first, production
+route/header probes second, leaf-only Auth config PATCH third, then immediate
+read-back and real mailbox journeys. A pre-PATCH snapshot and the identical
+leaf mask are the rollback boundary; patching the parent `notification` object
+would risk the write-only custom-SMTP secret and is forbidden.
 
 **Consequences.**
 - The full reset lifecycle was verified against the Firebase Auth
@@ -1387,6 +1400,16 @@ re-picking — the same trade Instagram/WhatsApp/Discord make.
   back down once real-world sizes are observed (Roadmap follow-up).
 - Regression tests: `test/image_crop_test.dart` (geometry + 1:1 output),
   `test/profile_save_e2e_test.dart` (whole pipeline through the editor).
+
+**Corrective amendment (2026-08-27, source only — not deployed).** The cover
+matrix must scale X, Y **and Z** uniformly. `InteractiveViewer` clamps pinch
+gestures with `getMaxScaleOnAxis()`; leaving Z at 1 while a large photo's X/Y
+cover scale was below 1 made the first pinch multiply the cover scale twice and
+shrink the photo into a corner. Pinch/drag are not the only way to operate the
+crop: named 44 px Zoom −/+ and four directional controls are available to a
+single pointer and keyboard, and the preview exposes its current zoom through
+semantics. Widget regressions exercise the actual gesture and controls at
+normal and 200% text, confirming that the visible frame stays fully covered.
 
 ## ADR-026: "More" destinations re-host the shell's bottom navigation (amends ADR-019)
 
@@ -3191,6 +3214,11 @@ fills the foreground behavior browsers deliberately leave to applications.
 earlier `yovoice_default`/default-sound names are historical, not an instruction
 for current code or deployment.
 
+**Amended in source by ADR-116 (2026-08-27).** The Velvet Prism migration uses
+`yovoice_activity_v3`; Android cannot mutate the sound of an already-created
+channel. Production remains on v2 until the staged mobile-client and Functions
+cutover in ADR-116 is completed.
+
 ### Consequences
 
 - Users receive more than a bell count when notification permission is granted.
@@ -3254,10 +3282,14 @@ startup composition during actual engine initialization, removes it after
 its stream is genuinely loading. Signed-in initialization of push/profile
 services stays fire-and-forget and `MainShell` renders immediately. Both layers
 retain `YO VOICE` and `Create your space`, animated voice rings and a waveform.
-The mark is intentionally large and slightly below optical center; `YO VOICE`
-renders in front of its lower edge with a dark readability shadow, creating one
-matching depth-effect composition on narrow and wide screens. Reduced-motion
-users receive a static waveform.
+The native, web-bootstrap and Flutter mark remain centred and fixed at exactly
+170 logical pixels;
+`YO VOICE` renders in front of its lower edge with a dark readability shadow,
+creating one matching depth-effect composition without a centre or size jump.
+The stage is positioned independently from supporting copy so font metrics and
+200% text cannot move the mark. Auth destinations crossfade from the loading
+surface without delaying readiness. Reduced-motion users receive a static
+waveform and an immediate state replacement.
 
 ### Reasoning
 
@@ -3274,6 +3306,8 @@ No animation is allowed to become a minimum timer.
   real initialization completes without claiming a percentage.
 - Web bootstrap removal is tied to the first Flutter `runApp`; Auth loading,
   error, logged-out and signed-in destinations keep their real state semantics.
+- iOS and Android own a matching #0D0618 native launch frame and centred mark;
+  Android 12+ has matching light/dark system-splash resources.
 
 ## ADR-053: Paid capabilities come only from the trusted entitlement and every entry boundary fails closed
 
@@ -4861,10 +4895,16 @@ tap would create fatigue and unnecessary audio work.
    existing installed channel's sound cannot be changed; APNs references the
    packaged WAV by exact name.
 
+**Source amendment, 2026-08-27 (ADR-116).** The eight semantic events remain,
+but their oscillator/jingle language does not: one 48 kHz stereo material pack
+replaces it, native and in-app notification bytes are identical, Android moves
+to v3, and foreground FCM/Firestore presentation claims one audible owner.
+
 ### Consequences
 
-- The eight shared assets total well under 300 KB; each is mono PCM and shorter
-  than one second. They add no database, network request or background loop.
+- The original deployed assets were mono and under 300 KB. The source v3 pack
+  is stereo PCM16 and about 300 KB in total; each cue remains shorter than one
+  second and adds no database, network request or background loop.
 - A burst of participant changes produces a restrained cue rather than one
   overlapping sound per event.
 - Platform notification settings remain authoritative for background push
@@ -5997,7 +6037,12 @@ undetuned center fundamental joined the anchor and every file now measures
 **Consequences.** New sounds are added by composing notes from the same four
 pitches in the script and rerunning it. Subjective pleasantness is
 UNVERIFIED by the author (no ears); the operator's listen is the acceptance
-test. Preview locally: `afplay assets/audio/ui/notification.wav`.
+test. Preview locally: `afplay assets/audio/ui/v3/notification.wav`.
+
+**Superseded in source by ADR-116 (2026-08-27).** The operator rejected the
+v2 glass-bell/pentatonic language as retro and kitschy. The generator remains
+the authority, but the musical grammar above is historical rather than a rule
+for new work.
 
 ## ADR-100: The pre-stories Discover avatar board is deleted, not kept dormant
 
@@ -6278,7 +6323,16 @@ limiter and the idempotency ledger.
 is the sole writer. The client keeps a bounded, persisted outbox
 (`lib/features/messages/data/services/message_outbox.dart`) with Pending /
 Retrying / Failed states, retries each entry under its original `requestId`,
-and drains when connectivity returns. `_sendTextMessageDirectly` is deleted.
+and drains when connectivity returns. One process-wide production
+`MessageService.live` owns one queue per authenticated UID under
+`messages.outbox.v2.<uid>`; its first load is a shared Future and all mutations
+are serialized. The ownerless v1 key is retired instead of guessed across an
+account switch, and MainShell resumes the authenticated queue on cold start.
+`_sendTextMessageDirectly` is deleted. Chat renders the queue optimistically:
+local persistence releases the composer, the backend's deterministic message
+id reconciles callable and Firestore arrival order, and terminal entries retain
+Retry/Remove recovery. Typing presence is a coalesced state transition with a
+bounded heartbeat, not a write per keystroke.
 
 ### Reasoning
 
@@ -6335,13 +6389,17 @@ the server down.
 
 - A sanctioned account cannot send a direct message by any client path.
   Enforcement is uniform: one writer, all checks.
-- Sending is no longer synchronous with delivery. `sendTextMessage` returns
-  once the message is queued; a refusal still throws, a transient failure
-  does not. `MessageService.outbox` exposes the queue and a `changes` stream
-  so a chat view can render Pending / Retrying / Failed. **No UI consumes it
-  yet** — the states exist and are covered by tests, but nothing renders
-  them, so a queued message currently looks sent. That is the next piece of
-  work and is tracked in Roadmap.
+- Sending is no longer synchronous with UI acknowledgement. Chat uses
+  `queueTextMessage`, which returns after local enqueue and drains in the
+  background; the older `sendTextMessage` API deliberately still awaits the
+  first attempt for callers/tests that need the server outcome. The chat consumes
+  `MessageService.outbox.changes` plus its accepted hand-off stream and renders
+  Pending / Retrying / Failed, preserving a terminal message until the person
+  retries or removes it. Rapid sends are drained FIFO inside each conversation;
+  a backed-off message blocks overtaking in its chat but not an unrelated chat.
+  A rejected local enqueue restores (and defensively merges) the draft instead
+  of losing it. A server-history error remains visible beside local bubbles,
+  and closing Chat cancels the one shared Firestore source subscription.
 - `canDirectMessage` and `canonicalFollowingEdge` in `firestore.rules` are
   no longer referenced by any rule. They are kept, annotated as such, with a
   pointer to `functions/messaging/direct_integrity.js` where privacy is
@@ -6679,7 +6737,7 @@ activation and Enter/Space activation. No backend, rules, schema or index
 change is involved. Deployed through the byte-verified Hosting release from
 `5377aa6` on 2026-08-25.
 
-## ADR-111: Desktop recent chats use the participant photo as a bounded blurred backdrop
+## ADR-111: Desktop recent chats use current profile artwork as a bounded full-bleed backdrop
 
 **Context.** The desktop `Your recent chats` cards were 148 px tall but placed
 only a 40 px avatar in the upper-left and two short text rows at the bottom.
@@ -6690,29 +6748,44 @@ remains appropriate and must not drift as a side effect of a desktop request.
 
 **Decision.** `RecentChats` gains an explicit presentation style. Mobile keeps
 the existing standard style and geometry. `DesktopHome` selects a 116 px
-`desktopBackdrop` style: the other participant's existing conversation photo
-fills the card, is enlarged and softly blurred with `ImageFiltered`, and sits
-under a dark vertical scrim. Missing, loading or broken photos show a
-deterministic violet/blue gradient plus a low-emphasis initial. A small chat
-glyph replaces the detached avatar; unread count stays at the upper-right and
-name/preview stay at the bottom. The whole surface is one
+`desktopBackdrop` style. The initial deployed version used the denormalized
+conversation photo, enlarged it 1.14× and blurred it with `ImageFiltered`.
+
+**Corrective amendment, 2026-08-27 (source only).** Desktop Home now resolves
+each of the at-most-three visible partners through the server-owned
+`publicProfiles` projection. The conversation photo remains an immediate
+loading/error fallback, while an emitted empty profile value truthfully means
+the avatar was removed. A real image fills the card sharply with
+`BoxFit.cover`, a slight upward face bias and medium filtering; a lower
+vertical scrim owns text contrast without hiding the upper artwork. Missing or
+broken photos show a deterministic dark brand surface, hashed accent and
+visible monogram. The generic chat glyph is removed because the section and
+whole-card action already communicate the destination; unread count remains at
+the upper-right, with name/preview at the bottom. The whole surface remains one
 `AccessibleTapRegion` named `Open chat with <display name>`.
 
 **Reasoning.** The participant photo provides identity without consuming a
 separate layout slot, while the shorter card removes dead space. This mirrors
 the room board's full-bleed image-plus-scrim hierarchy without copying its
-scale. `ImageFiltered` affects only the at-most-three image children; it is not
-a `BackdropFilter` resampling the already-painted Home surface per card. The
-scrim, not blur alone, owns text contrast over arbitrary portraits.
+scale. Identity must remain recognizable: heavy blur plus an almost-opaque
+scrim reduced a square portrait to an anonymous color band. The public profile
+projection is already the authorized identity source used by profile surfaces,
+whereas the conversation copy can lag fan-out or predate it. A maximum of three
+mounted point listeners is a bounded cost and repairs existing conversations
+without a production backfill. The scrim, not blur, owns text contrast over
+arbitrary portraits.
 
 **Consequences.** Conversation ordering, the three-item cap, unread data,
-preview copy, callbacks, queries, backend and mobile layout are unchanged.
-Tests pin the desktop variant's full-card image treatment, 116 px height,
-semantic action and tap callback while the existing multi-width suite pins the
-standard avatar cards at 148 px. Missing images remain intentional rather than
-showing a broken glyph. No schema, rules, indexes or Functions change is
-involved. The presentation was deployed through the byte-verified Hosting
-release from `5377aa6` on 2026-08-25.
+preview copy, callbacks, backend and mobile layout are unchanged. The desktop
+surface adds at most three active `publicProfiles/{uid}` point listeners; each
+is cancelled with its card, and a read failure degrades to the conversation
+copy rather than breaking Home. Tests pin live-photo replacement, the sharp
+full-card treatment, 116/212 px heights, semantic action and tap callback while
+the existing multi-width suite pins standard avatar cards at 148 px. Missing
+images remain intentional rather than showing a broken glyph. No schema,
+rules, indexes or Functions change is involved. The original blurred
+presentation shipped in the byte-verified Hosting release from `5377aa6` on
+2026-08-25; the 2026-08-27 correction is **SOURCE ONLY — NOT DEPLOYED**.
 
 ## ADR-112: Find Creators presents `official` as a verified Creator, not a separate account type
 
@@ -6806,6 +6879,19 @@ No Firebase data, rules, indexes, Functions, schema or dependency changes are
 involved. Deployed through the byte-verified Hosting release from `5377aa6` on
 2026-08-25.
 
+**Corrective amendment (2026-08-27, source only — not deployed).** An action
+that leaves Profile Preview must not navigate through the preview's `BuildContext`
+after calling `pop`. The modal returns a typed destination; the launcher keeps
+its stable `NavigatorState`, awaits full dismissal, then pushes Chat or the full
+profile. Failures that keep the preview open render inside its surface as a
+friendly live region, because a root snackbar sits underneath stacked modal
+barriers. The resolved Auth and MessageService travel together into Chat;
+short-lived injected services remain owned by the launcher and are disposed
+after the route returns. Opening also has a concise live status while the
+action is disabled. A route-level regression reproduces Profile Preview above
+an existing modal, then verifies one request/Chat route, optimistic identity
+reconciliation and correct Back behavior.
+
 ## ADR-114: Social graph callables own the notification lifecycle end to end
 
 **Context.** ADR-041 correctly removed social-notification writes from the
@@ -6897,3 +6983,171 @@ row is best effort. **DEPLOYED 2026-08-25.** The ordered Rules/Functions
 cutover, trigger deletion, backup and zero-plan sweep completed before Hosting.
 The release owner explicitly proceeded without the physical two-device FCM
 smoke, so OS-level delivery on two real devices remains unverified.
+
+## ADR-115: Voice Moment review stays local; availability is user-sized; the root lifecycle is server-authoritative
+
+**Status**: Accepted in source — **SOURCE ONLY, NOT DEPLOYED**
+**Date**: 2026-08-27
+
+### Context
+
+ADR-103 shipped five fixed availability choices and no way to listen to a
+finished recording before publishing. The active-Moment cap also scanned only
+the newest 100 authored documents, while the Firestore rules still permitted
+client root creation, broad author updates and direct deletion. A client could
+therefore create an undeclared permanent Moment, bypass publish/media
+validation or delete a root without queuing media cleanup.
+
+### Decision
+
+A finished recording remains device-local during review. Native playback uses
+the temporary recording file; web playback uses a Blob object URL owned and
+revoked by the recording. Play, pause and seek never reserve a draft, upload an
+object or call finalize. Publish first stops and disposes playback, then starts
+the existing reservation/upload/finalize flow.
+
+Timed availability accepts any whole-hour value from 24 through 720. The UI
+also accepts 1–30 whole days and converts them to hours. `permanent` remains the
+explicit Until deleted mode; absent and explicit 24 preserve the deployed
+request identity, while every non-default duration participates in the
+idempotency hash. Caption and availability are locked after the first publish
+attempt so a retry cannot change the request behind an existing requestId.
+Voice replies receive local preview but no independent availability selector.
+
+The complete published set for an author is the source of truth for the
+10-active cap. `momentCapacityLedgers/{uid}` is a server-only revision/mutex,
+not a counter: finalize, delete and expiry advance it in their transactions so
+competing capacity changes serialize. The exact query requires
+`voiceMoments(authorId ASC, isPublished ASC)` and no backfill.
+
+Voice Moment root create, every update and delete are server authority. Like
+and comment documents are server-owned too; clients may read engagement only
+when they can read the parent. The old direct engagement fallbacks are removed
+rather than preserving counter transitions that cannot be proven atomic and
+non-forgeable in Rules. Draft/expired/deleting roots and their subcollections
+are author-private; Storage creation requires the exact canonical uploading
+draft. Voice-reply media creation requires the exact unexpired server
+reservation; finalize atomically removes that reservation and creates the
+comment. Root and reply objects are immutable to clients at every state;
+bounded abandoned-upload workers and the cleanup outbox are the only deletion
+authority. Existing mixed-case reply objects retain signed-in read
+compatibility only.
+
+Every unfinished finalize attempt consumes its rate budget before any external
+Storage metadata or download-URL read, even when the same requestId already has
+a matching preflight. Only a completed operation-ledger replay is free and
+skips Storage. Timed Moments are removed from already-open feeds, detail,
+story, sheet and comment surfaces by a client timer at the exact `expiresAt`;
+playback stops as the subtree is removed. Each visible transition produces one
+deduplicated accessibility announcement and restores keyboard focus to a
+stable surviving item or heading. Story maps the previous position into the
+surviving chain by keeping the same link, then the first surviving successor,
+then the nearest predecessor; a multi-deadline resume therefore cannot skip a
+live link. Waits longer than the browser's signed 32-bit millisecond timer
+limit are chunked and rechecked against the clock. Cached hidden tabs neither
+announce nor reclaim focus, and a parent rebuild after a deadline preserves
+the same single visible transition. The server independently rejects new likes
+and text/voice replies at `expiresAt`, without waiting for the scheduled
+sweeper to persist the retired state. Permanent Moments arm no timer.
+
+### Reasoning
+
+Preview should let an author judge the audio without changing server state or
+creating abandoned uploads. A continuous range expresses the user's intent
+without introducing a new schema, while keeping the deployed 24-hour request
+identity makes retries and older clients compatible. Exact capacity cannot be
+derived safely from a bounded newest-first window, and two finalizations of
+different roots do not otherwise conflict; the small per-author revision makes
+those transactions contend while leaving the actual published set as the
+reconstructible source of truth. Root publication and deletion bind Firestore,
+Storage generations, expiry and cleanup side effects that Security Rules cannot
+make atomic, so they belong to the existing callables rather than a permissive
+client fallback.
+
+### Consequences
+
+Expiry means exact removal from live app surfaces and refusal of new
+engagement, not destruction of the document or media. Explicit author deletion
+queues Storage cleanup; bounded server workers also remove abandoned uploads.
+A Firebase download-token URL
+already learned while a Moment was published remains a bearer URL until cleanup
+or token revocation, regardless of later Storage-rule denial.
+
+Release order is index to READY and production query proof, then Functions and
+callable/concurrency smoke, then Firestore Rules, Storage Rules and their
+read-back/smoke, and only then the client. Existing ADR-103 remains the
+historical deployed contract; this ADR supersedes only its fixed-selector,
+bounded-cap and client-root-authority details in source.
+
+## ADR-116: Product sound is a material feedback system, not a set of jingles
+
+**Status**: Accepted in source — **SOURCE ONLY, NOT DEPLOYED**
+**Date**: 2026-08-27
+
+### Context
+
+ADR-076 introduced eight bounded semantic cues and ADR-099 made them
+reproducible, but both generated versions were melodic glass-bell synths: a
+pentatonic scale, rising/falling pairs, detune, pitch settle and a classic
+two-note notification. The operator rejected that language as retro and
+kitschy. The audit also found two generators, a much louder old native push
+WAV, two audible foreground owners, an obsolete Android manifest fallback and
+an immutable v2 channel that could not receive replacement bytes reliably.
+
+### Decision
+
+The event inventory stays deliberately small: create/join/leave, participant
+join/leave, mute/unmute and notification. User recordings, LiveKit speech,
+Voice Moments and voice messages are media, not soundtrack assets, and remain
+untouched.
+
+The new family is **Velvet Prism**: a 4–10 ms filtered material contact, muted
+inharmonic body and quiet air layer. There are no notes, scales, arpeggios,
+chorus, detune, pitch glide or generic tap sounds. Beginnings open texture and
+width; endings fold them into a mono body. All eight files are deterministic
+48 kHz stereo PCM16, 95–360 ms long, mastered in the asset, and end in
+exact silence. `UiSound.volume` is therefore 1.0 for every cue.
+
+`tool/generate_ui_sounds.py` is the only authoring source. It renders all eight
+Flutter assets under the cache-safe `assets/audio/ui/v3/` path and bit-identical
+Android/iOS notification copies, and
+`--check` verifies inventory, format, loudness ceiling, DC, stereo correlation,
+mono loss, terminal silence and byte reproducibility. The conflicting Dart
+generator is removed, and CI runs the same check before analysis or build. The
+`v3` asset path is immutable for browser-cache purposes; a future remaster must
+bump the pack path rather than silently replacing it.
+
+Playback remains lazy and preference-gated, but commands are serialized through
+the actual playback-complete event, so an audible tail is never hard-cut; only
+still-queued stale work is dropped by the newest-queued-wins policy. Android marks cues as sonification
+and requests no audio focus; iOS is deliberately not reconfigured from this
+layer because AVAudioSession is process-global and LiveKit/recording own it.
+Room creation consumes the immediately following connected cue, so one action
+cannot become two jingles. FCM and the Firestore banner share one foreground
+claim: whichever presents first owns the only sound.
+
+Android uses `yovoice_activity_v3` in Flutter, Functions and the manifest
+fallback, because installed channel sound is immutable. APNs retains the
+stable `yovoice_notification.wav` filename. Platform notification settings,
+DND and the system volume remain authoritative.
+
+### Reasoning
+
+Premium sound is restraint, material consistency and reliable behavior, not a
+brighter melody. Short aperiodic contacts remain legible on a phone speaker
+without sounding like a game reward, while one mono anchor and a low side
+level survive headphones and accessibility mono audio. One generator and one
+foreground owner turn brand language into an enforceable system rather than a
+folder of unrelated WAVs.
+
+### Consequences
+
+The v3 client/Functions cutover is staged: ship clients that create v3 first,
+verify the new native assets on physical Android/iOS devices, then switch FCM
+payloads only when the minimum supported Android population has v3 (or a
+forced upgrade is in effect). Old Android clients do not know the new channel.
+Web Hosting receives the in-app pack under the cache-safe `audio/ui/v3/` path;
+iOS and Android require clean native builds. Acceptance includes phone
+speaker, headphones, silent/DND, active LiveKit, Bluetooth and foreground /
+background notification checks. A green waveform test cannot replace the
+operator's final listening approval.

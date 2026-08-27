@@ -7,10 +7,13 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/offline_voice_moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_card.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_boundary.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 /// Opens ONE Voice Moment so it can actually be heard.
@@ -40,6 +43,8 @@ Future<void> showMomentSheet(
   /// passes nothing; a harness passes a player that touches no platform
   /// channel.
   AudioPlayer Function()? playerFactory,
+  MomentExpiryClock? expiryClock,
+  MomentExpiryTimerFactory? expiryTimerFactory,
 }) async {
   // Resolved here rather than demanded from every caller: without it the
   // heart renders as an inert indicator, and a Moment you cannot like is
@@ -69,6 +74,8 @@ Future<void> showMomentSheet(
   final live = moments?.watchMoment(moment.id);
 
   final navigator = Navigator.of(context);
+  final expiryAnnouncer = MomentExpiryAnnouncer();
+  var expiryHandled = false;
 
   await showModalBottomSheet<void>(
     context: context,
@@ -105,22 +112,49 @@ Future<void> showMomentSheet(
                       // An errored or empty document stream keeps the Moment
                       // the caller passed: it is real, just not live.
                       final current = snapshot.data ?? moment;
-                      return MomentCard(
-                        // Keyed by id, so switching Moments rebuilds the card's
-                        // player rather than reusing another Moment's state.
-                        key: ValueKey('moment-sheet-${current.id}'),
+                      return MomentExpiryBoundary(
                         moment: current,
-                        isOwn: isOwn,
-                        canReport: canReport,
-                        feedService: feed,
-                        offlineService: offlineService,
-                        contentReportService: contentReportService,
-                        playerFactory: playerFactory,
-                        onComments: () => unawaited(
-                          navigator.push<void>(
-                            MaterialPageRoute<void>(
-                              builder: (_) =>
-                                  MomentCommentsScreen(moment: current),
+                        clock: expiryClock,
+                        timerFactory: expiryTimerFactory,
+                        onExpired: () {
+                          if (expiryHandled) return;
+                          expiryHandled = true;
+                          if (sheetContext.mounted) {
+                            expiryAnnouncer.announce(
+                              sheetContext,
+                              transition: 'sheet-gone-${current.id}',
+                              message: 'Voice Moment expired. Closing player.',
+                            );
+                            final navigator = Navigator.of(sheetContext);
+                            final sheetRoute = ModalRoute.of(sheetContext);
+                            if (sheetRoute != null && sheetRoute.isActive) {
+                              navigator.removeRoute(sheetRoute);
+                            } else {
+                              unawaited(navigator.maybePop());
+                            }
+                          }
+                        },
+                        child: MomentCard(
+                          // Keyed by id, so switching Moments rebuilds the
+                          // card's player rather than reusing another
+                          // Moment's state.
+                          key: ValueKey('moment-sheet-${current.id}'),
+                          moment: current,
+                          isOwn: isOwn,
+                          canReport: canReport,
+                          feedService: feed,
+                          offlineService: offlineService,
+                          contentReportService: contentReportService,
+                          playerFactory: playerFactory,
+                          onComments: () => unawaited(
+                            navigator.push<void>(
+                              MaterialPageRoute<void>(
+                                builder: (_) => MomentCommentsScreen(
+                                  moment: current,
+                                  expiryClock: expiryClock,
+                                  expiryTimerFactory: expiryTimerFactory,
+                                ),
+                              ),
                             ),
                           ),
                         ),

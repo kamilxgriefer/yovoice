@@ -9,8 +9,11 @@ import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart' as audio;
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -257,10 +260,7 @@ void main() {
         moments: s.moments,
         feed: s.feed,
       );
-      expect(
-        find.byKey(const ValueKey('moment-detail-back')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('moment-detail-back')), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('moment-detail-back')));
       await tester.pumpAndSettle();
@@ -299,6 +299,12 @@ void main() {
           .collection('comments')
           .get();
       expect(stored.docs.single.data()['text'], 'Real comment');
+      expect(stored.docs.single.data()['schemaVersion'], 2);
+      expect(
+        (await s.db.collection('voiceMoments').doc('m1').get())
+            .data()?['commentCount'],
+        1,
+      );
     });
   });
 
@@ -387,9 +393,7 @@ void main() {
       expect(find.text('This Moment is no longer available'), findsOneWidget);
       expect(find.byKey(const ValueKey('moment-detail-play')), findsNothing);
 
-      await tester.tap(
-        find.byKey(const ValueKey('moment-detail-gone-back')),
-      );
+      await tester.tap(find.byKey(const ValueKey('moment-detail-gone-back')));
       await tester.pumpAndSettle();
       expect(find.text('FEED'), findsOneWidget);
     });
@@ -432,9 +436,7 @@ void main() {
         feed: s.feed,
       );
 
-      await tester.tap(
-        find.byKey(const ValueKey('moment-detail-delete-m1')),
-      );
+      await tester.tap(find.byKey(const ValueKey('moment-detail-delete-m1')));
       await tester.pumpAndSettle();
 
       // The exact destructive copy.
@@ -464,9 +466,7 @@ void main() {
         feed: s.feed,
       );
 
-      await tester.tap(
-        find.byKey(const ValueKey('moment-detail-delete-m1')),
-      );
+      await tester.tap(find.byKey(const ValueKey('moment-detail-delete-m1')));
       await tester.pumpAndSettle();
       await tester.tap(
         find.byKey(const ValueKey('moment-detail-delete-cancel')),
@@ -476,10 +476,7 @@ void main() {
       final snapshot = await s.db.collection('voiceMoments').doc('m1').get();
       expect(snapshot.exists, isTrue);
       // The page did not pop: its own chrome is still on screen.
-      expect(
-        find.byKey(const ValueKey('moment-detail-back')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('moment-detail-back')), findsOneWidget);
     });
   });
 
@@ -545,14 +542,19 @@ void main() {
   });
 }
 
-
 class _CallableDeleteService extends MomentService {
   _CallableDeleteService({
-    required super.firestore,
-    required super.auth,
-    required super.storage,
-    required this.db,
-  });
+    required FirebaseFirestore firestore,
+    required FirebaseAuth auth,
+    required FirebaseStorage storage,
+    required FakeFirebaseFirestore db,
+  }) : db = db,
+       super(
+         firestore: firestore,
+         auth: auth,
+         storage: storage,
+         functions: _MomentDetailFunctions(db),
+       );
 
   final FakeFirebaseFirestore db;
 
@@ -563,4 +565,87 @@ class _CallableDeleteService extends MomentService {
     }
     await db.collection('voiceMoments').doc(moment.id).delete();
   }
+}
+
+/// The widget still exercises the production [MomentService]. This double is
+/// only the callable transport: it models the Admin-SDK side effect after the
+/// client calls `createMomentComment`, so the test cannot pass through a
+/// client-direct Firestore fallback that production Rules now reject.
+class _MomentDetailFunctions implements FirebaseFunctions {
+  _MomentDetailFunctions(this.db);
+
+  final FakeFirebaseFirestore db;
+  int _nextComment = 0;
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _MomentDetailCallable((parameters) => _call(name, parameters));
+
+  Future<Object?> _call(String name, Object? parameters) async {
+    if (name != 'createMomentComment') {
+      throw FirebaseFunctionsException(
+        code: 'not-found',
+        message: 'Unexpected callable $name.',
+      );
+    }
+    final data = Map<String, dynamic>.from(parameters as Map);
+    final momentId = data['momentId'] as String;
+    final text = data['text'] as String;
+    _nextComment += 1;
+    final commentId = _nextComment.toRadixString(16).padLeft(20, '0');
+    final momentRef = db.collection('voiceMoments').doc(momentId);
+    final commentRef = momentRef.collection('comments').doc(commentId);
+    final now = Timestamp.now();
+
+    await db.runTransaction((transaction) async {
+      final moment = await transaction.get(momentRef);
+      final current = (moment.data()?['commentCount'] as num?)?.toInt() ?? 0;
+      transaction.set(commentRef, <String, dynamic>{
+        'schemaVersion': 2,
+        'type': 'text',
+        'authorId': _viewer,
+        'authorName': 'YO Voice viewer',
+        'authorPhotoUrl': null,
+        'text': text,
+        'audioUrl': null,
+        'storagePath': null,
+        'durationSeconds': null,
+        'mediaGeneration': null,
+        'mediaSize': null,
+        'mediaContentType': null,
+        'createdAt': now,
+      });
+      transaction.update(momentRef, <String, dynamic>{
+        'commentCount': current + 1,
+        'updatedAt': now,
+      });
+    });
+    return <String, Object?>{'commentId': commentId};
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _MomentDetailCallable implements HttpsCallable {
+  _MomentDetailCallable(this.handler);
+
+  final Future<Object?> Function(Object? parameters) handler;
+
+  @override
+  Future<HttpsCallableResult<T>> call<T>([Object? parameters]) async =>
+      _MomentDetailCallableResult<T>(await handler(parameters) as T);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _MomentDetailCallableResult<T> implements HttpsCallableResult<T> {
+  _MomentDetailCallableResult(this.data);
+
+  @override
+  final T data;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

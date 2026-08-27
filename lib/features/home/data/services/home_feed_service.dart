@@ -7,19 +7,26 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
 
 class HomeFeedService {
   HomeFeedService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
     FirebaseFunctions? functions,
+    MomentExpiryClock? expiryClock,
+    MomentExpiryTimerFactory? expiryTimerFactory,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
-       _functionsOverride = functions;
+       _functionsOverride = functions,
+       _expiryClock = expiryClock,
+       _expiryTimerFactory = expiryTimerFactory;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
   final FirebaseFunctions? _functionsOverride;
+  final MomentExpiryClock? _expiryClock;
+  final MomentExpiryTimerFactory? _expiryTimerFactory;
 
   FirebaseFunctions? get _functions =>
       _functionsOverride ??
@@ -61,9 +68,15 @@ class HomeFeedService {
     var friendIds = <String>{};
     var followingIds = <String>{};
     var moments = <VoiceMoment>[];
+    DateTime? expiredThrough;
+    late final MomentExpiryScheduler expiry;
 
-    void emit() {
+    void emit([DateTime? deadline]) {
       if (controller.isClosed) return;
+      if (deadline != null &&
+          (expiredThrough == null || deadline.isAfter(expiredThrough!))) {
+        expiredThrough = deadline;
+      }
       final allowedAuthors = <String>{_uid, ...friendIds, ...followingIds};
       // Expiry is enforced client-side on every surface this stream feeds
       // (Home strips, the social feed, the Following filter): a Moment
@@ -72,7 +85,9 @@ class HomeFeedService {
       // the amended availability contract ("keep until deleted") and
       // stays live. `isActiveAt` is the single definition of "still
       // alive".
-      final now = DateTime.now();
+      final wallNow = expiry.now();
+      final floor = expiredThrough;
+      final now = floor != null && floor.isAfter(wallNow) ? floor : wallNow;
       final filtered = moments
           .where(
             (moment) =>
@@ -86,7 +101,17 @@ class HomeFeedService {
         return bDate.compareTo(aDate);
       });
       controller.add(filtered);
+      // Firestore will not emit merely because wall time crossed an
+      // `expiresAt`. Re-arm one timer for the next finite deadline so the
+      // already-delivered list removes it without waiting for the sweeper.
+      expiry.schedule(filtered);
     }
+
+    expiry = MomentExpiryScheduler(
+      onDeadline: emit,
+      clock: _expiryClock,
+      timerFactory: _expiryTimerFactory,
+    );
 
     final subscriptions = <StreamSubscription<dynamic>>[];
 
@@ -141,6 +166,7 @@ class HomeFeedService {
     );
 
     controller.onCancel = () async {
+      expiry.dispose();
       for (final subscription in subscriptions) {
         await subscription.cancel();
       }
@@ -234,28 +260,9 @@ class HomeFeedService {
       }
     }
 
-    final moment = _firestore.collection('voiceMoments').doc(momentId);
-
-    await _firestore.runTransaction((transaction) async {
-      final momentSnapshot = await transaction.get(moment);
-      final likeSnapshot = await transaction.get(like);
-      if (!momentSnapshot.exists) {
-        throw StateError('Voice Moment no longer exists.');
-      }
-      final current =
-          (momentSnapshot.data()?['likeCount'] as num?)?.toInt() ?? 0;
-      if (likeSnapshot.exists) {
-        transaction.delete(like);
-        transaction.update(moment, {
-          'likeCount': current > 0 ? current - 1 : 0,
-        });
-      } else {
-        transaction.set(like, {
-          'userId': _uid,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-        transaction.update(moment, {'likeCount': current + 1});
-      }
-    });
+    throw StateError(
+      'Liking needs the YO Voice server right now and it could not be '
+      'reached. Try again in a moment.',
+    );
   }
 }

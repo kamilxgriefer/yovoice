@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
@@ -88,6 +89,10 @@ class FileRecordedAudio extends RecordedAudio {
 
   @override
   String get contentType => kVoiceMomentContentType;
+
+  @override
+  Source get playbackSource =>
+      DeviceFileSource(file.path, mimeType: contentType);
 
   @override
   Future<String> uploadTo(

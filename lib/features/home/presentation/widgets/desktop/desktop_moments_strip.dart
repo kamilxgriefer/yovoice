@@ -7,6 +7,7 @@ import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
@@ -44,6 +45,7 @@ class DesktopMomentsStrip extends StatefulWidget {
     this.followService,
     this.onOpenProfile,
     this.currentUserId,
+    this.expiryClock,
     super.key,
   });
 
@@ -88,6 +90,9 @@ class DesktopMomentsStrip extends StatefulWidget {
 
   /// The signed-in uid, used to read who this account already follows.
   final String? currentUserId;
+
+  /// Uses the same instant as an injected [HomeFeedService] in widget tests.
+  final DateTime Function()? expiryClock;
 
   /// A Moment counts as "new" for a day after it is posted.
   static const Duration newWindow = Duration(hours: 24);
@@ -185,107 +190,133 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                         .toList(growable: false);
                     final others = _newestPerAuthor(all, profile?.uid);
 
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _StripHeading(
-                          onSeeAll: widget.onSeeAll,
-                          // Nothing to "see all" of until the circle has posted.
-                          showSeeAll: others.isNotEmpty || mine.isNotEmpty,
-                          onDiscover: widget.onDiscover,
-                          showDiscover:
-                              others.isNotEmpty ||
-                              profileSuggestions.isNotEmpty,
-                        ),
-                        LayoutBuilder(
-                          builder: (context, constraints) {
-                            final tileWidth = _MomentTile.widthFor(context);
-                            final tileHeight = _MomentTile.heightFor(context);
-                            // "Your Moment" always holds the first slot; the rest
-                            // of the width decides how many people fit, capped at
-                            // the 8 the composition is designed around.
-                            final fits =
-                                ((constraints.maxWidth + _tileGap) /
-                                        (tileWidth + _tileGap))
-                                    .floor();
-                            final capacity = (fits - 1).clamp(0, 7);
-                            final shown = others
-                                .take(capacity)
-                                .toList(growable: false);
+                    return MomentExpiryListTransition(
+                      moments: all,
+                      clock: widget.expiryClock ?? DateTime.now,
+                      transitionScope: 'desktop-home-moments',
+                      announcementBuilder: (count) => count == 1
+                          ? 'One Voice Moment expired and was removed from Home.'
+                          : '$count Voice Moments expired and were removed from Home.',
+                      builder: (context, recoveryFocus, tileFocusNode) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _StripHeading(
+                              expiryRecoveryFocus: recoveryFocus,
+                              onSeeAll: widget.onSeeAll,
+                              // Nothing to "see all" of until the circle has posted.
+                              showSeeAll: others.isNotEmpty || mine.isNotEmpty,
+                              onDiscover: widget.onDiscover,
+                              showDiscover:
+                                  others.isNotEmpty ||
+                                  profileSuggestions.isNotEmpty,
+                            ),
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                final tileWidth = _MomentTile.widthFor(context);
+                                final tileHeight = _MomentTile.heightFor(
+                                  context,
+                                );
+                                // "Your Moment" always holds the first slot; the rest
+                                // of the width decides how many people fit, capped at
+                                // the 8 the composition is designed around.
+                                final fits =
+                                    ((constraints.maxWidth + _tileGap) /
+                                            (tileWidth + _tileGap))
+                                        .floor();
+                                final capacity = (fits - 1).clamp(0, 7);
+                                final shown = others
+                                    .take(capacity)
+                                    .toList(growable: false);
 
-                            final tiles = <Widget>[
-                              _YourMomentTile(
-                                profile: profile,
-                                mine: mine,
-                                onCreate: widget.onCreateMoment,
-                                onOpen: widget.onOpenMoment,
-                                onOpenChain: widget.onOpenOwnChain,
-                              ),
-                              for (final moment in shown)
-                                _MomentTile(
-                                  moment: moment,
-                                  onTap: () => widget.onOpenMoment(moment),
-                                  online: online.contains(moment.authorId),
-                                ),
-                            ];
-
-                            // Nothing from the circle and no profile suggestion:
-                            // the quiet state fills the band rather than leaving
-                            // it blank.
-                            if (others.isEmpty && profileSuggestions.isEmpty) {
-                              return SizedBox(
-                                height: tileHeight,
-                                child: Row(
-                                  children: [
-                                    tiles.first,
-                                    const SizedBox(width: 14),
-                                    Expanded(
-                                      flex: 3,
-                                      child: _CircleQuietState(
-                                        onDiscover: widget.onDiscover,
+                                final tiles = <Widget>[
+                                  _YourMomentTile(
+                                    profile: profile,
+                                    mine: mine,
+                                    focusNode: mine.isEmpty
+                                        ? null
+                                        : tileFocusNode(mine.first.id),
+                                    onCreate: widget.onCreateMoment,
+                                    onOpen: widget.onOpenMoment,
+                                    onOpenChain: widget.onOpenOwnChain,
+                                  ),
+                                  for (final moment in shown)
+                                    _MomentTile(
+                                      key: ValueKey(
+                                        'desktop-home-moment-${moment.id}',
                                       ),
+                                      moment: moment,
+                                      focusNode: tileFocusNode(moment.id),
+                                      onTap: () => widget.onOpenMoment(moment),
+                                      online: online.contains(moment.authorId),
                                     ),
-                                  ],
-                                ),
-                              );
-                            }
+                                ];
 
-                            // ONE row, packed from the left: people you can hear,
-                            // then the divider, then profile shortcuts. Following
-                            // belongs on the profile surface, not in this rail.
-                            return SizedBox(
-                              height: tileHeight,
-                              child: SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                child: Row(
-                                  children: [
-                                    for (var i = 0; i < tiles.length; i++) ...[
-                                      if (i > 0)
-                                        const SizedBox(width: _tileGap),
-                                      tiles[i],
-                                    ],
-                                    if (profileSuggestions.isNotEmpty) ...[
-                                      const _RailDivider(),
-                                      for (
-                                        var i = 0;
-                                        i < profileSuggestions.length;
-                                        i++
-                                      ) ...[
-                                        if (i > 0)
-                                          const SizedBox(width: _tileGap),
-                                        _PersonSuggestionTile(
-                                          person: profileSuggestions[i],
-                                          onOpenProfile: widget.onOpenProfile,
+                                // Nothing from the circle and no profile suggestion:
+                                // the quiet state fills the band rather than leaving
+                                // it blank.
+                                if (others.isEmpty &&
+                                    profileSuggestions.isEmpty) {
+                                  return SizedBox(
+                                    height: tileHeight,
+                                    child: Row(
+                                      children: [
+                                        tiles.first,
+                                        const SizedBox(width: 14),
+                                        Expanded(
+                                          flex: 3,
+                                          child: _CircleQuietState(
+                                            onDiscover: widget.onDiscover,
+                                          ),
                                         ),
                                       ],
-                                    ],
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ],
+                                    ),
+                                  );
+                                }
+
+                                // ONE row, packed from the left: people you can hear,
+                                // then the divider, then profile shortcuts. Following
+                                // belongs on the profile surface, not in this rail.
+                                return SizedBox(
+                                  height: tileHeight,
+                                  child: SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    child: Row(
+                                      children: [
+                                        for (
+                                          var i = 0;
+                                          i < tiles.length;
+                                          i++
+                                        ) ...[
+                                          if (i > 0)
+                                            const SizedBox(width: _tileGap),
+                                          tiles[i],
+                                        ],
+                                        if (profileSuggestions.isNotEmpty) ...[
+                                          const _RailDivider(),
+                                          for (
+                                            var i = 0;
+                                            i < profileSuggestions.length;
+                                            i++
+                                          ) ...[
+                                            if (i > 0)
+                                              const SizedBox(width: _tileGap),
+                                            _PersonSuggestionTile(
+                                              person: profileSuggestions[i],
+                                              onOpenProfile:
+                                                  widget.onOpenProfile,
+                                            ),
+                                          ],
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        );
+                      },
                     );
                   },
                 );
@@ -314,12 +345,14 @@ class _RailDivider extends StatelessWidget {
 
 class _StripHeading extends StatelessWidget {
   const _StripHeading({
+    required this.expiryRecoveryFocus,
     required this.onSeeAll,
     required this.showSeeAll,
     required this.onDiscover,
     required this.showDiscover,
   });
 
+  final FocusNode expiryRecoveryFocus;
   final VoidCallback onSeeAll;
   final bool showSeeAll;
 
@@ -335,13 +368,21 @@ class _StripHeading extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         children: [
-          const Expanded(
-            child: Text(
-              'People & Moments',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 16.5,
-                fontWeight: FontWeight.w800,
+          Expanded(
+            child: MomentExpiryFocusTarget(
+              key: const ValueKey('desktop-home-moments-heading'),
+              focusNode: expiryRecoveryFocus,
+              semanticLabel: 'People and Moments',
+              child: const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'People & Moments',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
               ),
             ),
           ),
@@ -455,11 +496,14 @@ class _MomentRing extends StatelessWidget {
 class _MomentTile extends StatelessWidget {
   const _MomentTile({
     required this.moment,
+    required this.focusNode,
     required this.onTap,
     this.online = false,
+    super.key,
   });
 
   final VoiceMoment moment;
+  final FocusNode focusNode;
   final VoidCallback onTap;
 
   /// The author's own `isOnline`, for friends only — the rail never
@@ -498,6 +542,7 @@ class _MomentTile extends StatelessWidget {
       width: widthFor(context),
       height: heightFor(context),
       child: InkWell(
+        focusNode: focusNode,
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
         child: Column(
@@ -693,6 +738,7 @@ class _YourMomentTile extends StatelessWidget {
   const _YourMomentTile({
     required this.profile,
     required this.mine,
+    required this.focusNode,
     required this.onCreate,
     required this.onOpen,
     required this.onOpenChain,
@@ -703,6 +749,7 @@ class _YourMomentTile extends StatelessWidget {
   /// The signed-in user's live Moments, newest first (the stream's
   /// order). Empty when nothing is live right now.
   final List<VoiceMoment> mine;
+  final FocusNode? focusNode;
   final VoidCallback onCreate;
   final ValueChanged<VoiceMoment> onOpen;
   final ValueChanged<List<VoiceMoment>>? onOpenChain;
@@ -727,6 +774,7 @@ class _YourMomentTile extends StatelessWidget {
                   : 'Play your Voice Moment'),
         child: InkWell(
           key: const ValueKey('home-your-moment'),
+          focusNode: focusNode,
           onTap: newest == null
               ? onCreate
               : (onOpenChain != null

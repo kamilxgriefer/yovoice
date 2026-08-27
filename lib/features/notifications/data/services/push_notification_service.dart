@@ -18,6 +18,65 @@ import 'package:yovoice/features/notifications/data/services/notification_servic
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {}
 
+/// A single-use reservation for one foreground notification presentation.
+///
+/// FCM and the Firestore notification stream are independent deliveries of the
+/// same event. Reserving first keeps them from presenting concurrently, while
+/// completing only after a banner/system notification was accepted lets the
+/// losing path retry when presentation was unavailable.
+class ForegroundNotificationClaim {
+  ForegroundNotificationClaim(this._onComplete);
+
+  final void Function(bool presented) _onComplete;
+  bool _completed = false;
+
+  void complete({required bool presented}) {
+    if (_completed) return;
+    _completed = true;
+    _onComplete(presented);
+  }
+}
+
+/// Explicitly distinguishes an untracked legacy payload from a vetoed
+/// duplicate. A nullable claim alone cannot represent both without either
+/// dropping id-less pushes or allowing already-presented ids through again.
+class ForegroundNotificationClaimDecision {
+  const ForegroundNotificationClaimDecision.allowUntracked()
+    : shouldPresent = true,
+      claim = null;
+
+  const ForegroundNotificationClaimDecision.skip()
+    : shouldPresent = false,
+      claim = null;
+
+  ForegroundNotificationClaimDecision.claimed(
+    ForegroundNotificationClaim claimed,
+  ) : shouldPresent = true,
+      claim = claimed;
+
+  final bool shouldPresent;
+  final ForegroundNotificationClaim? claim;
+}
+
+/// Applies the explicit arbitration decision and settles any claim from the
+/// actual presentation result, including the exceptional path. Kept as a
+/// small testable seam because platform local-notification plugins are not
+/// available in VM tests.
+@visibleForTesting
+Future<bool> presentForegroundNotificationDecision({
+  required ForegroundNotificationClaimDecision decision,
+  required Future<bool> Function() present,
+}) async {
+  if (!decision.shouldPresent) return false;
+  var presented = false;
+  try {
+    presented = await present();
+    return presented;
+  } finally {
+    decision.claim?.complete(presented: presented);
+  }
+}
+
 /// Owns the FCM lifecycle end-to-end: permission request, token
 /// register/refresh/unregister, foreground local-notification display, and
 /// routing a tap back into the app. Every entry point is wrapped so a
@@ -26,6 +85,13 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {}
 /// than crashing app startup — see main.dart's App Check guard for the same
 /// pattern applied here.
 class PushNotificationService {
+  /// Android notification-channel sound settings are immutable after the
+  /// channel is first created. v3 is the Velvet Prism sound migration; a new
+  /// id is required for existing installs to receive the new master.
+  static const String androidChannelId = 'yovoice_activity_v3';
+  static const String androidSoundResource = 'yovoice_notification';
+  static const String iosSoundFile = 'yovoice_notification.wav';
+
   static const String _rotationPendingPreference =
       'push_token_rotation_pending_v1';
   static const Duration _signOutCleanupTimeout = Duration(seconds: 4);
@@ -91,15 +157,23 @@ class PushNotificationService {
   )?
   onNotificationTap;
 
+  /// Arbitrates the FCM foreground path against the independent Firestore
+  /// banner stream. A claimed decision is a temporary reservation, not proof
+  /// of presentation: FCM must complete it with the actual native/in-app
+  /// result. The explicit decision also distinguishes an already-owned event
+  /// from a legacy payload without an id, which remains allowed but untracked.
+  ForegroundNotificationClaimDecision Function(String? notificationId)?
+  claimForegroundNotification;
+
   /// Web browsers do not automatically present a `notification` payload
-  /// while the tab is focused. The app layer uses this hook for one modest
-  /// in-app banner; native foreground messages are presented by the local
-  /// notifications plugin with the same system sound as background pushes.
+  /// while the tab is focused, so they always use this in-app path. Native
+  /// normally uses a local system notification; this hook is also its safe
+  /// fallback when that platform presentation throws.
   ///
   /// [notificationId] is the Firestore notification document id carried in
   /// the push payload — the app layer dedupes against its stream-driven
   /// banner source with it, so the same notification never banners twice.
-  void Function(
+  bool Function(
     String title,
     String? body,
     NotificationType type,
@@ -107,7 +181,7 @@ class PushNotificationService {
     String? actorId,
     String? notificationId,
   )?
-  onWebForegroundNotification;
+  onInAppForegroundNotification;
 
   /// Call once, after the user is signed in — token registration needs a
   /// uid to write `users/{uid}/fcmTokens/{token}` under, and requesting
@@ -479,12 +553,12 @@ class PushNotificationService {
 
     if (Platform.isAndroid) {
       const channel = AndroidNotificationChannel(
-        'yovoice_activity_v2',
+        androidChannelId,
         'YO Voice notifications',
         description: 'Messages, invitations and activity from YO Voice',
         importance: Importance.high,
         playSound: true,
-        sound: RawResourceAndroidNotificationSound('yovoice_notification'),
+        sound: RawResourceAndroidNotificationSound(androidSoundResource),
         enableVibration: true,
       );
       await _localNotifications
@@ -498,53 +572,105 @@ class PushNotificationService {
   Future<void> _showLocalNotification(RemoteMessage message) async {
     final notification = message.notification;
     if (notification == null) return;
-    if (kIsWeb) {
-      onWebForegroundNotification?.call(
-        notification.title ?? 'YO Voice',
-        notification.body,
-        NotificationType.fromName(message.data['type'] as String?),
-        message.data['targetId'] as String?,
-        message.data['actorId'] as String?,
-        message.data['notificationId'] as String?,
-      );
-      return;
+    final notificationId = message.data['notificationId'] as String?;
+    final claimOwner = claimForegroundNotification;
+    var decision = const ForegroundNotificationClaimDecision.allowUntracked();
+    if (claimOwner != null) {
+      try {
+        decision = claimOwner(notificationId);
+      } catch (error) {
+        // The Firestore stream remains the source-of-truth fallback. If its
+        // arbiter cannot reserve this delivery, do not risk a duplicate native
+        // sound/banner here.
+        debugPrint(
+          'PushNotificationService: could not reserve foreground '
+          'notification (${error.runtimeType}).',
+        );
+        return;
+      }
     }
+
+    await presentForegroundNotificationDecision(
+      decision: decision,
+      present: () async {
+        if (kIsWeb) {
+          return _tryShowInAppForegroundNotification(
+            message,
+            notificationId: notificationId,
+          );
+        }
+        try {
+          await _localNotifications.show(
+            id: notification.hashCode,
+            title: notification.title,
+            body: notification.body,
+            notificationDetails: const NotificationDetails(
+              android: AndroidNotificationDetails(
+                androidChannelId,
+                'YO Voice notifications',
+                channelDescription:
+                    'Messages, invitations and activity from YO Voice',
+                importance: Importance.high,
+                priority: Priority.high,
+                playSound: true,
+                sound: RawResourceAndroidNotificationSound(
+                  androidSoundResource,
+                ),
+                enableVibration: true,
+              ),
+              iOS: DarwinNotificationDetails(
+                presentAlert: true,
+                presentBadge: true,
+                presentSound: true,
+                sound: iosSoundFile,
+              ),
+            ),
+            payload:
+                '${message.data['type'] ?? ''}|'
+                '${message.data['targetId'] ?? ''}|'
+                '${message.data['actorId'] ?? ''}|'
+                '${message.data['notificationId'] ?? ''}',
+          );
+          return true;
+        } catch (error) {
+          // The native path did not accept a presentation. Try the in-app
+          // surface, and release the reservation to Firestore if that surface
+          // is not mounted either.
+          debugPrint(
+            'PushNotificationService: could not present a foreground '
+            'notification (${error.runtimeType}).',
+          );
+          return _tryShowInAppForegroundNotification(
+            message,
+            notificationId: notificationId,
+          );
+        }
+      },
+    );
+  }
+
+  bool _tryShowInAppForegroundNotification(
+    RemoteMessage message, {
+    required String? notificationId,
+  }) {
+    final notification = message.notification;
+    if (notification == null) return false;
     try {
-      await _localNotifications.show(
-        id: notification.hashCode,
-        title: notification.title,
-        body: notification.body,
-        notificationDetails: const NotificationDetails(
-          android: AndroidNotificationDetails(
-            'yovoice_activity_v2',
-            'YO Voice notifications',
-            channelDescription:
-                'Messages, invitations and activity from YO Voice',
-            importance: Importance.high,
-            priority: Priority.high,
-            playSound: true,
-            sound: RawResourceAndroidNotificationSound('yovoice_notification'),
-            enableVibration: true,
-          ),
-          iOS: DarwinNotificationDetails(
-            presentAlert: true,
-            presentBadge: true,
-            presentSound: true,
-            sound: 'yovoice_notification.wav',
-          ),
-        ),
-        payload:
-            '${message.data['type'] ?? ''}|${message.data['targetId'] ?? ''}'
-            '|${message.data['actorId'] ?? ''}'
-            '|${message.data['notificationId'] ?? ''}',
-      );
+      return onInAppForegroundNotification?.call(
+            notification.title ?? 'YO Voice',
+            notification.body,
+            NotificationType.fromName(message.data['type'] as String?),
+            message.data['targetId'] as String?,
+            message.data['actorId'] as String?,
+            notificationId,
+          ) ??
+          false;
     } catch (error) {
-      // Only the foreground re-display failed. The message itself was
-      // received and the activity document behind it is already stored.
       debugPrint(
-        'PushNotificationService: could not present a foreground '
-        'notification (${error.runtimeType}).',
+        'PushNotificationService: in-app foreground presentation failed '
+        '(${error.runtimeType}).',
       );
+      return false;
     }
   }
 

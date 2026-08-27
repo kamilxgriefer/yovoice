@@ -21,20 +21,24 @@ import 'voice_moment_test_doubles.dart';
 
 void main() {
   group('MomentAvailability', () {
-    test('mirrors the server whitelist exactly: 24, 72, 168, 720 hours or '
-        'the literal permanent', () {
+    test('accepts every whole hour from 24 through 720, or permanent', () {
       expect(MomentAvailability.hours24.wireValue, 24);
-      expect(MomentAvailability.days3.wireValue, 72);
-      expect(MomentAvailability.days7.wireValue, 168);
-      expect(MomentAvailability.days30.wireValue, 720);
+      expect(MomentAvailability.timedHours(25).wireValue, 25);
+      expect(MomentAvailability.timedHours(72).wireValue, 72);
+      expect(MomentAvailability.timedHours(720).wireValue, 720);
       expect(MomentAvailability.permanent.wireValue, 'permanent');
+      expect(() => MomentAvailability.timedHours(23), throwsRangeError);
+      expect(() => MomentAvailability.timedHours(721), throwsRangeError);
     });
 
     test('only the 24-hour default may be omitted on the wire', () {
       expect(MomentAvailability.hours24.isServerDefault, isTrue);
-      for (final other in MomentAvailability.values.where(
-        (value) => value != MomentAvailability.hours24,
-      )) {
+      for (final other in [
+        MomentAvailability.timedHours(25),
+        MomentAvailability.timedHours(72),
+        MomentAvailability.timedHours(720),
+        MomentAvailability.permanent,
+      ]) {
         expect(other.isServerDefault, isFalse, reason: '$other must be sent');
       }
     });
@@ -74,9 +78,7 @@ void main() {
 
     test('a future expiresAt is live, a past one is dead — unchanged', () {
       expect(
-        moment(
-          expiresAt: now.add(const Duration(hours: 1)),
-        ).isActiveAt(now),
+        moment(expiresAt: now.add(const Duration(hours: 1))).isActiveAt(now),
         isTrue,
       );
       expect(
@@ -125,17 +127,12 @@ void main() {
   });
 
   group('the recorder\'s Available for selector', () {
-    Widget host(Widget child) => MaterialApp(
-      theme: ThemeData.dark(useMaterial3: true),
-      home: child,
-    );
+    Widget host(Widget child) =>
+        MaterialApp(theme: ThemeData.dark(useMaterial3: true), home: child);
 
-    ({
-      FakeStopwatch clock,
-      StubMomentService service,
-      Widget screen,
-    })
-    build({String? replyToMomentId}) {
+    ({FakeStopwatch clock, StubMomentService service, Widget screen}) build({
+      String? replyToMomentId,
+    }) {
       final backend = FakeRecorderBackend();
       final capture = FakeAudioCapture()..result = FakeRecordedAudio();
       final service = StubMomentService();
@@ -155,10 +152,7 @@ void main() {
       );
     }
 
-    Future<void> reachReview(
-      WidgetTester tester,
-      FakeStopwatch clock,
-    ) async {
+    Future<void> reachReview(WidgetTester tester, FakeStopwatch clock) async {
       await tester.tap(find.byIcon(Icons.mic_rounded));
       await tester.pump();
       await tester.pump();
@@ -169,37 +163,7 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('offers exactly the five whitelisted choices, 24 hours '
-        'selected by default', (tester) async {
-      tester.view.physicalSize = const Size(768, 1024);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-
-      final harness = build();
-      await tester.pumpWidget(host(harness.screen));
-      await tester.pumpAndSettle();
-      await reachReview(tester, harness.clock);
-
-      expect(find.text('Available for'), findsOneWidget);
-      for (final option in MomentAvailability.values) {
-        expect(
-          find.byKey(ValueKey('availability-${option.name}')),
-          findsOneWidget,
-          reason: '${option.label} must be offered',
-        );
-        expect(find.text(option.label), findsOneWidget);
-      }
-
-      await tester.tap(find.text('Publish'));
-      await tester.pumpAndSettle();
-      expect(
-        harness.service.publishedAvailability,
-        MomentAvailability.hours24,
-        reason: 'the default is today\'s behaviour: 24 hours',
-      );
-    });
-
-    testWidgets('choosing Keep until deleted publishes as permanent', (
+    testWidgets('offers a custom timed duration with 24 hours by default', (
       tester,
     ) async {
       tester.view.physicalSize = const Size(768, 1024);
@@ -211,21 +175,39 @@ void main() {
       await tester.pumpAndSettle();
       await reachReview(tester, harness.clock);
 
-      await tester.tap(
+      expect(find.text('Available for'), findsOneWidget);
+      expect(find.byKey(const ValueKey('availability-timed')), findsOneWidget);
+      expect(
         find.byKey(const ValueKey('availability-permanent')),
+        findsOneWidget,
       );
-      await tester.pump();
-      expect(find.text('Stays in the feed until you delete it.'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('availability-amount')),
+            )
+            .controller!
+            .text,
+        '24',
+      );
+      expect(find.text('Hours'), findsOneWidget);
+      expect(
+        find.textContaining('visible in the feed for 24 hours'),
+        findsOneWidget,
+      );
 
       await tester.tap(find.text('Publish'));
       await tester.pumpAndSettle();
       expect(
         harness.service.publishedAvailability,
-        MomentAvailability.permanent,
+        MomentAvailability.hours24,
+        reason: 'the default is today\'s behaviour: 24 hours',
       );
     });
 
-    testWidgets('choosing 3 days publishes 72 hours', (tester) async {
+    testWidgets('choosing Until deleted publishes as permanent', (
+      tester,
+    ) async {
       tester.view.physicalSize = const Size(768, 1024);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
@@ -235,11 +217,150 @@ void main() {
       await tester.pumpAndSettle();
       await reachReview(tester, harness.clock);
 
-      await tester.tap(find.byKey(const ValueKey('availability-days3')));
+      await tester.tap(find.byKey(const ValueKey('availability-permanent')));
+      await tester.pump();
+      expect(
+        find.textContaining('visible in the feed until you delete it'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Publish'));
+      await tester.pumpAndSettle();
+      expect(
+        harness.service.publishedAvailability,
+        MomentAvailability.permanent,
+      );
+    });
+
+    testWidgets('a custom 3-day choice publishes 72 hours', (tester) async {
+      tester.view.physicalSize = const Size(768, 1024);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final harness = build();
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+      await reachReview(tester, harness.clock);
+
+      await tester.tap(find.byKey(const ValueKey('availability-unit')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Days').last);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('availability-amount')),
+        '3',
+      );
       await tester.pump();
       await tester.tap(find.text('Publish'));
       await tester.pumpAndSettle();
-      expect(harness.service.publishedAvailability, MomentAvailability.days3);
+      expect(
+        harness.service.publishedAvailability,
+        MomentAvailability.timedHours(72),
+      );
+    });
+
+    testWidgets('a custom 25-hour choice is accepted', (tester) async {
+      tester.view.physicalSize = const Size(768, 1024);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final harness = build();
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+      await reachReview(tester, harness.clock);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('availability-amount')),
+        '25',
+      );
+      await tester.tap(find.text('Publish'));
+      await tester.pumpAndSettle();
+
+      expect(
+        harness.service.publishedAvailability,
+        MomentAvailability.timedHours(25),
+      );
+    });
+
+    testWidgets('invalid timed input is explained and cannot publish', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(768, 1024);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final harness = build();
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+      await reachReview(tester, harness.clock);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('availability-amount')),
+        '23',
+      );
+      await tester.tap(find.text('Publish'));
+      await tester.pump();
+
+      expect(find.text('Choose between 24 and 720 hours.'), findsOneWidget);
+      expect(harness.service.publishCalls, 0);
+    });
+
+    testWidgets('caption and availability freeze after the first attempt', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(768, 1024);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final harness = build();
+      harness.service.failure = StateError('network unavailable');
+      await tester.pumpWidget(host(harness.screen));
+      await tester.pumpAndSettle();
+      await reachReview(tester, harness.clock);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('voice-moment-caption')),
+        'Frozen caption',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('availability-amount')),
+        '25',
+      );
+      await tester.tap(find.text('Publish'));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('voice-moment-caption')),
+            )
+            .enabled,
+        isFalse,
+      );
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('availability-amount')),
+            )
+            .enabled,
+        isFalse,
+      );
+      expect(
+        find.text('Caption and availability are locked for this retry.'),
+        findsOneWidget,
+      );
+
+      harness.service.failure = null;
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+      expect(harness.service.publishedCaptions, [
+        'Frozen caption',
+        'Frozen caption',
+      ]);
+      expect(harness.service.publishedAvailabilities, [
+        MomentAvailability.timedHours(25),
+        MomentAvailability.timedHours(25),
+      ]);
     });
 
     testWidgets('a voice REPLY never shows the selector — replies have no '
@@ -254,25 +375,40 @@ void main() {
       await reachReview(tester, harness.clock);
 
       expect(find.text('Available for'), findsNothing);
-      expect(find.byKey(const ValueKey('availability-hours24')), findsNothing);
+      expect(find.byKey(const ValueKey('availability-timed')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('voice-preview-toggle')),
+        findsOneWidget,
+      );
+
+      harness.service.failure = StateError('network unavailable');
+      await tester.enterText(
+        find.byKey(const ValueKey('voice-moment-caption')),
+        'A reply worth retrying',
+      );
+      await tester.tap(find.text('Publish'));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('voice-moment-caption')),
+            )
+            .enabled,
+        isFalse,
+      );
+      expect(find.text('Caption is locked for this retry.'), findsOneWidget);
     });
   });
 
   group('the availabilityHours wire field', () {
-    ({
-      _RecordingFunctions functions,
-      MomentService service,
-    })
-    build() {
+    ({_RecordingFunctions functions, MomentService service}) build() {
       final functions = _RecordingFunctions();
       return (
         functions: functions,
         service: MomentService(
           firestore: FakeFirebaseFirestore(),
-          auth: MockFirebaseAuth(
-            signedIn: true,
-            mockUser: MockUser(uid: 'me'),
-          ),
+          auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me')),
           storage: MockFirebaseStorage(),
           functions: functions,
         ),
@@ -294,19 +430,19 @@ void main() {
       expect(finalize.payload.containsKey('availabilityHours'), isFalse);
     });
 
-    test('a timed choice sends its whitelisted hour count', () async {
+    test('a custom timed choice sends its hour count', () async {
       final harness = build();
       await harness.service.publishRecordedMoment(
         audio: FakeRecordedAudio(),
         durationSeconds: 5,
         caption: 'hello',
-        availability: MomentAvailability.days7,
+        availability: MomentAvailability.timedHours(25),
       );
 
       final finalize = harness.functions.calls.singleWhere(
         (call) => call.name == 'finalizeMomentDraft',
       );
-      expect(finalize.payload['availabilityHours'], 168);
+      expect(finalize.payload['availabilityHours'], 25);
     });
 
     test('permanent sends the literal string', () async {
@@ -335,7 +471,7 @@ void main() {
           audio: audio,
           durationSeconds: 5,
           caption: 'hello',
-          availability: MomentAvailability.days3,
+          availability: MomentAvailability.timedHours(72),
         ),
         throwsA(isA<FirebaseFunctionsException>()),
       );

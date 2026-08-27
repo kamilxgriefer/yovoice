@@ -1307,34 +1307,144 @@ async function main() {
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     await setDoc(doc(ctx.firestore(), "voiceMoments/moment1"), {
       authorId: "host-uid",
+      isPublished: true,
       likeCount: 0,
       commentCount: 0,
     });
+    await setDoc(doc(ctx.firestore(), "voiceMoments/moment-private"), {
+      authorId: "host-uid",
+      isPublished: false,
+      status: "uploading",
+      likeCount: 0,
+      commentCount: 0,
+    });
+    await setDoc(
+      doc(ctx.firestore(), "voiceMoments/moment1/likes/published-like"),
+      { userId: "host-uid", createdAt: serverTimestamp() },
+    );
+    await setDoc(
+      doc(ctx.firestore(), "voiceMoments/moment1/comments/existing-comment"),
+      {
+        type: "text",
+        authorId: "attacker-uid",
+        text: "Existing comment",
+        createdAt: serverTimestamp(),
+      },
+    );
+    await setDoc(
+      doc(ctx.firestore(), "voiceMoments/moment-private/likes/private-like"),
+      { userId: "host-uid", createdAt: serverTimestamp() },
+    );
+    await setDoc(
+      doc(
+        ctx.firestore(),
+        "voiceMoments/moment-private/comments/private-comment",
+      ),
+      {
+        type: "text",
+        authorId: "host-uid",
+        text: "Private comment",
+        createdAt: serverTimestamp(),
+      },
+    );
   });
 
-  await check("regression: liking a moment increments likeCount by exactly 1", async () => {
+  await check("SECURITY: likes and root counters are callable-only", async () => {
     const db = attacker.firestore();
-    const batch = writeBatch(db);
-    batch.set(doc(db, "voiceMoments/moment1/likes/attacker-uid"), {
+    const likeRef = doc(db, "voiceMoments/moment1/likes/attacker-uid");
+    await assertFails(setDoc(likeRef, {
       userId: "attacker-uid",
-      createdAt: null,
+      createdAt: serverTimestamp(),
+    }));
+
+    const batch = writeBatch(db);
+    batch.set(likeRef, {
+      userId: "attacker-uid",
+      createdAt: serverTimestamp(),
     });
     batch.update(doc(db, "voiceMoments/moment1"), { likeCount: 1 });
-    await assertSucceeds(batch.commit());
+    await assertFails(batch.commit());
+
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(
+        doc(ctx.firestore(), "voiceMoments/moment1/likes/attacker-uid"),
+        { userId: "attacker-uid", createdAt: serverTimestamp() },
+      );
+    });
+    await assertFails(updateDoc(likeRef, { createdAt: serverTimestamp() }));
+    await assertFails(deleteDoc(likeRef));
   });
 
-  await check("SECURITY: cannot set likeCount to an arbitrary value", async () => {
+  await check("SECURITY: no client can mutate either engagement counter", async () => {
     const db = attacker.firestore();
     const ref = doc(db, "voiceMoments/moment1");
     await assertFails(updateDoc(ref, { likeCount: 9999 }));
+    await assertFails(updateDoc(ref, { likeCount: -1 }));
+    await assertFails(updateDoc(ref, { commentCount: 1 }));
+  });
+
+  await check("SECURITY: text and forged comments are callable-only", async () => {
+    await assertFails(setDoc(
+      doc(attacker.firestore(), "voiceMoments/moment1/comments/comment-1"),
+      {
+        type: "text",
+        authorId: "attacker-uid",
+        text: "Canonical comment",
+      },
+    ));
+    await assertFails(setDoc(
+      doc(attacker.firestore(), "voiceMoments/moment1/comments/forged"),
+      {
+        type: "text",
+        authorId: "attacker-uid",
+        text: "Forged comment",
+        createdAt: "not-a-timestamp",
+        admin: true,
+      },
+    ));
+    const existing = doc(
+      attacker.firestore(),
+      "voiceMoments/moment1/comments/existing-comment",
+    );
+    await assertFails(updateDoc(existing, { text: "Attacker edit" }));
+    await assertFails(deleteDoc(existing));
   });
 
   await check(
-    "moment owner can edit content but cannot transfer authorId",
+    "SECURITY: even the owner cannot directly edit root content or identity",
     async () => {
       const ref = doc(host.firestore(), "voiceMoments/moment1");
-      await assertSucceeds(updateDoc(ref, { caption: "Owner edit" }));
+      await assertFails(updateDoc(ref, { caption: "Owner edit" }));
       await assertFails(updateDoc(ref, { authorId: "attacker-uid" }));
+    },
+  );
+
+  await check("SECURITY: draft roots are author-private while published roots are readable", async () => {
+    await assertSucceeds(getDoc(doc(host.firestore(), "voiceMoments/moment-private")));
+    await assertFails(getDoc(doc(attacker.firestore(), "voiceMoments/moment-private")));
+    await assertSucceeds(getDoc(doc(attacker.firestore(), "voiceMoments/moment1")));
+  });
+
+  await check(
+    "SECURITY: Moment engagement reads inherit the parent visibility boundary",
+    async () => {
+      const privateLike = "voiceMoments/moment-private/likes/private-like";
+      const privateComment =
+        "voiceMoments/moment-private/comments/private-comment";
+      const publishedLike = "voiceMoments/moment1/likes/published-like";
+      const publishedComment =
+        "voiceMoments/moment1/comments/existing-comment";
+
+      await assertSucceeds(getDoc(doc(host.firestore(), privateLike)));
+      await assertSucceeds(getDoc(doc(host.firestore(), privateComment)));
+      await assertFails(getDoc(doc(attacker.firestore(), privateLike)));
+      await assertFails(getDoc(doc(attacker.firestore(), privateComment)));
+      await assertSucceeds(getDoc(doc(attacker.firestore(), publishedLike)));
+      await assertSucceeds(getDoc(doc(attacker.firestore(), publishedComment)));
+
+      const anonymous = testEnv.unauthenticatedContext().firestore();
+      await assertFails(getDoc(doc(anonymous, publishedLike)));
+      await assertFails(getDoc(doc(anonymous, publishedComment)));
     },
   );
 
@@ -1389,9 +1499,9 @@ async function main() {
     await assertFails(updateDoc(ref, { expiresAt: deleteField() }));
   });
 
-  await check("regression: the author can still edit the caption on an expiring Moment", async () => {
+  await check("SECURITY: the author cannot edit the caption on an expiring Moment", async () => {
     const ref = doc(host.firestore(), "voiceMoments/moment-expiry");
-    await assertSucceeds(updateDoc(ref, { caption: "Owner edit before expiry" }));
+    await assertFails(updateDoc(ref, { caption: "Owner edit before expiry" }));
   });
 
   await check("SECURITY: a client-created Moment cannot carry its own expiresAt", async () => {
@@ -1405,14 +1515,33 @@ async function main() {
     }));
   });
 
-  await check("regression: a legacy client Moment create without expiresAt still passes", async () => {
-    await assertSucceeds(setDoc(doc(host.firestore(), "voiceMoments/legacy-client-create"), {
+  await check("SECURITY: legacy-style client root creation is also rejected", async () => {
+    await assertFails(setDoc(doc(host.firestore(), "voiceMoments/legacy-client-create"), {
       authorId: "host-uid",
       caption: "Legacy create",
       isPublished: true,
       likeCount: 0,
       commentCount: 0,
     }));
+  });
+
+  await check("SECURITY: root deletion is callable-only, including for the author", async () => {
+    await assertFails(deleteDoc(doc(host.firestore(), "voiceMoments/moment1")));
+  });
+
+  await check("SECURITY: capacity mutex ledgers are invisible and server-only", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "momentCapacityLedgers/host-uid"), {
+        schemaVersion: 1,
+        ownerId: "host-uid",
+        revision: 1,
+        updatedAt: serverTimestamp(),
+      });
+    });
+    const ref = doc(host.firestore(), "momentCapacityLedgers/host-uid");
+    await assertFails(getDoc(ref));
+    await assertFails(updateDoc(ref, { revision: 2 }));
+    await assertFails(deleteDoc(ref));
   });
 
   // Viewed state for story chains lives at users/{uid}/momentViews/{momentId}
@@ -9181,6 +9310,17 @@ async function main() {
   const mutedUser = testEnv.authenticatedContext("muted-uid", {
     email_verified: true,
   });
+  const sendMuteRoomMessage = (db, id, text) => setDoc(
+    doc(db, `rooms/mute-room/messages/${id}`),
+    {
+      senderId: "muted-uid",
+      senderName: "Muted",
+      senderPhotoUrl: null,
+      text,
+      createdAt: serverTimestamp(),
+      reactions: {},
+    },
+  );
 
   await check(
     "MUTE SECURITY: a client cannot write its own (or anyone's) restriction",
@@ -9211,16 +9351,30 @@ async function main() {
           role: "user",
           accountType: "personal",
         });
+        await setDoc(doc(ctx.firestore(), "rooms/mute-room"), {
+          authorId: "host-uid",
+          hostId: "host-uid",
+          visibility: "public",
+          status: "active",
+          isLive: true,
+        });
+        await setDoc(doc(ctx.firestore(), "rooms/mute-room/participants/muted-uid"), {
+          userId: "muted-uid",
+          displayName: "Muted",
+          role: "listener",
+          isMuted: true,
+          isSpeaker: false,
+          isHandRaised: false,
+        });
       });
-      // Baseline FIRST on a current publishing surface, so the later denial
-      // is attributable to the restriction rather than retired Global Chat.
-      await assertSucceeds(
-        setDoc(doc(mutedUser.firestore(), "voiceMoments/mute-vm0"), {
-          authorId: "muted-uid",
-          caption: "baseline",
-          isPublished: true,
-        }),
-      );
+      // Baseline FIRST on a current direct-write communication surface.
+      // Voice Moment engagement is callable-only, so Room chat is the
+      // correct place to exercise canCommunicate() in Security Rules.
+      await assertSucceeds(sendMuteRoomMessage(
+        mutedUser.firestore(),
+        "mute-c0",
+        "baseline",
+      ));
 
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         await setDoc(doc(ctx.firestore(), "restrictions/muted-uid"), {
@@ -9234,14 +9388,8 @@ async function main() {
       await assertFails(
         sendGlobal(mutedDb, "muted-uid", "Muted", "mute-legacy"),
       );
-      // Public voice moment.
-      await assertFails(
-        setDoc(doc(mutedDb, "voiceMoments/mute-vm1"), {
-          authorId: "muted-uid",
-          caption: "x",
-          isPublished: true,
-        }),
-      );
+      // Public Room chat is a current client-direct communication surface.
+      await assertFails(sendMuteRoomMessage(mutedDb, "mute-c1", "muted"));
       // The holder can still READ their restriction and see the why.
       await assertSucceeds(
         getDoc(doc(mutedDb, "restrictions/muted-uid")),
@@ -9262,13 +9410,11 @@ async function main() {
           expiresAt: Timestamp.fromMillis(Date.now() - 60_000),
         });
       });
-      await assertSucceeds(
-        setDoc(doc(mutedUser.firestore(), "voiceMoments/mute-vm2"), {
-          authorId: "muted-uid",
-          caption: "expired restriction",
-          isPublished: true,
-        }),
-      );
+      await assertSucceeds(sendMuteRoomMessage(
+        mutedUser.firestore(),
+        "mute-c2",
+        "expired restriction",
+      ));
     },
   );
 
@@ -9284,13 +9430,11 @@ async function main() {
           { blockedAt: serverTimestamp() },
         );
       });
-      await assertSucceeds(
-        setDoc(doc(mutedUser.firestore(), "voiceMoments/mute-vm3"), {
-          authorId: "muted-uid",
-          caption: "personal block is not a sanction",
-          isPublished: true,
-        }),
-      );
+      await assertSucceeds(sendMuteRoomMessage(
+        mutedUser.firestore(),
+        "mute-c3",
+        "personal block is not a sanction",
+      ));
     },
   );
 

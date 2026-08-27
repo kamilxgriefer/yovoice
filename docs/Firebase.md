@@ -68,9 +68,19 @@ Top-level collections (from `firestore.rules`):
 | `clubs/{clubId}` | `members`, `invites`, `channels` → `messages` |
 | `rooms/{roomId}` | `participants`, `roomMembers`, `messages`, `handRequests` |
 | `voiceMoments/{momentId}` | `likes`, `comments` |
+| `momentCapacityLedgers/{userId}` (server-only revision/mutex; source only, not deployed) | — |
 | `creatorPinnedPosts/{creatorId}` (server-owned exact pointer) | — |
 
 Notable fields:
+
+- **Voice Moment lifecycle (ADR-115, source only)** — root create, publication,
+  expiry and delete are Cloud Functions authority. Draft, expired and deleting
+  roots are readable only by their author; published roots remain readable by
+  signed-in clients. Like/comment documents and every root counter transition
+  are server-owned; clients retain parent-gated reads only. The server-only
+  `momentCapacityLedgers/{uid}` document is a transaction mutex/version, not a
+  capacity counter: exact published roots remain the source of truth, so the
+  change needs no backfill.
 
 - **Display-name cooldown** — `users/{userId}.displayNameChangedAt` is an
   optional, server-owned Firestore Timestamp. Its absence means the account is
@@ -176,22 +186,23 @@ document, never trust the request — are collected in
 
 ## Composite indexes
 
-`firestore.indexes.json` holds **21** composite indexes and **4**
-`fieldOverrides` (14 and 1 before the 2026-08-16 deploy; the fourth
-override, `invites.inviteeId`, arrived with `84d1feb`; four composites with
-`9b54c22` and `4cad282`, and the two newest with `cef05e6` —
-`isPublished`+`likeCount` desc and `isPublished`+`createdAt` desc, for the
-Moments discovery feed). A live reading on **2026-08-19**
-(`firebase firestore:indexes --project yovoice-ec54a`) returned **19 and
-4** — so as of 2026-08-20 the file is **exactly two composites ahead of
-production**, and the Moments feed's queries will throw
-`FAILED_PRECONDITION` until they are deployed and Enabled. The file is
-deliberately kept a **superset** of production, so an index deploy can never
-be the thing that removes one; being ahead is expected, and the thing to
-check is whether a *feature* depends on the gap.
+`firestore.indexes.json` currently holds **26** composite indexes and **5**
+`fieldOverrides`. The 2026-08-19 live reading of 19 and 4 is historical, not
+proof of today's production state; re-read production before every release
+rather than subtracting one stale count from another. ADR-115 adds the
+source-only `voiceMoments(authorId ASC, isPublished ASC)` composite used by the
+exact active-cap query. It must be deployed to READY/Enabled and the real query
+must succeed before the new Functions can serve traffic. The emulator does not
+enforce this requirement.
 
-The `fieldOverrides` exist to enable `COLLECTION_GROUP` scope on
-`rooms.roomId`, `participants.userId` and `roomMembers.userId`.
+The file is deliberately kept a **superset** of production, so an index deploy
+can never be the thing that removes one; being ahead is expected, and the thing
+to check is whether a feature depends on the gap.
+
+The first three `fieldOverrides` enable `COLLECTION_GROUP` scope on
+`rooms.roomId`, `participants.userId` and `roomMembers.userId`; the
+`invites.inviteeId` and `clubs.clubId` entries also re-declare their collection
+orders while adding collection-group scope.
 
 ### A `fieldOverrides` entry *replaces* automatic single-field indexing
 
@@ -283,19 +294,49 @@ Functions → Logs for its first real run rather than assuming it works.
 
 ## Storage
 
-`storage.rules` — four upload paths, each size/content-type limited:
+`storage.rules` — the six client-upload path families below, each
+size/content-type limited:
 
 | Path | Purpose | Read |
 |---|---|---|
 | `users/{userId}/profile/{fileName}` | Profile photos | Public |
 | `room_images/{roomId}/{uid}_{ts}.ext` | Room cover images | Public |
 | `clubs/{userId}/{clubId}/{kind}_{ts}.ext` | Club images | Public |
-| `voice_moments/{userId}/{fileName}`, `voice_replies/{userId}/{momentId}/{fileName}` | Voice Moment audio | Signed-in only |
+| `voice_moments/{userId}/{fileName}` | Voice Moment root audio | Draft/expired/deleting: author through the authenticated SDK; published: signed-in users |
+| `voice_replies/{userId}/{momentId}/{fileName}` | Voice Moment reply audio | Signed-in only |
 | `message_attachments/{ownerId}/{conversationId}/{messageId}.{ext}` | Private DM photos and voice messages | Active conversation participants only |
 
 Uploads tied to content shown to other users require `email_verified`
 (profile photos are deliberately exempt — setting one during onboarding,
 before verification completes, is normal).
+
+ADR-115's source-only root-audio contract accepts creation only for a
+server-reserved schema-v2 `uploading` draft with a lowercase 20-hex Moment id,
+exact path and `{authorId, momentId}` metadata, plus unpublished/null audio and
+media state (`isPublished: false`; `audioUrl`, `publishedAt` and media fields
+null).
+New allocations require lowercase hex. Existing 20-character mixed-case ids
+remain narrowly read-compatible so historical media is not cut off; the
+metadata, root author and full path must still agree. Root audio is immutable
+to every client, including its author while the draft is still `uploading`.
+Abandoned uploads, published media, expired media and deleting media are all
+cleanup-worker/Admin authority. This deliberately removes a cross-service race
+where client deletion could land after Storage validation but before the
+Firestore publish transaction. Changing Storage Rules
+does not revoke a Firebase download-token URL already learned while a Moment
+was published: that bearer URL remains usable until object cleanup or token
+rotation.
+
+Voice reply allocation is separately reservation-bound. A new object must use
+the lowercase 20-hex comment id, exact path and `{authorId, momentId,
+commentId}` metadata from an unexpired server-owned
+`voiceMomentUploadReservations/{commentId}` row in canonical `uploading` state;
+payload MIME and size must satisfy the same bounded audio allowlist the
+finalizer validates. Reply audio is client-immutable before and after
+finalization: bounded abandoned-reservation cleanup removes an unfinished
+object, while `finalizeVoiceCommentDraft` creates the comment and removes the
+reservation atomically. Already-existing mixed-case reply objects remain
+signed-in readable, but receive no legacy create/delete exception.
 
 **Club image names accept two shapes, and this matters** (fixed in
 `56e7ea7`, deployed 2026-08-16): `validClubImageUpload()` previously
@@ -352,11 +393,9 @@ cd firestore-tests && npm install && npm test
 ```
 
 Full details in [`firestore-tests/README.md`](../firestore-tests/README.md)
-and [TESTING.md](TESTING.md) — **466** checks as of 2026-08-20 (396 on
-2026-08-18 → 403 → 446 with club chat moderation, `b3c27fd` → 466 with room
-chat write validation and the `clubs` `list` rule, `01c0ab2`), plus 52
-Storage and 11 family-media checks;
-regression + attack-scenario coverage. Always run against a
+and the single current-count table in [TESTING.md](TESTING.md). Coverage
+includes Firestore, Storage and family-media regression/attack scenarios;
+do not duplicate their moving counts here. Always run against a
 freshly-started emulator before trusting a "green" result; see
 [ADR-007](Decisions.md#adr-007-firestore-rules-changes-are-always-emulator-tested-against-a-real-collectiongroup-query)
 for why that distinction matters. And note what a green run does *not*

@@ -192,12 +192,22 @@ Full schema and the exact current rules structure: [Firebase.md](Firebase.md).
 
 ## Storage rules
 
-Four upload paths (profile photos, room images, club images, Voice
-Moments audio), each size- and content-type-limited. Uploads tied to
-content shown to other users require `email_verified`; profile photos are
-deliberately exempt, since setting one during onboarding — before
-verification completes — is normal, expected behavior, not a gap. Full
-table in [Firebase.md](Firebase.md#storage).
+Every upload path is size- and content-type-limited. Uploads tied to content
+shown to other users require `email_verified`; profile photos are deliberately
+exempt, since setting one during onboarding — before verification completes —
+is normal, expected behavior, not a gap. Full table in
+[Firebase.md](Firebase.md#storage).
+
+ADR-115's **source-only, not-deployed** Voice Moment contract also binds a root
+audio object to an exact server-reserved schema-v2 uploading draft. Only the
+author may read that draft object; no client may delete root or reply audio.
+Signed-in users may read root audio only after the root is published, and
+retired media returns to author-only SDK access until server cleanup. Bounded
+Admin workers remove abandoned uploads, so a client cannot delete an object in
+the Storage-validation-to-Firestore-commit window and leave a published dead
+URL. A previously disclosed Firebase download-token URL is a bearer capability
+and is not revoked by a later Rules denial; expiry is therefore an exact
+in-app visibility and engagement boundary, not a promise of byte destruction.
 
 ## Secrets
 
@@ -698,13 +708,17 @@ rule counting a different unit than the UI the user is looking at.
 
 ## Current status
 
-**No known open privilege-escalation gap.** What remains behind
+**No known open cross-account privilege-escalation gap.** What remains behind
 `canAccessRoom()` are the two non-escalating ungated writes directly above,
-plus App Check enforcement, which stays off deliberately. A full audit
-found 13 issues (3 critical, 3 high, 6 medium, 1 client/server contract
-bug); 12 are fixed, verified directly against current `firestore.rules`,
-`storage.rules`, and `functions/` — not assumed from the audit's own
-"fixed" claims.
+plus App Check enforcement, which stays off deliberately. Production's Voice
+Moment root rules still let an author/modified legacy client bypass the
+server-authoritative availability, capacity/media validation and cleanup
+lifecycle for that author's own content. ADR-115 closes that integrity/abuse
+gap in source, but it is **NOT DEPLOYED** until its coordinated
+index/Functions/Firestore/Storage/client rollout completes. A full audit found
+13 earlier issues (3 critical, 3 high, 6 medium, 1 client/server contract bug);
+12 are fixed, verified directly against the then-current rules and Functions —
+not assumed from the audit's own "fixed" claims.
 
 **Deployment status, 2026-08-18**: the hardened `firestore.rules` and
 `storage.rules` are **live in production**. `firestore.rules` was deployed

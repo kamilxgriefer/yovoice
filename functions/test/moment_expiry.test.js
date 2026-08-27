@@ -89,9 +89,11 @@ async function seedMoment(momentId, overrides = {}) {
 // precisely what would corrupt the global counters these tests assert on.
 async function wipeMoments() {
   const moments = await db.collection("voiceMoments").get();
-  await Promise.all(
-    moments.docs.map((document) => db.recursiveDelete(document.ref)),
-  );
+  const ledgers = await db.collection("momentCapacityLedgers").get();
+  await Promise.all([
+    ...moments.docs.map((document) => db.recursiveDelete(document.ref)),
+    ...ledgers.docs.map((document) => document.ref.delete()),
+  ]);
 }
 
 function readMoment(momentId) {
@@ -141,6 +143,12 @@ describe("voice moment expiry sweep", () => {
     }
     const comment = await db.doc(`voiceMoments/${momentId}/comments/c1`).get();
     assert.equal(comment.exists, true, "comments stay after expiry");
+    const capacity = (
+      await db.doc(`momentCapacityLedgers/${AUTHOR}`).get()
+    ).data();
+    assert.equal(capacity.schemaVersion, 1);
+    assert.equal(capacity.ownerId, AUTHOR);
+    assert.equal(capacity.revision, 1, "expiry advances the capacity mutex");
   });
 
   test("ANTI-TRAP: a Moment still inside its 24 hours is left alone", async () => {
@@ -201,6 +209,11 @@ describe("voice moment expiry sweep", () => {
       Object.prototype.hasOwnProperty.call(moment, "expiresAt"),
       false,
       "no deadline was backfilled",
+    );
+    assert.equal(
+      (await db.doc(`momentCapacityLedgers/${AUTHOR}`).get()).exists,
+      false,
+      "a skipped permanent Moment does not mutate capacity state",
     );
   });
 

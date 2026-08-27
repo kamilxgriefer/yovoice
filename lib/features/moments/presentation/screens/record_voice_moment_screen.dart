@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
 import 'package:record/record.dart' show Amplitude;
 
 import 'package:yovoice/core/helpers/error_messages.dart';
@@ -30,6 +32,8 @@ enum VoiceMomentRecordingPhase {
   publishing,
 }
 
+enum _AvailabilityUnit { hours, days }
+
 /// Records and publishes a Voice Moment.
 ///
 /// One implementation for web and native: the state machine, the service
@@ -41,6 +45,7 @@ class RecordVoiceMomentScreen extends StatefulWidget {
     this.replyToAuthorName,
     this.recorder,
     this.momentService,
+    this.previewPlayerFactory,
     super.key,
   });
 
@@ -51,12 +56,16 @@ class RecordVoiceMomentScreen extends StatefulWidget {
   final VoiceMomentRecorder? recorder;
   final MomentService? momentService;
 
+  /// Injected so playback can be exercised without a platform audio channel.
+  final AudioPlayer Function()? previewPlayerFactory;
+
   @override
   State<RecordVoiceMomentScreen> createState() =>
       _RecordVoiceMomentScreenState();
 }
 
-class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
+class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen>
+    with WidgetsBindingObserver {
   // Every colour on this screen resolves from AppColors, the project's
   // single source of truth for the palette. The file previously defined
   // its own purple (0xFF9D20FF), visibly different from the AppColors
@@ -66,6 +75,9 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
   static const Color _surface = AppColors.surface;
   static const Color _inset = AppColors.background;
   static const Color _border = AppColors.border;
+  // Interactive control outlines need >=3:1 against the fixed dark inset,
+  // even when the ambient app theme is light.
+  static const Color _controlBorder = AppColors.textHint;
   static const Color _muted = AppColors.textSecondary;
   static const Color _primary = AppColors.primary;
 
@@ -104,6 +116,8 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
   late final VoiceMomentRecorder _recorder;
   MomentService? _momentService;
   final TextEditingController _captionController = TextEditingController();
+  final TextEditingController _availabilityAmountController =
+      TextEditingController(text: '24');
 
   VoiceMomentRecordingPhase _phase = VoiceMomentRecordingPhase.checkingSupport;
 
@@ -119,18 +133,46 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
 
   RecordedAudio? _recording;
 
+  AudioPlayer? _previewPlayer;
+  StreamSubscription<PlayerState>? _previewStateSubscription;
+  StreamSubscription<Duration>? _previewPositionSubscription;
+  StreamSubscription<Duration>? _previewDurationSubscription;
+  StreamSubscription<void>? _previewCompletionSubscription;
+  Duration _previewPosition = Duration.zero;
+  Duration _previewDuration = Duration.zero;
+  bool _previewLoaded = false;
+  bool _previewPlaying = false;
+  bool _previewBusy = false;
+  String? _previewError;
+
   /// How long the published Moment stays live. Defaults to 24 hours —
   /// exactly today's behaviour — and is sent to the server as
   /// `availabilityHours` only when the author picks something else.
   /// Voice replies have no expiry of their own, so the selector never
   /// renders for them.
-  MomentAvailability _availability = MomentAvailability.fallback;
+  MomentAvailability _timedAvailability = MomentAvailability.fallback;
+  _AvailabilityUnit _availabilityUnit = _AvailabilityUnit.hours;
+  bool _untilDeleted = false;
+  String? _availabilityError;
+
+  /// Once the first upload attempt starts these values must remain identical
+  /// for every retry of the same audio. `MomentService` deliberately rejects
+  /// a changed idempotent contract, so the UI makes that invariant visible.
+  bool _publishContractLocked = false;
+
+  bool _leaving = false;
+  bool _restarting = false;
+  bool _resourcesReleased = false;
 
   /// Keeps the primary action reachable: a null `onPressed` drops focus to
   /// the route scope, which is how the retry became unreachable after a
   /// failed publish.
   final FocusNode _publishFocus = FocusNode(debugLabel: 'Publish Voice Moment');
+  final FocusNode _availabilityAmountFocus = FocusNode(
+    debugLabel: 'Voice Moment duration',
+  );
   final GlobalKey _publishKey = GlobalKey();
+  final GlobalKey _availabilityAmountKey = GlobalKey();
 
   String _meterValue = _meterSilent;
   Duration _meterValueAt = Duration.zero;
@@ -150,26 +192,41 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _recorder = widget.recorder ?? VoiceMomentRecorder();
     _captionController.addListener(_onCaptionChanged);
+    _availabilityAmountController.addListener(_onAvailabilityAmountChanged);
     unawaited(_resolveSupport());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
     unawaited(_levels?.cancel());
     _publishFocus.dispose();
+    _availabilityAmountFocus.dispose();
     _captionController
       ..removeListener(_onCaptionChanged)
       ..dispose();
-    unawaited(_recording?.discard());
-    unawaited(_recorder.dispose());
+    _availabilityAmountController
+      ..removeListener(_onAvailabilityAmountChanged)
+      ..dispose();
+    // `dispose` cannot await. The route's explicit back path awaits this same
+    // ordered cleanup; this is the safety net for parent-route teardown.
+    unawaited(_releaseResources());
     super.dispose();
   }
 
-  MomentService get _moments => _momentService ??= (widget.momentService ??
-      MomentService());
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      unawaited(_pausePreview());
+    }
+  }
+
+  MomentService get _moments =>
+      _momentService ??= (widget.momentService ?? MomentService());
 
   bool get _isReply => widget.replyToMomentId != null;
 
@@ -187,9 +244,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
       View.of(context),
       text,
       Directionality.of(context),
-      assertiveness: assertive
-          ? Assertiveness.assertive
-          : Assertiveness.polite,
+      assertiveness: assertive ? Assertiveness.assertive : Assertiveness.polite,
     );
   }
 
@@ -222,6 +277,320 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
     setState(() {});
   }
 
+  void _onAvailabilityAmountChanged() {
+    if (!mounted || _untilDeleted || _publishContractLocked) return;
+    final availability = _readTimedAvailability();
+    setState(() {
+      _availabilityError = _timedAvailabilityValidationMessage();
+      if (availability != null) _timedAvailability = availability;
+    });
+  }
+
+  MomentAvailability? _readTimedAvailability() {
+    final amount = int.tryParse(_availabilityAmountController.text.trim());
+    if (amount == null) return null;
+    final hours = switch (_availabilityUnit) {
+      _AvailabilityUnit.hours => amount,
+      _AvailabilityUnit.days => amount * 24,
+    };
+    if (hours < MomentAvailability.minimumHours ||
+        hours > MomentAvailability.maximumHours) {
+      return null;
+    }
+    return MomentAvailability.timedHours(hours);
+  }
+
+  String? _timedAvailabilityValidationMessage() {
+    final amount = int.tryParse(_availabilityAmountController.text.trim());
+    if (amount == null) return 'Enter a whole number.';
+    return switch (_availabilityUnit) {
+      _AvailabilityUnit.hours
+          when amount < MomentAvailability.minimumHours ||
+              amount > MomentAvailability.maximumHours =>
+        'Choose between 24 and 720 hours.',
+      _AvailabilityUnit.days when amount < 1 || amount > 30 =>
+        'Choose between 1 and 30 days.',
+      _ => null,
+    };
+  }
+
+  void _setUntilDeleted(bool value) {
+    if (_publishContractLocked ||
+        _phase == VoiceMomentRecordingPhase.publishing) {
+      return;
+    }
+    setState(() {
+      _untilDeleted = value;
+      _availabilityError = value ? null : _timedAvailabilityValidationMessage();
+    });
+  }
+
+  void _setAvailabilityUnit(_AvailabilityUnit unit) {
+    if (_publishContractLocked ||
+        _phase == VoiceMomentRecordingPhase.publishing ||
+        unit == _availabilityUnit) {
+      return;
+    }
+    final currentHours = _timedAvailability.hours ?? 24;
+    final nextAmount = unit == _AvailabilityUnit.hours
+        ? currentHours
+        : math.max(1, (currentHours / 24).ceil());
+    setState(() {
+      _availabilityUnit = unit;
+      _availabilityError = null;
+    });
+    _availabilityAmountController.value = TextEditingValue(
+      text: '$nextAmount',
+      selection: TextSelection.collapsed(offset: '$nextAmount'.length),
+    );
+  }
+
+  MomentAvailability? _validatedAvailabilityForPublish() {
+    if (_isReply) return MomentAvailability.fallback;
+    if (_untilDeleted) return MomentAvailability.permanent;
+    final availability = _readTimedAvailability();
+    final error = _timedAvailabilityValidationMessage();
+    if (availability == null || error != null) {
+      final message = error ?? 'Choose a valid duration.';
+      setState(() => _availabilityError = message);
+      _announce(message);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final target = _availabilityAmountKey.currentContext;
+        if (target != null) {
+          unawaited(
+            Scrollable.ensureVisible(
+              target,
+              duration: const Duration(milliseconds: 200),
+              alignment: 0.5,
+            ),
+          );
+        }
+        _availabilityAmountFocus.requestFocus();
+      });
+      return null;
+    }
+    return availability;
+  }
+
+  AudioPlayer _ensurePreviewPlayer() {
+    final existing = _previewPlayer;
+    if (existing != null) return existing;
+
+    final player = widget.previewPlayerFactory?.call() ?? AudioPlayer();
+    _previewPlayer = player;
+    _previewStateSubscription = player.onPlayerStateChanged.listen((state) {
+      if (!mounted || !identical(_previewPlayer, player)) return;
+      setState(() => _previewPlaying = state == PlayerState.playing);
+    }, onError: _showPreviewError);
+    _previewPositionSubscription = player.onPositionChanged.listen((position) {
+      if (!mounted || !identical(_previewPlayer, player)) return;
+      final upper = _previewDuration > Duration.zero
+          ? _previewDuration
+          : position;
+      setState(() {
+        _previewPosition = position > upper ? upper : position;
+      });
+    }, onError: _showPreviewError);
+    _previewDurationSubscription = player.onDurationChanged.listen((duration) {
+      if (!mounted ||
+          !identical(_previewPlayer, player) ||
+          duration <= Duration.zero) {
+        return;
+      }
+      setState(() => _previewDuration = duration);
+    }, onError: _showPreviewError);
+    _previewCompletionSubscription = player.onPlayerComplete.listen((_) {
+      if (!mounted || !identical(_previewPlayer, player)) return;
+      setState(() {
+        _previewPlaying = false;
+        _previewPosition = _previewDuration;
+      });
+    }, onError: _showPreviewError);
+    return player;
+  }
+
+  void _showPreviewError(Object _) {
+    if (!mounted) return;
+    const message =
+        'Preview could not be played on this device. You can '
+        'try again, record a new take, or publish this one.';
+    setState(() {
+      _previewBusy = false;
+      _previewPlaying = false;
+      _previewLoaded = false;
+      _previewError = message;
+    });
+    // Keep the status line as the screen's single polite live region and use
+    // the dedicated assertive announcement channel for this asynchronous
+    // failure, just like publish/capture errors.
+    _announce(message);
+  }
+
+  Future<void> _togglePreview() async {
+    if (_previewBusy ||
+        _phase != VoiceMomentRecordingPhase.reviewing ||
+        _recording == null) {
+      return;
+    }
+
+    final player = _ensurePreviewPlayer();
+    if (_previewPlaying) {
+      setState(() => _previewBusy = true);
+      try {
+        await player.pause();
+        if (!mounted || !identical(_previewPlayer, player)) return;
+        setState(() {
+          _previewPlaying = false;
+          _previewBusy = false;
+        });
+      } catch (error) {
+        _showPreviewError(error);
+      }
+      return;
+    }
+
+    final audio = _recording;
+    if (audio == null) return;
+    setState(() {
+      _previewBusy = true;
+      _previewError = null;
+    });
+    try {
+      final atEnd =
+          _previewDuration > Duration.zero &&
+          _previewPosition >= _previewDuration;
+      if (atEnd) {
+        _previewPosition = Duration.zero;
+        if (_previewLoaded) await player.seek(Duration.zero);
+      }
+      if (_previewLoaded) {
+        await player.resume();
+      } else {
+        await player.play(
+          audio.playbackSource,
+          position: _previewPosition > Duration.zero ? _previewPosition : null,
+        );
+        _previewLoaded = true;
+      }
+      if (!mounted || !identical(_previewPlayer, player)) return;
+      setState(() {
+        _previewPlaying = true;
+        _previewBusy = false;
+      });
+    } catch (error) {
+      _showPreviewError(error);
+    }
+  }
+
+  void _setPreviewPosition(double milliseconds) {
+    final duration = Duration(milliseconds: milliseconds.round());
+    setState(() => _previewPosition = duration);
+  }
+
+  Future<void> _seekPreview(double milliseconds) async {
+    final player = _previewPlayer;
+    if (!_previewLoaded || player == null) return;
+    try {
+      await player.seek(Duration(milliseconds: milliseconds.round()));
+    } catch (error) {
+      _showPreviewError(error);
+    }
+  }
+
+  Future<void> _pausePreview() async {
+    final player = _previewPlayer;
+    if (player == null || !_previewPlaying) return;
+    try {
+      await player.pause();
+      if (mounted && identical(_previewPlayer, player)) {
+        setState(() => _previewPlaying = false);
+      }
+    } catch (_) {
+      // Lifecycle suspension must not replace a useful recording with an
+      // error. An explicit Play tap will surface a platform failure.
+    }
+  }
+
+  Future<void> _stopAndDisposePreview({bool resetPosition = true}) async {
+    final player = _previewPlayer;
+    _previewPlayer = null;
+    if (player != null) {
+      try {
+        await player.stop();
+      } catch (_) {
+        // Disposal still releases the platform channel after a failed stop.
+      }
+    }
+    final subscriptionCancellations = <Future<void>>[
+      if (_previewStateSubscription != null)
+        _previewStateSubscription!.cancel(),
+      if (_previewPositionSubscription != null)
+        _previewPositionSubscription!.cancel(),
+      if (_previewDurationSubscription != null)
+        _previewDurationSubscription!.cancel(),
+      if (_previewCompletionSubscription != null)
+        _previewCompletionSubscription!.cancel(),
+    ];
+    _previewStateSubscription = null;
+    _previewPositionSubscription = null;
+    _previewDurationSubscription = null;
+    _previewCompletionSubscription = null;
+    // Calling cancel detaches the listeners synchronously. Some platform
+    // streams complete the returned cleanup future only when their player is
+    // disposed, so awaiting those futures before `dispose` would deadlock.
+    unawaited(
+      Future.wait(
+        subscriptionCancellations,
+      ).then<void>((_) {}, onError: (Object _, StackTrace _) {}),
+    );
+    if (player != null) {
+      try {
+        await player.dispose();
+      } catch (_) {
+        // Best-effort release; the recording itself can still be discarded.
+      }
+    }
+    _previewLoaded = false;
+    _previewPlaying = false;
+    _previewBusy = false;
+    _previewError = null;
+    if (resetPosition) _previewPosition = Duration.zero;
+  }
+
+  Future<void> _releaseResources() async {
+    if (_resourcesReleased) return;
+    _resourcesReleased = true;
+    _accessAttempt++;
+    _ticker?.cancel();
+    await _levels?.cancel();
+    _levels = null;
+    if (_phase == VoiceMomentRecordingPhase.requestingAccess ||
+        _phase == VoiceMomentRecordingPhase.recording) {
+      try {
+        await _recorder.cancel();
+      } catch (_) {
+        // Continue releasing the player and temporary recording.
+      }
+    }
+    final audio = _recording;
+    _recording = null;
+    if (audio != null) _momentService?.abandonPendingPublish(audio);
+    await _stopAndDisposePreview();
+    if (audio != null) await audio.discard();
+    await _recorder.dispose();
+  }
+
+  Future<void> _leave([Object? result]) async {
+    if (_leaving || _phase == VoiceMomentRecordingPhase.publishing) return;
+    setState(() => _leaving = true);
+    await _releaseResources();
+    if (!mounted) return;
+    // Let PopScope observe `canPop: true` before initiating the real pop.
+    await WidgetsBinding.instance.endOfFrame;
+    if (mounted) Navigator.of(context).pop(result);
+  }
+
   String _meterValueFor(double level) {
     if (level <= 0) return _meterSilent;
     if (level < 0.25) return _meterQuiet;
@@ -230,7 +599,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
 
   Future<void> _resolveSupport() async {
     final support = await _recorder.checkSupport();
-    if (!mounted) return;
+    if (!mounted || _leaving || _resourcesReleased) return;
     setState(() {
       if (support.isSupported) {
         _phase = VoiceMomentRecordingPhase.idle;
@@ -252,10 +621,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
   }
 
   Future<void> _startRecording() async {
-    if (_phase != VoiceMomentRecordingPhase.idle &&
-        _phase != VoiceMomentRecordingPhase.reviewing) {
-      return;
-    }
+    if (_phase != VoiceMomentRecordingPhase.idle) return;
 
     await _discardRecording();
     if (!mounted) return;
@@ -446,6 +812,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
     }
     setState(() {
       _recording = audio;
+      _previewPosition = Duration.zero;
+      _previewDuration = Duration(seconds: _durationSeconds);
+      _previewError = null;
+      _publishContractLocked = false;
       _phase = VoiceMomentRecordingPhase.reviewing;
     });
   }
@@ -468,17 +838,36 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
   Future<void> _discardRecording() async {
     final existing = _recording;
     _recording = null;
+    if (existing != null) {
+      // A failed publish pins this exact recording as the idempotent retry
+      // identity. Record again/Back means the author has explicitly abandoned
+      // that retry; release the strong service-map reference before discarding
+      // the native file or browser Blob. Remote orphan cleanup stays server
+      // authority because finalize may already have committed.
+      _momentService?.abandonPendingPublish(existing);
+    }
+    // The player owns an open file/Blob handle on some platforms. Stop and
+    // dispose it before deleting the file or revoking the object URL.
+    await _stopAndDisposePreview();
     if (existing != null) await existing.discard();
   }
 
   Future<void> _recordAgain() async {
-    await _discardRecording();
-    if (!mounted) return;
-    _meter.fillRange(0, _meter.length, 0);
-    setState(() {
-      _notice = null;
-      _phase = VoiceMomentRecordingPhase.idle;
-    });
+    if (_phase == VoiceMomentRecordingPhase.publishing || _restarting) return;
+    _restarting = true;
+    try {
+      await _discardRecording();
+      if (!mounted) return;
+      _meter.fillRange(0, _meter.length, 0);
+      setState(() {
+        _notice = null;
+        _publishContractLocked = false;
+        _phase = VoiceMomentRecordingPhase.idle;
+      });
+      await _startRecording();
+    } finally {
+      _restarting = false;
+    }
   }
 
   // ---------------------------------------------------------------- publish
@@ -487,18 +876,29 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
     final audio = _recording;
     if (audio == null || _phase != VoiceMomentRecordingPhase.reviewing) return;
 
+    final availability = _validatedAvailabilityForPublish();
+    if (availability == null) return;
+    // Freeze the exact contract before any asynchronous cleanup or network
+    // call. A failed upload can then be retried idempotently with no hidden
+    // caption or expiry drift.
+    final caption = _captionController.text;
+
     setState(() {
       _notice = null;
+      _publishContractLocked = true;
       _phase = VoiceMomentRecordingPhase.publishing;
     });
+
+    // Audio playback and upload must never contend for the local file/Blob.
+    await _stopAndDisposePreview();
 
     try {
       await _moments.publishRecordedMoment(
         audio: audio,
         durationSeconds: _durationSeconds,
-        caption: _captionController.text,
+        caption: caption,
         replyToMomentId: widget.replyToMomentId,
-        availability: _availability,
+        availability: availability,
       );
     } catch (error) {
       if (!mounted) return;
@@ -558,7 +958,8 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
 
     await _discardRecording();
     if (!mounted) return;
-    Navigator.of(context).pop(true);
+    setState(() => _phase = VoiceMomentRecordingPhase.reviewing);
+    await _leave(true);
   }
 
   int get _durationSeconds => _recorder.durationSeconds;
@@ -585,9 +986,13 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
   Widget build(BuildContext context) {
     final busy = _phase == VoiceMomentRecordingPhase.publishing;
 
-    return PopScope(
-      // Leaving mid-upload would orphan a reserved draft.
-      canPop: !busy,
+    return PopScope<Object?>(
+      // Every exit goes through `_leave`, which releases microphone/player
+      // resources and discards the local take before the route is removed.
+      canPop: _leaving,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && !busy) unawaited(_leave(result));
+      },
       child: Scaffold(
         backgroundColor: _background,
         body: Container(
@@ -595,11 +1000,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
             gradient: RadialGradient(
               center: Alignment(0, -0.8),
               radius: 1.1,
-              colors: [
-                _skyTop,
-                AppColors.surface,
-                _background,
-              ],
+              colors: [_skyTop, AppColors.surface, _background],
             ),
           ),
           child: SafeArea(
@@ -629,7 +1030,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
       child: Row(
         children: [
           IconButton(
-            onPressed: busy ? null : () => Navigator.pop(context),
+            onPressed: busy ? null : _leave,
             tooltip: 'Back',
             // Material 3's default IconButton padding yields a 40x40 box;
             // docs/UI.md sets a 44x44 floor.
@@ -663,7 +1064,12 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
   Widget _stackedBody(double width) {
     final compact = width < 600;
     return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(compact ? 16 : 22, 26, compact ? 16 : 22, 30),
+      padding: EdgeInsets.fromLTRB(
+        compact ? 16 : 22,
+        26,
+        compact ? 16 : 22,
+        30,
+      ),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 620),
@@ -728,9 +1134,14 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
                         // designs sharing one column.
                         _intro(),
                         const SizedBox(height: 28),
-                        _meterBlock(compact: false, showSilenceHint: false),
-                        const SizedBox(height: 20),
-                        _recordButton(),
+                        if (_phase == VoiceMomentRecordingPhase.reviewing ||
+                            _phase == VoiceMomentRecordingPhase.publishing)
+                          _previewPanel()
+                        else ...[
+                          _meterBlock(compact: false, showSilenceHint: false),
+                          const SizedBox(height: 20),
+                          _recordButton(),
+                        ],
                         const SizedBox(height: 16),
                         _statusLine(),
                         if (_phase ==
@@ -819,10 +1230,18 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
         return [_unavailableCard()];
       default:
         return [
-          if (_notice != null) ...[_noticeCard(_notice!), const SizedBox(height: 20)],
-          _meterBlock(compact: compact),
-          const SizedBox(height: 22),
-          _recordButton(),
+          if (_notice != null) ...[
+            _noticeCard(_notice!),
+            const SizedBox(height: 20),
+          ],
+          if (_phase == VoiceMomentRecordingPhase.reviewing ||
+              _phase == VoiceMomentRecordingPhase.publishing)
+            _previewPanel()
+          else ...[
+            _meterBlock(compact: compact),
+            const SizedBox(height: 22),
+            _recordButton(),
+          ],
           const SizedBox(height: 14),
           _statusLine(),
           if (_phase == VoiceMomentRecordingPhase.requestingAccess) ...[
@@ -836,6 +1255,11 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
             if (!_isReply) ...[
               const SizedBox(height: 16),
               _availabilitySelector(),
+            ],
+            if (_publishContractLocked &&
+                _phase != VoiceMomentRecordingPhase.publishing) ...[
+              const SizedBox(height: 8),
+              _publishContractLockNotice(),
             ],
             const SizedBox(height: 12),
             _actions(stacked: stackActions),
@@ -856,6 +1280,11 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
             if (!_isReply) ...[
               const SizedBox(height: 16),
               _availabilitySelector(),
+            ],
+            if (_publishContractLocked &&
+                _phase != VoiceMomentRecordingPhase.publishing) ...[
+              const SizedBox(height: 8),
+              _publishContractLockNotice(),
             ],
             const SizedBox(height: 12),
             _actions(stacked: false),
@@ -912,10 +1341,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
             'Remaining',
             _formatDuration(_maxSeconds - _elapsedSeconds),
           ),
-          if (_silenceDetected) ...[
-            const SizedBox(height: 14),
-            _silenceHint(),
-          ],
+          if (_silenceDetected) ...[const SizedBox(height: 14), _silenceHint()],
         ],
       ),
     );
@@ -978,80 +1404,82 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
       liveRegion: true,
       container: true,
       child: Container(
-      padding: const EdgeInsets.fromLTRB(22, 24, 22, 22),
-      decoration: BoxDecoration(
-        color: _inset,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _border),
-      ),
-      child: Column(
-        children: [
-          Container(
-            width: 64,
-            height: 64,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _warning.withValues(alpha: .12),
-              border: Border.all(
-                color: _warning.withValues(alpha: .4),
+        padding: const EdgeInsets.fromLTRB(22, 24, 22, 22),
+        decoration: BoxDecoration(
+          color: _inset,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _border),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _warning.withValues(alpha: .12),
+                border: Border.all(color: _warning.withValues(alpha: .4)),
+              ),
+              child: const Icon(
+                Icons.mic_off_rounded,
+                color: _warning,
+                size: 28,
               ),
             ),
-            child: const Icon(
-              Icons.mic_off_rounded,
-              color: _warning,
-              size: 28,
+            const SizedBox(height: 18),
+            const Text(
+              'Recording is not available here',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 19,
+                fontWeight: FontWeight.w900,
+              ),
             ),
-          ),
-          const SizedBox(height: 18),
-          const Text(
-            'Recording is not available here',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 19,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            support?.reason ??
-                'YO Voice could not reach an audio recorder on this device.',
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: _muted, fontSize: 13.5, height: 1.5),
-          ),
-          if (support?.action != null) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             Text(
-              support!.action!,
+              support?.reason ??
+                  'YO Voice could not reach an audio recorder on this device.',
               textAlign: TextAlign.center,
               style: const TextStyle(
-                color: AppColors.textPrimary,
+                color: _muted,
                 fontSize: 13.5,
                 height: 1.5,
-                fontWeight: FontWeight.w700,
+              ),
+            ),
+            if (support?.action != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                support!.action!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 13.5,
+                  height: 1.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+            const SizedBox(height: 22),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: _leave,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: _border),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  minimumSize: const Size.fromHeight(48),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                child: const Text('Go back'),
               ),
             ),
           ],
-          const SizedBox(height: 22),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton(
-              onPressed: () => Navigator.pop(context),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.white,
-                side: const BorderSide(color: _border),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                minimumSize: const Size.fromHeight(48),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-              child: const Text('Go back'),
-            ),
-          ),
-        ],
-      ),
+        ),
       ),
     );
   }
@@ -1219,6 +1647,142 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
     );
   }
 
+  Widget _previewPanel() {
+    final publishing = _phase == VoiceMomentRecordingPhase.publishing;
+    final total = _previewDuration > Duration.zero
+        ? _previewDuration
+        : Duration(seconds: math.max(1, _durationSeconds));
+    final maximum = math.max(1, total.inMilliseconds).toDouble();
+    final value = _previewPosition.inMilliseconds
+        .clamp(0, maximum.round())
+        .toDouble();
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+      decoration: BoxDecoration(
+        color: _inset,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 12,
+            runSpacing: 4,
+            children: [
+              const Text(
+                'Listen before publishing',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Text(
+                _formatDuration(total.inSeconds),
+                style: const TextStyle(
+                  color: _muted,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Semantics(
+                button: true,
+                enabled: !publishing && !_previewBusy,
+                excludeSemantics: true,
+                label: _previewPlaying
+                    ? 'Pause recording preview'
+                    : 'Play recording preview',
+                onTap: publishing || _previewBusy ? null : _togglePreview,
+                child: IconButton.filled(
+                  key: const ValueKey('voice-preview-toggle'),
+                  onPressed: publishing || _previewBusy ? null : _togglePreview,
+                  tooltip: _previewPlaying ? 'Pause preview' : 'Play preview',
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size(52, 52),
+                    backgroundColor: _primary,
+                    disabledBackgroundColor: _primary.withValues(alpha: .35),
+                  ),
+                  icon: _previewBusy
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Icon(
+                          _previewPlaying
+                              ? Icons.pause_rounded
+                              : Icons.play_arrow_rounded,
+                          color: Colors.white,
+                          size: 28,
+                        ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  children: [
+                    Semantics(
+                      label: 'Recording preview position',
+                      child: Slider(
+                        key: const ValueKey('voice-preview-seek'),
+                        value: value,
+                        max: maximum,
+                        onChanged: publishing ? null : _setPreviewPosition,
+                        onChangeEnd: publishing
+                            ? null
+                            : (next) => unawaited(_seekPreview(next)),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '${_formatDuration(_previewPosition.inSeconds.clamp(0, total.inSeconds))} '
+                          '/ ${_formatDuration(total.inSeconds)}',
+                          style: const TextStyle(
+                            color: _muted,
+                            fontSize: 11.5,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (_previewError != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              _previewError!,
+              style: const TextStyle(
+                color: _warning,
+                fontSize: 12,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   /// Shown once silence has persisted. Not a live region — the assertive
   /// announcement carries it to screen readers; this is the visual half,
   /// and without it a silent meter is pixel-identical to the idle one.
@@ -1267,10 +1831,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
   Widget _recordButton() {
     final recording = _phase == VoiceMomentRecordingPhase.recording;
     final requesting = _phase == VoiceMomentRecordingPhase.requestingAccess;
-    final enabled =
-        _phase == VoiceMomentRecordingPhase.idle ||
-        _phase == VoiceMomentRecordingPhase.reviewing ||
-        recording;
+    final enabled = _phase == VoiceMomentRecordingPhase.idle || recording;
 
     final color = recording ? _live : _primary;
 
@@ -1282,50 +1843,40 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
     return Center(
       child: AccessibleTapRegion(
         onTap: enabled ? _toggleRecording : null,
-        // Two controls used to answer to "Record again". This one discards
-        // the take and goes live immediately; the outlined button returns
-        // to idle. The label names the consequence so picking the wrong
-        // one cannot silently destroy a recording.
-        semanticLabel: recording
-            ? 'Stop recording'
-            : (_phase == VoiceMomentRecordingPhase.reviewing
-                  ? 'Discard this take and start recording now'
-                  : 'Start recording'),
+        semanticLabel: recording ? 'Stop recording' : 'Start recording',
         circular: true,
         minimumSize: const Size(86, 86),
         child: AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            width: 86,
-            height: 86,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: enabled || requesting
-                  ? color
-                  : color.withValues(alpha: .35),
-              boxShadow: [
-                BoxShadow(
-                  color: color.withValues(alpha: enabled ? .42 : .12),
-                  blurRadius: 28,
-                  spreadRadius: 3,
-                ),
-              ],
-            ),
-            child: requesting
-                ? const Center(
-                    child: SizedBox(
-                      width: 26,
-                      height: 26,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.4,
-                        color: Colors.white,
-                      ),
+          duration: const Duration(milliseconds: 220),
+          width: 86,
+          height: 86,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: enabled || requesting ? color : color.withValues(alpha: .35),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: enabled ? .42 : .12),
+                blurRadius: 28,
+                spreadRadius: 3,
+              ),
+            ],
+          ),
+          child: requesting
+              ? const Center(
+                  child: SizedBox(
+                    width: 26,
+                    height: 26,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.4,
+                      color: Colors.white,
                     ),
-                  )
-                : Icon(
-                    recording ? Icons.stop_rounded : Icons.mic_rounded,
-                    color: Colors.white,
-                    size: 38,
                   ),
+                )
+              : Icon(
+                  recording ? Icons.stop_rounded : Icons.mic_rounded,
+                  color: Colors.white,
+                  size: 38,
+                ),
         ),
       ),
     );
@@ -1337,7 +1888,7 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
         'Waiting for microphone access…',
       VoiceMomentRecordingPhase.recording => 'Recording — tap to stop.',
       VoiceMomentRecordingPhase.reviewing =>
-        'Add a caption, then publish — or record again.',
+        'Preview your take, then publish — or record again.',
       VoiceMomentRecordingPhase.publishing => 'Publishing your Voice Moment…',
       _ => 'Tap the microphone to start.',
     };
@@ -1353,8 +1904,11 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
 
   Widget _captionField() {
     return TextField(
+      key: const ValueKey('voice-moment-caption'),
       controller: _captionController,
-      enabled: _phase != VoiceMomentRecordingPhase.publishing,
+      enabled:
+          _phase != VoiceMomentRecordingPhase.publishing &&
+          !_publishContractLocked,
       maxLength: _captionMaxLength,
       maxLines: 3,
       minLines: 3,
@@ -1381,10 +1935,10 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
         // override — the harness and the app were not showing the same
         // field. A visible boundary and a real focus ring are also what
         // 1.4.11 and 2.4.7 ask for.
-        border: _captionBorder(_border),
-        enabledBorder: _captionBorder(_border),
+        border: _captionBorder(_controlBorder),
+        enabledBorder: _captionBorder(_controlBorder),
         focusedBorder: _captionBorder(_primary, width: 2),
-        disabledBorder: _captionBorder(_border.withValues(alpha: .5)),
+        disabledBorder: _captionBorder(_controlBorder.withValues(alpha: .5)),
       ),
     );
   }
@@ -1396,13 +1950,18 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
     );
   }
 
-  /// "Available for": the operator-chosen lifetime of the Moment. The
-  /// five options ARE the server's whitelist — 24h (default), 3, 7 and 30
-  /// days, or keep-until-deleted — and the server re-validates whatever
-  /// is sent. Wrapping chips, so a 320-pt phone and a 2x text scale slide
-  /// to more rows instead of overflowing.
+  /// A custom, server-validated visibility window. Timed Moments accept a
+  /// whole number of hours (24–720) or days (1–30); the other explicit mode
+  /// stays visible until the author deletes it.
   Widget _availabilitySelector() {
     final publishing = _phase == VoiceMomentRecordingPhase.publishing;
+    final enabled = !publishing && !_publishContractLocked;
+    final validTimed = _readTimedAvailability();
+    final amount = int.tryParse(_availabilityAmountController.text.trim());
+    final timedCopy = validTimed == null || amount == null
+        ? 'Choose how long this Moment stays visible in the feed.'
+        : 'This Moment will stay visible in the feed for $amount '
+              '${_availabilityUnit == _AvailabilityUnit.hours ? (amount == 1 ? 'hour' : 'hours') : (amount == 1 ? 'day' : 'days')}.';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1416,27 +1975,151 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
         ),
         const SizedBox(height: 4),
         Text(
-          _availability == MomentAvailability.permanent
-              ? 'Stays in the feed until you delete it.'
-              : 'Disappears automatically when the time is up.',
+          _untilDeleted
+              ? 'This Moment will stay visible in the feed until you delete it.'
+              : timedCopy,
           style: const TextStyle(color: _muted, fontSize: 12, height: 1.35),
         ),
         const SizedBox(height: 10),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final option in MomentAvailability.values)
-              _AvailabilityChip(
-                key: ValueKey('availability-${option.name}'),
-                label: option.label,
-                selected: _availability == option,
-                enabled: !publishing,
-                onTap: () => setState(() => _availability = option),
-              ),
-          ],
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final textScale = MediaQuery.textScalerOf(context).scale(1);
+            final stacked = constraints.maxWidth < 310 || textScale >= 1.6;
+            final timed = _AvailabilityModeButton(
+              key: const ValueKey('availability-timed'),
+              label: 'Timed',
+              icon: Icons.schedule_rounded,
+              selected: !_untilDeleted,
+              enabled: enabled,
+              onTap: () => _setUntilDeleted(false),
+            );
+            final permanent = _AvailabilityModeButton(
+              key: const ValueKey('availability-permanent'),
+              label: 'Until deleted',
+              icon: Icons.all_inclusive_rounded,
+              selected: _untilDeleted,
+              enabled: enabled,
+              onTap: () => _setUntilDeleted(true),
+            );
+            if (stacked) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [timed, const SizedBox(height: 8), permanent],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: timed),
+                const SizedBox(width: 8),
+                Expanded(child: permanent),
+              ],
+            );
+          },
         ),
+        if (!_untilDeleted) ...[
+          const SizedBox(height: 10),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final textScale = MediaQuery.textScalerOf(context).scale(1);
+              final stacked = constraints.maxWidth < 330 || textScale >= 1.5;
+              final amountField = KeyedSubtree(
+                key: _availabilityAmountKey,
+                child: TextField(
+                  key: const ValueKey('availability-amount'),
+                  controller: _availabilityAmountController,
+                  focusNode: _availabilityAmountFocus,
+                  enabled: enabled,
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.done,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Duration',
+                    labelStyle: const TextStyle(color: _muted),
+                    floatingLabelStyle: const TextStyle(
+                      color: AppColors.textPrimary,
+                    ),
+                    errorText: _availabilityError,
+                    filled: true,
+                    fillColor: _inset,
+                    border: _captionBorder(_controlBorder),
+                    enabledBorder: _captionBorder(_controlBorder),
+                    focusedBorder: _captionBorder(_primary, width: 2),
+                    disabledBorder: _captionBorder(
+                      _controlBorder.withValues(alpha: .5),
+                    ),
+                  ),
+                ),
+              );
+              final unitField = DropdownButtonFormField<_AvailabilityUnit>(
+                key: const ValueKey('availability-unit'),
+                initialValue: _availabilityUnit,
+                decoration: InputDecoration(
+                  labelText: 'Unit',
+                  labelStyle: const TextStyle(color: _muted),
+                  floatingLabelStyle: const TextStyle(
+                    color: AppColors.textPrimary,
+                  ),
+                  filled: true,
+                  fillColor: _inset,
+                  border: _captionBorder(_controlBorder),
+                  enabledBorder: _captionBorder(_controlBorder),
+                  focusedBorder: _captionBorder(_primary, width: 2),
+                  disabledBorder: _captionBorder(
+                    _controlBorder.withValues(alpha: .5),
+                  ),
+                ),
+                dropdownColor: _surface,
+                style: const TextStyle(color: Colors.white),
+                iconEnabledColor: _muted,
+                iconDisabledColor: AppColors.textHint,
+                items: const [
+                  DropdownMenuItem(
+                    value: _AvailabilityUnit.hours,
+                    child: Text('Hours'),
+                  ),
+                  DropdownMenuItem(
+                    value: _AvailabilityUnit.days,
+                    child: Text('Days'),
+                  ),
+                ],
+                onChanged: enabled
+                    ? (unit) {
+                        if (unit != null) _setAvailabilityUnit(unit);
+                      }
+                    : null,
+              );
+              if (stacked) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    amountField,
+                    const SizedBox(height: 10),
+                    unitField,
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 3, child: amountField),
+                  const SizedBox(width: 10),
+                  Expanded(flex: 2, child: unitField),
+                ],
+              );
+            },
+          ),
+        ],
       ],
+    );
+  }
+
+  Widget _publishContractLockNotice() {
+    return Text(
+      _isReply
+          ? 'Caption is locked for this retry.'
+          : 'Caption and availability are locked for this retry.',
+      style: const TextStyle(color: _muted, fontSize: 11.5, height: 1.35),
     );
   }
 
@@ -1450,10 +2133,8 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
   Widget _actions({required bool stacked}) {
     final publishing = _phase == VoiceMomentRecordingPhase.publishing;
 
-    final again = OutlinedButton.icon(
+    final again = OutlinedButton(
       onPressed: publishing ? _ignoreWhileBusy : _recordAgain,
-      icon: const Icon(Icons.refresh_rounded),
-      label: const Text('Record again', overflow: TextOverflow.ellipsis),
       style: OutlinedButton.styleFrom(
         foregroundColor: publishing ? Colors.white38 : Colors.white,
         side: BorderSide(
@@ -1463,30 +2144,26 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
         minimumSize: const Size.fromHeight(48),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
+      child: const Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.refresh_rounded),
+          SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              'Record again',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
     );
 
-    final publish = FilledButton.icon(
+    final publish = FilledButton(
       key: _publishKey,
       focusNode: _publishFocus,
       onPressed: publishing ? _ignoreWhileBusy : _publish,
-      icon: publishing
-          ? const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Colors.white,
-              ),
-            )
-          : const Icon(Icons.publish_rounded),
-      label: Text(
-        publishing
-            ? 'Publishing…'
-            : (_notice?.problem == VoiceRecordingProblem.uploadFailed
-                  ? 'Try again'
-                  : 'Publish'),
-        overflow: TextOverflow.ellipsis,
-      ),
       style: FilledButton.styleFrom(
         backgroundColor: publishing ? _primary.withValues(alpha: .5) : _primary,
         foregroundColor: publishing ? Colors.white70 : Colors.white,
@@ -1495,6 +2172,34 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
         // 44x44 floor is about what the user can see and aim at.
         minimumSize: const Size.fromHeight(48),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          if (publishing)
+            const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+          else
+            const Icon(Icons.publish_rounded),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              publishing
+                  ? 'Publishing…'
+                  : (_notice?.problem == VoiceRecordingProblem.uploadFailed
+                        ? 'Try again'
+                        : 'Publish'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
       ),
     );
 
@@ -1516,11 +2221,11 @@ class _RecordVoiceMomentScreenState extends State<RecordVoiceMomentScreen> {
   }
 }
 
-/// One availability choice, selected reads violet — the same selected
-/// grammar the feed's filter chips use, with a real 44-pt target.
-class _AvailabilityChip extends StatelessWidget {
-  const _AvailabilityChip({
+/// One lifetime mode with a visible boundary, selected state and 48-pt target.
+class _AvailabilityModeButton extends StatelessWidget {
+  const _AvailabilityModeButton({
     required this.label,
+    required this.icon,
     required this.selected,
     required this.enabled,
     required this.onTap,
@@ -1528,6 +2233,7 @@ class _AvailabilityChip extends StatelessWidget {
   });
 
   final String label;
+  final IconData icon;
   final bool selected;
   final bool enabled;
   final VoidCallback onTap;
@@ -1537,7 +2243,7 @@ class _AvailabilityChip extends StatelessWidget {
     return Semantics(
       button: true,
       selected: selected,
-      label: 'Available for $label',
+      label: 'Availability: $label',
       child: Material(
         color: selected
             ? AppColors.primary
@@ -1547,33 +2253,28 @@ class _AvailabilityChip extends StatelessWidget {
           onTap: enabled ? onTap : null,
           borderRadius: BorderRadius.circular(999),
           child: Container(
-            constraints: const BoxConstraints(minHeight: 44),
+            constraints: const BoxConstraints(minHeight: 48),
             padding: const EdgeInsets.symmetric(horizontal: 14),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(999),
               border: Border.all(
                 color: selected
                     ? AppColors.primary
-                    : AppColors.border.withValues(alpha: enabled ? 1 : .5),
+                    : AppColors.textHint.withValues(alpha: enabled ? 1 : .5),
               ),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(
-                  label == MomentAvailability.permanent.label
-                      ? Icons.all_inclusive_rounded
-                      : Icons.schedule_rounded,
+                  icon,
                   size: 15,
                   color: selected
                       ? AppColors.textPrimary
                       : AppColors.textSecondary,
                 ),
                 const SizedBox(width: 6),
-                // Flexible: at a 2x text scale the longest label is a
-                // hair wider than a 360-pt phone's content column, and a
-                // chip must squeeze (ellipsize) rather than overflow.
-                Flexible(
+                Expanded(
                   child: Text(
                     label,
                     maxLines: 1,

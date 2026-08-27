@@ -42,6 +42,7 @@ class BroadcastRoomScreen extends StatefulWidget {
     this.roomService,
     this.voiceService,
     this.entryCoordinator,
+    this.playInitialJoinSound = true,
     super.key,
   });
 
@@ -55,6 +56,10 @@ class BroadcastRoomScreen extends StatefulWidget {
   final RoomService? roomService;
   final VoiceCallService? voiceService;
   final RoomVoiceEntryCoordinator? entryCoordinator;
+
+  /// Room creation already has its own confirmation; all other entry points
+  /// keep the normal connected cue.
+  final bool playInitialJoinSound;
 
   @override
   State<BroadcastRoomScreen> createState() => _BroadcastRoomScreenState();
@@ -119,7 +124,9 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         .listen(_handleRoomState, onError: (Object _) {});
     // A dormant room has no session to connect to. Asking for a token
     // anyway is the "This room is not currently live." failure.
-    if (_live) unawaited(_connectVoice());
+    if (_live) {
+      unawaited(_connectVoice(playSound: widget.playInitialJoinSound));
+    }
     _announceEntryFailure();
   }
 

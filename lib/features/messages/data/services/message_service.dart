@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -82,6 +83,11 @@ class _PendingDirectAttachment {
 }
 
 class MessageService {
+  /// The single production facade. Screens share its connectivity listener,
+  /// retry timers and account-scoped outbox; tests keep using the injectable
+  /// constructor below.
+  static final MessageService live = MessageService();
+
   MessageService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
@@ -98,7 +104,15 @@ class MessageService {
        _functionsOverride = functions,
        _storageOverride = storage,
        _outboxOverride = outbox,
-       _connectivityOverride = connectivity;
+       _connectivityOverride = connectivity,
+       _useSharedLiveOutbox =
+           firestore == null &&
+           auth == null &&
+           notificationService == null &&
+           functions == null &&
+           storage == null &&
+           outbox == null &&
+           connectivity == null;
 
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
@@ -107,17 +121,39 @@ class MessageService {
   final FirebaseStorage? _storageOverride;
   final MessageOutbox? _outboxOverride;
   final Connectivity? _connectivityOverride;
+  final bool _useSharedLiveOutbox;
   MessageOutbox? _outbox;
+  String? _outboxOwnerId;
   StreamSubscription<Object?>? _connectivitySubscription;
-  Timer? _drainTimer;
-  bool _draining = false;
+  final Map<MessageOutbox, Timer> _drainTimers = <MessageOutbox, Timer>{};
 
   /// The queue of messages written but not yet accepted by the server.
   ///
   /// Exposed so a chat view can render pending, retrying and failed messages
   /// — the whole point of queueing rather than dropping is that someone can
   /// see what has not gone out yet.
-  MessageOutbox get outbox => _outbox ??= _outboxOverride ?? MessageOutbox();
+  MessageOutbox get outbox {
+    final override = _outboxOverride;
+    if (override != null) return override;
+
+    final ownerId = _auth.currentUser?.uid;
+    if (_useSharedLiveOutbox && ownerId != null && ownerId.isNotEmpty) {
+      return MessageOutbox.sharedForUser(ownerId);
+    }
+
+    // Injection-backed services stay isolated for deterministic tests and
+    // previews, but still rotate queues when their fake/live auth identity
+    // changes. Signed-out queues are memory-only.
+    if (_outbox == null || _outboxOwnerId != ownerId) {
+      _outboxOwnerId = ownerId;
+      _outbox = MessageOutbox(
+        storageKey: ownerId == null ? null : 'messages.outbox.v2.$ownerId',
+        ownerId: ownerId,
+      );
+    }
+    return _outbox!;
+  }
+
   final Map<String, _PendingDirectAttachment> _pendingImageAttachments = {};
   final Expando<Map<String, _PendingDirectAttachment>>
   _pendingVoiceAttachments = Expando('directVoiceAttachments');
@@ -271,18 +307,52 @@ class MessageService {
     required String conversationId,
     required String otherUserId,
   }) {
-    return _conversations.doc(conversationId).snapshots().map((snapshot) {
-      final typing = snapshot.data()?['typing'] as Map?;
-      final value = typing?[otherUserId] as Map?;
-      final isTyping = value?['isTyping'] as bool? ?? false;
-      final updatedAt = value?['updatedAt'];
+    return Stream<bool>.multi((controller) {
+      Timer? expiryTimer;
+      late final StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>
+      subscription;
 
-      if (!isTyping || updatedAt is! Timestamp) {
-        return false;
-      }
+      subscription = _conversations
+          .doc(conversationId)
+          .snapshots()
+          .listen(
+            (snapshot) {
+              expiryTimer?.cancel();
+              final typing = snapshot.data()?['typing'] as Map?;
+              final value = typing?[otherUserId] as Map?;
+              final isTyping = value?['isTyping'] as bool? ?? false;
+              final updatedAt = value?['updatedAt'];
 
-      return DateTime.now().difference(updatedAt.toDate()).inSeconds < 8;
-    });
+              if (!isTyping || updatedAt is! Timestamp) {
+                controller.add(false);
+                return;
+              }
+
+              final remaining =
+                  const Duration(seconds: 8) -
+                  DateTime.now().difference(updatedAt.toDate());
+              if (remaining <= Duration.zero) {
+                controller.add(false);
+                return;
+              }
+
+              controller.add(true);
+              // Firestore will not emit another snapshot merely because time
+              // passed. Expire the indicator locally instead of leaving someone
+              // "typing" forever after a client disappears.
+              expiryTimer = Timer(remaining, () => controller.add(false));
+            },
+            onError: controller.addError,
+            onDone: () {
+              expiryTimer?.cancel();
+              controller.close();
+            },
+          );
+      controller.onCancel = () {
+        expiryTimer?.cancel();
+        unawaited(subscription.cancel());
+      };
+    }).distinct();
   }
 
   Future<void> setTyping({
@@ -441,7 +511,8 @@ class MessageService {
     // Queued before the first attempt, not after a failure: a process death
     // mid-send would otherwise lose the message in the one window where it
     // exists nowhere but memory.
-    final entry = await outbox.enqueue(
+    final queue = outbox;
+    final entry = await queue.enqueue(
       conversationId: conversationId,
       recipientId: recipientId,
       text: trimmed,
@@ -449,7 +520,51 @@ class MessageService {
     );
 
     _listenForConnectivity();
-    await _attemptDelivery(entry, rethrowRefusal: true);
+    await _attemptDelivery(entry, queue: queue, rethrowRefusal: true);
+  }
+
+  /// Persists a text message locally and returns as soon as it is safely in
+  /// the outbox. Delivery continues in the strict, oldest-first drain.
+  ///
+  /// ChatScreen uses this path so a slow or cold callable never freezes the
+  /// composer. [sendTextMessage] remains the await-the-first-attempt API for
+  /// callers and tests that explicitly need the server outcome.
+  Future<OutboxEntry> queueTextMessage({
+    required String conversationId,
+    required String recipientId,
+    required String text,
+    Message? replyTo,
+  }) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      throw ArgumentError.value(text, 'text', 'Message cannot be empty.');
+    }
+
+    final queue = outbox;
+    final entry = await queue.enqueue(
+      conversationId: conversationId,
+      recipientId: recipientId,
+      text: trimmed,
+      replyToMessageId: replyTo?.id,
+    );
+    _listenForConnectivity();
+    unawaited(_flushOutbox(queue));
+    return entry;
+  }
+
+  /// Mirrors the backend's deterministic direct-message id. It lets the chat
+  /// replace an optimistic outbox bubble with the exact committed document,
+  /// without guessing by text or timestamp (both can legitimately repeat).
+  String messageIdForQueuedText(OutboxEntry entry, {String? senderId}) {
+    final actorId = senderId ?? _currentUserId;
+    final body = <String>[
+      'direct-message',
+      entry.conversationId,
+      actorId,
+      entry.requestId,
+    ].join('\u0000');
+    final value = sha256.convert(utf8.encode(body)).toString();
+    return 'm_${value.substring(0, 40)}';
   }
 
   /// Attempts one outbox entry.
@@ -460,13 +575,20 @@ class MessageService {
   /// is no call site to throw at.
   Future<bool> _attemptDelivery(
     OutboxEntry entry, {
+    required MessageOutbox queue,
     bool rethrowRefusal = false,
   }) async {
+    final ownerId = queue.ownerId;
+    if (ownerId != null && _auth.currentUser?.uid != ownerId) {
+      // The account changed after this queue was captured. Keep the entry in
+      // its owner's queue; never submit it under the new Firebase session.
+      return false;
+    }
     final functions = _functions;
 
     if (functions == null) {
       // No Firebase app at all. Transient by definition — the queue waits.
-      await outbox.markRetry(entry.id, 'The messaging service is unavailable.');
+      await queue.markRetry(entry.id, 'The messaging service is unavailable.');
       return false;
     }
 
@@ -480,15 +602,15 @@ class MessageService {
         'requestId': entry.requestId,
         'replyToMessageId': entry.replyToMessageId,
       });
-      await outbox.markSent(entry.id);
+      await queue.markSent(entry.id);
       return true;
     } catch (error) {
       if (_isRetryable(error)) {
-        await outbox.markRetry(entry.id, _describeError(error));
-        _scheduleDrain();
+        await queue.markRetry(entry.id, _describeError(error));
+        _scheduleDrain(queue);
         return false;
       }
-      await outbox.markFailed(entry.id, _describeError(error));
+      await queue.markFailed(entry.id, _describeError(error));
       if (rethrowRefusal) {
         rethrow;
       }
@@ -578,11 +700,11 @@ class MessageService {
     }
   }
 
-  void _scheduleDrain() {
-    if (_drainTimer?.isActive ?? false) {
+  void _scheduleDrain(MessageOutbox queue) {
+    if (_drainTimers[queue]?.isActive ?? false) {
       return;
     }
-    final pending = outbox.unsent;
+    final pending = queue.unsent;
     if (pending.isEmpty) {
       return;
     }
@@ -604,8 +726,9 @@ class MessageService {
     if (delay < const Duration(seconds: 1)) {
       delay = const Duration(seconds: 1);
     }
-    _drainTimer = Timer(delay, () {
-      unawaited(flushOutbox());
+    _drainTimers[queue] = Timer(delay, () {
+      _drainTimers.remove(queue);
+      unawaited(_flushOutbox(queue));
     });
   }
 
@@ -614,23 +737,47 @@ class MessageService {
   /// Ordering is strict and sequential: direct messages must arrive in the
   /// order they were written, so one entry's failure stops the drain rather
   /// than letting a later message overtake an earlier one.
-  Future<void> flushOutbox() async {
-    if (_draining) {
+  Future<void> flushOutbox() => _flushOutbox(outbox);
+
+  /// Restores and resumes persisted work when the authenticated shell starts.
+  /// No new message is required to wake a queue left by an earlier process.
+  Future<void> resumeOutbox() async {
+    final queue = outbox;
+    await queue.load();
+    _listenForConnectivity();
+    await _flushOutbox(queue);
+  }
+
+  Future<void> _flushOutbox(MessageOutbox queue) async {
+    final ownerId = queue.ownerId;
+    if (ownerId != null && _auth.currentUser?.uid != ownerId) {
       return;
     }
-    _draining = true;
+    if (!queue.tryBeginDelivery()) return;
     try {
-      await outbox.load();
-      for (final entry in outbox.due()) {
-        final delivered = await _attemptDelivery(entry);
+      await queue.load();
+      while (true) {
+        if (ownerId != null && _auth.currentUser?.uid != ownerId) {
+          break;
+        }
+        // Re-read after every delivery. A second message can be queued while
+        // the first callable is in flight; taking one snapshot here would
+        // strand it until the one-second retry timer despite being online.
+        final due = queue.due();
+        if (due.isEmpty) {
+          break;
+        }
+        final delivered = await _attemptDelivery(due.first, queue: queue);
         if (!delivered) {
           break;
         }
       }
     } finally {
-      _draining = false;
+      queue.endDelivery();
     }
-    _scheduleDrain();
+    if (ownerId == null || _auth.currentUser?.uid == ownerId) {
+      _scheduleDrain(queue);
+    }
   }
 
   /// Retries a message the automatic loop gave up on.
@@ -638,22 +785,28 @@ class MessageService {
   /// Keeps the original requestId, so a manual retry of a send that secretly
   /// succeeded is still deduplicated by the server ledger.
   Future<void> retryFailedMessage(String entryId) async {
-    final entry = await outbox.retryNow(entryId);
+    final queue = outbox;
+    final entry = await queue.retryNow(entryId);
     if (entry == null) {
       return;
     }
-    await _attemptDelivery(entry, rethrowRefusal: true);
+    await _attemptDelivery(entry, queue: queue, rethrowRefusal: true);
   }
 
   /// Drops a queued message the person no longer wants sent.
-  Future<void> discardQueuedMessage(String entryId) => outbox.discard(entryId);
+  Future<void> discardQueuedMessage(String entryId) {
+    final queue = outbox;
+    return queue.discard(entryId);
+  }
 
   /// Releases the connectivity subscription and retry timer.
   Future<void> dispose() async {
     await _connectivitySubscription?.cancel();
     _connectivitySubscription = null;
-    _drainTimer?.cancel();
-    _drainTimer = null;
+    for (final timer in _drainTimers.values) {
+      timer.cancel();
+    }
+    _drainTimers.clear();
   }
 
   /// Sends an image through the server-reserved private attachment flow.
