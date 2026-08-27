@@ -2403,7 +2403,7 @@ permission flags).
   checked-in SDK config contains the release OAuth client. The registered
   Firebase handler is now live; each auth release still requires a real popup
   smoke rather than relying on static configuration alone.
-- **Fixed in build 6 source — Google/Apple authentication could succeed and
+- **Fixed and deployed to web/Android internal build 6 — Google/Apple authentication could succeed and
   then return the user to Login, while Registration did not expose either
   provider.** Firebase publishes the authenticated user before the provider
   future completes; if concurrent first-profile provisioning then failed, the
@@ -2415,8 +2415,10 @@ permission flags).
   with an explicit retry/sign-out state. Registration reuses the Google/Apple
   actions from Login, transient Apple availability failures can be retried,
   and iOS declares `GIDClientID`. Automated tests/config checks are not a real
-  provider login: new-account and returning-account smokes on production web,
-  Play-installed build 6 and signed iOS/TestFlight remain release evidence.
+  provider login: new-account and returning-account smokes on production web
+  and store-installed builds remain release evidence. The signed iOS build 6
+  artifact passed entitlement/configuration inspection but is not on TestFlight
+  because this Mac has no App Store Connect upload authorization.
 - **Fixed in source and provider configuration — Sign in with Apple was a
   placeholder.** Apple App ID `app.yovoice` now has the capability, Service ID
   `app.yovoice.web` owns the three verified web domains and Firebase callback,

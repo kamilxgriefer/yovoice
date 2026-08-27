@@ -4552,7 +4552,8 @@ policy remain production blockers until legally approved and configured.
 
 ## ADR-068: OAuth handlers are provider-registered endpoints; unavailable identity providers fail closed
 
-**Status:** accepted in source (2026-08-18).
+**Status:** accepted 2026-08-18; build 6 client recovery deployed to web and
+Android internal testing 2026-08-28; signed iOS artifact retained.
 
 Flutter Web previously used the branded `auth.yovoice.app` domain as its
 Firebase `authDomain`, even though Google's OAuth client did not register

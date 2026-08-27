@@ -16,8 +16,9 @@ someone decide what to pick up next.
 
 ## Done
 
-- **P0 Google/Apple sign-in and registration recovery** (2026-08-27, build 6
-  source ready; store/real-account smoke pending): Login and Registration now
+- **P0 Google/Apple sign-in and registration recovery** (2026-08-28,
+  **DEPLOYED TO WEB; ANDROID BUILD 6 INTERNAL; SIGNED iOS BUILD 6 RETAINED**;
+  TestFlight authorization and real-account smoke pending): Login and Registration now
   expose the same federated actions. Valid provider sessions are no longer
   rolled back by a concurrent or transient Firestore profile failure;
   authenticated entry waits for a bounded, retried, rules-safe profile

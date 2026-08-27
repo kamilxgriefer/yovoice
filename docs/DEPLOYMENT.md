@@ -15,9 +15,10 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
-### Release candidate 2026-08-27: Google/Apple authentication recovery and build 6
+### Released 2026-08-28: Google/Apple authentication recovery and build 6
 
-Build 6 source restores federated login and registration parity, keeps a valid
+**DEPLOYED from `91353d71ae10d0de13926894a3d65c70fc7425ca`.** Build 6
+restores federated login and registration parity, keeps a valid
 Firebase identity when Firestore profile creation is temporarily unavailable,
 and gates authenticated entry on a bounded, retried canonical profile
 bootstrap. Provider names are normalized to Firestore Rules' UTF-16 length
@@ -25,13 +26,33 @@ contract without splitting graphemes; an in-flight account switch cannot
 retarget provider data. Apple provider outages are retriable, Android uses the
 Firebase-hosted Apple OAuth flow, and iOS carries an explicit `GIDClientID`.
 
-Release gates before this heading may be changed to **RELEASED**: full Flutter
-tests and analysis; signed AAB/IPA metadata, signatures and entitlements;
-verified Hosting workflow from the pinned commit; Google Play internal and
-TestFlight upload results; then real new/returning-account provider smokes on
-available controlled devices. No Functions, Firestore/Storage Rules, indexes,
-or production data change belongs to this release. Do not describe an
-automated provider-configuration probe as a real-account sign-in.
+Hosting workflow
+[33120682376](https://github.com/kamilxgriefer/yovoice/actions/runs/33120682376)
+repeated every verification/build gate, then deployed only its pinned artifact.
+Both live origins serve the exact 6,276,276-byte workflow `main.dart.js`,
+SHA-256
+`560e48a682fdf1b7114b01d4743a9db0f4a7d73bc1997084bc965703d14e8490`.
+The automatic Hosting verification, browser smoke and CodeQL runs also passed
+for the same release SHA.
+
+Google Play internal testing reports `6 (1.0.0)` available to the existing
+10-tester list. The signed AAB SHA-256 is
+`700e3f413410d19a70d269ae710707796a9e31046f5e3816dd511aef8c0b2e54`.
+The signed iOS `1.0.0 (6)` IPA is retained at SHA-256
+`15ea8f770d333e8862084b39e09a0589f5a66c6bcee7717a62fe44839bdbe7d8`;
+its distribution signature, production profile, Apple Sign-In entitlement and
+Google client configuration passed artifact inspection. It is **not** on
+TestFlight: App Store export/upload failed with `Failed to Use Accounts`, and
+this Mac has neither App Store Connect upload authorization nor Transporter.
+
+Release verification passed 1,382 Flutter tests, the 46 focused auth/profile
+tests, `flutter analyze`, the full CI rules/Functions suite, browser smoke,
+CodeQL, signed-artifact inspection and independent security, QA, DevOps and
+principal reviews. The public Firebase provider probes route to the canonical
+Google and Apple authorization hosts. A controlled new/returning-account OAuth
+completion on web and store-installed builds was not fabricated and remains
+tester acceptance. No Functions, Firestore/Storage Rules, indexes or
+production data changed in this release.
 
 ### Released 2026-08-27: direct friend calls and Android build 5
 
