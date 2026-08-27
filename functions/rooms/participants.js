@@ -670,7 +670,7 @@ const moderateRoomParticipantSelf = onCall(CALLABLE_OPTIONS, (request) =>
 
 async function executeSetOwnParticipantMute(
   request,
-  roomControl = null,
+  _roomControl = null,
 ) {
   const auth = await requireActiveCaller(request);
   const roomId = normalizeText(request.data?.roomId, 128);
@@ -685,14 +685,11 @@ async function executeSetOwnParticipantMute(
   const participantReference = roomReference
     .collection("participants")
     .doc(auth.uid);
-  const restrictionReference = db.collection("restrictions").doc(auth.uid);
-  let resulting = null;
   await db.runTransaction(async (transaction) => {
-    const [roomSnapshot, participantSnapshot, restrictionSnapshot] =
+    const [roomSnapshot, participantSnapshot] =
       await transaction.getAll(
         roomReference,
         participantReference,
-        restrictionReference,
       );
     if (!roomSnapshot.exists || !participantSnapshot.exists) {
       throw new HttpsError("not-found", "The room participant no longer exists.");
@@ -710,30 +707,11 @@ async function executeSetOwnParticipantMute(
       isMuted,
       updatedAt: FieldValue.serverTimestamp(),
     });
-    const restriction = restrictionSnapshot.exists
-      ? (restrictionSnapshot.data() ?? {})
-      : {};
-    const expiresAt = restriction.expiresAt;
-    const communicationMuted = restriction.type === "communicationMute" &&
-      (expiresAt == null ||
-       (expiresAt instanceof Timestamp && expiresAt.toMillis() > Date.now()));
-    const role = String(participant.role ?? "listener");
-    resulting = {
-      // Muting yourself must NEVER cost you the right to speak again — that
-      // is the defect this whole change removes. The permission is recomputed
-      // here only so a stale grant cannot outlive a moderator action.
-      canPublish: publishAllowed({
-        role,
-        room,
-        hostMuted: participant.hostMuted === true,
-        serverMuted: participant.serverMuted === true,
-        communicationMuted,
-      }),
-      canPublishData: !communicationMuted,
-    };
   });
-  await (roomControl ?? getProductionLiveKitControl())
-    .setParticipantPermissions(roomId, auth.uid, resulting);
+  // Self-mute is a local track state, not a publishing permission. Calling
+  // the LiveKit control plane here added a full extra network round trip to
+  // every tap and could not make the local microphone any more muted. Host
+  // and staff mutes keep their own permission-revocation path above.
   return { success: true, roomId, isMuted };
 }
 

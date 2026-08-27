@@ -780,11 +780,16 @@ service cloud.firestore {
 
     function roomParticipantJoinTransitionAllowed(roomId) {
       let participantPath = /databases/$(database)/documents/rooms/$(roomId)/participants/$(request.auth.uid);
+      let broadcast = resource.data.get('experience', 'community') in [
+        'broadcast', 'podcast'
+      ];
       return !exists(participantPath) &&
           existsAfter(participantPath) &&
           getAfter(participantPath).data.userId == request.auth.uid &&
-          getAfter(participantPath).data.role == 'listener' &&
-          getAfter(participantPath).data.isSpeaker == false &&
+          getAfter(participantPath).data.role == (
+            broadcast ? 'listener' : 'speaker'
+          ) &&
+          getAfter(participantPath).data.isSpeaker == !broadcast &&
           getAfter(participantPath).data.isHandRaised == false &&
           request.resource.data.diff(resource.data).affectedKeys()
             .hasOnly(['participantCount', 'updatedAt']) &&
@@ -3071,11 +3076,10 @@ service cloud.firestore {
         allow read: if canAccessRoom(roomId) ||
             (isSignedIn() && resource.data.userId == request.auth.uid);
 
-        // Self-service creation must mirror what joinRoom()/createRoom()
-        // actually write: the room's real host joins as host+speaker,
-        // everyone else joins as a plain listener. Promoting to speaker
-        // or moderator status only ever happens through a host-driven
-        // update below.
+        // Self-service creation mirrors the product model: a Community room
+        // is a Discord-like conversation where everyone joins as a speaker;
+        // only a Broadcast room has listeners who require promotion. The
+        // room's real host always joins as host+speaker.
         //
         // createRoom() writes the room doc and this participant doc in the
         // same batch, so a plain get()/isRoomHost() wouldn't see the room's
@@ -3099,8 +3103,16 @@ service cloud.firestore {
               // canonical active Club membership is the admission grant.
               (
                 request.auth.uid == participantId &&
-                selfRoomParticipantShape(
-                  request.resource.data, 'listener', false
+                (
+                  get(
+                    /databases/$(database)/documents/rooms/$(roomId)
+                  ).data.get('experience', 'community') in ['broadcast', 'podcast']
+                    ? selfRoomParticipantShape(
+                        request.resource.data, 'listener', false
+                      )
+                    : selfRoomParticipantShape(
+                        request.resource.data, 'speaker', true
+                      )
                 ) &&
                 getAfter(
                   /databases/$(database)/documents/rooms/$(roomId)

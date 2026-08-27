@@ -1,11 +1,12 @@
 import 'dart:async';
 
-/// Serializes a room mute change across the roster and LiveKit.
+/// Serializes a room mute change across LiveKit and the roster.
 ///
-/// The roster must be updated first. Room screens listen to that roster and
-/// enforce `isMuted == true` on the local microphone. Enabling LiveKit before
-/// clearing the roster therefore lets a stale `true` snapshot immediately
-/// mute the microphone again.
+/// Muting is privacy-sensitive and must feel immediate, so the local track is
+/// disabled before any network round trip. Unmuting keeps the opposite order:
+/// server authority clears the roster flag first, then LiveKit is enabled.
+/// This asymmetry makes Mute instant without creating a window that could
+/// bypass a moderator/server mute.
 class RoomMuteSync {
   RoomMuteSync({this.onBusyChanged});
 
@@ -25,8 +26,13 @@ class RoomMuteSync {
     _busy = true;
     onBusyChanged?.call();
     try {
-      await persistRosterState(targetMuted);
-      await applyMicrophoneState(targetMuted);
+      if (targetMuted) {
+        await applyMicrophoneState(true);
+        await persistRosterState(true);
+      } else {
+        await persistRosterState(false);
+        await applyMicrophoneState(false);
+      }
       return true;
     } finally {
       _busy = false;

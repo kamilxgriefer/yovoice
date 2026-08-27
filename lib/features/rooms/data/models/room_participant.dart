@@ -34,7 +34,13 @@ class RoomParticipant {
       displayName: data['displayName'] as String? ?? 'YO Voice user',
       photoUrl: data['photoUrl'] as String?,
       role: data['role'] as String? ?? 'listener',
-      isMuted: data['isMuted'] as bool? ?? true,
+      // All three flags mean the visible microphone is off. Keeping only the
+      // self flag made moderator/staff mutes look unmuted in the roster and
+      // delayed local enforcement until another rebuild happened.
+      isMuted:
+          data['isMuted'] == true ||
+          data['hostMuted'] == true ||
+          data['serverMuted'] == true,
       isSpeaker: data['isSpeaker'] as bool? ?? false,
       isHandRaised: data['isHandRaised'] as bool? ?? false,
       joinedAt: (data['joinedAt'] as Timestamp?)?.toDate(),

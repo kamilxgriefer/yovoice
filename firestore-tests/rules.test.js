@@ -219,9 +219,9 @@ async function main() {
         userId: "attacker-uid",
         displayName: "Bypass Auth Name",
         photoUrl: null,
-        role: "listener",
-        isMuted: true,
-        isSpeaker: false,
+        role: "speaker",
+        isMuted: false,
+        isSpeaker: true,
         isHandRaised: false,
         joinedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -235,7 +235,7 @@ async function main() {
   );
 
   await check(
-    "non-host can join as a plain listener (self-service create)",
+    "non-host joins a Community room as a normal speaker",
     async () => {
       const db = attacker.firestore();
       const ref = doc(db, "rooms/room1/participants/attacker-uid");
@@ -244,9 +244,9 @@ async function main() {
         userId: "attacker-uid",
         displayName: "Attacker",
         photoUrl: null,
-        role: "listener",
-        isMuted: true,
-        isSpeaker: false,
+        role: "speaker",
+        isMuted: false,
+        isSpeaker: true,
         isHandRaised: false,
         joinedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -258,6 +258,55 @@ async function main() {
       await assertSucceeds(
         batch.commit(),
       );
+    },
+  );
+
+  await check(
+    "Broadcast keeps self-service joins in the listener audience",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(doc(ctx.firestore(), "rooms/broadcast-join"), {
+          hostId: "host-uid",
+          hostName: "Host",
+          name: "Broadcast",
+          description: "",
+          category: "talk",
+          visibility: "public",
+          language: "English",
+          maxParticipants: 25,
+          participantCount: 0,
+          memberCount: 0,
+          isLive: true,
+          roomType: "temporary",
+          experience: "broadcast",
+          status: "active",
+          approvalRequired: false,
+          slowModeSeconds: 0,
+          autoMuteNewUsers: true,
+          membersCanStartVoice: false,
+        });
+      });
+      const db = attacker.firestore();
+      const batch = writeBatch(db);
+      batch.set(
+        doc(db, "rooms/broadcast-join/participants/attacker-uid"),
+        {
+          userId: "attacker-uid",
+          displayName: "Attacker",
+          photoUrl: null,
+          role: "listener",
+          isMuted: true,
+          isSpeaker: false,
+          isHandRaised: false,
+          joinedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+      );
+      batch.update(doc(db, "rooms/broadcast-join"), {
+        participantCount: 1,
+        updatedAt: serverTimestamp(),
+      });
+      await assertSucceeds(batch.commit());
     },
   );
 
@@ -490,9 +539,9 @@ async function main() {
             userId: uid,
             displayName,
             photoUrl: null,
-            role: "listener",
+            role: "speaker",
             isMuted: false,
-            isSpeaker: false,
+            isSpeaker: true,
             isHandRaised: false,
             joinedAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
@@ -6144,9 +6193,9 @@ async function main() {
               userId: "recency-member",
               displayName: "recency-member",
               photoUrl: null,
-              role: "listener",
-              isMuted: true,
-              isSpeaker: false,
+              role: "speaker",
+              isMuted: false,
+              isSpeaker: true,
               isHandRaised: false,
               joinedAt: serverTimestamp(),
               updatedAt: serverTimestamp(),

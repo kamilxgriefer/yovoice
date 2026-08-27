@@ -161,7 +161,10 @@ class RoomService {
       'stageLimit': experience == RoomExperience.broadcast ? 8 : null,
       'approvalRequired': false,
       'slowModeSeconds': 0,
-      'autoMuteNewUsers': true,
+      // Community is a Discord-like open conversation: joining it grants a
+      // normal microphone immediately. Broadcast keeps its audience muted
+      // until the host promotes somebody.
+      'autoMuteNewUsers': experience == RoomExperience.broadcast,
       'membersCanStartVoice': false,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
@@ -485,15 +488,23 @@ class RoomService {
       final max = (data['maxParticipants'] as num?)?.toInt();
       if (max != null && count >= max) throw StateError('This room is full.');
 
+      final experience = RoomExperience.fromValue(data['experience']);
+      final everyoneSpeaks = experience == RoomExperience.community;
       transaction.set(participant, {
         'userId': user.uid,
         'displayName': identity.displayName,
         'photoUrl': identity.photoUrl,
-        'role': data['hostId'] == user.uid ? 'host' : 'listener',
+        'role': data['hostId'] == user.uid
+            ? 'host'
+            : everyoneSpeaks
+            ? 'speaker'
+            : 'listener',
         'isMuted': data['hostId'] == user.uid
             ? false
+            : everyoneSpeaks
+            ? false
             : (data['autoMuteNewUsers'] as bool? ?? true),
-        'isSpeaker': data['hostId'] == user.uid,
+        'isSpeaker': data['hostId'] == user.uid || everyoneSpeaks,
         'isHandRaised': false,
         'joinedAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),

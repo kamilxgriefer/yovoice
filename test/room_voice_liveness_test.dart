@@ -73,94 +73,90 @@ void main() {
   });
 
   group('starting voice', () {
-    test(
-      'a Family Room member opens the mics — the reported bug: no '
-      'membersCanStartVoice, no roomType and no experience, and the caller '
-      'is not the host',
-      () async {
-        // Exactly the shape of the reported room, minus the fields that
-        // postdate it. `clubId` IS present: all three club_lounge_ rooms in
-        // production carry it, and roomVoiceStartAllowed() reads the FIELD.
-        await seedRoom('club_lounge_family_host', {
-          'category': 'club',
-          'visibility': 'private',
-          'name': 'The Family Lounge',
-          'clubId': 'family_host',
-        });
-        await db.collection('clubs').doc('family_host').set({
-          'ownerId': 'host',
-          'name': 'The Family',
-          'status': 'active',
-        });
-        await db
-            .collection('clubs')
-            .doc('family_host')
-            .collection('members')
-            .doc('relative')
-            .set({'userId': 'relative', 'role': 'member'});
+    test('a Family Room member opens the mics — the reported bug: no '
+        'membersCanStartVoice, no roomType and no experience, and the caller '
+        'is not the host', () async {
+      // Exactly the shape of the reported room, minus the fields that
+      // postdate it. `clubId` IS present: all three club_lounge_ rooms in
+      // production carry it, and roomVoiceStartAllowed() reads the FIELD.
+      await seedRoom('club_lounge_family_host', {
+        'category': 'club',
+        'visibility': 'private',
+        'name': 'The Family Lounge',
+        'clubId': 'family_host',
+      });
+      await db.collection('clubs').doc('family_host').set({
+        'ownerId': 'host',
+        'name': 'The Family',
+        'status': 'active',
+      });
+      await db
+          .collection('clubs')
+          .doc('family_host')
+          .collection('members')
+          .doc('relative')
+          .set({'userId': 'relative', 'role': 'member'});
 
-        await serviceFor('relative').startCommunityVoice(
-          'club_lounge_family_host',
-        );
+      await serviceFor(
+        'relative',
+      ).startCommunityVoice('club_lounge_family_host');
 
-        final room = await readRoom('club_lounge_family_host');
-        expect(room['isLive'], isTrue, reason: 'voice must actually start');
-        expect(room['participantCount'], 1);
-        final participant = await db
-            .collection('rooms')
-            .doc('club_lounge_family_host')
-            .collection('participants')
-            .doc('relative')
-            .get();
-        expect(
-          participant.exists,
-          isTrue,
-          reason:
-              'the token function refuses a caller with no participant row, '
-              'so the roster join is part of starting voice',
-        );
-        expect(participant.data(), containsPair('role', 'listener'));
-      },
-    );
+      final room = await readRoom('club_lounge_family_host');
+      expect(room['isLive'], isTrue, reason: 'voice must actually start');
+      expect(room['participantCount'], 1);
+      final participant = await db
+          .collection('rooms')
+          .doc('club_lounge_family_host')
+          .collection('participants')
+          .doc('relative')
+          .get();
+      expect(
+        participant.exists,
+        isTrue,
+        reason:
+            'the token function refuses a caller with no participant row, '
+            'so the roster join is part of starting voice',
+      );
+      expect(participant.data(), containsPair('role', 'speaker'));
+      expect(participant.data(), containsPair('isSpeaker', true));
+      expect(participant.data(), containsPair('isMuted', false));
+    });
 
-    test(
-      'an already-live room is NOT written to again — both rule branches '
-      'require isLive to be false before the transition',
-      () async {
-        final before = Timestamp.fromDate(DateTime.utc(2026, 1, 1));
-        await seedRoom('live-room', {
-          'isLive': true,
-          'participantCount': 1,
-          'updatedAt': before,
-        });
-        await db
-            .collection('rooms')
-            .doc('live-room')
-            .collection('participants')
-            .doc('host')
-            .set({
-              'userId': 'host',
-              'displayName': 'host',
-              'role': 'host',
-              'isMuted': false,
-              'isSpeaker': true,
-              'isHandRaised': false,
-            });
+    test('an already-live room is NOT written to again — both rule branches '
+        'require isLive to be false before the transition', () async {
+      final before = Timestamp.fromDate(DateTime.utc(2026, 1, 1));
+      await seedRoom('live-room', {
+        'isLive': true,
+        'participantCount': 1,
+        'updatedAt': before,
+      });
+      await db
+          .collection('rooms')
+          .doc('live-room')
+          .collection('participants')
+          .doc('host')
+          .set({
+            'userId': 'host',
+            'displayName': 'host',
+            'role': 'host',
+            'isMuted': false,
+            'isSpeaker': true,
+            'isHandRaised': false,
+          });
 
-        await serviceFor('host').startCommunityVoice('live-room');
+      await serviceFor('host').startCommunityVoice('live-room');
 
-        final room = await readRoom('live-room');
-        expect(room['isLive'], isTrue);
-        expect(
-          room['updatedAt'],
-          before,
-          reason:
-              'a re-asserted isLive:true is permission-denied on the server; '
-              'entering a live room must perform no root write at all',
-        );
-        expect(room['participantCount'], 1);
-      },
-    );
+      final room = await readRoom('live-room');
+      expect(room['isLive'], isTrue);
+      expect(
+        room['updatedAt'],
+        before,
+        reason:
+            'a re-asserted isLive:true is permission-denied on the server; '
+            'entering a live room must perform no root write at all',
+      );
+      expect(room['participantCount'], 1);
+    });
 
     test(
       'a room whose deletion has begun cannot be restarted, even by its host',
@@ -301,9 +297,7 @@ void main() {
             .set({'userId': 'relative', 'banned': true});
 
         await expectLater(
-          serviceFor(
-            'relative',
-          ).startCommunityVoice('club_lounge_family_host'),
+          serviceFor('relative').startCommunityVoice('club_lounge_family_host'),
           throwsA(isA<StateError>()),
         );
         expect((await readRoom('club_lounge_family_host'))['isLive'], isFalse);
@@ -324,40 +318,37 @@ void main() {
       expect(room['experience'], 'broadcast');
     });
 
-    test(
-      'a lounge whose clubId FIELD is absent refuses a member, because the '
-      'rule reads the field and not the club_lounge_ id prefix',
-      () async {
-        // The `clubId` fallback in VoiceRoom.fromFirestore is for identity
-        // and routing. roomVoiceStartAllowed() gates on
-        // resource.data.get('clubId',''), so a fieldless lounge cannot
-        // satisfy the Club branch on the server for anybody. Offering the
-        // control anyway would auto-write straight into a denial.
-        await seedRoom('club_lounge_fieldless', {'visibility': 'private'});
-        await db.collection('clubs').doc('fieldless').set({
-          'ownerId': 'host',
-          'status': 'active',
-        });
-        await db
-            .collection('clubs')
-            .doc('fieldless')
-            .collection('members')
-            .doc('relative')
-            .set({'userId': 'relative', 'role': 'member'});
+    test('a lounge whose clubId FIELD is absent refuses a member, because the '
+        'rule reads the field and not the club_lounge_ id prefix', () async {
+      // The `clubId` fallback in VoiceRoom.fromFirestore is for identity
+      // and routing. roomVoiceStartAllowed() gates on
+      // resource.data.get('clubId',''), so a fieldless lounge cannot
+      // satisfy the Club branch on the server for anybody. Offering the
+      // control anyway would auto-write straight into a denial.
+      await seedRoom('club_lounge_fieldless', {'visibility': 'private'});
+      await db.collection('clubs').doc('fieldless').set({
+        'ownerId': 'host',
+        'status': 'active',
+      });
+      await db
+          .collection('clubs')
+          .doc('fieldless')
+          .collection('members')
+          .doc('relative')
+          .set({'userId': 'relative', 'role': 'member'});
 
-        expect(
-          await serviceFor('relative').resolveVoiceStartAuthority(
-            await serviceFor('relative').getRoom('club_lounge_fieldless'),
-          ),
-          RoomVoiceStartAuthority.none,
-        );
-        await expectLater(
-          serviceFor('relative').startCommunityVoice('club_lounge_fieldless'),
-          throwsA(isA<StateError>()),
-        );
-        expect((await readRoom('club_lounge_fieldless'))['isLive'], isFalse);
-      },
-    );
+      expect(
+        await serviceFor('relative').resolveVoiceStartAuthority(
+          await serviceFor('relative').getRoom('club_lounge_fieldless'),
+        ),
+        RoomVoiceStartAuthority.none,
+      );
+      await expectLater(
+        serviceFor('relative').startCommunityVoice('club_lounge_fieldless'),
+        throwsA(isA<StateError>()),
+      );
+      expect((await readRoom('club_lounge_fieldless'))['isLive'], isFalse);
+    });
 
     test(
       'the same fieldless lounge still starts for its HOST — the host branch '

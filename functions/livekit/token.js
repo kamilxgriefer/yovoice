@@ -208,12 +208,10 @@ function everyoneMaySpeak(room) {
 function deriveVoiceGrant(access, authenticatedUser) {
   const { room, participant, profile, communicationMuted } = access;
   const isHost = room.hostId === authenticatedUser.uid;
-  // A COMMUNITY ROOM IS A CONVERSATION, NOT A STAGE. Self-service joins are
-  // pinned to `role: 'listener'` by firestore.rules, so gating publish on the
-  // role alone made every non-host in a Family or Community room a permanent
-  // audience member who could never speak. Only a BROADCAST room has an
-  // audience that must be promoted; everywhere else everyone present may talk,
-  // which is what the product means by a community room.
+  // A COMMUNITY ROOM IS A CONVERSATION, NOT A STAGE. New clients join it as
+  // speakers; the experience fallback remains important for legacy roster
+  // rows that still say `listener`. Only a BROADCAST room has an audience
+  // that must be promoted; everywhere else everyone present may talk.
   const isSpeaker = SPEAKING_ROLES.has(participant.role) || everyoneMaySpeak(room);
   const canPublish =
     !communicationMuted &&

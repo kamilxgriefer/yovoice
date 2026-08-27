@@ -124,21 +124,17 @@ describe("onCall invocation contract", () => {
   test("setOwnRoomParticipantMute ignores the second argument", async () => {
     await seedRoom();
     const second = trackedSecondArgument();
-    await assert.rejects(
-      () =>
-        setOwnRoomParticipantMute.run(
-          request(GUEST, { roomId: ROOM, isMuted: false }),
-          second.proxy,
-        ),
-      (error) =>
-        /LiveKit control-plane configuration is incomplete/.test(
-          String(error?.message),
-        ),
+    await setOwnRoomParticipantMute.run(
+      request(GUEST, { roomId: ROOM, isMuted: false }),
+      second.proxy,
     );
     assert.deepEqual(
       second.reads.filter((name) => name === "setParticipantPermissions"),
       [],
     );
+    const participant = await db.collection("rooms").doc(ROOM)
+      .collection("participants").doc(GUEST).get();
+    assert.equal(participant.data().isMuted, false);
   });
 
   test("deleteRoomSelf ignores the second argument", async () => {

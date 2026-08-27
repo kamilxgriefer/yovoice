@@ -24,6 +24,7 @@ class StageSpeaker {
     this.isMuted = false,
     this.isSpeaking = false,
     this.audioLevel = 0,
+    this.roleLabel,
   });
 
   final String userId;
@@ -37,6 +38,7 @@ class StageSpeaker {
   /// 0..1, already smoothed by the caller. Drives the ring and glow only —
   /// no constant motion when nobody talks.
   final double audioLevel;
+  final String? roleLabel;
 }
 
 /// Responsive room workspace shared by every live-room family.
@@ -168,8 +170,7 @@ class _SpeakerTileState extends State<SpeakerTile>
   /// The static cues (ring width, glow, the equaliser chip glyph) carry the
   /// state on their own, so honouring `disableAnimations` costs nothing.
   void _syncPulse() {
-    final reduceMotion =
-        MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     if (widget.speaker.isSpeaking && !reduceMotion) {
       if (!_pulse.isAnimating) _pulse.repeat(reverse: true);
     } else if (_pulse.isAnimating || _pulse.value != 0) {
@@ -203,7 +204,7 @@ class _SpeakerTileState extends State<SpeakerTile>
                     ? 'host'
                     : speaker.isModerator
                     ? 'moderator'
-                    : 'speaker'}, '
+                    : (speaker.roleLabel ?? 'speaker').toLowerCase()}, '
                 '${speaker.isMuted
                     ? 'muted'
                     : speaker.isSpeaking
@@ -241,9 +242,7 @@ class _SpeakerTileState extends State<SpeakerTile>
                   AnimatedBuilder(
                     animation: _pulse,
                     builder: (context, child) => Transform.scale(
-                      scale: speaker.isSpeaking
-                          ? 1 + .022 * _pulse.value
-                          : 1,
+                      scale: speaker.isSpeaking ? 1 + .022 * _pulse.value : 1,
                       child: child,
                     ),
                     child: AnimatedContainer(
@@ -378,7 +377,7 @@ class _SpeakerTileState extends State<SpeakerTile>
                     ? 'Host'
                     : speaker.isModerator
                     ? 'Moderator'
-                    : 'Speaker',
+                    : speaker.roleLabel ?? 'Speaker',
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: .45),
                   fontSize: 10,
@@ -757,6 +756,9 @@ class RoomStagePanel extends StatelessWidget {
     required this.onOverflowTap,
     this.onSpeakerTap,
     this.fill = false,
+    this.title = 'On stage',
+    this.emptyMessage = 'The stage is ready for the first voice.',
+    this.icon = Icons.graphic_eq_rounded,
     super.key,
   });
 
@@ -777,6 +779,9 @@ class RoomStagePanel extends StatelessWidget {
   /// Off by default: on a narrow screen the panel is one card in a scroll
   /// view, and an unbounded-height parent would have nothing to give it.
   final bool fill;
+  final String title;
+  final String emptyMessage;
+  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
@@ -793,12 +798,12 @@ class RoomStagePanel extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.graphic_eq_rounded, color: identity.accent, size: 18),
+              Icon(icon, color: identity.accent, size: 18),
               const SizedBox(width: 8),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'On stage',
-                  style: TextStyle(
+                  title,
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 15,
                     fontWeight: FontWeight.w900,
@@ -825,8 +830,10 @@ class RoomStagePanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          if (fill) Expanded(child: Center(child: _speakerArea(context)))
-          else _speakerArea(context),
+          if (fill)
+            Expanded(child: Center(child: _speakerArea(context)))
+          else
+            _speakerArea(context),
         ],
       ),
     );
@@ -838,7 +845,7 @@ class RoomStagePanel extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 26),
         child: Center(
           child: Text(
-            'The stage is ready for the first voice.',
+            emptyMessage,
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Colors.white.withValues(alpha: .62),
@@ -860,4 +867,3 @@ class RoomStagePanel extends StatelessWidget {
     );
   }
 }
-

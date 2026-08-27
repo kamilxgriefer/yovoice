@@ -43,6 +43,15 @@ void main() {
     expect(harness.events, ['persist:room-1:false', 'apply:false']);
   });
 
+  test('mute changes the local track before the roster round trip', () async {
+    final harness = _Harness(muted: false);
+
+    final outcome = await harness.coordinator.toggle(roomId: 'room-1');
+
+    expect(outcome, RoomMuteOutcome.applied);
+    expect(harness.events, ['apply:true', 'persist:room-1:true']);
+  });
+
   test('a not-live refusal tears down the stale session', () async {
     final harness = _Harness(
       persistError: _ServerRefusal('failed-precondition'),
@@ -72,14 +81,25 @@ void main() {
     expect(harness.events, ['persist:room-1:false']);
   });
 
-  test('a non-Firebase failure reports failed without disconnecting',
-      () async {
+  test('a non-Firebase failure reports failed without disconnecting', () async {
     final harness = _Harness(persistError: StateError('offline'));
 
     final outcome = await harness.coordinator.toggle(roomId: 'room-1');
 
     expect(outcome, RoomMuteOutcome.failed);
     expect(harness.events, ['persist:room-1:false']);
+  });
+
+  test('a failed roster sync keeps the privacy-critical local mute', () async {
+    final harness = _Harness(
+      muted: false,
+      persistError: _ServerRefusal('internal'),
+    );
+
+    final outcome = await harness.coordinator.toggle(roomId: 'room-1');
+
+    expect(outcome, RoomMuteOutcome.mutedLocally);
+    expect(harness.events, ['apply:true', 'persist:room-1:true']);
   });
 
   test('a second toggle while one is in flight reports busy', () async {
@@ -121,6 +141,6 @@ void main() {
     await harness.coordinator.toggle(roomId: 'room-1');
 
     expect(observed, [true, false]);
-    expect(harness.events, ['persist:room-1:true', 'apply:true']);
+    expect(harness.events, ['apply:true', 'persist:room-1:true']);
   });
 }

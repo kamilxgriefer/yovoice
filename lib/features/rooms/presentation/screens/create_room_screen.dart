@@ -74,6 +74,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   final List<String> _tags = <String>[];
   ConversationStyle _conversationStyle = ConversationStyle.casual;
   bool _newcomerFriendly = false;
+  RoomType _roomType = RoomType.community;
   ShowFormat _showFormat = ShowFormat.solo;
 
   XFile? _coverFile;
@@ -218,7 +219,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         visibility: _visibility,
         language: _language,
         maxParticipants: _maxParticipants,
-        roomType: RoomType.temporary,
+        roomType: _isBroadcast ? RoomType.temporary : _roomType,
         targetAudience: _targetAudience,
         topicTags: _tags,
         roomGuidelines: _guidelines.text,
@@ -543,6 +544,28 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
         ),
         const SizedBox(height: 20),
         if (!_isBroadcast) ...[
+          _SectionLabel('Room lifecycle', identity),
+          const SizedBox(height: 10),
+          _LifecycleChoice(
+            identity: identity,
+            selected: _roomType == RoomType.community,
+            icon: Icons.all_inclusive_rounded,
+            title: 'Stay open',
+            subtitle:
+                'People can keep talking after you leave. Voice sleeps when '
+                'the room becomes empty.',
+            onTap: () => setState(() => _roomType = RoomType.community),
+          ),
+          const SizedBox(height: 10),
+          _LifecycleChoice(
+            identity: identity,
+            selected: _roomType == RoomType.temporary,
+            icon: Icons.person_off_outlined,
+            title: 'End with host',
+            subtitle: 'Everyone is disconnected when you leave the room.',
+            onTap: () => setState(() => _roomType = RoomType.temporary),
+          ),
+          const SizedBox(height: 20),
           _SectionLabel('Conversation style', identity),
           const SizedBox(height: 10),
           Wrap(
@@ -621,6 +644,11 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
       ('Capacity', _maxParticipants?.toString() ?? 'Unlimited'),
       if (!_isBroadcast) ('Style', _conversationStyle.label),
       if (!_isBroadcast)
+        (
+          'Lifecycle',
+          _roomType == RoomType.community ? 'Stay open' : 'End with host',
+        ),
+      if (!_isBroadcast)
         ('Newcomer friendly', _newcomerFriendly ? 'Yes' : 'No'),
       if (_isBroadcast) ('Format', _showFormat.label),
       if (_isBroadcast)
@@ -630,6 +658,101 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
 }
 
 // ------------------------------------------------------------- widgets
+
+class _LifecycleChoice extends StatelessWidget {
+  const _LifecycleChoice({
+    required this.identity,
+    required this.selected,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final SpaceIdentity identity;
+  final bool selected;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '$title. $subtitle',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            padding: const EdgeInsets.all(15),
+            decoration: BoxDecoration(
+              color: selected
+                  ? identity.primary.withValues(alpha: .13)
+                  : const Color(0xFF171121),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: selected ? identity.primary : const Color(0xFF392C43),
+                width: selected ? 1.5 : 1,
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: selected ? identity.wash : const Color(0xFF251A30),
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  child: Icon(icon, color: identity.accent, size: 21),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          color: Color(0xFFB6A9C2),
+                          fontSize: 12.5,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  selected
+                      ? Icons.check_circle_rounded
+                      : Icons.radio_button_unchecked_rounded,
+                  color: selected ? identity.accent : const Color(0xFF756A80),
+                  size: 22,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _StepBar extends StatelessWidget {
   const _StepBar({required this.step, required this.identity});

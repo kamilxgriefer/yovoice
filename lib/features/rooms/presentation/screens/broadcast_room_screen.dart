@@ -298,6 +298,11 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
       case RoomMuteOutcome.applied:
       case RoomMuteOutcome.busy:
         break;
+      case RoomMuteOutcome.mutedLocally:
+        _showMessage(
+          "You're muted. Room status couldn't sync; try again.",
+          isError: true,
+        );
       case RoomMuteOutcome.sessionEnded:
         _showMessage('This room is no longer live.', isError: true);
         await _leaveCoordinator.leave(

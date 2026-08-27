@@ -30,7 +30,7 @@ void main() {
     expect(sync.isBusy, isFalse);
   });
 
-  test('persists mute before disabling the microphone', () async {
+  test('disables the microphone before persisting mute', () async {
     final events = <String>[];
     final sync = RoomMuteSync();
 
@@ -40,10 +40,10 @@ void main() {
       applyMicrophoneState: (muted) async => events.add('microphone:$muted'),
     );
 
-    expect(events, ['persist:true', 'microphone:true']);
+    expect(events, ['microphone:true', 'persist:true']);
   });
 
-  test('does not change LiveKit when the roster write is rejected', () async {
+  test('does not unmute LiveKit when the roster write is rejected', () async {
     final microphoneStates = <bool>[];
     final sync = RoomMuteSync();
 
@@ -58,6 +58,29 @@ void main() {
 
     expect(microphoneStates, isEmpty);
     expect(sync.isBusy, isFalse);
+  });
+
+  test('local mute does not wait for the network', () async {
+    final persisted = Completer<void>();
+    final events = <String>[];
+    final sync = RoomMuteSync();
+
+    final operation = sync.toggle(
+      currentMuted: false,
+      persistRosterState: (muted) async {
+        events.add('persist:$muted');
+        await persisted.future;
+      },
+      applyMicrophoneState: (muted) async {
+        events.add('microphone:$muted');
+      },
+    );
+
+    await Future<void>.delayed(Duration.zero);
+    expect(events, ['microphone:true', 'persist:true']);
+    expect(sync.isBusy, isTrue);
+    persisted.complete();
+    expect(await operation, isTrue);
   });
 
   test('ignores a second tap while synchronization is in progress', () async {

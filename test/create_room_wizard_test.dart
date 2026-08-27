@@ -361,6 +361,9 @@ void main() {
       tester.takeException();
       final data = (await db.collection('rooms').get()).docs.single.data();
       expect(data['experience'], 'community');
+      expect(data['roomType'], 'community');
+      expect(data['isLive'], isFalse);
+      expect(data['autoMuteNewUsers'], isFalse);
       expect(data['topic'], '');
       expect(data['audienceCanSpeak'], isTrue);
       expect(data['handRaisingEnabled'], isFalse);
@@ -370,6 +373,40 @@ void main() {
       expect(data['conversationStyle'], 'focused');
       // Podcast-only field must be absent, not null.
       expect(data.containsKey('showFormat'), isFalse);
+      final owner = await db
+          .collection('rooms')
+          .doc((await db.collection('rooms').get()).docs.single.id)
+          .collection('roomMembers')
+          .doc(uid)
+          .get();
+      expect(owner.data(), containsPair('role', 'owner'));
+    });
+
+    testWidgets('Community creator can choose End with host', (tester) async {
+      useSize(tester, const Size(430, 2000));
+      await tester.pumpWidget(host(build()));
+      await settle(tester);
+
+      await tester.enterText(find.byType(TextFormField).first, 'Quick room');
+      await tester.tap(find.text('Continue'));
+      await settle(tester);
+      await tester.tap(find.text('Continue'));
+      await settle(tester);
+      await tester.tap(find.text('End with host').first);
+      await settle(tester);
+      await tester.tap(find.text('Create Room'));
+      await settle(tester);
+
+      tester.takeException();
+      final room = (await db.collection('rooms').get()).docs.single;
+      expect(room.data()['roomType'], 'temporary');
+      expect(room.data()['isLive'], isTrue);
+      expect(room.data()['autoMuteNewUsers'], isFalse);
+      final hostParticipant = await room.reference
+          .collection('participants')
+          .doc(uid)
+          .get();
+      expect(hostParticipant.data(), containsPair('role', 'host'));
     });
 
     testWidgets('a Podcast room writes exactly its own metadata', (
@@ -401,6 +438,8 @@ void main() {
       tester.takeException();
       final data = (await db.collection('rooms').get()).docs.single.data();
       expect(data['experience'], 'broadcast');
+      expect(data['roomType'], 'temporary');
+      expect(data['autoMuteNewUsers'], isTrue);
       expect(data['topic'], 'Episode one');
       expect(data['audienceCanSpeak'], isFalse);
       expect(data['handRaisingEnabled'], isTrue);

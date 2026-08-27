@@ -23,6 +23,11 @@ enum RoomMuteOutcome {
 
   /// A transient failure; state is unchanged and a retry is reasonable.
   failed,
+
+  /// The privacy-critical local mute succeeded, but its roster mirror did
+  /// not. The microphone remains safely off and only synchronization needs
+  /// another try.
+  mutedLocally,
 }
 
 /// The one mute/unmute path shared by the room screens and the mini bar.
@@ -30,10 +35,9 @@ enum RoomMuteOutcome {
 /// Both surfaces previously diverged: screens persisted the roster through
 /// the server callable while the mini bar flipped only the local LiveKit
 /// track, so the two controls could disagree with each other and with the
-/// server. Every toggle now runs the same serialized sequence — roster
-/// first, microphone second — and a server refusal that means "this voice
-/// session is gone" tears the stale session down instead of trapping the
-/// user behind an error loop.
+/// server. Muting disables the local track first; unmuting still waits for
+/// server authority. A refusal that means "this voice session is gone" tears
+/// the stale session down instead of trapping the user behind an error loop.
 class RoomMuteCoordinator extends ChangeNotifier {
   RoomMuteCoordinator({
     required Future<void> Function(String roomId, bool muted)
@@ -51,8 +55,8 @@ class RoomMuteCoordinator extends ChangeNotifier {
   /// The instance every production surface shares. One serializer means a
   /// double tap that spans the room screen and the mini bar is still a
   /// single operation.
-  static RoomMuteCoordinator get production => _production ??=
-      RoomMuteCoordinator(
+  static RoomMuteCoordinator get production =>
+      _production ??= RoomMuteCoordinator(
         persistRosterState: (roomId, muted) =>
             RoomService().setMuted(roomId: roomId, isMuted: muted),
         applyMicrophoneState: (muted) =>
@@ -73,9 +77,10 @@ class RoomMuteCoordinator extends ChangeNotifier {
   Future<RoomMuteOutcome> toggle({required String roomId}) async {
     if (_sync.isBusy) return RoomMuteOutcome.busy;
 
+    final wasMuted = _readCurrentMuted();
     try {
       final applied = await _sync.toggle(
-        currentMuted: _readCurrentMuted(),
+        currentMuted: wasMuted,
         persistRosterState: (muted) => _persistRosterState(roomId, muted),
         applyMicrophoneState: _applyMicrophoneState,
       );
@@ -92,8 +97,14 @@ class RoomMuteCoordinator extends ChangeNotifier {
         }
         return RoomMuteOutcome.sessionEnded;
       }
+      if (!wasMuted && _readCurrentMuted()) {
+        return RoomMuteOutcome.mutedLocally;
+      }
       return RoomMuteOutcome.failed;
     } catch (_) {
+      if (!wasMuted && _readCurrentMuted()) {
+        return RoomMuteOutcome.mutedLocally;
+      }
       return RoomMuteOutcome.failed;
     }
   }

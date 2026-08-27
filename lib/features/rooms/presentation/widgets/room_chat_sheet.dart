@@ -196,7 +196,7 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
       decoration: BoxDecoration(
         color: const Color(0xFF110B19),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white.withValues(alpha: .07)),
+        border: Border.all(color: widget.accent.withValues(alpha: .22)),
         boxShadow: const [
           BoxShadow(
             color: Color(0x66000000),
@@ -209,30 +209,75 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 16, 12, 8),
-            child: Row(
-              children: [
-                Icon(Icons.forum_rounded, color: widget.accent, size: 19),
-                const SizedBox(width: 9),
-                const Expanded(
-                  child: Text(
-                    'Room chat',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w900,
-                    ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 300;
+                return MediaQuery.withClampedTextScaling(
+                  maxScaleFactor: compact ? 1.35 : 2,
+                  child: Row(
+                    children: [
+                      if (compact)
+                        Icon(
+                          Icons.forum_rounded,
+                          color: widget.accent,
+                          size: 19,
+                        )
+                      else
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: widget.accent.withValues(alpha: .14),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            Icons.forum_rounded,
+                            color: widget.accent,
+                            size: 19,
+                          ),
+                        ),
+                      SizedBox(width: compact ? 9 : 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Room chat',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 17,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            if (!compact)
+                              const Text(
+                                'Live conversation',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Color(0xFF9C93AB),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      if (widget.onClose != null) ...[
+                        const SizedBox(width: 4),
+                        IconButton(
+                          tooltip: 'Back to stage',
+                          onPressed: widget.onClose,
+                          icon: const Icon(Icons.close_rounded),
+                          color: Colors.white70,
+                        ),
+                      ],
+                    ],
                   ),
-                ),
-                if (widget.onClose != null) ...[
-                  const SizedBox(width: 4),
-                  IconButton(
-                    tooltip: 'Back to stage',
-                    onPressed: widget.onClose,
-                    icon: const Icon(Icons.close_rounded),
-                    color: Colors.white70,
-                  ),
-                ],
-              ],
+                );
+              },
             ),
           ),
           Expanded(
@@ -252,11 +297,52 @@ class _RoomChatPanelState extends State<RoomChatPanel> {
                 }
                 final messages = snapshot.data ?? const <RoomMessage>[];
                 if (messages.isEmpty) {
-                  return const Center(
-                    child: Text(
-                      'Say something — the room can hear you type.',
-                      style: TextStyle(color: Color(0xFF9E92A8)),
-                    ),
+                  return LayoutBuilder(
+                    builder: (context, constraints) {
+                      final compact = constraints.maxHeight < 180;
+                      return Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(compact ? 10 : 24),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (!compact) ...[
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(
+                                    color: widget.accent.withValues(alpha: .12),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(
+                                    Icons.waving_hand_rounded,
+                                    color: widget.accent,
+                                    size: 21,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                              ],
+                              const Text(
+                                'Start the conversation',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              if (!compact) ...[
+                                const SizedBox(height: 4),
+                                const Text(
+                                  'Messages stay with this room.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(color: Color(0xFF9E92A8)),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      );
+                    },
                   );
                 }
                 return ListView.builder(
@@ -434,8 +520,20 @@ class _MessageRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.all(9),
+      decoration: BoxDecoration(
+        color: isMine
+            ? accent.withValues(alpha: .09)
+            : Colors.white.withValues(alpha: .025),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isMine
+              ? accent.withValues(alpha: .16)
+              : Colors.white.withValues(alpha: .035),
+        ),
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -448,7 +546,7 @@ class _MessageRow extends StatelessWidget {
                 onTap: onAvatarTap,
                 radius: 22,
                 child: UserAvatar(
-                  radius: 16,
+                  radius: 18,
                   photoUrl: message.senderPhotoUrl,
                   displayName: message.senderName,
                 ),
@@ -506,23 +604,12 @@ class _MessageRow extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 3),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 9,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1C1428),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFF2C2138)),
-                    ),
-                    child: Text(
-                      message.text,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        height: 1.35,
-                      ),
+                  Text(
+                    message.text,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      height: 1.35,
                     ),
                   ),
                   if (message.reactions.isNotEmpty) ...[

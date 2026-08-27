@@ -22,6 +22,8 @@ class RoomHeader extends StatelessWidget {
     required this.onBack,
     required this.onSpeakingTap,
     required this.onListenersTap,
+    this.people,
+    this.onPeopleTap,
     this.avatarUrl,
     this.avatarName,
     this.actions = const <Widget>[],
@@ -37,9 +39,11 @@ class RoomHeader extends StatelessWidget {
   final String subtitle;
   final int speaking;
   final int listeners;
+  final int? people;
   final VoidCallback onBack;
   final VoidCallback onSpeakingTap;
   final VoidCallback onListenersTap;
+  final VoidCallback? onPeopleTap;
 
   /// A real image identity (a club's avatar). Falls back to the room-type
   /// icon — never to an empty box.
@@ -118,7 +122,19 @@ class RoomHeader extends StatelessWidget {
                 ],
               ),
             ),
-            if (!narrow) ...[
+            if (!narrow && people != null) ...[
+              const SizedBox(width: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 180),
+                child: RoomCounterPill(
+                  icon: Icons.groups_rounded,
+                  label: 'In room',
+                  value: people!,
+                  identity: identity,
+                  onTap: onPeopleTap ?? onSpeakingTap,
+                ),
+              ),
+            ] else if (!narrow) ...[
               const SizedBox(width: 8),
               // Bounded on purpose: the pill's inner text is flexible and
               // needs a real width to truncate against.
@@ -155,30 +171,42 @@ class RoomHeader extends StatelessWidget {
                   children: [
                     identityRow,
                     const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        const SizedBox(width: 46),
-                        Expanded(
-                          child: RoomCounterPill(
-                            icon: Icons.graphic_eq_rounded,
-                            label: 'Speaking',
-                            value: speaking,
-                            identity: identity,
-                            onTap: onSpeakingTap,
-                          ),
+                    if (people != null)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 46),
+                        child: RoomCounterPill(
+                          icon: Icons.groups_rounded,
+                          label: 'In room',
+                          value: people!,
+                          identity: identity,
+                          onTap: onPeopleTap ?? onSpeakingTap,
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: RoomCounterPill(
-                            icon: Icons.headphones_rounded,
-                            label: 'Listeners',
-                            value: listeners,
-                            identity: identity,
-                            onTap: onListenersTap,
+                      )
+                    else
+                      Row(
+                        children: [
+                          const SizedBox(width: 46),
+                          Expanded(
+                            child: RoomCounterPill(
+                              icon: Icons.graphic_eq_rounded,
+                              label: 'Speaking',
+                              value: speaking,
+                              identity: identity,
+                              onTap: onSpeakingTap,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: RoomCounterPill(
+                              icon: Icons.headphones_rounded,
+                              label: 'Listeners',
+                              value: listeners,
+                              identity: identity,
+                              onTap: onListenersTap,
+                            ),
+                          ),
+                        ],
+                      ),
                   ],
                 )
               : identityRow,

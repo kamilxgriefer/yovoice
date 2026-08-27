@@ -25,6 +25,7 @@ import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 
 class CommunityVoiceRoomScreen extends StatefulWidget {
@@ -377,6 +378,16 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
       case RoomMuteOutcome.applied:
       case RoomMuteOutcome.busy:
         break;
+      case RoomMuteOutcome.mutedLocally:
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text(
+                "You're muted. Room status couldn't sync; try again.",
+              ),
+            ),
+          );
       case RoomMuteOutcome.sessionEnded:
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()
@@ -418,17 +429,12 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  // One People drawer for the whole room — sections instead of two
-  // separate speaker/listener sheets (the sheet sorts host → speakers →
-  // listeners and labels roles per row).
+  // One People drawer for the whole Community room. There is no stage versus
+  // listener hierarchy here: the host is first, then everybody else by name.
   void _openParticipants(List<RoomParticipant> participants) {
     final ordered = [...participants]
       ..sort((a, b) {
-        int rank(RoomParticipant p) => p.isHost
-            ? 0
-            : p.isSpeaker
-            ? 1
-            : 2;
+        int rank(RoomParticipant p) => p.isHost ? 0 : 1;
         final byRank = rank(a).compareTo(rank(b));
         if (byRank != 0) return byRank;
         return a.displayName.toLowerCase().compareTo(
@@ -446,7 +452,7 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
         maxWidth: 720,
       ),
       builder: (context) => _ParticipantsSheet(
-        title: 'People · ${participants.length}',
+        title: 'People here',
         participants: ordered,
         hostId: widget.room.hostId,
         currentUserId: _uid,
@@ -468,20 +474,18 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     );
   }
 
-  /// Rooms stage: hero banner + a calm speaker grid + the audience as a
-  /// compact strip. Live speaking state and audio levels come from LiveKit
-  /// ([_voice.participants], matched by uid identity); roles and mute
-  /// flags come from the Firestore roster. Listeners never render on the
-  /// stage — a room with 500 listeners paints the same number of widgets
-  /// as a room with 5.
+  /// Community presence: one Discord-like people grid. Live speaking state
+  /// and audio levels come from LiveKit; identity, host role and moderation
+  /// state come from the Firestore roster. Legacy `listener` rows are still
+  /// rendered as normal room members because Community has no audience role.
   Widget _buildStage(List<RoomParticipant> roomParticipants, Club? club) {
     final identity = voiceRoomIdentity(widget.room, club: club);
     final voiceByIdentity = {
       for (final v in _voice.participants) v.identity: v,
     };
 
-    final stageSpeakers = [
-      for (final p in roomParticipants.where((p) => p.isSpeaker || p.isHost))
+    final roomPeople = [
+      for (final p in roomParticipants)
         StageSpeaker(
           userId: p.userId,
           displayName: p.displayName,
@@ -490,11 +494,9 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
           isMuted: p.isMuted,
           isSpeaking: voiceByIdentity[p.userId]?.isSpeaking ?? false,
           audioLevel: voiceByIdentity[p.userId]?.audioLevel ?? 0,
+          roleLabel: 'Member',
         ),
     ];
-    final listeners = roomParticipants
-        .where((p) => !p.isSpeaker && !p.isHost)
-        .toList(growable: false);
 
     // WIDE LAYOUTS GIVE THE STAGE THE LEFTOVER HEIGHT.
     //
@@ -535,17 +537,13 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
               compact: media.width < 520,
             ),
     );
-    final audience = AudienceStrip(
-      count: listeners.length,
-      identity: identity,
-      onTap: () => _openParticipants(_latestParticipants),
-      previewPhotoUrls: [for (final l in listeners.take(6)) l.photoUrl],
-      previewNames: [for (final l in listeners.take(6)) l.displayName],
-    );
     RoomStagePanel stage({required bool fill}) => RoomStagePanel(
-      speakers: stageSpeakers,
+      speakers: roomPeople,
       identity: identity,
       fill: fill,
+      title: 'People here',
+      emptyMessage: 'Join the room to start the conversation.',
+      icon: Icons.groups_rounded,
       onOverflowTap: () => _openParticipants(_latestParticipants),
       onSpeakerTap: (speaker) => showProfilePreview(
         context,
@@ -564,8 +562,6 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
             hero,
             const SizedBox(height: 14),
             Expanded(child: stage(fill: true)),
-            const SizedBox(height: 12),
-            audience,
           ],
         ),
       );
@@ -573,14 +569,24 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(0, 4, 0, 16),
-      children: [
-        hero,
-        const SizedBox(height: 14),
-        stage(fill: false),
-        const SizedBox(height: 12),
-        audience,
-      ],
+      children: [hero, const SizedBox(height: 14), stage(fill: false)],
     );
+  }
+
+  /// Connected LiveKit identities are the real-time presence authority. The
+  /// Firestore roster supplies profile/role data but may retain a row after a
+  /// crash until server reconciliation. During connect (and in widget-test
+  /// seams with no LiveKit cast) the roster is the honest fallback.
+  List<RoomParticipant> _activeParticipants(List<RoomParticipant> roster) {
+    if (!_voice.isConnected || _voice.roomId != widget.room.id) return roster;
+    final connectedIds = _voice.participants
+        .map((participant) => participant.identity)
+        .where((identity) => identity.isNotEmpty)
+        .toSet();
+    if (connectedIds.isEmpty) return roster;
+    return roster
+        .where((participant) => connectedIds.contains(participant.userId))
+        .toList(growable: false);
   }
 
   List<RoomParticipant> _latestParticipants = const [];
@@ -731,17 +737,9 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
     return StreamBuilder<List<RoomParticipant>>(
       stream: _participants,
       builder: (context, snapshot) {
-        final roomParticipants = snapshot.data ?? const <RoomParticipant>[];
+        final roster = snapshot.data ?? const <RoomParticipant>[];
+        final roomParticipants = _activeParticipants(roster);
         _latestParticipants = roomParticipants;
-        // Zero while dormant, for the same reason as the broadcast
-        // screen: the pill says "Speaking", and before the session runs
-        // nobody is.
-        final speaking = !_live
-            ? 0
-            : roomParticipants
-                  .where((participant) => participant.isSpeaker)
-                  .length;
-        final listeners = roomParticipants.length - speaking;
         // Liveness leads: in a dormant room there is no audio session at
         // all, so no MicState value could describe the control honestly.
         final affordance = roomMicAffordance(
@@ -788,9 +786,12 @@ class _CommunityVoiceRoomScreenState extends State<CommunityVoiceRoomScreen> {
                           subtitle: _subtitleText(club),
                           avatarUrl: club?.avatarUrl,
                           avatarName: club?.name,
-                          speaking: speaking,
-                          listeners: listeners,
+                          speaking: 0,
+                          listeners: 0,
+                          people: roomParticipants.length,
                           onBack: () => Navigator.of(context).pop(),
+                          onPeopleTap: () =>
+                              _openParticipants(roomParticipants),
                           onSpeakingTap: () =>
                               _openParticipants(roomParticipants),
                           onListenersTap: () =>
@@ -913,18 +914,11 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                           horizontal: 6,
                           vertical: 6,
                         ),
-                        leading: CircleAvatar(
+                        leading: UserAvatar(
                           radius: 23,
+                          photoUrl: participant.photoUrl,
+                          displayName: participant.displayName,
                           backgroundColor: const Color(0xFF7135A5),
-                          child: Text(
-                            participant.displayName.isEmpty
-                                ? '?'
-                                : participant.displayName[0].toUpperCase(),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
                         ),
                         title: Wrap(
                           spacing: 6,
@@ -947,9 +941,7 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                               ? 'Community owner'
                               : participant.isMuted
                               ? 'Muted'
-                              : participant.isSpeaker
-                              ? 'Speaking'
-                              : 'Listening',
+                              : 'Microphone ready',
                           style: const TextStyle(color: Color(0xFFB6A9C2)),
                         ),
                         trailing: canAct
@@ -1007,9 +999,7 @@ class _ParticipantsSheetState extends State<_ParticipantsSheet> {
                             : Icon(
                                 participant.isMuted
                                     ? Icons.mic_off_rounded
-                                    : participant.isSpeaker
-                                    ? Icons.graphic_eq_rounded
-                                    : Icons.headphones_rounded,
+                                    : Icons.mic_rounded,
                                 color: const Color(0xFFC277FF),
                               ),
                       );

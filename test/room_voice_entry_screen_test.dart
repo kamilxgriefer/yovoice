@@ -22,9 +22,13 @@ import 'package:yovoice/features/rooms/presentation/screens/community_voice_room
 /// constructor, and `VoiceCallService.forTesting()` is the seam that lets a
 /// recording stand-in answer "was a token requested?".
 class _RecordingVoice extends VoiceCallService {
-  _RecordingVoice({this.muted = false}) : super.forTesting();
+  _RecordingVoice({
+    this.muted = false,
+    this.cast = const <VoiceParticipantViewData>[],
+  }) : super.forTesting();
 
   final bool muted;
+  final List<VoiceParticipantViewData> cast;
   final List<String> joins = [];
   final List<bool> joinSoundFlags = [];
   final List<String> disconnects = [];
@@ -68,8 +72,7 @@ class _RecordingVoice extends VoiceCallService {
       : MicState.unavailable;
 
   @override
-  List<VoiceParticipantViewData> get participants =>
-      const <VoiceParticipantViewData>[];
+  List<VoiceParticipantViewData> get participants => cast;
 }
 
 void main() {
@@ -345,6 +348,70 @@ void main() {
       expect(find.text('Not live'), findsNothing);
       expect(find.text('Start voice'), findsNothing);
     });
+
+    testWidgets(
+      'Community shows one connected people count and no listener layer',
+      (tester) async {
+        await seedRoom(isLive: true);
+        final participants = db
+            .collection('rooms')
+            .doc(roomId)
+            .collection('participants');
+        for (final (id, name, role) in const [
+          ('host', 'Host', 'host'),
+          ('relative', 'Relative', 'speaker'),
+          ('ghost', 'Disconnected', 'listener'),
+        ]) {
+          await participants.doc(id).set({
+            'userId': id,
+            'displayName': name,
+            'role': role,
+            'isMuted': false,
+            'isSpeaker': role != 'listener',
+            'isHandRaised': false,
+          });
+        }
+        final voice = _RecordingVoice(
+          cast: const [
+            VoiceParticipantViewData(
+              identity: 'host',
+              displayName: 'Host',
+              isLocal: false,
+              isSpeaking: false,
+              audioLevel: 0,
+              isMuted: false,
+            ),
+            VoiceParticipantViewData(
+              identity: 'relative',
+              displayName: 'Relative',
+              isLocal: true,
+              isSpeaking: true,
+              audioLevel: .4,
+              isMuted: false,
+            ),
+          ],
+        );
+
+        await pumpCommunity(
+          tester,
+          uid: 'relative',
+          voice: voice,
+          entry: RoomVoiceEntry(
+            outcome: RoomVoiceEntryOutcome.live,
+            room: roomModel(isLive: true),
+            authority: RoomVoiceStartAuthority.none,
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(find.textContaining('In room'), findsOneWidget);
+        expect(find.text('People here'), findsOneWidget);
+        expect(find.text('Disconnected'), findsNothing);
+        expect(find.text('Listening'), findsNothing);
+        expect(find.byIcon(Icons.headphones_rounded), findsNothing);
+      },
+    );
 
     testWidgets('room creation can consume the initial join cue', (
       tester,

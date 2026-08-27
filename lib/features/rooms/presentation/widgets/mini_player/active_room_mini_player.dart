@@ -256,7 +256,7 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
   bool get _muteBusy => _voice.muteChangeInProgress || _mutes.isBusy;
 
   /// Mute goes through the ONE coordinator the room screens use — roster
-  /// first, LiveKit second, server-recomputed permissions (ADR-094:
+  /// with privacy-first local mute and authority-first unmute (ADR-094:
   /// self-mute is track state, never a permission).
   Future<void> _toggleMute() async {
     final roomId = _watchedRoomId;
@@ -269,6 +269,16 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
       // The player disappears on its own once the stale session disconnects.
       case RoomMuteOutcome.sessionEnded:
         break;
+      case RoomMuteOutcome.mutedLocally:
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text(
+                "You're muted. Room status couldn't sync; try again.",
+              ),
+            ),
+          );
       case RoomMuteOutcome.failed:
         ScaffoldMessenger.of(context)
           ..hideCurrentSnackBar()

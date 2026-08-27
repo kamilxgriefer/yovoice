@@ -309,21 +309,19 @@ describe("host room control", () => {
     assert.equal(control.calls.at(-1)[3].canPublish, false);
   });
 
-  test("self unmute updates LiveKit but respects active communication mute", async () => {
+  test("self mute updates only the roster and skips the LiveKit control plane", async () => {
     const roomId = `${P}self-mute`;
     const control = fakeControl();
     await seedRoom(roomId);
     await seedParticipant(roomId);
-    await db.collection("restrictions").doc(GUEST).set({
-      type: "communicationMute",
-      expiresAt: Timestamp.fromMillis(Date.now() + 60_000),
-    });
     await executeSetOwnParticipantMute(
-      request(GUEST, { roomId, isMuted: false }),
+      request(GUEST, { roomId, isMuted: true }),
       control,
     );
-    assert.equal(control.calls[0][3].canPublish, false);
-    assert.equal(control.calls[0][3].canPublishData, false);
+    const participant = await db.collection("rooms").doc(roomId)
+      .collection("participants").doc(GUEST).get();
+    assert.equal(participant.data().isMuted, true);
+    assert.deepEqual(control.calls, []);
   });
 
   test("delete is recursive, but Club Lounges require the Club lifecycle", async () => {
