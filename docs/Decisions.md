@@ -7173,3 +7173,50 @@ iOS and Android require clean native builds. Acceptance includes phone
 speaker, headphones, silent/DND, active LiveKit, Bluetooth and foreground /
 background notification checks. A green waveform test cannot replace the
 operator's final listening approval.
+
+## ADR-117: Direct calls are a server-authoritative state machine, not tiny rooms
+
+**Status**: **READY FOR DEPLOYMENT**
+**Date**: 2026-08-27
+
+### Context
+
+The phone icon in every direct conversation was deliberately inert because the
+product had room audio but no two-party signaling: no ring delivery, answer or
+decline authority, busy state, missed-call timeout or guaranteed teardown. A
+client shortcut into a Community Room would expose the wrong lifecycle and
+leave permissions, simultaneous calls and external LiveKit state racy.
+
+### Decision
+
+`directCalls/{callId}` is a server-owned two-participant state machine. Six
+callables own start, answer, decline, cancel, end and token minting. Start and
+answer/token issuance revalidate both active accounts, both canonical
+friendship guards, both block directions and communication restrictions.
+Transactional per-user locks permit one ringing/active call; ringing expires
+after 60 seconds.
+
+The callee receives a private inbox mirror and a high-priority call push. Only
+an accepted call can mint a five-minute LiveKit token scoped to
+`call_<callId>`. Terminal active calls create a retryable control outbox whose
+worker deletes the LiveKit room and active-session mirrors. Call documents are
+participant-get-only; every client write to calls, signals, locks and control
+outbox is denied. A missed notification routes to the DM instead of briefly
+opening a terminal call surface.
+
+### Reasoning
+
+Busy exclusion and one canonical transition prevent double answers, stale
+tokens and overlapping calls. Rechecking the live social/safety graph at every
+authority boundary means an old ringing document never bypasses a new block,
+sanction, deleted account or removed friendship. A retryable outbox closes the
+Firestore-to-LiveKit side-effect gap without granting clients control-plane
+credentials.
+
+### Consequences
+
+Calls currently require confirmed friendship and a foreground-capable app; this
+is not yet a CallKit/ConnectionService background telephony integration.
+Ringing has a fixed 60-second timeout and active calls an eight-hour safety
+ceiling. Release order is the composite index to READY, Functions and their
+live smoke, Rules read-back, then build 5 clients.

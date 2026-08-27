@@ -34,7 +34,8 @@ class _ActiveVoiceBarState extends State<ActiveVoiceBar> {
     final roomId = _voice.roomId;
     final roomName = _voice.roomName;
 
-    if (roomId == null ||
+    if (!_voice.isRoomSession ||
+        roomId == null ||
         roomName == null ||
         _voice.status == VoiceCallStatus.disconnected) {
       return const SizedBox.shrink();

@@ -89,6 +89,7 @@ class PushNotificationService {
   /// channel is first created. v3 is the Velvet Prism sound migration; a new
   /// id is required for existing installs to receive the new master.
   static const String androidChannelId = 'yovoice_activity_v3';
+  static const String androidCallChannelId = 'yovoice_calls_v1';
   static const String androidSoundResource = 'yovoice_notification';
   static const String iosSoundFile = 'yovoice_notification.wav';
 
@@ -566,12 +567,28 @@ class PushNotificationService {
             AndroidFlutterLocalNotificationsPlugin
           >()
           ?.createNotificationChannel(channel);
+      const callChannel = AndroidNotificationChannel(
+        androidCallChannelId,
+        'YO Voice calls',
+        description: 'Incoming private voice calls',
+        importance: Importance.max,
+        playSound: true,
+        sound: RawResourceAndroidNotificationSound(androidSoundResource),
+        enableVibration: true,
+      );
+      await _localNotifications
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.createNotificationChannel(callChannel);
     }
   }
 
   Future<void> _showLocalNotification(RemoteMessage message) async {
     final notification = message.notification;
     if (notification == null) return;
+    final type = NotificationType.fromName(message.data['type'] as String?);
+    final isCall = type == NotificationType.directCall;
     final notificationId = message.data['notificationId'] as String?;
     final claimOwner = claimForegroundNotification;
     var decision = const ForegroundNotificationClaimDecision.allowUntracked();
@@ -604,21 +621,25 @@ class PushNotificationService {
             id: notification.hashCode,
             title: notification.title,
             body: notification.body,
-            notificationDetails: const NotificationDetails(
+            notificationDetails: NotificationDetails(
               android: AndroidNotificationDetails(
-                androidChannelId,
-                'YO Voice notifications',
-                channelDescription:
-                    'Messages, invitations and activity from YO Voice',
-                importance: Importance.high,
-                priority: Priority.high,
+                isCall ? androidCallChannelId : androidChannelId,
+                isCall ? 'YO Voice calls' : 'YO Voice notifications',
+                channelDescription: isCall
+                    ? 'Incoming private voice calls'
+                    : 'Messages, invitations and activity from YO Voice',
+                importance: isCall ? Importance.max : Importance.high,
+                priority: isCall ? Priority.max : Priority.high,
                 playSound: true,
-                sound: RawResourceAndroidNotificationSound(
+                sound: const RawResourceAndroidNotificationSound(
                   androidSoundResource,
                 ),
                 enableVibration: true,
+                category: isCall
+                    ? AndroidNotificationCategory.call
+                    : AndroidNotificationCategory.social,
               ),
-              iOS: DarwinNotificationDetails(
+              iOS: const DarwinNotificationDetails(
                 presentAlert: true,
                 presentBadge: true,
                 presentSound: true,

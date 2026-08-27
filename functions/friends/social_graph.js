@@ -696,18 +696,19 @@ const sendFriendRequest = onCall(
         return { outcome: "accepted", changed: true };
       }
 
-      const [actorOutgoing, targetIncoming] = await Promise.all([
-        transaction.get(
-          actorRef
-            .collection("sentFriendRequests")
-            .limit(MAX_PENDING_REQUESTS + 1),
-        ),
-        transaction.get(
-          targetRef
-            .collection("friendRequests")
-            .limit(MAX_PENDING_REQUESTS + 1),
-        ),
-      ]);
+      // Keep transaction reads ordered. The Firestore emulator and the
+      // production client can invalidate one of two concurrent query streams
+      // when reciprocal requests force the transaction to retry.
+      const actorOutgoing = await transaction.get(
+        actorRef
+          .collection("sentFriendRequests")
+          .limit(MAX_PENDING_REQUESTS + 1),
+      );
+      const targetIncoming = await transaction.get(
+        targetRef
+          .collection("friendRequests")
+          .limit(MAX_PENDING_REQUESTS + 1),
+      );
       if (
         actorOutgoing.size >= MAX_PENDING_REQUESTS ||
         targetIncoming.size >= MAX_PENDING_REQUESTS

@@ -43,6 +43,23 @@ for how this fits into the full join-a-room flow, start to finish:
 code. `LIVEKIT_URL` (`wss://yovoice-3f7j9fb7.livekit.cloud`) is a plain
 `defineString` — a public endpoint, not a secret.
 
+## Direct 1:1 calls
+
+`functions/calls/direct_calls.js` owns the friend-call lifecycle:
+`startDirectCall`, `acceptDirectCall`, `declineDirectCall`,
+`cancelDirectCall`, `endDirectCall` and `createDirectCallToken`. Start and the
+answer/token boundaries revalidate active accounts, both canonical friendship
+guards, both block directions and both communication restrictions.
+Transactional `directCallLocks/{uid}` documents allow one ringing/active call
+per account.
+
+Ringing lasts 60 seconds. `expireDirectCallsSchedule` converts an unanswered
+call to `missed`, frees both locks and creates the canonical missed-call
+notification. An accepted call gets an eight-hour ceiling and a five-minute
+LiveKit token scoped to `call_<callId>`. Ending an active call writes
+`directCallControlOutbox/{callId}`; `onDirectCallControlCreated` retries the
+LiveKit room deletion/revocation and active-session cleanup.
+
 ## Notifications
 
 > **ADR-114 social lifecycle is DEPLOYED (2026-08-25).** The generation-bound
@@ -75,6 +92,9 @@ uses the high-importance `yovoice_activity_v3` Android channel with the custom
 interruption level, and web icon/badge metadata. Flutter, Functions and the
 manifest fallback carry the same channel id; v3 is required because Android
 persists a channel's sound. The app/Android/iOS WAVs are byte-identical.
+Incoming direct calls use a separate max-priority `yovoice_calls_v1` Android
+channel, an APNs time-sensitive category and a require-interaction web
+notification; ordinary activity remains on v3.
 Foreground FCM and the independent Firestore banner claim the notification id
 through one gate, so only the first presentation owns a sound; a native
 presentation failure falls back to the in-app banner without replaying it.

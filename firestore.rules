@@ -2081,6 +2081,16 @@ service cloud.firestore {
         allow delete: if isOwner(userId);
       }
 
+      // Server-authored ringing mirror. Keeping this under the callee's own
+      // account avoids a global directCalls query and lets the app subscribe
+      // to exactly one private inbox. Call state and identities are still
+      // authoritative on /directCalls/{callId}; clients cannot forge, answer
+      // or dismiss either copy directly.
+      match /incomingCalls/{callId} {
+        allow read: if isOwner(userId);
+        allow create, update, delete: if false;
+      }
+
       // One doc per registered device. Only the Admin SDK (push-send Cloud
       // Function) ever reads across users' tokens; clients only manage
       // their own.
@@ -2094,6 +2104,27 @@ service cloud.firestore {
             request.resource.data.updatedAt == request.time;
         allow delete: if isOwner(userId);
       }
+    }
+
+    // Private 1:1 voice signaling. Every state transition (ring, accept,
+    // decline, cancel, end, expiry) is performed by a callable that rechecks
+    // active accounts, restrictions, bilateral blocks and canonical
+    // friendship. Participants may point-read their own call for realtime UI;
+    // no client may author or mutate a session.
+    match /directCalls/{callId} {
+      allow get, list: if isSignedIn() &&
+          request.auth.uid in resource.data.participantIds;
+      allow create, update, delete: if false;
+    }
+
+    // Concurrency locks and LiveKit teardown jobs expose operational state and
+    // are therefore Admin-SDK-only in both directions.
+    match /directCallLocks/{userId} {
+      allow read, write: if false;
+    }
+
+    match /directCallControlOutbox/{callId} {
+      allow read, write: if false;
     }
 
     match /conversations/{conversationId} {

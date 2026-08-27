@@ -60,7 +60,7 @@ Top-level collections (from `firestore.rules`):
 
 | Collection | Subcollections |
 |---|---|
-| `users/{userId}` (private; owner get only, never client-listable) | `friendRequests`, `sentFriendRequests`, `friends`, `blocked`, `following`, `followers`, `clubs`, `notifications`, `fcmTokens` |
+| `users/{userId}` (private; owner get only, never client-listable) | `friendRequests`, `sentFriendRequests`, `friends`, `blocked`, `following`, `followers`, `clubs`, `notifications`, `fcmTokens`, `incomingCalls` |
 | `publicProfiles/{userId}` (server-owned exact public profile) | — |
 | `socialPresence/{userId}` (server-owned, self/canonical-friend read) | — |
 | `privateRateLimits/{id}` (Admin-only search budgets) | — |
@@ -70,8 +70,18 @@ Top-level collections (from `firestore.rules`):
 | `voiceMoments/{momentId}` | `likes`, `comments` |
 | `momentCapacityLedgers/{userId}` (server-only revision/mutex; deployed 2026-08-27) | — |
 | `creatorPinnedPosts/{creatorId}` (server-owned exact pointer) | — |
+| `directCalls/{callId}` (server-owned; two participants get only) | — |
+| `directCallLocks/{userId}` / `directCallControlOutbox/{callId}` (server-only) | — |
 
 Notable fields:
+
+- **Direct-call signaling (ADR-117)** — `directCalls` is the canonical status
+  machine (`ringing`, `active`, `declined`, `cancelled`, `ended`, `missed`). A
+  callee's `users/{uid}/incomingCalls/{callId}` is a read-only delivery mirror;
+  per-user locks prevent overlap and the control outbox makes terminal LiveKit
+  cleanup retryable. Clients cannot list arbitrary calls or write any of these
+  collections. Scheduled expiry uses the composite index on
+  `directCalls(status, expiresAt)`.
 
 - **Voice Moment lifecycle (ADR-115, deployed 2026-08-27)** — root create, publication,
   expiry and delete are Cloud Functions authority. Draft, expired and deleting

@@ -1847,7 +1847,11 @@ class _VoiceActionButton extends StatelessWidget {
 
         return Semantics(
           button: true,
-          label: live ? 'Voice — live in a room' : 'Use your voice',
+          label: live
+              ? voice.isDirectCall
+                    ? 'Voice — private call active'
+                    : 'Voice — live in a room'
+              : 'Use your voice',
           excludeSemantics: true,
           child: Center(
             child: Transform.translate(

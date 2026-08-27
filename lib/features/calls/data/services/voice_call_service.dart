@@ -8,6 +8,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:yovoice/core/audio/ui_sound.dart';
 import 'package:yovoice/core/audio/ui_sound_service.dart';
 
+import '../models/voice_connection_info.dart';
+import 'direct_call_service.dart';
 import 'voice_token_service.dart';
 
 enum VoiceCallStatus {
@@ -17,6 +19,8 @@ enum VoiceCallStatus {
   reconnecting,
   failed,
 }
+
+enum VoiceSessionKind { room, directCall }
 
 /// What the microphone button should show — one enum, no combinations of
 /// guessed booleans. Every value is a visually distinct UI state.
@@ -59,6 +63,7 @@ class VoiceCallService extends ChangeNotifier {
   // shell's RoomMiniBar) — including in widget tests with no Firebase
   // app. Nothing needs the token service until an actual join().
   late final VoiceTokenService _tokenService = VoiceTokenService();
+  late final DirectCallService _directCallService = DirectCallService();
   final UiSoundService _sounds = UiSoundService.instance;
 
   Room? _room;
@@ -69,6 +74,8 @@ class VoiceCallService extends ChangeNotifier {
   String? _roomId;
   String? _roomName;
   String? _errorMessage;
+  VoiceSessionKind? _sessionKind;
+  String? _directCallId;
   bool _isMuted = false;
   bool _muteChangeInProgress = false;
 
@@ -76,6 +83,18 @@ class VoiceCallService extends ChangeNotifier {
   String? get roomId => _roomId;
   String? get roomName => _roomName;
   String? get errorMessage => _errorMessage;
+  VoiceSessionKind? get sessionKind => _sessionKind;
+  String? get directCallId => _directCallId;
+  bool get isDirectCall =>
+      _sessionKind == VoiceSessionKind.directCall || directCallId != null;
+
+  // The fallback keeps the established test seam and any in-memory room
+  // session created by a pre-upgrade hot restart visible. New joins always set
+  // the explicit kind; a directCallId still wins and can never look like a
+  // room mini-player.
+  bool get isRoomSession =>
+      _sessionKind == VoiceSessionKind.room ||
+      (_sessionKind == null && roomId != null && directCallId == null);
 
   /// AUTHORITATIVE mute state: while connected, this is LiveKit's own
   /// publication state, not our remembered boolean. The remembered flag
@@ -179,14 +198,52 @@ class VoiceCallService extends ChangeNotifier {
     required String participantName,
     bool playSound = true,
   }) async {
-    if (_roomId == roomId && isConnected) return;
+    return _joinWithToken(
+      sessionRoomId: roomId,
+      roomName: roomName,
+      kind: VoiceSessionKind.room,
+      tokenLoader: () => _tokenService.createJoinToken(
+        roomId: roomId,
+        participantName: participantName,
+      ),
+      playSound: playSound,
+    );
+  }
+
+  Future<void> joinDirectCall({
+    required String callId,
+    required String contactName,
+    required String participantName,
+    bool playSound = true,
+  }) {
+    return _joinWithToken(
+      sessionRoomId: 'call_$callId',
+      roomName: contactName,
+      kind: VoiceSessionKind.directCall,
+      directCallId: callId,
+      tokenLoader: () => _directCallService.createJoinToken(callId),
+      playSound: playSound,
+    );
+  }
+
+  Future<void> _joinWithToken({
+    required String sessionRoomId,
+    required String roomName,
+    required VoiceSessionKind kind,
+    required Future<VoiceConnectionInfo> Function() tokenLoader,
+    String? directCallId,
+    bool playSound = true,
+  }) async {
+    if (_roomId == sessionRoomId && isConnected) return;
 
     if (_room != null) {
       await disconnect();
     }
 
-    _roomId = roomId;
+    _roomId = sessionRoomId;
     _roomName = roomName;
+    _sessionKind = kind;
+    _directCallId = directCallId;
     _errorMessage = null;
     _isMuted = false;
     _setStatus(VoiceCallStatus.connecting);
@@ -194,10 +251,7 @@ class VoiceCallService extends ChangeNotifier {
     try {
       await _requestPermissions();
 
-      final connectionInfo = await _tokenService.createJoinToken(
-        roomId: roomId,
-        participantName: participantName,
-      );
+      final connectionInfo = await tokenLoader();
 
       final room = Room(
         roomOptions: const RoomOptions(adaptiveStream: true, dynacast: true),
@@ -325,6 +379,8 @@ class VoiceCallService extends ChangeNotifier {
     _muteChangeInProgress = false;
     _roomId = null;
     _roomName = null;
+    _sessionKind = null;
+    _directCallId = null;
     notifyListeners();
 
     await _disposeRoom();

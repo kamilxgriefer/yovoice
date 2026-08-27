@@ -11,6 +11,7 @@ import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/auth/presentation/screens/auth_gate.dart';
+import 'package:yovoice/features/calls/presentation/widgets/direct_call_coordinator.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
@@ -516,7 +517,9 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
-          home: const PresenceLifecycle(child: AuthGate()),
+          home: const DirectCallCoordinator(
+            child: PresenceLifecycle(child: AuthGate()),
+          ),
         ),
       ),
     );

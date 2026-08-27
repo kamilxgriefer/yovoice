@@ -69,6 +69,16 @@ const {
 */
 
 const { createLiveKitToken } = require("./livekit/token");
+const {
+  acceptDirectCall,
+  cancelDirectCall,
+  createDirectCallToken,
+  declineDirectCall,
+  endDirectCall,
+  expireDirectCallsSchedule,
+  onDirectCallControlCreated,
+  startDirectCall,
+} = require("./calls/direct_calls");
 
 /*
 |--------------------------------------------------------------------------
@@ -204,6 +214,14 @@ exports.getAuditLogFilters = getAuditLogFilters;
 */
 
 exports.createLiveKitToken = createLiveKitToken;
+exports.startDirectCall = startDirectCall;
+exports.acceptDirectCall = acceptDirectCall;
+exports.declineDirectCall = declineDirectCall;
+exports.cancelDirectCall = cancelDirectCall;
+exports.endDirectCall = endDirectCall;
+exports.createDirectCallToken = createDirectCallToken;
+exports.expireDirectCallsSchedule = expireDirectCallsSchedule;
+exports.onDirectCallControlCreated = onDirectCallControlCreated;
 
 /*
 |--------------------------------------------------------------------------

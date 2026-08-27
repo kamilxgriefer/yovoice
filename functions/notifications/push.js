@@ -39,6 +39,8 @@ const PUSH_TITLES = {
   liveStarted: (actor, label) =>
     label ? `${actor} is live: ${label}` : `${actor} is live now`,
   directMessage: (actor) => `${actor} sent you a message`,
+  directCall: (actor) => `${actor} is calling you`,
+  missedCall: (actor) => `Missed call from ${actor}`,
   mention: (actor, label) =>
     label ? `${actor} mentioned you in ${label}` : `${actor} mentioned you`,
   reply: (actor, label) =>

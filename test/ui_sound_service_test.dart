@@ -112,17 +112,19 @@ void main() {
     },
   );
 
-  test('Android fallback, Flutter and Functions use the v3 sound channel', () {
+  test('Android fallback and Functions keep activity and call channels', () {
     const channel = PushNotificationService.androidChannelId;
     expect(channel, 'yovoice_activity_v3');
     expect(
       File('android/app/src/main/AndroidManifest.xml').readAsStringSync(),
       contains('android:value="$channel"'),
     );
-    expect(
-      File('functions/notifications/push_payload.js').readAsStringSync(),
-      contains('channelId: "$channel"'),
-    );
+    final pushPayload = File(
+      'functions/notifications/push_payload.js',
+    ).readAsStringSync();
+    expect(pushPayload, contains('"$channel"'));
+    expect(pushPayload, contains('"yovoice_calls_v1"'));
+    expect(pushPayload, contains('channelId: isCall'));
   });
 
   test(

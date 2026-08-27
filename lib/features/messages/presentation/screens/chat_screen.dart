@@ -6,6 +6,9 @@ import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 
+import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
+import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/calls/presentation/screens/direct_call_screen.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
@@ -29,6 +32,7 @@ class ChatScreen extends StatefulWidget {
     this.messageService,
     this.auth,
     this.contentReportService,
+    this.directCallService,
     super.key,
   });
 
@@ -45,6 +49,7 @@ class ChatScreen extends StatefulWidget {
   final MessageService? messageService;
   final FirebaseAuth? auth;
   final ContentReportService? contentReportService;
+  final DirectCallGateway? directCallService;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -60,6 +65,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   late final MessageService _service =
       widget.messageService ?? MessageService.live;
+  late final DirectCallGateway _calls =
+      widget.directCallService ?? DirectCallService();
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
@@ -74,6 +81,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Message? _replyTo;
   bool _sending = false;
   bool _sendingMedia = false;
+  bool _startingCall = false;
   bool _isMuted = false;
   bool _typingAnnounced = false;
   bool _typingUpdateInFlight = false;
@@ -319,6 +327,54 @@ class _ChatScreenState extends State<ChatScreen> {
           fallback: 'Unread counts may not update right now.',
         ),
       );
+    }
+  }
+
+  Future<void> _startDirectCall() async {
+    if (_startingCall) return;
+    final voice = VoiceCallService.instance;
+    if (voice.status != VoiceCallStatus.disconnected &&
+        voice.status != VoiceCallStatus.failed) {
+      _showMessage('Leave your current voice session before starting a call.');
+      return;
+    }
+    setState(() => _startingCall = true);
+    String? callId;
+    try {
+      callId = await _calls.startCall(
+        calleeId: widget.otherUserId,
+        conversationId: widget.conversationId,
+      );
+      if (!mounted) {
+        await _calls.cancel(callId);
+        return;
+      }
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          fullscreenDialog: true,
+          builder: (_) => DirectCallScreen(
+            callId: callId!,
+            callService: _calls,
+            currentUserId: _currentUserId,
+            participantName:
+                (widget.auth ?? FirebaseAuth.instance)
+                    .currentUser
+                    ?.displayName ??
+                (widget.auth ?? FirebaseAuth.instance).currentUser?.email ??
+                'YO Voice user',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(
+        friendlyErrorMessage(
+          error,
+          fallback: 'Could not start this private voice call.',
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _startingCall = false);
     }
   }
 
@@ -715,6 +771,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   photoUrl: widget.otherPhotoUrl,
                   presenceStream: _presence,
                   muted: _isMuted,
+                  callBusy: _startingCall,
                   onBack: () => Navigator.pop(context),
                   onMute: _toggleMute,
                   onArchive: _archiveConversation,
@@ -724,6 +781,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     displayName: widget.otherDisplayName,
                     photoUrl: widget.otherPhotoUrl,
                   ),
+                  onCall: _startDirectCall,
                 ),
                 Expanded(
                   child: StreamBuilder<List<Message>>(
@@ -869,10 +927,12 @@ class _ChatHeader extends StatelessWidget {
     required this.photoUrl,
     required this.presenceStream,
     required this.muted,
+    required this.callBusy,
     required this.onBack,
     required this.onMute,
     required this.onArchive,
     required this.onProfileTap,
+    required this.onCall,
   });
 
   final String userId;
@@ -880,6 +940,7 @@ class _ChatHeader extends StatelessWidget {
   final String photoUrl;
   final Stream<ChatPresence> presenceStream;
   final bool muted;
+  final bool callBusy;
   final VoidCallback onBack;
   final VoidCallback onMute;
   final VoidCallback onArchive;
@@ -887,6 +948,7 @@ class _ChatHeader extends StatelessWidget {
   /// No dead avatars: tapping the person you're talking to opens their
   /// profile preview.
   final VoidCallback onProfileTap;
+  final VoidCallback onCall;
 
   @override
   Widget build(BuildContext context) {
@@ -967,15 +1029,18 @@ class _ChatHeader extends StatelessWidget {
               ),
             ),
           ),
-          // Deliberately disabled, not a dead tap target: 1:1 calls need
-          // signaling that doesn't exist yet (ringing notifications,
-          // accept/decline, call session docs — VoiceCallScreen is
-          // room-based). Disabled + labeled per ADR-012 until that
-          // subsystem is built.
-          const IconButton(
-            onPressed: null,
-            tooltip: 'Voice calls — coming soon',
-            icon: Icon(Icons.call_outlined, color: Colors.white38),
+          IconButton(
+            onPressed: callBusy ? null : onCall,
+            tooltip: callBusy ? 'Starting voice call' : 'Start voice call',
+            icon: callBusy
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: _ChatScreenState._primary,
+                    ),
+                  )
+                : const Icon(Icons.call_rounded, color: Colors.white),
           ),
           PopupMenuButton<String>(
             tooltip: 'Conversation options',

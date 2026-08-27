@@ -128,6 +128,7 @@ class _ActiveRoomMiniPlayerState extends State<ActiveRoomMiniPlayer> {
 
   /// The session this player is a view over, or null when there is none.
   String? get _activeRoomId {
+    if (!_voice.isRoomSession) return null;
     final roomId = _voice.roomId;
     if (roomId == null) return null;
     switch (_voice.status) {

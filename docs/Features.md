@@ -120,6 +120,14 @@ through the authenticated Firebase Storage SDK. Upload and finalization are
 idempotent, so a lost network response reuses the same reservation and object
 instead of creating a duplicate message.
 
+Confirmed friends can also place a real-time 1:1 voice call from the phone
+action in a DM. The callee sees an app-level incoming-call screen and can answer
+or decline; the caller can cancel while ringing, either participant can mute or
+end after connection, and a 60-second timeout becomes a missed-call entry that
+opens the conversation. Calls use a separate server-authoritative lifecycle and
+dedicated LiveKit room rather than pretending a two-person call is a Community
+Room. Only one ringing/active call per account is allowed.
+
 Home surfaces the three most recently updated non-archived direct
 conversations as `Your recent chats`. Global Chat is retired from the app
 UI; its existing backend data remains compatibility-only for older clients

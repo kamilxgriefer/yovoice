@@ -2053,3 +2053,27 @@ from the predeploy snapshot, and continue processing signed provider events.
 Do not delete `billingAccounts` or webhook receipts; they are required for
 reconciliation, refunds and replay. Stripe Product/Prices should be archived
 only after no active subscription references them.
+
+## Direct 1:1 call rollout
+
+Direct calls add server-only signaling, a scheduled expiry query, LiveKit
+control-plane cleanup and client reads, so release them in this order:
+
+1. Deploy `firestore.indexes.json` and wait for the
+   `directCalls(status, expiresAt)` index to report READY.
+2. Deploy `startDirectCall`, `acceptDirectCall`, `declineDirectCall`,
+   `cancelDirectCall`, `endDirectCall`, `createDirectCallToken`,
+   `expireDirectCallsSchedule`, `onDirectCallControlCreated` and the updated
+   `onNotificationCreated`. Confirm every revision is ACTIVE.
+3. Smoke a two-user ringing→accept→token→end lifecycle and confirm both
+   `directCallLocks` are removed plus the control outbox reaches `complete`.
+4. Deploy Firestore Rules, read them back and prove participant get / outsider
+   denial against production-safe disposable data.
+5. Release Hosting and native build 5. Verify foreground incoming presentation,
+   background push, answer/decline/cancel/end, mute latency, busy refusal,
+   60-second missed call and notification-to-DM routing.
+
+Rollback the clients first if their call UI is unhealthy, then restore Rules
+and Functions from the pinned pre-release revision. Keep the scheduled expiry
+and control worker running until no `ringing`/`active` call or pending control
+outbox remains; removing cleanup first can strand locks or LiveKit rooms.

@@ -33,6 +33,10 @@ const _kPreferenceGroups = [
     ],
   ),
   _PreferenceGroup(
+    title: 'Calls',
+    types: [NotificationType.directCall, NotificationType.missedCall],
+  ),
+  _PreferenceGroup(
     title: 'Messages',
     types: [
       NotificationType.directMessage,
@@ -62,6 +66,10 @@ String _labelFor(NotificationType type) {
       return 'People you follow go live';
     case NotificationType.directMessage:
       return 'Direct messages';
+    case NotificationType.directCall:
+      return 'Incoming voice calls';
+    case NotificationType.missedCall:
+      return 'Missed calls';
     case NotificationType.mention:
       return 'Mentions';
     case NotificationType.reply:

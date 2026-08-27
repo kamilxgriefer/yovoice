@@ -12756,6 +12756,140 @@ async function main() {
     },
   );
 
+  // -----------------------------------------------------------------------
+  // DIRECT CALLS — callables are the only writers; each participant may
+  // point-read canonical call state, while the callee alone owns the compact
+  // incoming-call subscription beneath users/{uid}.
+  // -----------------------------------------------------------------------
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await Promise.all([
+      setDoc(doc(db, "users/call-caller"), {
+        displayName: "Call Caller",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/call-callee"), {
+        displayName: "Call Callee",
+        banned: false,
+      }),
+      setDoc(doc(db, "users/call-outsider"), {
+        displayName: "Call Outsider",
+        banned: false,
+      }),
+      setDoc(doc(db, "directCalls/call-security"), {
+        callerId: "call-caller",
+        calleeId: "call-callee",
+        participantIds: ["call-callee", "call-caller"],
+        status: "ringing",
+      }),
+      setDoc(doc(db, "users/call-callee/incomingCalls/call-security"), {
+        callId: "call-security",
+        callerId: "call-caller",
+        status: "ringing",
+      }),
+      setDoc(doc(db, "directCallLocks/call-callee"), {
+        callId: "call-security",
+        status: "ringing",
+      }),
+      setDoc(doc(db, "directCallControlOutbox/call-security"), {
+        callId: "call-security",
+        status: "pending",
+      }),
+    ]);
+  });
+
+  const callCaller = testEnv.authenticatedContext("call-caller", {
+    email_verified: true,
+  });
+  const callCallee = testEnv.authenticatedContext("call-callee", {
+    email_verified: true,
+  });
+  const callOutsider = testEnv.authenticatedContext("call-outsider", {
+    email_verified: true,
+  });
+
+  await check(
+    "DIRECT CALL SECURITY: both participants can point-read the canonical " +
+      "call and an outsider cannot",
+    async () => {
+      await assertSucceeds(
+        getDoc(doc(callCaller.firestore(), "directCalls/call-security")),
+      );
+      await assertSucceeds(
+        getDoc(doc(callCallee.firestore(), "directCalls/call-security")),
+      );
+      await assertFails(
+        getDoc(doc(callOutsider.firestore(), "directCalls/call-security")),
+      );
+    },
+  );
+
+  await check(
+    "DIRECT CALL SECURITY: clients cannot forge or transition call state",
+    async () => {
+      const callerDb = callCaller.firestore();
+      await assertFails(
+        setDoc(doc(callerDb, "directCalls/forged-call"), {
+          callerId: "call-caller",
+          calleeId: "call-callee",
+          participantIds: ["call-callee", "call-caller"],
+          status: "active",
+        }),
+      );
+      await assertFails(
+        updateDoc(doc(callerDb, "directCalls/call-security"), {
+          status: "active",
+        }),
+      );
+      await assertFails(
+        deleteDoc(doc(callerDb, "directCalls/call-security")),
+      );
+    },
+  );
+
+  await check(
+    "DIRECT CALL SECURITY: only the callee can read their ringing inbox, " +
+      "and even they cannot dismiss or forge it",
+    async () => {
+      const calleeDb = callCallee.firestore();
+      await assertSucceeds(
+        getDocs(
+          query(
+            collection(calleeDb, "users/call-callee/incomingCalls"),
+            where("status", "==", "ringing"),
+          ),
+        ),
+      );
+      await assertFails(
+        getDoc(
+          doc(
+            callCaller.firestore(),
+            "users/call-callee/incomingCalls/call-security",
+          ),
+        ),
+      );
+      await assertFails(
+        deleteDoc(
+          doc(calleeDb, "users/call-callee/incomingCalls/call-security"),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "DIRECT CALL SECURITY: concurrency locks and LiveKit teardown jobs are " +
+      "opaque even to their subject",
+    async () => {
+      const calleeDb = callCallee.firestore();
+      await assertFails(
+        getDoc(doc(calleeDb, "directCallLocks/call-callee")),
+      );
+      await assertFails(
+        getDoc(doc(calleeDb, "directCallControlOutbox/call-security")),
+      );
+    },
+  );
+
   console.log(`\n${passed} passed, ${failed} failed`);
   await testEnv.cleanup();
   process.exit(failed > 0 ? 1 : 0);

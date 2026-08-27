@@ -10,6 +10,8 @@ enum NotificationType {
   broadcastInvite,
   liveStarted,
   directMessage,
+  directCall,
+  missedCall,
   mention,
   reply,
   // Server-only: never in firestore.rules' client-creatable type list, so
@@ -105,6 +107,10 @@ class AppNotification {
         // directMessage row here is a non-friend reaching out — the
         // product's "message request" moment.
         return '$actorName sent you a message request';
+      case NotificationType.directCall:
+        return '$actorName is calling you';
+      case NotificationType.missedCall:
+        return 'Missed call from $actorName';
       case NotificationType.mention:
         return targetLabel == null
             ? '$actorName mentioned you'

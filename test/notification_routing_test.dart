@@ -66,6 +66,14 @@ void main() {
       NotificationRouter.destinationFor(NotificationType.follow),
       NotificationDestination.profile,
     );
+    expect(
+      NotificationRouter.destinationFor(NotificationType.directCall),
+      NotificationDestination.directCall,
+    );
+    expect(
+      NotificationRouter.destinationFor(NotificationType.missedCall),
+      NotificationDestination.missedCall,
+    );
   });
   const senderUid = 'sender-uid';
   const recipientUid = 'recipient-uid';

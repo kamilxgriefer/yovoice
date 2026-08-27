@@ -41,6 +41,13 @@ This boundary is live in production; see ADR-115 and the retained rollout /
 recovery record in
 [DEPLOYMENT.md](DEPLOYMENT.md#released-2026-08-27-voice-moment-local-review-custom-availability-and-authoritative-capacity).
 
+**ADR-117 server-authoritative exception — ready for release.** A private 1:1
+call spans a bilateral permission check, atomic busy locks, ringing delivery,
+short-lived LiveKit authority and retryable external room teardown. Rules
+cannot make those effects atomic, so Cloud Functions own every status
+transition and token; clients receive participant-scoped snapshots and render
+the call state. This is intentionally separate from the room lifecycle.
+
 ## Two repos, one Firebase project
 
 ```

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_invite_response_screen.dart';
+import 'package:yovoice/features/calls/presentation/screens/direct_call_screen.dart';
+import 'package:yovoice/features/calls/presentation/direct_call_route_registry.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/presentation/screens/friends_screen.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
@@ -28,6 +30,8 @@ enum NotificationDestination {
   club,
   room,
   conversation,
+  directCall,
+  missedCall,
   none,
 }
 
@@ -54,6 +58,8 @@ class NotificationRouter {
         NotificationType.directMessage ||
         NotificationType.mention ||
         NotificationType.reply => NotificationDestination.conversation,
+        NotificationType.directCall => NotificationDestination.directCall,
+        NotificationType.missedCall => NotificationDestination.missedCall,
         NotificationType.achievementUnlocked ||
         NotificationType.moderation ||
         NotificationType.system => NotificationDestination.none,
@@ -94,6 +100,10 @@ class NotificationRouter {
           await _openRoom(navigator, targetId);
         case NotificationDestination.conversation:
           await _openConversation(navigator, targetId);
+        case NotificationDestination.directCall:
+          await _openDirectCall(navigator, targetId);
+        case NotificationDestination.missedCall:
+          await _openMissedCall(navigator, targetId);
         case NotificationDestination.none:
           // No dedicated destination yet — landing on the notification
           // center itself (where the tap originated) is enough for these.
@@ -182,6 +192,43 @@ class NotificationRouter {
     navigator.push(
       MaterialPageRoute(builder: (_) => RoomEntryScreen(room: room)),
     );
+  }
+
+  static Future<void> _openDirectCall(
+    NavigatorState navigator,
+    String? callId,
+  ) async {
+    if (callId == null || callId.isEmpty) return;
+    final snapshot = await FirebaseFirestore.instance
+        .collection('directCalls')
+        .doc(callId)
+        .get();
+    if (!snapshot.exists || !navigator.mounted) return;
+    if (!DirectCallRouteRegistry.claim(callId)) return;
+    try {
+      await navigator.push<void>(
+        MaterialPageRoute<void>(
+          fullscreenDialog: true,
+          builder: (_) => DirectCallScreen(callId: callId),
+        ),
+      );
+    } finally {
+      DirectCallRouteRegistry.release(callId);
+    }
+  }
+
+  static Future<void> _openMissedCall(
+    NavigatorState navigator,
+    String? callId,
+  ) async {
+    if (callId == null || callId.isEmpty) return;
+    final snapshot = await FirebaseFirestore.instance
+        .collection('directCalls')
+        .doc(callId)
+        .get();
+    if (!snapshot.exists || !navigator.mounted) return;
+    final conversationId = snapshot.data()?['conversationId'] as String?;
+    await _openConversation(navigator, conversationId);
   }
 
   static Future<void> _openConversation(
