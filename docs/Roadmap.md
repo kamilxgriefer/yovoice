@@ -17,11 +17,11 @@ someone decide what to pick up next.
 ## Done
 
 - **Friends can call each other directly from a DM** (2026-08-27, ADR-117,
-  **READY FOR BACKEND + BUILD 5 RELEASE**): the formerly inert phone action now
-  creates a private ringing session, presents incoming calls app-wide, supports
-  answer/decline/cancel/end and fast local mute, and connects both participants
-  to a dedicated LiveKit room only after acceptance. Server-owned locks prevent
-  overlapping calls, terminal transitions revoke the room, and unanswered
+  **DEPLOYED TO BACKEND + WEB; ANDROID BUILD 5 INTERNAL**): the formerly inert
+  phone action now creates a private ringing session, presents incoming calls
+  app-wide, supports answer/decline/cancel/end and fast local mute, and connects
+  both participants to a dedicated LiveKit room only after acceptance.
+  Server-owned locks prevent overlapping calls, terminal transitions revoke the room, and unanswered
   calls expire after 60 seconds into a missed-call notification. Bilateral
   friendship, blocks, restrictions and active accounts are revalidated at
   start, answer and token issuance.

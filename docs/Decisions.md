@@ -7099,8 +7099,8 @@ fixed-selector, bounded-cap and client-root-authority details in production.
 
 ## ADR-116: Product sound is a material feedback system, not a set of jingles
 
-**Status**: **PARTIALLY DEPLOYED 2026-08-27** — Hosting v3 live; native build
-and FCM payload cutover held
+**Status**: **DEPLOYED 2026-08-27** — Hosting and FCM v3 live; Android build 5
+available to internal testers; signed iOS build 5 artifact retained
 **Date**: 2026-08-27
 
 ### Context
@@ -7161,13 +7161,13 @@ folder of unrelated WAVs.
 
 ### Consequences
 
-The v3 client/Functions cutover is staged. Hosting from `65c1c5f` now serves
-the verified v3 in-app pack, but native stores remain on build `+3` and live
-`onNotificationCreated` remains revision `00013-dex` with channel v2. Ship
-clients that create v3 first,
-verify the new native assets on physical Android/iOS devices, then switch FCM
-payloads only when the minimum supported Android population has v3 (or a
-forced upgrade is in effect). Old Android clients do not know the new channel.
+The staged cutover completed on 2026-08-27. Hosting serves the verified v3
+in-app pack; Android builds 4 and 5 create `yovoice_activity_v3`, build 5 is
+available on the internal track, and production `onNotificationCreated` now
+targets the v3 activity channel plus the dedicated `yovoice_calls_v1` incoming
+call channel. The signed iOS build 5 artifact contains the matching APNs WAV,
+but was not uploaded because this workspace has no App Store Connect upload
+authorization.
 Web Hosting receives the in-app pack under the cache-safe `audio/ui/v3/` path;
 iOS and Android require clean native builds. Acceptance includes phone
 speaker, headphones, silent/DND, active LiveKit, Bluetooth and foreground /
@@ -7176,7 +7176,7 @@ operator's final listening approval.
 
 ## ADR-117: Direct calls are a server-authoritative state machine, not tiny rooms
 
-**Status**: **READY FOR DEPLOYMENT**
+**Status**: **DEPLOYED 2026-08-27**
 **Date**: 2026-08-27
 
 ### Context
@@ -7218,5 +7218,9 @@ credentials.
 Calls currently require confirmed friendship and a foreground-capable app; this
 is not yet a CallKit/ConnectionService background telephony integration.
 Ringing has a fixed 60-second timeout and active calls an eight-hour safety
-ceiling. Release order is the composite index to READY, Functions and their
-live smoke, Rules read-back, then build 5 clients.
+ceiling. The release completed in that order: the composite index is READY,
+the call Functions are ACTIVE, the released Rules source is byte-identical,
+Hosting serves the pinned client bytes, and Android build 5 is available to
+the internal tester list. The unauthenticated production callable smoke proves
+the deployed start endpoint returns the expected authorization contract; the
+first signed-in two-device call remains part of tester acceptance.

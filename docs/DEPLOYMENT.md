@@ -15,6 +15,41 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Released 2026-08-27: direct friend calls and Android build 5
+
+**DEPLOYED from `cbe3e463f9209ea9e1fcc97b5fe27dad2cd8a5ef`.** The
+`directCalls(status ASC, expiresAt ASC)` index reports READY. The eight direct
+call lifecycle/control exports, updated notification owner and reciprocal
+friend-request fix are ACTIVE in `europe-west1`. Firestore Rules release
+`projects/yovoice-ec54a/rulesets/83c05c23-587e-4eb9-827a-ace8770c804d`
+was read back through the Rules API and is byte-identical to the pinned
+`firestore.rules`, SHA-256
+`b91a23640c3e8c566b618f9720ee5f6f7b1376c15ecda45ca6a7028c7f6ea936`.
+An unauthenticated request to the live `startDirectCall` endpoint returns the
+expected callable `UNAUTHENTICATED` contract rather than a missing or stale
+binding.
+
+Hosting workflow
+[33115756128](https://github.com/kamilxgriefer/yovoice/actions/runs/33115756128)
+passed every verification/build gate and deployed the pinned artifact. Both
+live origins return the same 6,269,582-byte `main.dart.js` as the release
+build, SHA-256
+`2f9f68801eb19d512fc81dcf657a4d1861d7a4e5b4d8c4b595dbe9534d4a7d34`.
+Google Play internal testing now reports version `5 (1.0.0)` as available to
+the selected 10-tester list. The signed AAB SHA-256 is
+`904285c22488ef9c29854c54cb94850cc968f494bebd77f1035d12bbd2a11f6d`.
+
+Release verification passed 1,370 Flutter tests, 802 Functions tests, 499
+Firestore Rules tests, `flutter analyze`, the full Hosting workflow and the
+Google Play artifact validation. A signed iOS build 5 IPA was also produced at
+SHA-256
+`356cb411148d368e838425abf6532e07b5ea9b2331f543725350bf40d6fb85ad`;
+it is not an App Store release because no App Store Connect upload
+authorization is configured in this workspace. A production two-account
+ringing/answer/end smoke was not fabricated without controlled disposable
+accounts; build 5 exposes that final real-device acceptance path to the tester
+cohort.
+
 ### Released 2026-08-27: Voice Moment local review, custom availability and authoritative capacity
 
 **DEPLOYED from `65c1c5f906e6d3dd569dc96b092dead9f8424f9e`.** The
@@ -167,17 +202,18 @@ Rules are live, restore the captured Firestore/Storage sources only as part of
 an explicit coordinated rollback; do not mix an old permissive root writer
 with a new client and call that a safe intermediate state.
 
-### Partial release 2026-08-27: Velvet Prism product sound
+### Released 2026-08-27: Velvet Prism product sound
 
-**HOSTING DEPLOYED; NATIVE/FCM CUTOVER HELD.** The verified Hosting artifact
-from `65c1c5f` contains exactly the eight cache-safe `audio/ui/v3` WAVs, and
-both live origins return byte-identical copies while the old root-level path
-resolves only to the SPA fallback. Native stores still have build `1.0.0+3`,
-whose build number cannot be reused; physical listening and a new build `+4`
-remain required. Production `onNotificationCreated` therefore deliberately
-continues to serve revision `onnotificationcreated-00013-dex` and Android
-channel v2. Do not deploy the v3 payload until the client/channel adoption gate
-below is satisfied.
+**HOSTING, ANDROID INTERNAL AND FCM CUTOVER DEPLOYED.** The verified Hosting
+artifact contains exactly the eight cache-safe `audio/ui/v3` WAVs, and both
+live origins return byte-identical client bytes while the old root-level path
+resolves only to the SPA fallback. Android builds 4 and 5 carry the v3 native
+assets/channel; build 5 is available to 10 internal testers. Production
+`onNotificationCreated` targets `yovoice_activity_v3`, while incoming calls use
+the separate maximum-priority `yovoice_calls_v1` channel. The signed iOS build
+5 artifact contains the matching WAV but awaits App Store Connect upload
+authorization. Physical speaker/headphone/DND listening remains an acceptance
+check for the tester cohort, not a claim supplied by automated waveform tests.
 
 1. Run the full Flutter/Functions gates plus:
 

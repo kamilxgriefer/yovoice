@@ -2317,11 +2317,11 @@ permission flags).
   feedback when form validation failed — indistinguishable from success.
   It now says so, and a real success ("Profile saved.") is announced only
   after every stage completes.
-- **Fixed in source: direct Voice call button in chat did nothing.** This was
-  not a tap-target bug: the product had no 1:1 signaling subsystem. Friends can
-  now start a server-authoritative call from a DM, receive an immediate ringing
-  surface, accept/decline/cancel/end it, mute locally and reconnect through a
-  short-lived LiveKit token. Per-user locks prevent overlapping calls; block,
+- **Fixed and deployed 2026-08-27: direct Voice call button in chat did
+  nothing.** This was not a tap-target bug: the product had no 1:1 signaling
+  subsystem. Friends can now start a server-authoritative call from a DM,
+  receive an immediate ringing surface, accept/decline/cancel/end it, mute
+  locally and reconnect through a short-lived LiveKit token. Per-user locks prevent overlapping calls; block,
   restriction, account and bilateral-friendship state are rechecked before
   answer and token minting. A 60-second timeout becomes a useful missed-call
   notification that returns to the conversation. See ADR-117.
