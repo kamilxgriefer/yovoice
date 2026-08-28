@@ -18,18 +18,18 @@ correction silently broke all three anchors.)*
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
 | Cloud Functions | `npm --prefix functions test` | **892** tests (67 `*.test.js` files) |
-| Flutter VM | `flutter test` | **1407** tests (125 VM-compatible files) |
+| Flutter VM | `flutter test` | **1410** tests (126 VM-compatible files) |
 | Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart` | **1** test (1 browser-only file) |
 
 **Where these numbers came from.** Functions 892 and Rules 512 were re-measured
 on 2026-08-28 against the exact current source and fresh isolated emulators;
 the final role-transition pass also repeated its focused Auth/Firestore matrix
-at 76/76. Flutter VM 1407 passed in one invocation, the real Chrome Blob
+at 76/76. Flutter VM 1410 passed in one invocation, the real Chrome Blob
 lifecycle passed 1/1, and `flutter analyze` was clean on those bytes. Storage
 60 and family media 11 also ran against fresh isolated emulators rather than an
 occupied local 8080 endpoint. Both web release compilation and the dedicated
-browser preview harness compiled successfully. The 67 Functions files and 126
-total Flutter test files (125 VM-compatible plus one browser-only) are current
+browser preview harness compiled successfully. The 67 Functions files and 127
+total Flutter test files (126 VM-compatible plus one browser-only) are current
 `find` results rather than carried-forward estimates. The earlier
 figures this row used to carry (Rules 485, Functions 783/62, Flutter 1198/114)
 are kept in the movement log below as history.
@@ -148,6 +148,16 @@ suite, so isolated ports are real isolation rather than documentation only.
 > queue; phone, tablet and desktop layouts were inspected at 320, 390, 768,
 > 1100 and 1440 px. Functions, Storage, family media and browser-only coverage
 > are unchanged.
+
+> **Movement, 2026-08-28 (full-profile Vibe rendering).** Flutter VM
+> **1407/125 → 1410/126** adds a three-test production-widget suite: a saved
+> Vibe renders as its own Voice identity section, the exact 80-character editor
+> limit wraps at 320 px/200% text without overflow, and website-only identity
+> no longer falls into the empty state. The existing end-to-end profile Save
+> test now also pins `statusMessage` in Firestore and the shared profile stream;
+> the full friend-profile responsive matrix pins the same Vibe after opening a
+> different member's full profile. Rules, Functions, Storage, family media and
+> browser-only coverage are unchanged.
 
 > **Movement, 2026-08-17.** Rules 301 → **318** (`c75720a`, the
 > account-status gating; the suite ran 310 passed / 8 failed against the
@@ -562,8 +572,8 @@ provider checkout.
 
 ## Dart tests — real, but narrow
 
-`test/` — **1361 VM tests across 120 compatible files**, plus **1 real-Chrome
-test** in the repository's one browser-only file (**121 `*_test.dart` files
+`test/` — **1410 VM tests across 126 compatible files**, plus **1 real-Chrome
+test** in the repository's one browser-only file (**127 `*_test.dart` files
 total**), green in local verification, grown mostly
 out of real bugs rather than an even coverage discipline. The
 pattern throughout: fake the Firebase backends
@@ -596,7 +606,13 @@ pattern throughout: fake the Firebase backends
 - **`profile_save_e2e_test.dart`** — drives the REAL EditProfileScreen
   through pick → crop editor → Save → Storage → Firestore → stream
   emission; asserts the stored objects are the cropped 1024²/1920×1080
-  JPEGs.
+  JPEGs and that `statusMessage` survives the same Firestore/stream round trip.
+- **`profile_voice_identity_test.dart`** — renders the exact production Voice
+  identity card and pins saved Vibe, the full 80-character value at
+  320 px/200% text, plus the long website-only populated state.
+- **`friend_profile_responsive_test.dart`** — keeps that same saved Vibe on
+  another member's full-profile route across 320–2560 px and in the 320 px/200%
+  semantics pass.
 - **`friend_accept_notification_test.dart`** — the friend-request
   notification lifecycle (sender notified on accept, dedupe, retirement,
   silent decline).

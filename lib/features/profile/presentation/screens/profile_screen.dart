@@ -18,6 +18,7 @@ import 'package:yovoice/features/profile/presentation/screens/edit_profile_scree
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_journey_card.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
@@ -299,7 +300,7 @@ class _ProfileContent extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 14),
-              _VoiceIdentity(profile: profile),
+              ProfileVoiceIdentityCard(profile: profile),
               if (profile.accountType != AccountType.personal)
                 CreatorPinnedMomentCard(
                   creatorId: profile.uid,
@@ -441,16 +442,27 @@ class _Divider extends StatelessWidget {
       Container(width: 1, height: 34, color: const Color(0xFF3A2B43));
 }
 
-class _VoiceIdentity extends StatelessWidget {
-  const _VoiceIdentity({required this.profile});
+/// The complete Voice identity card rendered on the member's profile.
+///
+/// Public so the developer preview and layout tests exercise the exact widget
+/// used by [ProfileScreen]. Keeping this as a real shared surface prevents a
+/// saved profile field from being present in the editor/model but absent from
+/// the rendered profile again.
+class ProfileVoiceIdentityCard extends StatelessWidget {
+  const ProfileVoiceIdentityCard({required this.profile, super.key});
+
   final UserProfile profile;
 
   @override
   Widget build(BuildContext context) {
+    final vibe = profile.statusMessage.trim();
+    final bio = profile.bio.trim();
     final hasIdentity =
-        profile.bio.isNotEmpty ||
-        profile.country.isNotEmpty ||
-        profile.nativeLanguage.isNotEmpty ||
+        vibe.isNotEmpty ||
+        bio.isNotEmpty ||
+        profile.country.trim().isNotEmpty ||
+        profile.website.trim().isNotEmpty ||
+        profile.nativeLanguage.trim().isNotEmpty ||
         profile.spokenLanguages.isNotEmpty ||
         profile.learningLanguages.isNotEmpty;
     return _Panel(
@@ -461,15 +473,23 @@ class _VoiceIdentity extends StatelessWidget {
           const SizedBox(height: 13),
           if (!hasIdentity)
             const Text(
-              'Add your bio and languages so people know your vibe.',
+              'Add your vibe, bio or languages so people know you.',
               style: TextStyle(color: Color(0xFFA99DB3)),
             )
           else ...[
-            if (profile.bio.isNotEmpty)
+            if (vibe.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 13),
+                child: ProfileVibeHeadline(
+                  key: const ValueKey('profile-vibe'),
+                  vibe: vibe,
+                ),
+              ),
+            if (bio.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 13),
                 child: Text(
-                  profile.bio,
+                  bio,
                   style: const TextStyle(color: Color(0xFFD9D1DE), height: 1.4),
                 ),
               ),
@@ -982,9 +1002,13 @@ class _Chip extends StatelessWidget {
         children: [
           Icon(icon, color: const Color(0xFFC34BFF), size: 15),
           const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(color: Color(0xFFE3D9E8), fontSize: 12),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Color(0xFFE3D9E8), fontSize: 12),
+            ),
           ),
         ],
       ),

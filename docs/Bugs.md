@@ -1173,6 +1173,20 @@ permission flags).
 
 ## UI
 
+- **FIXED IN SOURCE 2026-08-28 — Vibe saved successfully but disappeared on
+  full profiles.** The editor wrote `statusMessage`, the model read it back,
+  and compact profile previews already used it; both the signed-in member's
+  older Voice identity card and the full friend-profile route omitted it.
+  Both routes now share one labeled, full-width Vibe headline, treat Vibe alone
+  as a populated identity, and wrap the full 80-character value at narrow
+  widths and enlarged text. The signed-in card's stale identity predicate also
+  omitted `website`, so a website-only profile falsely showed the empty state;
+  that branch is fixed too. One regression drives Save through Firestore and
+  the shared profile stream; production-widget coverage pins both full-profile
+  routes, including 320 px/200% accessibility layouts. Browser inspection
+  covered the shared card at 390, 768 and 1180 px plus the actual friend route
+  at 1280 px with no visible overflow. **WEB/MOBILE BUILD 10 RELEASE PENDING.**
+
 - **FIXED AND RELEASED TO WEB/MOBILE BETA 2026-08-28 — Podcast Room behaved like a recolored
   Community Room and ignored parts of its own creation contract.** The screen
   showed description/category where the episode topic belonged, counted every

@@ -1,4 +1,5 @@
 // Developer-only harness for the profile surfaces.
+// ignore_for_file: depend_on_referenced_packages
 //
 // Renders EditProfileScreen and the Profile header with a fake, local
 // UserProfile so their layout can be inspected at arbitrary widths
@@ -12,11 +13,22 @@
 // Not referenced by lib/main.dart; never part of a shipped build.
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
+import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/friends/data/models/friend_user.dart';
+import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
+import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/home/presentation/widgets/more_sheet.dart';
+import 'package:yovoice/features/messages/data/services/message_service.dart';
+import 'package:yovoice/features/notifications/data/services/notification_service.dart';
+import 'package:yovoice/features/profile/data/services/follow_service.dart';
+import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
+import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_journey_card.dart';
 import 'package:yovoice/firebase_options.dart';
@@ -44,6 +56,7 @@ UserProfile _fakeProfile({
   email: 'ada@yovoice.app',
   displayName: 'Ada Lovelace',
   username: 'ada',
+  statusMessage: 'Synthwave after midnight · building a room for storytellers',
   bio: 'Hosting late-night rooms about synths, space and stories.',
   country: 'Poland',
   nativeLanguage: 'Polish',
@@ -90,7 +103,7 @@ class _PreviewHome extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: Scaffold(
         backgroundColor: const Color(0xFF09050F),
         appBar: AppBar(
@@ -102,6 +115,7 @@ class _PreviewHome extends StatelessWidget {
               Tab(text: 'Header'),
               Tab(text: 'Journey'),
               Tab(text: 'Edit profile'),
+              Tab(text: 'Full friend'),
               Tab(text: 'Premium locks'),
             ],
           ),
@@ -111,7 +125,10 @@ class _PreviewHome extends StatelessWidget {
             ListView(
               children: [
                 ProfileHeader(profile: _fakeProfile(), onEdit: () {}),
-                const SizedBox(height: 400),
+                Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: ProfileVoiceIdentityCard(profile: _fakeProfile()),
+                ),
               ],
             ),
             ListView(
@@ -131,12 +148,108 @@ class _PreviewHome extends StatelessWidget {
                 premiumIdentity: false,
               ),
             ),
+            const _FriendProfilePreview(),
             const _PremiumLocksPreview(),
           ],
         ),
       ),
     );
   }
+}
+
+class _FriendProfilePreview extends StatefulWidget {
+  const _FriendProfilePreview();
+
+  @override
+  State<_FriendProfilePreview> createState() => _FriendProfilePreviewState();
+}
+
+class _FriendProfilePreviewState extends State<_FriendProfilePreview> {
+  late final Future<Widget> _screen = _buildScreen();
+
+  Future<Widget> _buildScreen() async {
+    const currentUid = 'preview-current';
+    const friendUid = 'preview-friend';
+    final firestore = FakeFirebaseFirestore();
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: currentUid, email: 'current@yovoice.app'),
+    );
+    await firestore.collection('users').doc(currentUid).set({
+      'uid': currentUid,
+      'displayName': 'Preview account',
+      'email': 'current@yovoice.app',
+    });
+    await firestore.collection('publicProfiles').doc(friendUid).set({
+      'uid': friendUid,
+      'displayName': 'Alexandra Voice',
+      'username': 'alexandra',
+      'statusMessage':
+          'Linkin Park - In the End · open mic and late-night stories',
+      'bio': 'Hosting warm, curious conversations after midnight.',
+      'nativeLanguage': 'Polish',
+      'spokenLanguages': ['English'],
+      'learningLanguages': ['Japanese'],
+      'friendCount': 42,
+      'followerCount': 128,
+      'followingCount': 73,
+      'accountType': 'personal',
+    });
+    await firestore.collection('socialPresence').doc(friendUid).set({
+      'uid': friendUid,
+      'isOnline': true,
+    });
+
+    final notifications = NotificationService(firestore: firestore, auth: auth);
+    return FriendProfileScreen(
+      friend: const FriendUser(
+        id: friendUid,
+        displayName: 'Alexandra Voice',
+        email: 'alexandra@yovoice.app',
+        photoUrl: null,
+        isOnline: true,
+        lastSeen: null,
+      ),
+      friendService: FriendService(
+        firestore: firestore,
+        auth: auth,
+        notificationService: notifications,
+      ),
+      messageService: MessageService(
+        firestore: firestore,
+        auth: auth,
+        notificationService: notifications,
+      ),
+      profileService: ProfileService(firestore: firestore, auth: auth),
+      followService: FollowService(firestore: firestore, auth: auth),
+      socialGraphService: _PreviewSocialGraphService(),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Widget>(
+      future: _screen,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Text('Friend preview failed: ${snapshot.error}'),
+          );
+        }
+        return snapshot.data ??
+            const Center(child: CircularProgressIndicator());
+      },
+    );
+  }
+}
+
+class _PreviewSocialGraphService implements SocialGraphService {
+  @override
+  Future<MutualFriendsSummary> getMutualFriends(String targetUserId) async =>
+      MutualFriendsSummary.empty;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _PremiumLocksPreview extends StatelessWidget {

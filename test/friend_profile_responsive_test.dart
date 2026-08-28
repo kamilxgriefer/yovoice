@@ -52,6 +52,8 @@ void main() {
       'uid': friendId,
       'displayName': longDisplayName,
       'username': 'alexandra_responsive_profile_name',
+      'statusMessage':
+          'Linkin Park - In the End https://youtu.be/eVTXPUF4Oz4 playing on repeat tonight!',
       'bio': longBio,
       'nativeLanguage': 'Polish',
       'spokenLanguages': [
@@ -145,6 +147,22 @@ void main() {
             .first,
       );
       expect(find.text(longBio), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('friend-profile-vibe')),
+        120,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('friend-profile-content-frame')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      expect(
+        find.text(
+          'Linkin Park - In the End https://youtu.be/eVTXPUF4Oz4 playing on repeat tonight!',
+        ),
+        findsOneWidget,
+      );
       if (size.width > 880) {
         expect(
           tester
@@ -233,6 +251,17 @@ void main() {
       );
       expect(tester.getSize(followButton).height, greaterThanOrEqualTo(44));
       expect(tester.getSize(messageButton).height, greaterThanOrEqualTo(44));
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('friend-profile-vibe')),
+        180,
+        scrollable: scrollable,
+      );
+      expect(
+        find.bySemanticsLabel(
+          'Vibe: Linkin Park - In the End https://youtu.be/eVTXPUF4Oz4 playing on repeat tonight!',
+        ),
+        findsOneWidget,
+      );
       expect(
         tester
             .getSemantics(followButton)

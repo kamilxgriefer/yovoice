@@ -12,6 +12,7 @@ import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
+import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -705,6 +706,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
   );
 
   Widget _voiceIdentity(UserProfile? profile) {
+    final vibe = profile?.statusMessage.trim() ?? '';
     final languages = <String>{
       if ((profile?.nativeLanguage ?? '').isNotEmpty) profile!.nativeLanguage,
       ...?profile?.spokenLanguages,
@@ -718,21 +720,49 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: _border),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.language_rounded, color: Color(0xFFB348FF)),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              languages.isEmpty
-                  ? 'Voice identity not added yet.'
-                  : languages.join(' • '),
+          const Row(
+            children: [
+              Icon(Icons.language_rounded, color: Color(0xFFB348FF)),
+              SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Voice identity',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (vibe.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            ProfileVibeHeadline(
+              key: const ValueKey('friend-profile-vibe'),
+              vibe: vibe,
+            ),
+          ],
+          if (languages.isNotEmpty) ...[
+            const SizedBox(height: 13),
+            Text(
+              languages.join(' • '),
               style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.w700,
+                height: 1.4,
               ),
             ),
-          ),
+          ] else if (vibe.isEmpty) ...[
+            const SizedBox(height: 13),
+            const Text(
+              'Voice identity not added yet.',
+              style: TextStyle(color: _muted),
+            ),
+          ],
         ],
       ),
     );

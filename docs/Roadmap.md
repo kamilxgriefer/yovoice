@@ -1241,6 +1241,29 @@ someone decide what to pick up next.
 
 ## In Progress
 
+### Saved Vibe on the full profile
+
+- **Status**: Implementation and local verification complete; **web Hosting,
+  TestFlight build 10 and Android Internal build 10 release pending**.
+- **Description**: `statusMessage` already saved to Firestore, round-tripped
+  through `UserProfile` and appeared in compact previews, but the signed-in
+  Voice identity card and the full friend-profile route never rendered it.
+  Both routes now share one responsive headline. Vibe counts as a valid
+  identity by itself and preserves the exact 80-character editor limit at
+  320 px with 200% text. A website-only identity no longer falls into the
+  empty state.
+- **Verification**: One regression drives the real Save path through Firestore
+  and the shared stream; three separate widget regressions render the exact
+  signed-in card, while the full friend-profile responsive matrix pins the
+  same value on the other full route. Browser inspection covered the shared
+  card at 390, 768 and 1180 px plus the actual friend route at 1280 px. Full
+  Flutter VM: 1410/1410; analyze: clean.
+- **Release work**: Commit/push the reviewed bytes, pass exact-SHA CI, deploy
+  the pinned Hosting artifact and verify its hashes, then publish signed build
+  10 to both permanent internal tester cohorts.
+- **Priority**: High — the field currently looks as if Save lost the user's
+  data even though persistence succeeded.
+
 ### Moderator and super-moderator Premium preview (ADR-119)
 
 - **Status**: Implemented and reviewed in source; **production release

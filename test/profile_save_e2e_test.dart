@@ -232,6 +232,17 @@ void main() {
 
       // Edit the bio through the real field. It sits below the fold in
       // the lazily-built ListView, so scroll it into existence first.
+      final vibeField = find.widgetWithText(TextFormField, 'Vibe');
+      await tester.scrollUntilVisible(
+        vibeField,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.enterText(
+        vibeField,
+        'Linkin Park · In the End · on repeat tonight',
+      );
+
       final bioField = find.widgetWithText(TextFormField, 'old bio');
       await tester.scrollUntilVisible(
         bioField,
@@ -305,6 +316,10 @@ void main() {
       expect(data['photoUrl'], contains('avatar_'));
       expect(data['bannerUrl'], isNotNull);
       expect(data['bannerUrl'], contains('banner_'));
+      expect(
+        data['statusMessage'],
+        'Linkin Park · In the End · on repeat tonight',
+      );
       expect(data['bio'], 'new e2e bio');
 
       // --- PROOF 3: FirebaseAuth mirror was updated deliberately. ---
@@ -317,6 +332,10 @@ void main() {
       ))!;
       expect(emitted.photoUrl, data['photoUrl']);
       expect(emitted.bannerUrl, data['bannerUrl']);
+      expect(
+        emitted.statusMessage,
+        'Linkin Park · In the End · on repeat tonight',
+      );
       expect(emitted.bio, 'new e2e bio');
 
       expect(tester.takeException(), isNull);
