@@ -81,7 +81,7 @@ given a false-precision date.
 | [116](#adr-116-product-sound-is-a-material-feedback-system-not-a-set-of-jingles) | Product sound is a material feedback system, not a set of jingles | Hosting deployed; native/FCM held | 2026-08-27 |
 | [118](#adr-118-premium-pairs-recurring-eur-with-non-renewing-prepaid-blik) | Premium pairs recurring EUR with non-renewing prepaid BLIK | Catalog deployed; provider rollout disabled | 2026-08-28 |
 | [119](#adr-119-moderator-premium-preview-is-a-derived-product-benefit-not-a-paid-entitlement) | Moderator Premium preview is a derived product benefit, not a paid entitlement | Implemented; production release pending | 2026-08-28 |
-| [120](#adr-120-podcast-studio-uses-the-participant-roster-as-its-production-state) | Podcast Studio uses the participant roster as its production state | Accepted in source | 2026-08-28 |
+| [120](#adr-120-podcast-studio-uses-the-participant-roster-as-its-production-state) | Podcast Studio uses the participant roster as its production state | Deployed to web and mobile beta | 2026-08-28 |
 
 > **The index is incomplete and has been for a while**: rows for ADR-020
 > through ADR-052 were never added, and neither were ADR-062–065,
@@ -7421,7 +7421,7 @@ support and reconciliation can still answer whether access was purchased.
 
 ## ADR-120: Podcast Studio uses the participant roster as its production state
 
-**Status**: Accepted in source
+**Status**: Deployed to web and mobile beta
 **Date**: 2026-08-28
 
 ### Context

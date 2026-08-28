@@ -1173,7 +1173,7 @@ permission flags).
 
 ## UI
 
-- **FIXED IN SOURCE 2026-08-28 — Podcast Room behaved like a recolored
+- **FIXED AND RELEASED TO WEB/MOBILE BETA 2026-08-28 — Podcast Room behaved like a recolored
   Community Room and ignored parts of its own creation contract.** The screen
   showed description/category where the episode topic belonged, counted every
   stage member as “Speaking,” did not expose show format, guidelines or the
@@ -1188,7 +1188,9 @@ permission flags).
   existing one. Reconnect is a delayed permission-recovery fallback rather
   than the normal promotion path. Responsive frames were rendered at
   320/390/768/1100/1440 px; inspection caught and fixed a short-desktop stage
-  overlap before release. See ADR-120.
+  overlap before release. Production Firestore Rules and Hosting were verified
+  after deployment; the same client is available as TestFlight build 9 and
+  Android Internal Testing build 9. See ADR-120.
 
 - **FIXED IN SOURCE 2026-08-27 — a rapid double tap on More could stack
   sheets or pop two different routes.** The shell previously started a new

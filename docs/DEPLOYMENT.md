@@ -15,6 +15,57 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Released 2026-08-28: Podcast Studio and mobile build 9
+
+**WEB, RULES AND MOBILE BETA RELEASED.** Podcast Studio was deployed from
+`39b320727a450358a5b41a27fe353e2e41b0058e`; the shared native build number was
+then raised to 9 in `e2fd878c403466c9bbdd78fff6ab146a8958ad3a` because both
+stores had already accepted build 8. The release makes Podcast a producer-led
+show surface with an editorial episode hero, real stage/audience/speaker
+counts, an in-room producer desk, a live stage-request queue, listener state
+and dedicated Podcast settings.
+
+Firestore Rules deployed as
+`projects/yovoice-ec54a/rulesets/c6736f68-dfd8-4489-b3dd-00dd0d3a9f20`.
+The live Rules source was read back byte-for-byte and matches repository
+SHA-256 `09b5bace9c1522ad5e47a274041184e73f95d84d5ca0901d35b262733198428b`.
+Hosting workflow
+[33188999220](https://github.com/kamilxgriefer/yovoice/actions/runs/33188999220)
+deployed the pinned 6,348,593-byte `main.dart.js`; both live origins match the
+workflow artifact at SHA-256
+`973ad8d8dfdd5870afcbbc4be0bf3cabd62e3b6af13a278ff33058a9b485345c`.
+A follow-up pinned Hosting deployment from build-9 revision `e2fd878` is
+workflow
+[33192629289](https://github.com/kamilxgriefer/yovoice/actions/runs/33192629289).
+
+App Store Connect accepted the signed `1.0.0 (9)` package at 18:49 CEST,
+finished processing it, and shows it as **Testing** in the permanent
+`YO Voice Internal Testers` group with a 90-day window. The 54,481,227-byte
+IPA SHA-256 is
+`3702a6c272bcc4570e3f52e5e2ce2bc2c3e9a4a27f5eea2c19488d31ad94a492`;
+inspection confirmed bundle `app.yovoice`, Apple Distribution team
+`C3R59P53KB`, production APNs, build 9 and
+`ITSAppUsesNonExemptEncryption=false`. Xcode's upload succeeded; warnings for
+missing third-party framework dSYMs do not block TestFlight but may limit
+symbolication inside those frameworks.
+
+Google Play Internal Testing reports `9 (1.0.0)` as **Available to internal
+testers**, published at 18:57 CEST. The selected `YO Voice Internal Testers`
+email list contains 11 accounts, including `mikegabrielpl@gmail.com`, and uses
+the existing internal-test opt-in link. The 104,300,235-byte signed AAB
+SHA-256 is
+`3168978aeccc856baeda0686b39ba868fc727f98db94da993c51bfeac227944e`;
+its package is `app.yovoice`, version code 9, min SDK 24 and target SDK 36.
+Google Play reported zero newly unsupported devices and retained 12,294
+supported phones.
+
+Release verification passed 1,407 Flutter VM tests, 512 Firestore Rules tests,
+892 Cloud Functions tests, 60 Storage Rules tests, 11 combined Family media
+tests, the real-Chrome audio lifecycle test, the 49-test focused Podcast/model
+pass, `flutter analyze`, the release web build, 55 responsive visual frames,
+signed artifact inspection, browser smoke and CodeQL. Production App Store and
+Google Play submissions remain separate from these tester releases.
+
 ### Uploaded 2026-08-28: iOS build 7 and mobile beta access audit
 
 **APP STORE CONNECT UPLOAD ACCEPTED from

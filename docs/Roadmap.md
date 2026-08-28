@@ -17,7 +17,8 @@ someone decide what to pick up next.
 ## Done
 
 - **Podcast Studio is a producer-led show surface, not a recolored Community
-  Room** (2026-08-28, ADR-120, **SOURCE COMPLETE; RELEASE PENDING**): the
+  Room** (2026-08-28, ADR-120, **DEPLOYED TO WEB + FIRESTORE RULES; iOS
+  BUILD 9 TESTING; ANDROID BUILD 9 INTERNAL**): the
   episode topic, show format, host credit and live stage/audience/speaking
   metrics now form the editorial hero. Hosts get an in-room producer desk and
   a real-time request queue with one-tap accept/decline; listeners get explicit
@@ -30,18 +31,21 @@ someone decide what to pick up next.
   callable's gapless LiveKit permission update and reconnects only as a
   delayed recovery. Responsive visual evidence covers 320–1440 px plus the
   desktop producer queue; short canvases scroll instead of overlapping stage
-  cards.
+  cards. Production Hosting serves the pinned workflow artifact, Firestore
+  Rules were read back byte-for-byte, TestFlight build `1.0.0 (9)` is assigned
+  to the permanent internal group, and Google Play build `1.0.0 (9)` is
+  available to the selected 11-account tester list.
 
 - **iOS build 7 accepted by App Store Connect** (2026-08-28,
-  **UPLOADED — PROCESSING / TESTER ASSIGNMENT PENDING**): signed
+  **SUPERSEDED BY TESTFLIGHT BUILD 9**): signed
   `1.0.0 (7)` was uploaded from `9a92072`, passed App Store package analysis
-  and entered Apple processing. TestFlight availability is intentionally not
-  claimed until the processed build is visible in the intended tester group.
-  Android remains on active Internal Testing build 7 because no mobile-client
-  code changed after that already-published bundle.
+  and entered Apple processing. Build `1.0.0 (9)` is now the verified current
+  TestFlight build in `YO Voice Internal Testers`; Android Internal Testing is
+  likewise on build 9.
 
 - **Android adaptive launcher icon respects the platform safe area**
-  (2026-08-28, **ANDROID BUILD 7 INTERNAL — AVAILABLE TO 10 TESTERS**): the
+  (2026-08-28, **RETAINED IN ANDROID BUILD 9 INTERNAL — AVAILABLE TO 11
+  TESTERS**): the
   Android 8+ foreground inset moves from 8% to 16%, bringing the full YO mark
   inside the 66dp adaptive safe area used by circle, squircle and OEM masks.
   iOS/App Store artwork, the canonical transparent mark and legacy Android
@@ -50,8 +54,8 @@ someone decide what to pick up next.
   build.
 
 - **P0 Google/Apple sign-in and registration recovery** (2026-08-28,
-  **DEPLOYED TO WEB; ANDROID BUILD 7 INTERNAL; iOS BUILD 7 UPLOADED TO APP
-  STORE CONNECT**; TestFlight availability and real-account smoke pending):
+  **DEPLOYED TO WEB; ANDROID BUILD 9 INTERNAL; iOS BUILD 9 TESTING**;
+  real-account smoke pending):
   Login and Registration now expose the same federated actions. Valid provider
   sessions are no longer rolled back by a concurrent or transient Firestore
   profile failure;

@@ -39,7 +39,7 @@ The participant stream remains the authority for all counts. LiveKit speaking
 state supplies the speaking indicator; no independent counter or placeholder
 identity is fabricated.
 
-## Verification before release
+## Verification and release
 
 - Flutter VM: **1407/1407**.
 - Firestore Rules: **512/512** against a fresh emulator.
@@ -51,5 +51,26 @@ identity is fabricated.
 - `flutter build web --release`: successful.
 - Visual harness: **55** room frames, including the populated producer queue.
 
-Deployment evidence is appended only after Rules readback, the pinned Hosting
-workflow and served-artifact fingerprint have completed.
+## Production evidence
+
+- Firestore Rules deployed as ruleset
+  `projects/yovoice-ec54a/rulesets/c6736f68-dfd8-4489-b3dd-00dd0d3a9f20`;
+  the live source is byte-identical to the repository with SHA-256
+  `09b5bace9c1522ad5e47a274041184e73f95d84d5ca0901d35b262733198428b`.
+- Hosting workflow
+  [33188999220](https://github.com/kamilxgriefer/yovoice/actions/runs/33188999220)
+  deployed commit `39b320727a450358a5b41a27fe353e2e41b0058e`.
+  Its 6,348,593-byte `main.dart.js` is byte-identical on both live origins,
+  SHA-256
+  `973ad8d8dfdd5870afcbbc4be0bf3cabd62e3b6af13a278ff33058a9b485345c`.
+- Native release revision `e2fd878c403466c9bbdd78fff6ab146a8958ad3a`
+  increments the shared build number to 9 because App Store Connect and Google
+  Play had already accepted build 8 before Podcast Studio was archived.
+- TestFlight `1.0.0 (9)` passed package analysis, has status **Testing**, and
+  is assigned to `YO Voice Internal Testers` with a 90-day testing window. Its
+  signed 54,481,227-byte IPA SHA-256 is
+  `3702a6c272bcc4570e3f52e5e2ce2bc2c3e9a4a27f5eea2c19488d31ad94a492`.
+- Google Play `1.0.0 (9)` is **Available to internal testers**, published on
+  2026-08-28 at 18:57 CEST to the selected 11-account list. Its signed
+  104,300,235-byte AAB SHA-256 is
+  `3168978aeccc856baeda0686b39ba868fc727f98db94da993c51bfeac227944e`.
