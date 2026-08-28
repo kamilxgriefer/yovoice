@@ -11,6 +11,17 @@ const {
   buildEntitlements,
   applyEntitlementsInTransaction,
 } = require("./entitlements");
+const {
+  PLAN_CONFIGURATION,
+  buildBillingContext,
+  buildPlanCatalog,
+  billingManager,
+  entitlementIsActiveAt,
+  exactKeys,
+  getPremiumBillingContextWithoutStripe,
+  parseBillingContextRequest,
+  readAccountState,
+} = require("./billing_context");
 
 const REGION = "europe-west1";
 const BILLING_RETURN_URL = "https://yovoice.app/premium";
@@ -22,74 +33,48 @@ const STRIPE_SECRET_KEY = defineSecret("STRIPE_SECRET_KEY");
 const STRIPE_WEBHOOK_SECRET = defineSecret("STRIPE_WEBHOOK_SECRET");
 const STRIPE_MONTHLY_PRICE_ID = defineString("STRIPE_MONTHLY_PRICE_ID");
 const STRIPE_YEARLY_PRICE_ID = defineString("STRIPE_YEARLY_PRICE_ID");
+const STRIPE_BLIK_MONTHLY_PRICE_ID = defineString(
+  "STRIPE_BLIK_MONTHLY_PRICE_ID",
+);
+const STRIPE_BLIK_YEARLY_PRICE_ID = defineString(
+  "STRIPE_BLIK_YEARLY_PRICE_ID",
+);
 const STRIPE_PORTAL_CONFIGURATION_ID = defineString(
   "STRIPE_PORTAL_CONFIGURATION_ID",
   { default: "" },
 );
 const STRIPE_EXPECTED_MODE = defineString("STRIPE_EXPECTED_MODE");
 
-const PLAN_CONFIGURATION = Object.freeze({
-  monthly: Object.freeze({ interval: "month", plnAmount: 1999 }),
-  yearly: Object.freeze({ interval: "year", plnAmount: 19999 }),
+const BLIK_PLAN_CONFIGURATION = Object.freeze({
+  monthly: Object.freeze({ currency: "pln", unitAmount: 2600, durationDays: 30 }),
+  yearly: Object.freeze({ currency: "pln", unitAmount: 26000, durationDays: 365 }),
 });
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing"]);
 const GRACE_SUBSCRIPTION_STATUSES = new Set(["past_due"]);
-const ZERO_DECIMAL_CURRENCIES = new Set([
-  "bif",
-  "clp",
-  "djf",
-  "gnf",
-  "jpy",
-  "kmf",
-  "krw",
-  "mga",
-  "pyg",
-  "rwf",
-  "ugx",
-  "vnd",
-  "vuv",
-  "xaf",
-  "xof",
-  "xpf",
-]);
-
-function exactKeys(value, allowed) {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.keys(value).every((key) => allowed.includes(key))
-  );
-}
-
-function normalizeCountryCode(value) {
-  if (value === undefined || value === null || value === "") return null;
-  if (typeof value !== "string" || !/^[A-Za-z]{2}$/.test(value)) {
-    throw new HttpsError(
-      "invalid-argument",
-      "countryCode must be a two-letter ISO country code.",
-    );
-  }
-  return value.toUpperCase();
-}
-
-function parseBillingContextRequest(data) {
-  const input = data ?? {};
-  if (!exactKeys(input, ["countryCode"])) {
-    throw new HttpsError("invalid-argument", "Unexpected billing context fields.");
-  }
-  return { countryCode: normalizeCountryCode(input.countryCode) };
-}
+const TERMINAL_SUBSCRIPTION_STATUSES = new Set(["canceled", "incomplete_expired"]);
 
 function parseCheckoutRequest(data) {
   const input = data ?? {};
-  if (!exactKeys(input, ["plan"]) || !(input.plan in PLAN_CONFIGURATION)) {
+  if (
+    !exactKeys(input, ["plan", "paymentMethod"]) ||
+    !Object.hasOwn(input, "plan") ||
+    (input.paymentMethod !== undefined &&
+      !Object.hasOwn(input, "paymentMethod")) ||
+    !Object.hasOwn(PLAN_CONFIGURATION, input.plan)
+  ) {
     throw new HttpsError(
       "invalid-argument",
       "plan must be monthly or yearly.",
     );
   }
-  return { plan: input.plan };
+  const paymentMethod = input.paymentMethod ?? "recurring";
+  if (!["recurring", "blik"].includes(paymentMethod)) {
+    throw new HttpsError(
+      "invalid-argument",
+      "paymentMethod must be recurring or blik.",
+    );
+  }
+  return { plan: input.plan, paymentMethod };
 }
 
 function parsePortalRequest(data) {
@@ -99,15 +84,6 @@ function parsePortalRequest(data) {
   }
 }
 
-function formatMinorAmount(amount, currency, countryCode) {
-  const divisor = ZERO_DECIMAL_CURRENCIES.has(currency) ? 1 : 100;
-  const locale = countryCode ? `und-${countryCode}` : "en";
-  return new Intl.NumberFormat(locale, {
-    style: "currency",
-    currency: currency.toUpperCase(),
-  }).format(amount / divisor);
-}
-
 function validateConfiguredPrice(price, plan, expectedLiveMode) {
   const configuration = PLAN_CONFIGURATION[plan];
   if (
@@ -115,19 +91,23 @@ function validateConfiguredPrice(price, plan, expectedLiveMode) {
     price.object !== "price" ||
     price.active !== true ||
     price.type !== "recurring" ||
+    price.billing_scheme !== "per_unit" ||
+    price.transform_quantity != null ||
     price.recurring?.interval !== configuration.interval ||
     price.recurring?.interval_count !== 1 ||
+    price.recurring?.usage_type !== "licensed" ||
+    price.recurring?.aggregate_usage != null ||
     price.livemode !== expectedLiveMode
   ) {
     throw new Error(`Stripe ${plan} Price is not an active one-${configuration.interval} recurring Price.`);
   }
   if (
-    price.currency !== "pln" ||
-    price.unit_amount !== configuration.plnAmount ||
+    price.currency !== configuration.currency ||
+    price.unit_amount !== configuration.unitAmount ||
     price.tax_behavior !== "inclusive"
   ) {
     throw new Error(
-      `Stripe ${plan} Price must be PLN ${configuration.plnAmount} with inclusive tax.`,
+      `Stripe ${plan} Price must be ${configuration.currency.toUpperCase()} ${configuration.unitAmount} with inclusive tax.`,
     );
   }
   if (Object.keys(price.currency_options ?? {}).length > 0) {
@@ -137,107 +117,31 @@ function validateConfiguredPrice(price, plan, expectedLiveMode) {
   }
 }
 
-function buildPlanCatalog(countryCode) {
-  const monthlyAmount = PLAN_CONFIGURATION.monthly.plnAmount;
-  const plans = ["monthly", "yearly"].map((id) => {
-    const amount = PLAN_CONFIGURATION[id].plnAmount;
-    const yearly = id === "yearly";
-    const equivalentAmount = yearly ? Math.round(amount / 12) : null;
-    const savingsPercent = yearly
-      ? Math.max(0, Math.round((1 - amount / (monthlyAmount * 12)) * 100))
-      : 0;
-    return {
-      id,
-      interval: PLAN_CONFIGURATION[id].interval,
-      currency: "PLN",
-      unitAmount: amount,
-      formattedPrice: formatMinorAmount(amount, "pln", countryCode),
-      formattedEquivalent: yearly
-        ? formatMinorAmount(equivalentAmount, "pln", countryCode)
-        : null,
-      savingsPercent,
-    };
-  });
-
-  return {
-    countryCode,
-    currency: "PLN",
-    priceDisplaySource: "base",
-    localizedAtCheckout: true,
-    taxDisplay: "included",
-    taxNotice:
-      "The PLN base price includes applicable tax. Stripe shows the final local currency and tax before payment.",
-    plans,
-  };
-}
-
-function billingManager(source) {
-  if (source === "stripe") return "stripe";
-  if (["apple", "appStore", "ios"].includes(source)) return "apple";
-  if (["google", "googlePlay", "play"].includes(source)) return "google";
-  if (source === "admin") return "admin";
-  return "none";
-}
-
-function entitlementIsActiveAt(entitlements, nowMs) {
-  const periodEndMs = entitlements.currentPeriodEnd?.toMillis?.();
-  return (
-    ["active", "trialing", "grace"].includes(entitlements.status) &&
-    Number.isFinite(periodEndMs) &&
-    periodEndMs > nowMs
-  );
-}
-
-function buildBillingContext(countryCode, state, nowMs) {
-  const manager = billingManager(state.entitlements.source);
-  const active = entitlementIsActiveAt(state.entitlements, nowMs);
-  return {
-    ...buildPlanCatalog(countryCode),
-    billingManagedBy: manager,
-    checkoutAvailable: !active,
-    portalAvailable:
-      manager === "stripe" &&
-      typeof state.billing.stripeCustomerId === "string" &&
-      state.billing.stripeCustomerId.startsWith("cus_"),
-    currentPlan:
-      active &&
-      (state.entitlements.plan === "monthly" ||
-        state.entitlements.plan === "yearly")
-        ? state.entitlements.plan
-        : "none",
-    renewalBehavior:
-      active &&
-      (state.entitlements.renewalBehavior === "renews" ||
-        state.entitlements.renewalBehavior === "ends")
-        ? state.entitlements.renewalBehavior
-        : "none",
-    currentPeriodEndMs:
-      active && Number.isFinite(state.entitlements.currentPeriodEnd?.toMillis?.())
-        ? state.entitlements.currentPeriodEnd.toMillis()
-        : null,
-  };
-}
-
-async function readAccountState(firestore, uid) {
-  if (!uid) return { entitlements: {}, billing: {} };
-  const [entitlementSnapshot, billingSnapshot] = await Promise.all([
-    firestore.collection("entitlements").doc(uid).get(),
-    firestore.collection("billingAccounts").doc(uid).get(),
-  ]);
-  return {
-    entitlements: entitlementSnapshot.data() ?? {},
-    billing: billingSnapshot.data() ?? {},
-  };
-}
-
-async function getPremiumBillingContextWithoutStripe(
-  request,
-  firestore = db,
-  nowMs = Timestamp.now().toMillis(),
-) {
-  const { countryCode } = parseBillingContextRequest(request.data);
-  const state = await readAccountState(firestore, request.auth?.uid);
-  return buildBillingContext(countryCode, state, nowMs);
+function validateConfiguredBlikPrice(price, plan, expectedLiveMode) {
+  const configuration = BLIK_PLAN_CONFIGURATION[plan];
+  if (
+    !configuration ||
+    !price ||
+    price.object !== "price" ||
+    price.active !== true ||
+    price.type !== "one_time" ||
+    price.billing_scheme !== "per_unit" ||
+    price.transform_quantity != null ||
+    price.recurring != null ||
+    price.livemode !== expectedLiveMode ||
+    price.currency !== configuration.currency ||
+    price.unit_amount !== configuration.unitAmount ||
+    price.tax_behavior !== "inclusive"
+  ) {
+    throw new Error(
+      `Stripe ${plan} BLIK Price must be a one-time PLN ${configuration?.unitAmount} Price with inclusive tax.`,
+    );
+  }
+  if (Object.keys(price.currency_options ?? {}).length > 0) {
+    throw new Error(
+      `Stripe ${plan} BLIK Price must not define manual currency options.`,
+    );
+  }
 }
 
 async function listStripeSubscriptionsForCustomer(stripe, customerId) {
@@ -279,7 +183,7 @@ async function cancelStripeSubscriptionsForCustomer(
     if (canonicalCustomerId !== customerId) {
       throw new Error("Stripe returned a subscription for another customer.");
     }
-    if (!["canceled", "incomplete_expired"].includes(subscription.status)) {
+    if (!TERMINAL_SUBSCRIPTION_STATUSES.has(subscription.status)) {
       await stripe.subscriptions.cancel(
         subscription.id,
         {},
@@ -293,29 +197,200 @@ async function cancelStripeSubscriptionsForCustomer(
   return canceledCount;
 }
 
+async function expireOpenCheckoutSessionsForCustomer(
+  stripe,
+  customerId,
+  pendingSessionId,
+) {
+  const expiredSessionIds = new Set();
+  let startingAfter;
+  do {
+    const page = await stripe.checkout.sessions.list({
+      customer: customerId,
+      status: "open",
+      limit: 100,
+      ...(startingAfter ? { starting_after: startingAfter } : {}),
+    });
+    if (!Array.isArray(page.data)) {
+      throw new Error("Stripe Checkout Session pagination returned invalid data.");
+    }
+    for (const session of page.data) {
+      const sessionCustomerId = stripeObjectId(session.customer, "cus_");
+      if (
+        typeof session.id !== "string" ||
+        !session.id.startsWith("cs_") ||
+        sessionCustomerId !== customerId
+      ) {
+        throw new Error(
+          "Stripe returned a Checkout Session for another customer.",
+        );
+      }
+      if (session.status !== "open") continue;
+      await stripe.checkout.sessions.expire(
+        session.id,
+        {},
+        {
+          idempotencyKey: `yovoice_expire_auth_delete_${customerId}_${session.id}`,
+        },
+      );
+      expiredSessionIds.add(session.id);
+    }
+    startingAfter = page.has_more
+      ? page.data[page.data.length - 1]?.id
+      : undefined;
+    if (page.has_more && !startingAfter) {
+      throw new Error("Stripe Checkout Session pagination made no progress.");
+    }
+  } while (startingAfter);
+
+  // The list endpoint can be eventually consistent immediately after Session
+  // creation. The stored id is an additional canonical fallback, not the only
+  // Session considered during account deletion.
+  if (
+    typeof pendingSessionId === "string" &&
+    pendingSessionId.startsWith("cs_") &&
+    !expiredSessionIds.has(pendingSessionId)
+  ) {
+    const pending = await stripe.checkout.sessions.retrieve(pendingSessionId);
+    const pendingCustomerId = stripeObjectId(pending.customer, "cus_");
+    if (pending.id !== pendingSessionId || pendingCustomerId !== customerId) {
+      throw new Error(
+        "Stored Checkout Session does not match its canonical customer.",
+      );
+    }
+    if (pending.status === "open") {
+      await stripe.checkout.sessions.expire(
+        pendingSessionId,
+        {},
+        {
+          idempotencyKey: `yovoice_expire_auth_delete_${customerId}_${pendingSessionId}`,
+        },
+      );
+      expiredSessionIds.add(pendingSessionId);
+    }
+  }
+  return expiredSessionIds.size;
+}
+
+function stripeObjectId(value, prefix) {
+  const id = typeof value === "string" ? value : value?.id;
+  return typeof id === "string" && id.startsWith(prefix) ? id : null;
+}
+
+function billingAccountIsDeleted(billing) {
+  return (
+    billing?.accountDeletionTombstone === true ||
+    Number.isFinite(billing?.accountDeletedAt?.toMillis?.())
+  );
+}
+
+function userProfileIsDeleted(snapshot) {
+  if (!snapshot.exists) return true;
+  const user = snapshot.data() ?? {};
+  return (
+    user.deleted === true ||
+    user.status === "deleted" ||
+    Number.isFinite(user.authDeletedAt?.toMillis?.())
+  );
+}
+
+async function cancelCanonicalStripeSubscription(
+  stripe,
+  subscriptionId,
+  customerId,
+  idempotencyScope,
+) {
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+  if (
+    subscription.id !== subscriptionId ||
+    stripeObjectId(subscription.customer, "cus_") !== customerId
+  ) {
+    throw new Error("Stripe subscription does not match its canonical customer.");
+  }
+  if (TERMINAL_SUBSCRIPTION_STATUSES.has(subscription.status)) {
+    return { canceled: false, alreadyTerminal: true };
+  }
+  await stripe.subscriptions.cancel(
+    subscriptionId,
+    {},
+    {
+      idempotencyKey: `yovoice_cancel_${idempotencyScope}_${subscriptionId}`,
+    },
+  );
+  return { canceled: true, alreadyTerminal: false };
+}
+
+function invoiceSubscriptionId(invoice) {
+  if (invoice?.parent?.type !== "subscription_details") return null;
+  return stripeObjectId(
+    invoice?.parent?.subscription_details?.subscription,
+    "sub_",
+  );
+}
+
+function invoicePaymentIntentId(invoicePayment) {
+  if (invoicePayment?.payment?.type !== "payment_intent") return null;
+  return stripeObjectId(invoicePayment.payment.payment_intent, "pi_");
+}
+
 async function cancelStripeBillingForDeletedUser(
   uid,
   { firestore, stripe, now = () => Timestamp.now() },
 ) {
   const billingRef = firestore.collection("billingAccounts").doc(uid);
-  const snapshot = await billingRef.get();
-  const billing = snapshot.data() ?? {};
+  const entitlementRef = firestore.collection("entitlements").doc(uid);
+  const deletionTime = now();
+  let billing = {};
+  await firestore.runTransaction(async (transaction) => {
+    const [snapshot, entitlementSnapshot] = await Promise.all([
+      transaction.get(billingRef),
+      transaction.get(entitlementRef),
+    ]);
+    billing = snapshot.data() ?? {};
+    transaction.set(
+      billingRef,
+      {
+        accountDeletionTombstone: true,
+        accountDeletedAt: billing.accountDeletedAt ?? deletionTime,
+        accountDeletionCancellationStatus: "pending",
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    if (entitlementSnapshot.exists) {
+      const prior = entitlementSnapshot.data() ?? {};
+      const expiredEntitlement = buildEntitlements({
+        plan: ["monthly", "yearly"].includes(prior.plan) ? prior.plan : "none",
+        status: "expired",
+        currentPeriodEnd: deletionTime,
+        source: prior.source ?? "unknown",
+      });
+      applyEntitlementsInTransaction(transaction, uid, expiredEntitlement, {
+        firestore,
+        writeUserProjection: false,
+      });
+    }
+  });
   const customerId = billing.stripeCustomerId;
   if (
-    !snapshot.exists ||
     typeof customerId !== "string" ||
     !customerId.startsWith("cus_")
   ) {
+    await billingRef.set(
+      {
+        accountDeletionCancellationStatus: "no-stripe-subscription",
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
     return { outcome: "no-stripe-subscription" };
   }
 
-  const pendingSessionId = billing.pendingCheckoutSessionId;
-  if (typeof pendingSessionId === "string" && pendingSessionId.startsWith("cs_")) {
-    const pending = await stripe.checkout.sessions.retrieve(pendingSessionId);
-    if (pending.status === "open") {
-      await stripe.checkout.sessions.expire(pendingSessionId);
-    }
-  }
+  await expireOpenCheckoutSessionsForCustomer(
+    stripe,
+    customerId,
+    billing.pendingCheckoutSessionId,
+  );
 
   const canceledCount = await cancelStripeSubscriptionsForCustomer(
     stripe,
@@ -324,7 +399,8 @@ async function cancelStripeBillingForDeletedUser(
   );
   await billingRef.set(
     {
-      accountDeletedAt: now(),
+      accountDeletionTombstone: true,
+      accountDeletedAt: billing.accountDeletedAt ?? deletionTime,
       accountDeletionCancellationStatus:
         canceledCount > 0 ? "canceled" : "no-active-subscription",
       pendingCheckoutSessionId: null,
@@ -351,7 +427,11 @@ function mapStripeSubscription(
       : priceId === priceIds.yearly
         ? "yearly"
         : null;
-  if (!plan || subscription.items?.data?.length !== 1) {
+  if (
+    !plan ||
+    subscription.items?.data?.length !== 1 ||
+    subscription.items.data[0]?.quantity !== 1
+  ) {
     throw new Error("Stripe subscription does not contain one configured Premium Price.");
   }
 
@@ -454,14 +534,19 @@ async function requireActiveBillingUser(request, firestore) {
       { reason: "email-verification-required" },
     );
   }
-  const profileSnapshot = await firestore.collection("users").doc(request.auth.uid).get();
+  const [profileSnapshot, billingSnapshot] = await Promise.all([
+    firestore.collection("users").doc(request.auth.uid).get(),
+    firestore.collection("billingAccounts").doc(request.auth.uid).get(),
+  ]);
   const profile = profileSnapshot.data() ?? {};
   if (
     !profileSnapshot.exists ||
     profile.banned === true ||
     profile.disabled === true ||
     profile.deleted === true ||
-    profile.status === "deleted"
+    profile.status === "deleted" ||
+    Number.isFinite(profile.authDeletedAt?.toMillis?.()) ||
+    billingAccountIsDeleted(billingSnapshot.data() ?? {})
   ) {
     throw new HttpsError("permission-denied", "This account cannot manage Premium.");
   }
@@ -545,7 +630,6 @@ function makeStripeBillingHandlers({
   now = () => Timestamp.now(),
 }) {
   let priceCache = null;
-  let portalConfigurationCache = null;
 
   async function loadPrices() {
     const nowMs = now().toMillis();
@@ -554,17 +638,38 @@ function makeStripeBillingHandlers({
     const promise = Promise.all([
       stripe.prices.retrieve(priceIds.monthly, { expand: ["currency_options"] }),
       stripe.prices.retrieve(priceIds.yearly, { expand: ["currency_options"] }),
-    ]).then(([monthly, yearly]) => {
+      stripe.prices.retrieve(priceIds.blikMonthly, {
+        expand: ["currency_options"],
+      }),
+      stripe.prices.retrieve(priceIds.blikYearly, {
+        expand: ["currency_options"],
+      }),
+    ]).then(([monthly, yearly, blikMonthly, blikYearly]) => {
       validateConfiguredPrice(monthly, "monthly", expectedLiveMode);
       validateConfiguredPrice(yearly, "yearly", expectedLiveMode);
+      validateConfiguredBlikPrice(blikMonthly, "monthly", expectedLiveMode);
+      validateConfiguredBlikPrice(blikYearly, "yearly", expectedLiveMode);
       const monthlyProduct =
         typeof monthly.product === "string" ? monthly.product : monthly.product?.id;
       const yearlyProduct =
         typeof yearly.product === "string" ? yearly.product : yearly.product?.id;
-      if (!monthlyProduct || monthlyProduct !== yearlyProduct) {
-        throw new Error("Stripe Premium Prices must belong to the same Product.");
+      const blikMonthlyProduct =
+        typeof blikMonthly.product === "string"
+          ? blikMonthly.product
+          : blikMonthly.product?.id;
+      const blikYearlyProduct =
+        typeof blikYearly.product === "string"
+          ? blikYearly.product
+          : blikYearly.product?.id;
+      if (
+        !monthlyProduct ||
+        monthlyProduct !== yearlyProduct ||
+        monthlyProduct !== blikMonthlyProduct ||
+        monthlyProduct !== blikYearlyProduct
+      ) {
+        throw new Error("All Stripe Premium Prices must belong to the same Product.");
       }
-      const value = { monthly, yearly };
+      const value = { monthly, yearly, blikMonthly, blikYearly };
       priceCache = { value, expiresAtMs: nowMs + 5 * 60 * 1000 };
       return value;
     });
@@ -588,65 +693,54 @@ function makeStripeBillingHandlers({
         { reason: "billing-not-configured" },
       );
     }
-    const nowMs = now().toMillis();
-    if (
-      portalConfigurationCache?.value &&
-      portalConfigurationCache.expiresAtMs > nowMs
-    ) {
-      return portalConfigurationCache.value;
-    }
-    if (portalConfigurationCache?.promise) {
-      return portalConfigurationCache.promise;
-    }
-    const promise = Promise.all([
+    // Portal configuration is mutable under the same bpc_ id. Validate it on
+    // every session creation so a Dashboard change cannot retain a five-minute
+    // window for quantity/promotion-code or unapproved Price updates.
+    const [prices, configuration] = await Promise.all([
       loadPrices(),
       stripe.billingPortal.configurations.retrieve(portalConfigurationId),
-    ]).then(([prices, configuration]) => {
-      const cancelEnabled =
-        configuration.active === true &&
-        configuration.features?.subscription_cancel?.enabled === true;
-      const update = configuration.features?.subscription_update;
-      const priceUpdateEnabled =
-        update?.enabled === true &&
-        update.default_allowed_updates?.includes("price");
-      const expectedProduct =
-        typeof prices.monthly.product === "string"
-          ? prices.monthly.product
-          : prices.monthly.product?.id;
-      const matchingProduct = update?.products?.find(
-        (entry) =>
-          (typeof entry.product === "string"
-            ? entry.product
-            : entry.product?.id) === expectedProduct,
+    ]);
+    const cancelEnabled =
+      configuration.active === true &&
+      configuration.features?.subscription_cancel?.enabled === true &&
+      configuration.features?.subscription_cancel?.mode === "at_period_end";
+    const update = configuration.features?.subscription_update;
+    const priceUpdateEnabled =
+      update?.enabled === true &&
+      Array.isArray(update.default_allowed_updates) &&
+      update.default_allowed_updates.length === 1 &&
+      update.default_allowed_updates[0] === "price";
+    const expectedProduct =
+      typeof prices.monthly.product === "string"
+        ? prices.monthly.product
+        : prices.monthly.product?.id;
+    const products = Array.isArray(update?.products) ? update.products : [];
+    const matchingProduct = products.length === 1 ? products[0] : null;
+    const matchingProductId =
+      typeof matchingProduct?.product === "string"
+        ? matchingProduct.product
+        : matchingProduct?.product?.id;
+    const quantityAdjustmentDisabled =
+      matchingProduct?.adjustable_quantity?.enabled === false;
+    const allowedPriceIds = (matchingProduct?.prices ?? []).map((entry) =>
+      typeof entry === "string" ? entry : entry?.id,
+    );
+    const expectedPriceIds = [prices.monthly.id, prices.yearly.id].sort();
+    if (
+      !cancelEnabled ||
+      !priceUpdateEnabled ||
+      matchingProductId !== expectedProduct ||
+      !quantityAdjustmentDisabled ||
+      allowedPriceIds.length !== 2 ||
+      !allowedPriceIds.every((id) => typeof id === "string") ||
+      JSON.stringify([...allowedPriceIds].sort()) !==
+        JSON.stringify(expectedPriceIds)
+    ) {
+      throw new Error(
+        "Stripe Portal must allow cancellation and switching between both configured Premium Prices.",
       );
-      const allowedPrices = new Set(
-        (matchingProduct?.prices ?? []).map((entry) =>
-          typeof entry === "string" ? entry : entry?.id,
-        ),
-      );
-      if (
-        !cancelEnabled ||
-        !priceUpdateEnabled ||
-        !allowedPrices.has(prices.monthly.id) ||
-        !allowedPrices.has(prices.yearly.id)
-      ) {
-        throw new Error(
-          "Stripe Portal must allow cancellation and switching between both configured Premium Prices.",
-        );
-      }
-      portalConfigurationCache = {
-        value: configuration,
-        expiresAtMs: nowMs + 5 * 60 * 1000,
-      };
-      return configuration;
-    });
-    portalConfigurationCache = { promise, expiresAtMs: 0 };
-    try {
-      return await promise;
-    } catch (error) {
-      portalConfigurationCache = null;
-      throw error;
     }
+    return configuration;
   }
 
   async function accountState(uid) {
@@ -657,22 +751,123 @@ function makeStripeBillingHandlers({
     return entitlementIsActiveAt(entitlements, now().toMillis());
   }
 
+  async function withActiveCheckoutAccount(uid, callback = () => undefined) {
+    const userRef = firestore.collection("users").doc(uid);
+    const billingRef = firestore.collection("billingAccounts").doc(uid);
+    return firestore.runTransaction(async (transaction) => {
+      const [userSnapshot, billingSnapshot] = await Promise.all([
+        transaction.get(userRef),
+        transaction.get(billingRef),
+      ]);
+      const user = userSnapshot.data() ?? {};
+      const billing = billingSnapshot.data() ?? {};
+      if (
+        userProfileIsDeleted(userSnapshot) ||
+        user.banned === true ||
+        user.disabled === true ||
+        billingAccountIsDeleted(billing)
+      ) {
+        throw new HttpsError(
+          "permission-denied",
+          "This account cannot manage Premium.",
+        );
+      }
+      return callback({ transaction, billingRef, billing });
+    });
+  }
+
+  async function expireOpenCheckoutSession(sessionId) {
+    if (typeof sessionId !== "string" || !sessionId.startsWith("cs_")) return;
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    if (session.status === "open") {
+      await stripe.checkout.sessions.expire(sessionId);
+    }
+  }
+
+  async function clearCheckoutAttempt(uid, attemptToken) {
+    await withActiveCheckoutAccount(
+      uid,
+      ({ transaction, billingRef, billing }) => {
+        if (billing.pendingCheckoutAttemptToken !== attemptToken) return;
+        transaction.set(
+          billingRef,
+          {
+            pendingCheckoutAttemptToken: null,
+            pendingCheckoutSessionId: null,
+            pendingCheckoutPlan: null,
+            pendingCheckoutPaymentMethod: null,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      },
+    );
+  }
+
+  async function disposeUnboundStripeCustomer(uid, customerId) {
+    if (typeof customerId !== "string" || !customerId.startsWith("cus_")) {
+      throw new Error("Stripe returned an invalid Customer for cleanup.");
+    }
+    let cleanupStatus = "pending";
+    try {
+      const deleted = await stripe.customers.del(
+        customerId,
+        {},
+        { idempotencyKey: `yovoice_delete_orphan_customer_${customerId}` },
+      );
+      if (deleted.id !== customerId || deleted.deleted !== true) {
+        throw new Error("Stripe did not confirm Customer deletion.");
+      }
+      cleanupStatus = "deleted";
+    } catch (deleteError) {
+      try {
+        const scrubbed = await stripe.customers.update(customerId, {
+          metadata: { firebaseUid: "" },
+        });
+        if (scrubbed.id !== customerId) {
+          throw new Error("Stripe returned a different Customer during scrub.");
+        }
+        cleanupStatus = "scrubbed";
+      } catch (scrubError) {
+        cleanupStatus = "pending";
+      }
+    }
+    await firestore.collection("stripeCustomerCleanup").doc(customerId).set(
+      {
+        uid,
+        stripeCustomerId: customerId,
+        status: cleanupStatus,
+        requiresManualCleanup: cleanupStatus === "pending",
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    return cleanupStatus;
+  }
+
   async function getPremiumBillingContextHandler(request) {
     return getPremiumBillingContextWithoutStripe(
       request,
       firestore,
       now().toMillis(),
+      { checkoutEnabled: true },
     );
   }
 
   async function createPremiumCheckoutSessionHandler(request) {
-    const { plan } = parseCheckoutRequest(request.data);
+    const { plan, paymentMethod } = parseCheckoutRequest(request.data);
     const user = await requireActiveBillingUser(request, firestore);
     await consumeBillingRateLimit(firestore, user.uid, "checkout", { now: now() });
     const prices = await loadPrices();
     const lease = await acquireCheckoutLease(firestore, user.uid, { now: now() });
     try {
       const state = await accountState(user.uid);
+      if (billingAccountIsDeleted(state.billing)) {
+        throw new HttpsError(
+          "permission-denied",
+          "This account cannot manage Premium.",
+        );
+      }
       const manager = billingManager(state.entitlements.source);
       if (entitlementIsActive(state.entitlements)) {
         throw new HttpsError(
@@ -686,50 +881,116 @@ function makeStripeBillingHandlers({
 
       let customerId = state.billing.stripeCustomerId;
       if (typeof customerId !== "string" || !customerId.startsWith("cus_")) {
+        const customerIdempotencyKey = `yovoice_customer_${user.uid}_v1`;
+        const customerCreateAttemptRef = firestore
+          .collection("stripeCustomerCleanup")
+          .doc(`create_${user.uid}`);
+        // This record is written before crossing the provider boundary. If the
+        // process loses Stripe's response, support (or a retry) can replay the
+        // exact idempotent create and identify the otherwise-orphaned Customer.
+        await withActiveCheckoutAccount(
+          user.uid,
+          ({ transaction }) =>
+            transaction.set(
+              customerCreateAttemptRef,
+              {
+                uid: user.uid,
+                createIdempotencyKey: customerIdempotencyKey,
+                status: "creating",
+                requiresManualCleanup: true,
+                updatedAt: FieldValue.serverTimestamp(),
+              },
+              { merge: true },
+            ),
+        );
         const customer = await stripe.customers.create(
           { metadata: { firebaseUid: user.uid } },
-          { idempotencyKey: `yovoice_customer_${user.uid}_v1` },
+          { idempotencyKey: customerIdempotencyKey },
         );
-        customerId = customer.id;
-        await firestore.collection("billingAccounts").doc(user.uid).set(
+        if (typeof customer.id !== "string" || !customer.id.startsWith("cus_")) {
+          throw new Error("Stripe Customer creation returned an invalid id.");
+        }
+        await customerCreateAttemptRef.set(
           {
-            stripeCustomerId: customerId,
-            provider: "stripe",
+            stripeCustomerId: customer.id,
+            status: "created-unbound",
+            requiresManualCleanup: true,
             updatedAt: FieldValue.serverTimestamp(),
           },
           { merge: true },
         );
+        try {
+          customerId = await withActiveCheckoutAccount(
+            user.uid,
+            ({ transaction, billingRef, billing }) => {
+              const existingCustomerId = billing.stripeCustomerId;
+              if (
+                typeof existingCustomerId === "string" &&
+                existingCustomerId.startsWith("cus_")
+              ) {
+                return existingCustomerId;
+              }
+              transaction.set(
+                billingRef,
+                {
+                  stripeCustomerId: customer.id,
+                  provider: "stripe",
+                  updatedAt: FieldValue.serverTimestamp(),
+                },
+                { merge: true },
+              );
+              return customer.id;
+            },
+          );
+        } catch (error) {
+          const cleanupStatus = await disposeUnboundStripeCustomer(
+            user.uid,
+            customer.id,
+          );
+          await customerCreateAttemptRef.set(
+            {
+              status: cleanupStatus,
+              requiresManualCleanup: cleanupStatus === "pending",
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+          throw error;
+        }
+        if (customerId !== customer.id) {
+          const cleanupStatus = await disposeUnboundStripeCustomer(
+            user.uid,
+            customer.id,
+          );
+          await customerCreateAttemptRef.set(
+            {
+              status: cleanupStatus,
+              requiresManualCleanup: cleanupStatus === "pending",
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        } else {
+          await customerCreateAttemptRef.set(
+            {
+              status: "bound",
+              requiresManualCleanup: false,
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
       }
 
-      const pendingSessionId = state.billing.pendingCheckoutSessionId;
-      if (
-        typeof pendingSessionId === "string" &&
-        pendingSessionId.startsWith("cs_")
-      ) {
-        const pending = await stripe.checkout.sessions.retrieve(pendingSessionId);
-        if (
-          state.billing.pendingCheckoutPlan === plan &&
-          pending.status === "open" &&
-          typeof pending.url === "string" &&
-          pending.url.startsWith("https://")
-        ) {
-          return { url: pending.url };
-        }
-        if (pending.status === "open") {
-          await stripe.checkout.sessions.expire(pendingSessionId);
-        }
-      }
-
-      // A stale/missing entitlement must never allow a second paid
-      // subscription. Stripe is authoritative for its own customer here.
-      const subscriptions = await stripe.subscriptions.list({
-        customer: customerId,
-        status: "all",
-        limit: 10,
-      });
-      const existing = subscriptions.data.find(
+      // Check every page before reusing a stored Checkout URL. A stale open
+      // session is not proof that no subscription was activated elsewhere.
+      const subscriptions = await listStripeSubscriptionsForCustomer(
+        stripe,
+        customerId,
+      );
+      const existing = subscriptions.find(
         (subscription) =>
-          !["canceled", "incomplete_expired"].includes(subscription.status),
+          !TERMINAL_SUBSCRIPTION_STATUSES.has(subscription.status),
       );
       if (existing) {
         throw new HttpsError(
@@ -739,56 +1000,125 @@ function makeStripeBillingHandlers({
         );
       }
 
+      const pendingSessionId = state.billing.pendingCheckoutSessionId;
+      const pendingPaymentMethod =
+        state.billing.pendingCheckoutPaymentMethod ?? "recurring";
+      if (
+        typeof pendingSessionId === "string" &&
+        pendingSessionId.startsWith("cs_")
+      ) {
+        const pending = await stripe.checkout.sessions.retrieve(pendingSessionId);
+        if (
+          state.billing.pendingCheckoutPlan === plan &&
+          pendingPaymentMethod === paymentMethod &&
+          pending.status === "open" &&
+          typeof pending.url === "string" &&
+          pending.url.startsWith("https://")
+        ) {
+          await withActiveCheckoutAccount(user.uid);
+          return { url: pending.url };
+        }
+        if (pending.status === "open") {
+          await stripe.checkout.sessions.expire(pendingSessionId);
+        }
+      }
+
       const savedAttemptToken = state.billing.pendingCheckoutAttemptToken;
       const attemptToken =
         !pendingSessionId &&
         state.billing.pendingCheckoutPlan === plan &&
+        pendingPaymentMethod === paymentMethod &&
         typeof savedAttemptToken === "string" &&
         /^[0-9a-f-]{36}$/.test(savedAttemptToken)
           ? savedAttemptToken
           : lease.token;
-      await firestore.collection("billingAccounts").doc(user.uid).set(
-        {
-          pendingCheckoutAttemptToken: attemptToken,
-          // Clear a stale provider id before the external create. If this
-          // invocation crashes after Stripe succeeds, the retry reuses the
-          // persisted attempt token and therefore Stripe's idempotency key.
-          pendingCheckoutSessionId: null,
-          pendingCheckoutPlan: plan,
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true },
+      await withActiveCheckoutAccount(
+        user.uid,
+        ({ transaction, billingRef }) =>
+          transaction.set(
+            billingRef,
+            {
+              pendingCheckoutAttemptToken: attemptToken,
+              // Clear a stale provider id before the external create. If this
+              // invocation crashes after Stripe succeeds, the retry reuses the
+              // persisted attempt token and therefore Stripe's idempotency key.
+              pendingCheckoutSessionId: null,
+              pendingCheckoutPlan: plan,
+              pendingCheckoutPaymentMethod: paymentMethod,
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          ),
       );
 
+      const isBlik = paymentMethod === "blik";
+      const selectedPrice = isBlik
+        ? prices[plan === "monthly" ? "blikMonthly" : "blikYearly"]
+        : prices[plan];
       const session = await stripe.checkout.sessions.create(
         {
-          mode: "subscription",
+          mode: isBlik ? "payment" : "subscription",
           customer: customerId,
-          payment_method_types: ["card"],
+          payment_method_types: isBlik ? ["blik"] : ["card", "paypal"],
           client_reference_id: user.uid,
-          line_items: [{ price: prices[plan].id, quantity: 1 }],
-          adaptive_pricing: { enabled: true },
+          line_items: [{ price: selectedPrice.id, quantity: 1 }],
+          ...(!isBlik ? { adaptive_pricing: { enabled: true } } : {}),
           automatic_tax: { enabled: true },
           billing_address_collection: "required",
           customer_update: { address: "auto", name: "auto" },
           success_url: CHECKOUT_SUCCESS_URL,
           cancel_url: CHECKOUT_CANCEL_URL,
-          metadata: { firebaseUid: user.uid, plan },
-          subscription_data: { metadata: { firebaseUid: user.uid, plan } },
+          metadata: { firebaseUid: user.uid, plan, paymentMethod },
+          ...(!isBlik
+            ? {
+                subscription_data: {
+                  metadata: { firebaseUid: user.uid, plan },
+                },
+              }
+            : {}),
         },
         { idempotencyKey: `yovoice_checkout_${user.uid}_${attemptToken}` },
       );
-      if (typeof session.url !== "string" || !session.url.startsWith("https://")) {
-        throw new Error("Stripe Checkout did not return a hosted URL.");
+      if (
+        typeof session.id !== "string" ||
+        !session.id.startsWith("cs_") ||
+        session.status !== "open" ||
+        typeof session.url !== "string" ||
+        !session.url.startsWith("https://")
+      ) {
+        await clearCheckoutAttempt(user.uid, attemptToken);
+        throw new Error("Stripe Checkout did not return an open hosted Session.");
       }
-      await firestore.collection("billingAccounts").doc(user.uid).set(
-        {
-          pendingCheckoutSessionId: session.id,
-          pendingCheckoutPlan: plan,
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      );
+      try {
+        await withActiveCheckoutAccount(
+          user.uid,
+          ({ transaction, billingRef }) =>
+            transaction.set(
+              billingRef,
+              {
+                pendingCheckoutSessionId: session.id,
+                pendingCheckoutPlan: plan,
+                pendingCheckoutPaymentMethod: paymentMethod,
+                updatedAt: FieldValue.serverTimestamp(),
+              },
+              { merge: true },
+            ),
+        );
+      } catch (error) {
+        await expireOpenCheckoutSession(session.id);
+        try {
+          // This Session was deliberately expired, so its idempotency key must
+          // not be reused on the next request (Stripe would return the same
+          // unusable Session forever).
+          await clearCheckoutAttempt(user.uid, attemptToken);
+        } catch (cleanupError) {
+          logger.warn("Stripe checkout attempt cleanup failed", {
+            uid: user.uid,
+            message: cleanupError.message,
+          });
+        }
+        throw error;
+      }
       return { url: session.url };
     } finally {
       try {
@@ -810,10 +1140,17 @@ function makeStripeBillingHandlers({
     await consumeBillingRateLimit(firestore, user.uid, "portal", { now: now() });
     const state = await accountState(user.uid);
     const manager = billingManager(state.entitlements.source);
-    if (manager !== "stripe") {
+    const subscriptionId = state.billing.stripeSubscriptionId;
+    if (
+      state.entitlements.source !== "stripe" ||
+      typeof subscriptionId !== "string" ||
+      !subscriptionId.startsWith("sub_")
+    ) {
       throw new HttpsError(
         "failed-precondition",
-        "This subscription is managed by another provider.",
+        manager === "stripe"
+          ? "This Stripe purchase is prepaid and has no subscription portal."
+          : "This subscription is managed by another provider.",
         { reason: "billing-managed-elsewhere", billingManagedBy: manager },
       );
     }
@@ -823,6 +1160,21 @@ function makeStripeBillingHandlers({
         "failed-precondition",
         "No Stripe billing account was found.",
         { reason: "stripe-customer-missing" },
+      );
+    }
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    const subscriptionCustomerId =
+      typeof subscription.customer === "string"
+        ? subscription.customer
+        : subscription.customer?.id;
+    if (
+      subscription.id !== subscriptionId ||
+      subscriptionCustomerId !== customerId
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "The Stripe subscription does not belong to this billing account.",
+        { reason: "stripe-subscription-owner-mismatch" },
       );
     }
     await loadPortalConfiguration();
@@ -854,42 +1206,501 @@ function makeStripeBillingHandlers({
     return { uid: bindings.docs[0].id, billingRef: bindings.docs[0].ref };
   }
 
-  async function chargeForFinancialEvent(event) {
-    if (event.type === "charge.refunded") return event.data.object;
-    const dispute = event.data.object;
-    const chargeId =
-      typeof dispute.charge === "string" ? dispute.charge : dispute.charge?.id;
-    if (typeof chargeId !== "string" || !chargeId.startsWith("ch_")) {
-      throw new Error("Stripe dispute is missing its charge.");
+  async function readCanonicalPrepaidCheckout(sessionId) {
+    if (typeof sessionId !== "string" || !sessionId.startsWith("cs_")) {
+      throw new Error("Stripe prepaid event is missing a valid Checkout Session id.");
     }
-    return stripe.charges.retrieve(chargeId);
+    const prices = await loadPrices();
+    const session = await stripe.checkout.sessions.retrieve(sessionId, {
+      expand: ["payment_intent"],
+    });
+    if (
+      session.id !== sessionId ||
+      session.mode !== "payment" ||
+      session.status !== "complete" ||
+      session.payment_status !== "paid"
+    ) {
+      throw new Error("Stripe prepaid Checkout is not complete and paid.");
+    }
+
+    const lineItems = await stripe.checkout.sessions.listLineItems(sessionId, {
+      limit: 10,
+      expand: ["data.price"],
+    });
+    if (!Array.isArray(lineItems.data) || lineItems.data.length !== 1) {
+      throw new Error("Stripe prepaid Checkout must contain exactly one line item.");
+    }
+    const lineItem = lineItems.data[0];
+    const priceId =
+      typeof lineItem.price === "string" ? lineItem.price : lineItem.price?.id;
+    const plan =
+      priceId === prices.blikMonthly.id
+        ? "monthly"
+        : priceId === prices.blikYearly.id
+          ? "yearly"
+          : null;
+    if (!plan || lineItem.quantity !== 1) {
+      throw new Error("Stripe prepaid Checkout does not contain one configured BLIK Price.");
+    }
+    const configuration = BLIK_PLAN_CONFIGURATION[plan];
+    if (
+      session.currency !== configuration.currency ||
+      session.amount_total !== configuration.unitAmount
+    ) {
+      throw new Error("Stripe prepaid Checkout total does not match its configured BLIK Price.");
+    }
+
+    const customerId =
+      typeof session.customer === "string"
+        ? session.customer
+        : session.customer?.id;
+    if (typeof customerId !== "string" || !customerId.startsWith("cus_")) {
+      throw new Error("Stripe prepaid Checkout is missing its canonical Customer.");
+    }
+    const paymentIntentId =
+      typeof session.payment_intent === "string"
+        ? session.payment_intent
+        : session.payment_intent?.id;
+    if (
+      typeof paymentIntentId !== "string" ||
+      !paymentIntentId.startsWith("pi_")
+    ) {
+      throw new Error("Stripe prepaid Checkout is missing its PaymentIntent.");
+    }
+    const paymentIntent =
+      typeof session.payment_intent === "object" && session.payment_intent
+        ? session.payment_intent
+        : await stripe.paymentIntents.retrieve(paymentIntentId);
+    const paymentCustomerId =
+      typeof paymentIntent.customer === "string"
+        ? paymentIntent.customer
+        : paymentIntent.customer?.id;
+    const paymentMethodId = stripeObjectId(
+      paymentIntent.payment_method,
+      "pm_",
+    );
+    if (!paymentMethodId) {
+      throw new Error("Stripe prepaid PaymentIntent is missing its PaymentMethod.");
+    }
+    const paymentMethod =
+      typeof paymentIntent.payment_method === "object" &&
+      paymentIntent.payment_method
+        ? paymentIntent.payment_method
+        : await stripe.paymentMethods.retrieve(paymentMethodId);
+    if (
+      paymentIntent.id !== paymentIntentId ||
+      paymentIntent.status !== "succeeded" ||
+      paymentIntent.currency !== configuration.currency ||
+      paymentIntent.amount_received !== configuration.unitAmount ||
+      paymentCustomerId !== customerId ||
+      paymentMethod.id !== paymentMethodId ||
+      paymentMethod.type !== "blik"
+    ) {
+      throw new Error("Stripe prepaid PaymentIntent is not a settled configured BLIK payment.");
+    }
+    return {
+      session,
+      customerId,
+      paymentIntentId,
+      plan,
+      configuration,
+    };
+  }
+
+  async function applyPrepaidPurchase(sessionId, event) {
+    if (typeof event?.id !== "string" || !event.id.startsWith("evt_")) {
+      throw new Error("Stripe prepaid event is missing a valid event id.");
+    }
+    const canonical = await readCanonicalPrepaidCheckout(sessionId);
+    const { uid, billingRef } = await canonicalBillingBinding(
+      canonical.customerId,
+    );
+    const eventRef = firestore.collection("stripeWebhookEvents").doc(event.id);
+    // One receipt per Checkout Session prevents completed + async-succeeded
+    // deliveries (or different event ids for the same payment) granting twice.
+    const purchaseRef = firestore
+      .collection("stripeWebhookEvents")
+      .doc(`prepaid_${canonical.session.id}`);
+    const financialRiskRef = firestore
+      .collection("stripeFinancialRisks")
+      .doc(canonical.paymentIntentId);
+    let alreadyProcessed = false;
+    let reviewRequired = false;
+    let ignoredAfterDeletion = false;
+
+    await firestore.runTransaction(async (transaction) => {
+      alreadyProcessed = false;
+      reviewRequired = false;
+      ignoredAfterDeletion = false;
+      const userRef = firestore.collection("users").doc(uid);
+      const entitlementRef = firestore.collection("entitlements").doc(uid);
+      const [
+        eventSnapshot,
+        purchaseSnapshot,
+        billingSnapshot,
+        userSnapshot,
+        entitlementSnapshot,
+        financialRiskSnapshot,
+      ] = await Promise.all([
+        transaction.get(eventRef),
+        transaction.get(purchaseRef),
+        transaction.get(billingRef),
+        transaction.get(userRef),
+        transaction.get(entitlementRef),
+        transaction.get(financialRiskRef),
+      ]);
+      if (eventSnapshot.exists) {
+        alreadyProcessed = true;
+        return;
+      }
+      if (purchaseSnapshot.exists) {
+        alreadyProcessed = true;
+        transaction.create(eventRef, {
+          type: event.type,
+          created: event.created,
+          duplicatePrepaidPurchase: true,
+          processedAt: FieldValue.serverTimestamp(),
+        });
+        return;
+      }
+      const billing = billingSnapshot.data() ?? {};
+      if (!billingSnapshot.exists || billing.stripeCustomerId !== canonical.customerId) {
+        throw new Error("Stripe prepaid Customer does not match the canonical billing account.");
+      }
+
+      const previousEntitlement = entitlementSnapshot.data() ?? {};
+      const activeEntitlement = entitlementIsActiveAt(
+        previousEntitlement,
+        now().toMillis(),
+      );
+      const receipt = {
+        recordType: "prepaid-purchase",
+        type: event.type,
+        created: event.created,
+        uid,
+        plan: canonical.plan,
+        checkoutSessionId: canonical.session.id,
+        paymentIntentId: canonical.paymentIntentId,
+        processedAt: FieldValue.serverTimestamp(),
+      };
+      const pendingCheckoutClear =
+        billing.pendingCheckoutSessionId === canonical.session.id
+          ? {
+              pendingCheckoutSessionId: null,
+              pendingCheckoutPlan: null,
+              pendingCheckoutPaymentMethod: null,
+            }
+          : {};
+
+      if (billingAccountIsDeleted(billing) || userProfileIsDeleted(userSnapshot)) {
+        ignoredAfterDeletion = true;
+        reviewRequired = true;
+        transaction.set(
+          billingRef,
+          {
+            billingReviewRequired: true,
+            billingReviewReason: "prepaid-after-account-deletion",
+            billingReviewEventId: event.id,
+            ...pendingCheckoutClear,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+        transaction.create(purchaseRef, {
+          ...receipt,
+          fulfillmentStatus: "account-deleted",
+        });
+        transaction.create(eventRef, {
+          ...receipt,
+          ignoredAfterAccountDeletion: true,
+          supportReviewRequired: true,
+        });
+        return;
+      }
+
+      if (financialRiskSnapshot.exists) {
+        reviewRequired = true;
+        transaction.set(
+          billingRef,
+          {
+            billingReviewRequired: true,
+            billingReviewReason: "prepaid-payment-at-financial-risk",
+            billingReviewEventId: event.id,
+            ...pendingCheckoutClear,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+        transaction.create(purchaseRef, {
+          ...receipt,
+          fulfillmentStatus: "financial-risk",
+        });
+        transaction.create(eventRef, {
+          ...receipt,
+          blockedByFinancialRisk: true,
+          supportReviewRequired: true,
+        });
+        return;
+      }
+
+      // Checkout refuses active access before creating a Session. A different
+      // entitlement can still land while the customer is paying. Never replace
+      // a live subscription or silently stack time; retain the paid receipt and
+      // send the overlap to support reconciliation.
+      if (activeEntitlement) {
+        reviewRequired = true;
+        transaction.set(
+          billingRef,
+          {
+            billingReviewRequired: true,
+            billingReviewReason: "prepaid-active-entitlement-overlap",
+            billingReviewEventId: event.id,
+            ...pendingCheckoutClear,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+        transaction.create(purchaseRef, {
+          ...receipt,
+          fulfillmentStatus: "manual-review",
+        });
+        transaction.create(eventRef, {
+          ...receipt,
+          supportReviewRequired: true,
+        });
+        return;
+      }
+
+      const currentPeriodEnd = Timestamp.fromMillis(
+        now().toMillis() + canonical.configuration.durationDays * 86400000,
+      );
+      const entitlementData = buildEntitlements({
+        plan: canonical.plan,
+        status: "active",
+        currentPeriodEnd,
+        source: "stripe_prepaid",
+      });
+      transaction.set(
+        billingRef,
+        {
+          provider: "stripe",
+          prepaidAccessStatus: "active",
+          currentPrepaidCheckoutSessionId: canonical.session.id,
+          currentPrepaidPaymentIntentId: canonical.paymentIntentId,
+          lastPrepaidCheckoutSessionId: canonical.session.id,
+          lastPrepaidPaymentIntentId: canonical.paymentIntentId,
+          currentPeriodEnd,
+          renewalBehavior: "none",
+          ...pendingCheckoutClear,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      const user = userSnapshot.data() ?? {};
+      applyEntitlementsInTransaction(transaction, uid, entitlementData, {
+        user,
+        firestore,
+        writeUserProjection:
+          userSnapshot.exists &&
+          user.banned !== true &&
+          user.disabled !== true &&
+          user.deleted !== true &&
+          user.status !== "deleted" &&
+          !user.authDeletedAt,
+      });
+      transaction.create(purchaseRef, {
+        ...receipt,
+        fulfillmentStatus: "applied",
+        currentPeriodEnd,
+      });
+      transaction.create(eventRef, {
+        ...receipt,
+        entitlementApplied: true,
+      });
+    });
+
+    if (alreadyProcessed) return { ignored: true };
+    if (ignoredAfterDeletion) return { ignored: true };
+    if (reviewRequired) return { reviewRequired: true, uid };
+    return { applied: true, uid, plan: canonical.plan };
+  }
+
+  async function readPaidSubscriptionInvoiceIdentity(
+    subscription,
+    customerId,
+  ) {
+    const invoice = subscription.latest_invoice;
+    const invoiceId = stripeObjectId(invoice, "in_");
+    if (
+      !invoiceId ||
+      !invoice ||
+      typeof invoice !== "object" ||
+      stripeObjectId(invoice.customer, "cus_") !== customerId ||
+      invoiceSubscriptionId(invoice) !== subscription.id
+    ) {
+      throw new Error(
+        "Paid Stripe subscription is missing its canonical latest Invoice.",
+      );
+    }
+    const invoicePayments = await stripe.invoicePayments.list({
+      invoice: invoiceId,
+      status: "paid",
+      limit: 2,
+    });
+    if (
+      invoicePayments.has_more === true ||
+      !Array.isArray(invoicePayments.data) ||
+      invoicePayments.data.length !== 1
+    ) {
+      throw new Error(
+        "Paid Stripe subscription must have one canonical Invoice Payment.",
+      );
+    }
+    const invoicePayment = invoicePayments.data[0];
+    const paymentIntentId = invoicePaymentIntentId(invoicePayment);
+    if (
+      invoicePayment.status !== "paid" ||
+      stripeObjectId(invoicePayment.invoice, "in_") !== invoiceId ||
+      !paymentIntentId
+    ) {
+      throw new Error("Stripe Invoice Payment does not match the subscription Invoice.");
+    }
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    if (
+      paymentIntent.id !== paymentIntentId ||
+      stripeObjectId(paymentIntent.customer, "cus_") !== customerId
+    ) {
+      throw new Error("Stripe Invoice Payment has the wrong customer.");
+    }
+    return { invoiceId, paymentIntentId };
+  }
+
+  async function chargeForFinancialEvent(event) {
+    const eventObject = event.data.object;
+    const chargeId =
+      event.type === "charge.refunded"
+        ? stripeObjectId(eventObject, "ch_")
+        : stripeObjectId(eventObject.charge, "ch_");
+    if (typeof chargeId !== "string" || !chargeId.startsWith("ch_")) {
+      throw new Error("Stripe financial event is missing its charge.");
+    }
+    const charge = await stripe.charges.retrieve(chargeId);
+    if (charge.id !== chargeId) {
+      throw new Error("Stripe returned a different financial event charge.");
+    }
+    return charge;
+  }
+
+  async function readCanonicalFinancialCharge(charge) {
+    const paymentIntentId = stripeObjectId(charge.payment_intent, "pi_");
+    const customerId = stripeObjectId(charge.customer, "cus_");
+    if (!paymentIntentId || !customerId) {
+      throw new Error("Stripe charge is missing its PaymentIntent or Customer.");
+    }
+    const [paymentIntent, invoicePayments] = await Promise.all([
+      stripe.paymentIntents.retrieve(paymentIntentId),
+      stripe.invoicePayments.list({
+        payment: { type: "payment_intent", payment_intent: paymentIntentId },
+        status: "paid",
+        limit: 2,
+      }),
+    ]);
+    if (
+      paymentIntent.id !== paymentIntentId ||
+      stripeObjectId(paymentIntent.customer, "cus_") !== customerId
+    ) {
+      throw new Error("Stripe charge does not match its canonical PaymentIntent.");
+    }
+    if (!Array.isArray(invoicePayments.data)) {
+      throw new Error("Stripe Invoice Payment lookup returned invalid data.");
+    }
+    if (invoicePayments.data.length === 0 && invoicePayments.has_more !== true) {
+      return { customerId, paymentIntentId, recurringCharge: null };
+    }
+    if (invoicePayments.has_more === true || invoicePayments.data.length !== 1) {
+      throw new Error("Stripe PaymentIntent has ambiguous Invoice ownership.");
+    }
+    const invoicePayment = invoicePayments.data[0];
+    const invoiceId = stripeObjectId(invoicePayment.invoice, "in_");
+    if (
+      invoicePayment.status !== "paid" ||
+      invoicePaymentIntentId(invoicePayment) !== paymentIntentId ||
+      !invoiceId
+    ) {
+      throw new Error("Stripe Invoice Payment does not match its PaymentIntent.");
+    }
+    const invoice = await stripe.invoices.retrieve(invoiceId);
+    const subscriptionId = invoiceSubscriptionId(invoice);
+    if (
+      invoice.id !== invoiceId ||
+      stripeObjectId(invoice.customer, "cus_") !== customerId ||
+      !subscriptionId
+    ) {
+      throw new Error("Stripe Invoice does not match its canonical subscription.");
+    }
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    if (
+      subscription.id !== subscriptionId ||
+      stripeObjectId(subscription.customer, "cus_") !== customerId
+    ) {
+      throw new Error(
+        "Stripe recurring charge does not match its canonical Subscription.",
+      );
+    }
+    return {
+      customerId,
+      paymentIntentId,
+      recurringCharge: { customerId, invoiceId, paymentIntentId, subscriptionId },
+    };
   }
 
   async function applyFinancialRiskEvent(event) {
-    const charge = await chargeForFinancialEvent(event);
-    let customerId =
-      typeof charge.customer === "string" ? charge.customer : charge.customer?.id;
-    if ((!customerId || !customerId.startsWith("cus_")) && charge.invoice) {
-      const invoiceId =
-        typeof charge.invoice === "string" ? charge.invoice : charge.invoice?.id;
-      const invoice = await stripe.invoices.retrieve(invoiceId);
-      customerId =
-        typeof invoice.customer === "string"
-          ? invoice.customer
-          : invoice.customer?.id;
+    if (typeof event?.id !== "string" || !event.id.startsWith("evt_")) {
+      throw new Error("Stripe financial event is missing a valid event id.");
     }
+    const charge = await chargeForFinancialEvent(event);
+    const customerId = stripeObjectId(charge.customer, "cus_");
     const { uid, billingRef } = await canonicalBillingBinding(customerId);
     const eventRef = firestore.collection("stripeWebhookEvents").doc(event.id);
+    // Stripe can replay an old refund after a later purchase. Deduplicate
+    // before any cancellation side effect, not merely before Firestore writes.
+    const initialEventSnapshot = await eventRef.get();
+    if (
+      initialEventSnapshot.exists &&
+      initialEventSnapshot.data()?.processingState !==
+        "financial-cancel-pending"
+    ) {
+      return { ignored: true };
+    }
+
+    if (
+      event.type === "charge.refunded" &&
+      (!Number.isSafeInteger(charge.amount) ||
+        !Number.isSafeInteger(charge.amount_refunded) ||
+        charge.amount_refunded < 0 ||
+        charge.amount_refunded > charge.amount)
+    ) {
+      throw new Error("Stripe refund amounts are invalid.");
+    }
     const isPartialRefund =
       event.type === "charge.refunded" &&
-      Number.isSafeInteger(charge.amount) &&
-      Number.isSafeInteger(charge.amount_refunded) &&
       charge.amount_refunded < charge.amount;
+    const canonicalFinancial = await readCanonicalFinancialCharge(charge);
+    const recurringCharge = canonicalFinancial.recurringCharge;
+    if (canonicalFinancial.customerId !== customerId) {
+      throw new Error("Stripe financial customer changed.");
+    }
 
     if (isPartialRefund) {
       await firestore.runTransaction(async (transaction) => {
-        const eventSnapshot = await transaction.get(eventRef);
+        const [eventSnapshot, billingSnapshot] = await Promise.all([
+          transaction.get(eventRef),
+          transaction.get(billingRef),
+        ]);
         if (eventSnapshot.exists) return;
+        if (billingSnapshot.data()?.stripeCustomerId !== customerId) {
+          throw new Error("Financial event customer binding changed.");
+        }
         transaction.set(
           billingRef,
           {
@@ -903,6 +1714,10 @@ function makeStripeBillingHandlers({
         transaction.create(eventRef, {
           type: event.type,
           created: event.created,
+          subscriptionId: recurringCharge?.subscriptionId ?? null,
+          paymentIntentId:
+            recurringCharge?.paymentIntentId ??
+            stripeObjectId(charge.payment_intent, "pi_"),
           supportReviewRequired: true,
           processedAt: FieldValue.serverTimestamp(),
         });
@@ -910,17 +1725,168 @@ function makeStripeBillingHandlers({
       return { reviewRequired: true };
     }
 
-    if (
-      event.type === "charge.refunded" &&
-      (!Number.isSafeInteger(charge.amount) ||
-        !Number.isSafeInteger(charge.amount_refunded) ||
-        charge.amount_refunded < charge.amount)
-    ) {
-      throw new Error("Stripe refund amounts are invalid.");
+    const riskPaymentIntentId =
+      recurringCharge?.paymentIntentId ??
+      canonicalFinancial.paymentIntentId;
+    if (!riskPaymentIntentId) {
+      throw new Error("Stripe financial event is missing its PaymentIntent.");
+    }
+    const financialRiskRef = firestore
+      .collection("stripeFinancialRisks")
+      .doc(riskPaymentIntentId);
+    const financialRiskData = {
+      paymentIntentId: riskPaymentIntentId,
+      invoiceId: recurringCharge?.invoiceId ?? null,
+      subscriptionId: recurringCharge?.subscriptionId ?? null,
+      customerId,
+      latestEventId: event.id,
+      latestEventType: event.type,
+      accessBlocked: true,
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+
+    // A one-time BLIK payment has no Invoice. Its refund/dispute must never
+    // cancel a separate subscription that the customer bought later. Recheck
+    // ownership and the actually-applied purchase receipt in one transaction.
+    if (!recurringCharge) {
+      const paymentIntentId = stripeObjectId(charge.payment_intent, "pi_");
+      let alreadyProcessed = false;
+      let currentPrepaidRevoked = false;
+      await firestore.runTransaction(async (transaction) => {
+        alreadyProcessed = false;
+        currentPrepaidRevoked = false;
+        const userRef = firestore.collection("users").doc(uid);
+        const entitlementRef = firestore.collection("entitlements").doc(uid);
+        const [eventSnapshot, billingSnapshot, userSnapshot, entitlementSnapshot] =
+          await Promise.all([
+            transaction.get(eventRef),
+            transaction.get(billingRef),
+            transaction.get(userRef),
+            transaction.get(entitlementRef),
+          ]);
+        if (eventSnapshot.exists) {
+          alreadyProcessed = true;
+          return;
+        }
+        const billing = billingSnapshot.data() ?? {};
+        if (!billingSnapshot.exists || billing.stripeCustomerId !== customerId) {
+          throw new Error("Financial event customer binding changed.");
+        }
+        const prior = entitlementSnapshot.data() ?? {};
+        // Only the explicit current receipt is revocation authority. The
+        // legacy `lastPrepaid*` fields are audit history and may refer to an
+        // older or unfulfilled payment.
+        const currentPaymentIntentId = billing.currentPrepaidPaymentIntentId;
+        const currentCheckoutSessionId = billing.currentPrepaidCheckoutSessionId;
+        const purchaseRef =
+          typeof currentCheckoutSessionId === "string" &&
+          currentCheckoutSessionId.startsWith("cs_")
+            ? firestore
+                .collection("stripeWebhookEvents")
+                .doc(`prepaid_${currentCheckoutSessionId}`)
+            : null;
+        const purchaseSnapshot = purchaseRef
+          ? await transaction.get(purchaseRef)
+          : null;
+        const purchase = purchaseSnapshot?.data() ?? {};
+        transaction.set(financialRiskRef, financialRiskData, { merge: true });
+        const isCurrentPrepaid =
+          paymentIntentId &&
+          currentPaymentIntentId === paymentIntentId &&
+          billing.prepaidAccessStatus === "active" &&
+          prior.source === "stripe_prepaid" &&
+          !billingAccountIsDeleted(billing) &&
+          !userProfileIsDeleted(userSnapshot) &&
+          purchaseSnapshot?.exists === true &&
+          purchase.fulfillmentStatus === "applied" &&
+          purchase.paymentIntentId === paymentIntentId &&
+          purchase.checkoutSessionId === currentCheckoutSessionId;
+
+        if (!isCurrentPrepaid) {
+          transaction.set(
+            billingRef,
+            {
+              billingReviewRequired: true,
+              billingReviewReason: "non-current-prepaid-financial-event",
+              billingReviewEventId: event.id,
+              lastFinancialEventId: event.id,
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+          transaction.create(eventRef, {
+            type: event.type,
+            created: event.created,
+            paymentIntentId:
+              typeof paymentIntentId === "string" ? paymentIntentId : null,
+            ignoredAsNonCurrentPrepaid: true,
+            supportReviewRequired: true,
+            processedAt: FieldValue.serverTimestamp(),
+          });
+          return;
+        }
+
+        currentPrepaidRevoked = true;
+        const entitlementData = buildEntitlements({
+          plan: ["monthly", "yearly"].includes(prior.plan)
+            ? prior.plan
+            : "none",
+          status: "expired",
+          currentPeriodEnd: now(),
+          source: "stripe_prepaid",
+        });
+        transaction.set(
+          billingRef,
+          {
+            prepaidAccessStatus: "revoked",
+            financialAccessStatus: "revoked",
+            financialAccessReason:
+              event.type === "charge.refunded" ? "full-refund" : "dispute",
+            lastFinancialEventId: event.id,
+            renewalBehavior: "none",
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+        const user = userSnapshot.data() ?? {};
+        applyEntitlementsInTransaction(transaction, uid, entitlementData, {
+          user,
+          firestore,
+          writeUserProjection:
+            userSnapshot.exists &&
+            user.banned !== true &&
+            user.disabled !== true &&
+            user.deleted !== true &&
+            user.status !== "deleted" &&
+            !user.authDeletedAt,
+        });
+        transaction.create(eventRef, {
+          type: event.type,
+          created: event.created,
+          paymentIntentId,
+          currentPrepaidAccessRevoked: true,
+          accessRevoked: true,
+          processedAt: FieldValue.serverTimestamp(),
+        });
+      });
+      if (alreadyProcessed) return { ignored: true };
+      if (currentPrepaidRevoked) return { revoked: true };
+      return { reviewRequired: true };
     }
 
-    await cancelStripeSubscriptionsForCustomer(stripe, customerId, event.id);
+    let alreadyProcessed = false;
+    let nonCurrentRecurring = false;
+    let financialOperationOwned = false;
+    let financialOperationInProgress = false;
+    const financialOperationToken = randomUUID();
+    const financialOperationLeaseUntil = Timestamp.fromMillis(
+      now().toMillis() + 60_000,
+    );
     await firestore.runTransaction(async (transaction) => {
+      alreadyProcessed = false;
+      nonCurrentRecurring = false;
+      financialOperationOwned = false;
+      financialOperationInProgress = false;
       const userRef = firestore.collection("users").doc(uid);
       const entitlementRef = firestore.collection("entitlements").doc(uid);
       const [eventSnapshot, billingSnapshot, userSnapshot, entitlementSnapshot] =
@@ -930,11 +1896,159 @@ function makeStripeBillingHandlers({
           transaction.get(userRef),
           transaction.get(entitlementRef),
         ]);
-      if (eventSnapshot.exists) return;
-      if (billingSnapshot.data()?.stripeCustomerId !== customerId) {
+      const billing = billingSnapshot.data() ?? {};
+      const entitlement = entitlementSnapshot.data() ?? {};
+      if (!billingSnapshot.exists || billing.stripeCustomerId !== customerId) {
         throw new Error("Financial event customer binding changed.");
       }
+      if (eventSnapshot.exists) {
+        const receipt = eventSnapshot.data() ?? {};
+        const leaseUntilMs = receipt.operationLeaseUntil?.toMillis?.();
+        if (
+          receipt.processingState === "financial-cancel-pending" &&
+          receipt.subscriptionId === recurringCharge.subscriptionId &&
+          (!Number.isFinite(leaseUntilMs) || leaseUntilMs <= now().toMillis())
+        ) {
+          financialOperationOwned = true;
+          transaction.set(
+            eventRef,
+            {
+              operationToken: financialOperationToken,
+              operationLeaseUntil: financialOperationLeaseUntil,
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        } else if (receipt.processingState === "financial-cancel-pending") {
+          financialOperationInProgress = true;
+        } else {
+          alreadyProcessed = true;
+        }
+        return;
+      }
+      const isCurrentRecurring =
+        billing.stripeSubscriptionId === recurringCharge.subscriptionId &&
+        billing.currentInvoiceId === recurringCharge.invoiceId &&
+        billing.currentPaymentIntentId === recurringCharge.paymentIntentId &&
+        entitlement.source === "stripe" &&
+        !billingAccountIsDeleted(billing) &&
+        !userProfileIsDeleted(userSnapshot);
+      transaction.set(financialRiskRef, financialRiskData, { merge: true });
+      if (isCurrentRecurring) {
+        financialOperationOwned = true;
+        transaction.create(eventRef, {
+          type: event.type,
+          created: event.created,
+          subscriptionId: recurringCharge.subscriptionId,
+          invoiceId: recurringCharge.invoiceId,
+          paymentIntentId: recurringCharge.paymentIntentId,
+          processingState: "financial-cancel-pending",
+          operationToken: financialOperationToken,
+          operationLeaseUntil: financialOperationLeaseUntil,
+          queuedAt: FieldValue.serverTimestamp(),
+        });
+        return;
+      }
+
+      nonCurrentRecurring = true;
+      transaction.set(
+        billingRef,
+        {
+          billingReviewRequired: true,
+          billingReviewReason: "non-current-recurring-financial-event",
+          billingReviewEventId: event.id,
+          lastFinancialEventId: event.id,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      transaction.create(eventRef, {
+        type: event.type,
+        created: event.created,
+        subscriptionId: recurringCharge.subscriptionId,
+        invoiceId: recurringCharge.invoiceId,
+        paymentIntentId: recurringCharge.paymentIntentId,
+        ignoredAsNonCurrentRecurring: true,
+        supportReviewRequired: true,
+        processedAt: FieldValue.serverTimestamp(),
+      });
+    });
+    if (alreadyProcessed) return { ignored: true };
+    if (financialOperationInProgress) return { inProgress: true };
+    if (nonCurrentRecurring) return { reviewRequired: true };
+    if (!financialOperationOwned) {
+      throw new Error("Stripe financial cancellation was not claimed.");
+    }
+
+    // Cancel only the exact subscription paid by this Invoice. Never sweep all
+    // subscriptions on the Customer: a later purchase may already be current.
+    await cancelCanonicalStripeSubscription(
+      stripe,
+      recurringCharge.subscriptionId,
+      customerId,
+      event.id,
+    );
+
+    let supersededBeforeRevocation = false;
+    let financialOperationCompleted = false;
+    await firestore.runTransaction(async (transaction) => {
+      supersededBeforeRevocation = false;
+      financialOperationCompleted = false;
+      const userRef = firestore.collection("users").doc(uid);
+      const entitlementRef = firestore.collection("entitlements").doc(uid);
+      const [eventSnapshot, billingSnapshot, userSnapshot, entitlementSnapshot] =
+        await Promise.all([
+          transaction.get(eventRef),
+          transaction.get(billingRef),
+          transaction.get(userRef),
+          transaction.get(entitlementRef),
+        ]);
+      const receipt = eventSnapshot.data() ?? {};
+      if (
+        !eventSnapshot.exists ||
+        receipt.processingState !== "financial-cancel-pending" ||
+        receipt.operationToken !== financialOperationToken
+      ) {
+        throw new Error("Stripe financial cancellation claim changed.");
+      }
+      const billing = billingSnapshot.data() ?? {};
       const prior = entitlementSnapshot.data() ?? {};
+      if (billing.stripeCustomerId !== customerId) {
+        throw new Error("Financial event customer binding changed.");
+      }
+      if (
+        billing.stripeSubscriptionId !== recurringCharge.subscriptionId ||
+        billing.currentInvoiceId !== recurringCharge.invoiceId ||
+        billing.currentPaymentIntentId !== recurringCharge.paymentIntentId ||
+        prior.source !== "stripe" ||
+        billingAccountIsDeleted(billing) ||
+        userProfileIsDeleted(userSnapshot)
+      ) {
+        supersededBeforeRevocation = true;
+        transaction.set(
+          billingRef,
+          {
+            billingReviewRequired: true,
+            billingReviewReason: "recurring-financial-event-superseded",
+            billingReviewEventId: event.id,
+            lastFinancialEventId: event.id,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+        transaction.set(eventRef, {
+          type: event.type,
+          created: event.created,
+          subscriptionId: recurringCharge.subscriptionId,
+          processingState: "completed",
+          operationLeaseUntil: null,
+          supersededBeforeRevocation: true,
+          supportReviewRequired: true,
+          processedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+        financialOperationCompleted = true;
+        return;
+      }
       const entitlementData = buildEntitlements({
         plan: ["monthly", "yearly"].includes(prior.plan) ? prior.plan : "none",
         status: "expired",
@@ -965,13 +2079,23 @@ function makeStripeBillingHandlers({
           user.status !== "deleted" &&
           !user.authDeletedAt,
       });
-      transaction.create(eventRef, {
+      transaction.set(eventRef, {
         type: event.type,
         created: event.created,
+        subscriptionId: recurringCharge.subscriptionId,
+        invoiceId: recurringCharge.invoiceId,
+        paymentIntentId: recurringCharge.paymentIntentId,
+        processingState: "completed",
+        operationLeaseUntil: null,
         accessRevoked: true,
         processedAt: FieldValue.serverTimestamp(),
-      });
+      }, { merge: true });
+      financialOperationCompleted = true;
     });
+    if (!financialOperationCompleted) {
+      throw new Error("Stripe financial cancellation did not complete.");
+    }
+    if (supersededBeforeRevocation) return { reviewRequired: true };
     return { revoked: true };
   }
 
@@ -979,14 +2103,17 @@ function makeStripeBillingHandlers({
     if (typeof subscriptionId !== "string" || !subscriptionId.startsWith("sub_")) {
       throw new Error("Stripe webhook has no valid subscription id.");
     }
+    if (typeof event?.id !== "string" || !event.id.startsWith("evt_")) {
+      throw new Error("Stripe subscription event is missing a valid event id.");
+    }
     // The webhook must enforce the same commercial configuration as Checkout;
     // matching an id alone is not pricing authority.
     await loadPrices();
     const initialSubscription = await stripe.subscriptions.retrieve(subscriptionId);
-    const customerId =
-      typeof initialSubscription.customer === "string"
-        ? initialSubscription.customer
-        : initialSubscription.customer?.id;
+    if (initialSubscription.id !== subscriptionId) {
+      throw new Error("Stripe returned a different subscription.");
+    }
+    const customerId = stripeObjectId(initialSubscription.customer, "cus_");
     if (typeof customerId !== "string" || !customerId.startsWith("cus_")) {
       throw new Error("Stripe subscription is missing its customer.");
     }
@@ -994,18 +2121,22 @@ function makeStripeBillingHandlers({
     const eventRef = firestore.collection("stripeWebhookEvents").doc(event.id);
     let alreadyProcessed = false;
     let ignoredAsSuperseded = false;
+    let overlap = null;
     await firestore.runTransaction(async (transaction) => {
+      alreadyProcessed = false;
+      ignoredAsSuperseded = false;
+      overlap = null;
       // Refresh on every Firestore transaction retry. This closes the race in
       // which an older active event pauses here, a cancellation commits, and
       // the older handler resumes with a stale object and resurrects access.
       const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
         expand: ["latest_invoice"],
       });
-      const currentCustomerId =
-        typeof subscription.customer === "string"
-          ? subscription.customer
-          : subscription.customer?.id;
-      if (currentCustomerId !== customerId) {
+      const currentCustomerId = stripeObjectId(subscription.customer, "cus_");
+      if (
+        subscription.id !== subscriptionId ||
+        currentCustomerId !== customerId
+      ) {
         throw new Error("Stripe subscription customer changed during processing.");
       }
       const userRef = firestore.collection("users").doc(uid);
@@ -1021,31 +2152,165 @@ function makeStripeBillingHandlers({
         transaction.get(userRef),
         transaction.get(entitlementRef),
       ]);
-      if (eventSnapshot.exists) {
-        alreadyProcessed = true;
-        return;
-      }
       const billing = billingSnapshot.data() ?? {};
       if (!billingSnapshot.exists || billing.stripeCustomerId !== customerId) {
         throw new Error("Stripe customer does not match the canonical billing account.");
+      }
+      if (eventSnapshot.exists) {
+        const receipt = eventSnapshot.data() ?? {};
+        if (
+          receipt.subscriptionId === subscriptionId &&
+          ["cancel-pending", "review-pending"].includes(
+            receipt.processingState,
+          )
+        ) {
+          overlap = {
+            reason: receipt.overlapReason,
+            cancelRequired: receipt.cancelRequired === true,
+            accountDeleted: receipt.ignoredAfterAccountDeletion === true,
+            incomingWasTerminal: receipt.incomingWasTerminal === true,
+          };
+        } else {
+          alreadyProcessed = true;
+        }
+        return;
+      }
+      const queueOverlap = ({
+        reason,
+        cancelRequired,
+        accountDeleted = false,
+        incomingWasTerminal = false,
+      }) => {
+        overlap = {
+          reason,
+          cancelRequired,
+          accountDeleted,
+          incomingWasTerminal,
+        };
+        transaction.create(eventRef, {
+          type: event.type,
+          created: event.created,
+          subscriptionId,
+          processingState: cancelRequired ? "cancel-pending" : "review-pending",
+          overlapReason: reason,
+          cancelRequired,
+          incomingWasTerminal,
+          entitlementOverlap: true,
+          ignoredAfterAccountDeletion: accountDeleted,
+          supportReviewRequired: true,
+          queuedAt: FieldValue.serverTimestamp(),
+        });
+      };
+      const incomingIsTerminal = TERMINAL_SUBSCRIPTION_STATUSES.has(
+        subscription.status,
+      );
+      if (billingAccountIsDeleted(billing) || userProfileIsDeleted(userSnapshot)) {
+        queueOverlap({
+          reason: "subscription-after-account-deletion",
+          cancelRequired: !incomingIsTerminal,
+          accountDeleted: true,
+          incomingWasTerminal: incomingIsTerminal,
+        });
+        return;
       }
       const mapped = mapStripeSubscription(subscription, priceIds, {
         previousEntitlement: entitlementSnapshot.data() ?? {},
         nowMs: now().toMillis(),
       });
+      let settledIdentity = null;
+      if (
+        mapped.paymentSettled === true &&
+        ["active", "trialing"].includes(mapped.status)
+      ) {
+        settledIdentity = await readPaidSubscriptionInvoiceIdentity(
+          subscription,
+          customerId,
+        );
+        const financialRiskSnapshot = await transaction.get(
+          firestore
+            .collection("stripeFinancialRisks")
+            .doc(settledIdentity.paymentIntentId),
+        );
+        if (financialRiskSnapshot.exists) {
+          queueOverlap({
+            reason: "subscription-payment-at-financial-risk",
+            cancelRequired: !incomingIsTerminal,
+            incomingWasTerminal: incomingIsTerminal,
+          });
+          return;
+        }
+      }
+      const priorEntitlement = entitlementSnapshot.data() ?? {};
       const priorSubscriptionId = billing.stripeSubscriptionId;
-      const priorStatus = billing.stripeSubscriptionStatus;
+      let priorCanonicalIsTerminal = false;
       if (
         typeof priorSubscriptionId === "string" &&
-        priorSubscriptionId !== subscriptionId &&
-        ["active", "trialing", "grace"].includes(priorStatus)
+        priorSubscriptionId !== subscriptionId
       ) {
-        ignoredAsSuperseded = true;
-        transaction.create(eventRef, {
-          type: event.type,
-          created: event.created,
-          ignoredAsSuperseded: true,
-          processedAt: FieldValue.serverTimestamp(),
+        // Firestore is a projection, not subscription authority. Refresh the
+        // stored canonical subscription before deciding that the incoming one
+        // is a duplicate: an out-of-order webhook may leave a stale `active`
+        // status after the old subscription has already ended at Stripe.
+        const priorSubscription = await stripe.subscriptions.retrieve(
+          priorSubscriptionId,
+        );
+        if (
+          priorSubscription.id !== priorSubscriptionId ||
+          stripeObjectId(priorSubscription.customer, "cus_") !== customerId
+        ) {
+          throw new Error(
+            "Stored Stripe subscription does not match its canonical customer.",
+          );
+        }
+        priorCanonicalIsTerminal = TERMINAL_SUBSCRIPTION_STATUSES.has(
+          priorSubscription.status,
+        );
+        const incomingCanReplaceTerminalPrior =
+          priorCanonicalIsTerminal &&
+          !incomingIsTerminal &&
+          ["active", "trialing"].includes(mapped.status);
+        if (incomingCanReplaceTerminalPrior) {
+          // Continue to the entitlement overlap guard below. It has an explicit
+          // exception for replacing this now-terminal Stripe entitlement.
+        } else if (incomingIsTerminal) {
+          ignoredAsSuperseded = true;
+          transaction.create(eventRef, {
+            type: event.type,
+            created: event.created,
+            ignoredAsSuperseded: true,
+            processedAt: FieldValue.serverTimestamp(),
+          });
+          return;
+        } else {
+          queueOverlap({
+            reason: "duplicate-active-stripe-subscription",
+            cancelRequired: true,
+            incomingWasTerminal: false,
+          });
+          return;
+        }
+      }
+
+      const priorIsActive = entitlementIsActiveAt(
+        priorEntitlement,
+        now().toMillis(),
+      );
+      const sameCanonicalStripeEntitlement =
+        priorEntitlement.source === "stripe" &&
+        billing.stripeSubscriptionId === subscriptionId;
+      const replacesTerminalStripeEntitlement =
+        priorCanonicalIsTerminal &&
+        priorEntitlement.source === "stripe" &&
+        ["active", "trialing"].includes(mapped.status);
+      if (
+        priorIsActive &&
+        !sameCanonicalStripeEntitlement &&
+        !replacesTerminalStripeEntitlement
+      ) {
+        queueOverlap({
+          reason: "recurring-active-entitlement-overlap",
+          cancelRequired: !incomingIsTerminal,
+          incomingWasTerminal: incomingIsTerminal,
         });
         return;
       }
@@ -1066,6 +2331,12 @@ function makeStripeBillingHandlers({
           stripeSubscriptionStatus: mapped.status,
           currentPriceId: mapped.priceId,
           currentPeriodEnd: mapped.currentPeriodEnd,
+          ...(settledIdentity
+            ? {
+                currentInvoiceId: settledIdentity.invoiceId,
+                currentPaymentIntentId: settledIdentity.paymentIntentId,
+              }
+            : {}),
           cancelAtPeriodEnd: mapped.cancelAtPeriodEnd,
           renewalBehavior: ["active", "trialing", "grace"].includes(mapped.status)
             ? mapped.cancelAtPeriodEnd
@@ -1097,6 +2368,67 @@ function makeStripeBillingHandlers({
     });
     if (alreadyProcessed) return { ignored: true };
     if (ignoredAsSuperseded) return { ignored: true };
+    if (overlap) {
+      const cancellation = overlap.cancelRequired
+        ? await cancelCanonicalStripeSubscription(
+            stripe,
+            subscriptionId,
+            customerId,
+            `overlap_${event.id}`,
+          )
+        : {
+            canceled: false,
+            alreadyTerminal: overlap.incomingWasTerminal === true,
+          };
+      await firestore.runTransaction(async (transaction) => {
+        const [eventSnapshot, billingSnapshot] = await Promise.all([
+          transaction.get(eventRef),
+          transaction.get(billingRef),
+        ]);
+        const receipt = eventSnapshot.data() ?? {};
+        if (
+          !eventSnapshot.exists ||
+          receipt.subscriptionId !== subscriptionId ||
+          !["cancel-pending", "review-pending"].includes(
+            receipt.processingState,
+          )
+        ) {
+          return;
+        }
+        if (billingSnapshot.data()?.stripeCustomerId !== customerId) {
+          throw new Error("Stripe overlap customer binding changed.");
+        }
+        transaction.set(
+          billingRef,
+          {
+            billingReviewRequired: true,
+            billingReviewReason: overlap.reason,
+            billingReviewEventId: event.id,
+            duplicateStripeSubscriptionId: subscriptionId,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+        transaction.set(eventRef, {
+          type: event.type,
+          created: event.created,
+          subscriptionId,
+          processingState: "completed",
+          entitlementOverlap: true,
+          cancellationRequested: overlap.cancelRequired,
+          cancellationConverged:
+            cancellation.canceled || cancellation.alreadyTerminal,
+          incomingSubscriptionCanceled: cancellation.canceled,
+          incomingSubscriptionAlreadyTerminal: cancellation.alreadyTerminal,
+          ignoredAfterAccountDeletion: overlap.accountDeleted === true,
+          supportReviewRequired: true,
+          processedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+      });
+      return overlap.accountDeleted
+        ? { ignored: true }
+        : { reviewRequired: true, uid };
+    }
     return { applied: true, uid };
   }
 
@@ -1135,10 +2467,14 @@ function makeStripeBillingHandlers({
           response.status(200).json({ received: true, awaitingPayment: true });
           return;
         }
-        subscriptionId =
-          typeof session.subscription === "string"
-            ? session.subscription
-            : session.subscription?.id;
+        if (session.mode === "payment") {
+          await applyPrepaidPurchase(session.id, event);
+        } else {
+          subscriptionId =
+            typeof session.subscription === "string"
+              ? session.subscription
+              : session.subscription?.id;
+        }
       } else if (event.type === "checkout.session.async_payment_failed") {
         const session = event.data.object;
         subscriptionId =
@@ -1147,10 +2483,7 @@ function makeStripeBillingHandlers({
             : session.subscription?.id;
       } else if (["invoice.paid", "invoice.payment_failed"].includes(event.type)) {
         const invoice = event.data.object;
-        subscriptionId =
-          typeof invoice.subscription === "string"
-            ? invoice.subscription
-            : invoice.subscription?.id;
+        subscriptionId = invoiceSubscriptionId(invoice);
       }
       if (subscriptionId) await applySubscription(subscriptionId, event);
       response.status(200).json({ received: true });
@@ -1170,6 +2503,8 @@ function makeStripeBillingHandlers({
     createPremiumPortalSessionHandler,
     stripeWebhookHandler,
     applySubscription,
+    applyPrepaidPurchase,
+    readCanonicalPrepaidCheckout,
     applyFinancialRiskEvent,
     loadPrices,
     loadPortalConfiguration,
@@ -1186,6 +2521,8 @@ function runtimeHandlers() {
     priceIds: {
       monthly: STRIPE_MONTHLY_PRICE_ID.value(),
       yearly: STRIPE_YEARLY_PRICE_ID.value(),
+      blikMonthly: STRIPE_BLIK_MONTHLY_PRICE_ID.value(),
+      blikYearly: STRIPE_BLIK_YEARLY_PRICE_ID.value(),
     },
     portalConfigurationId: STRIPE_PORTAL_CONFIGURATION_ID.value(),
     expectedLiveMode: expectedMode === "live",
@@ -1197,10 +2534,6 @@ const billingCallableOptions = {
   secrets: [STRIPE_SECRET_KEY],
 };
 
-const getPremiumBillingContext = onCall(
-  { region: REGION, maxInstances: 20, concurrency: 80 },
-  (request) => getPremiumBillingContextWithoutStripe(request),
-);
 const createPremiumCheckoutSession = onCall(billingCallableOptions, (request) =>
   runtimeHandlers().createPremiumCheckoutSessionHandler(request),
 );
@@ -1235,7 +2568,6 @@ const onAuthUserDeletedCancelStripe = functionsV1
   });
 
 module.exports = {
-  getPremiumBillingContext,
   createPremiumCheckoutSession,
   createPremiumPortalSession,
   stripePremiumWebhook,
@@ -1248,6 +2580,7 @@ module.exports = {
   mapStripeSubscription,
   createStripeClient,
   validateConfiguredPrice,
+  validateConfiguredBlikPrice,
   parseBillingContextRequest,
   parseCheckoutRequest,
   parsePortalRequest,
@@ -1256,4 +2589,5 @@ module.exports = {
   releaseCheckoutLease,
   requireAuthenticatedBillingOwner,
   PLAN_CONFIGURATION,
+  BLIK_PLAN_CONFIGURATION,
 };

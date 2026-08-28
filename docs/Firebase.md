@@ -420,22 +420,40 @@ full `firebase deploy --only functions` against whatever project
 `firebase use` points at — it is not the single-function shortcut this doc
 tree described it as before 2026-08-16.
 
-## Stripe billing data boundary (source only; not deployed)
+## Stripe billing data boundary (source-ready; provider rollout disabled)
 
 - `entitlements/{uid}` remains the owner-readable, server-written access
-  projection and now includes `cancelAtPeriodEnd` and an exact
-  `renewalBehavior` (`renews`, `ends`, or `none`).
-- `billingAccounts/{uid}` is the canonical Firebase uid ↔ Stripe Customer/
-  Subscription binding plus provider lifecycle and pending Checkout recovery.
+  projection. `plan` is `monthly` or `yearly`; `currentPeriodEnd` is the exact
+  paid access boundary. `renewalBehavior` is `renews` for an active recurring
+  card/PayPal subscription and `ends` after recurring cancel-at-period-end.
+  Prepaid BLIK uses `source=stripe_prepaid` and `renewalBehavior=none`; the
+  active plan plus `currentPeriodEnd` still expose its exact paid window without
+  implying a future provider charge.
+- `billingAccounts/{uid}` is the canonical Firebase uid ↔ Stripe Customer
+  binding. It stores either the recurring Subscription lifecycle or the
+  verified one-time Checkout/Payment references needed to reconcile a 30-day
+  PLN 26 or 365-day PLN 260 BLIK grant. Pending Checkout recovery is bound to
+  both plan and payment method so a retry cannot silently change the purchase.
 - `billingRateLimits/{uid_action}`, `billingCheckoutLocks/{uid}` and
   `stripeWebhookEvents/{eventId}` are operational anti-abuse/idempotency state.
-- Firestore Rules deny every client read and write to all four operational
-  collections. Only Admin SDK Functions access them.
+  The event receipt is the replay boundary for both Subscription/Invoice and
+  one-time BLIK events.
+- `stripeCustomerCleanup/{attemptId}` records pre-provider Customer creation
+  intent and any orphan cleanup/manual-review state, closing the account-delete
+  race without exposing provider identifiers to clients.
+- Firestore Rules deny every client read and write to all five operational
+  collections. Only Admin SDK Functions access them. The public user document
+  carries only the existing cosmetic Premium mirror, never Price, payment,
+  Customer, PayPal or BLIK details.
 
-No new composite index is required. The Rules emulator command in this file
-passed 396 checks when this was written (2026-08-18) — the suite is **466** as
-of 2026-08-20 — including read/create/update/delete denial for each billing
-collection.
+No access write is authorized by `?checkout=success`, client metadata or a
+client-submitted payment method. The signed webhook and canonical provider
+state must commit billing, entitlement and event receipt together. No new
+composite index is required for this source change; the existing rules denial
+coverage remains mandatory. The secret-free catalog callable was deployed on
+2026-08-28 and returns `checkoutAvailable=false`. Provider objects, mutation
+handlers and checkout entry points are not live until the ordered rollout in
+DEPLOYMENT.md is completed.
 
 ## Profile visibility (source only; not deployed)
 

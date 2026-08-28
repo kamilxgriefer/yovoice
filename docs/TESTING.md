@@ -6,7 +6,7 @@ exist; know which one you're relying on before trusting it.
 
 ## Current counts
 
-**As of 2026-08-27.** One table, so there is a single place to correct when
+**As of 2026-08-28.** One table, so there is a single place to correct when
 these move. Every figure is a suite run, not an estimate; file counts are
 `find`. *(The date used to live in the heading; it moved into the body on
 2026-08-20 because three other docs deep-link to this section and every
@@ -14,24 +14,24 @@ correction silently broke all three anchors.)*
 
 | Suite | Command | Count |
 |---|---|---|
-| Firestore rules | `npm --prefix firestore-tests test` | **494** checks |
+| Firestore rules | `npm --prefix firestore-tests test` | **499** checks |
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
-| Cloud Functions | `npm --prefix functions test` | **793** tests (64 `*.test.js` files) |
+| Cloud Functions | `npm --prefix functions test` | **841** tests (65 `*.test.js` files) |
 | Flutter VM | `flutter test` | **1361** tests (120 VM-compatible files) |
 | Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart` | **1** test (1 browser-only file) |
 
-**Where these numbers came from.** All six rows were re-measured on
-2026-08-27 against the exact current source revision (Voice Moment
-local-review/custom-availability, the More transition fix and Velvet Prism
-product sound). Flutter VM 1361 passed in one invocation, the real Chrome
-Blob lifecycle passed 1/1, and `flutter analyze`
-was clean on the same bytes. Functions 793, Rules 494, Storage 60 and family
-media 11 ran against fresh, isolated emulators rather than the occupied local
-8080 endpoint. Both web release compilation and the dedicated browser preview
-harness compiled successfully. The 64 Functions files and 121 total Flutter
-test files (120 VM-compatible plus one browser-only) are current `find`
-results rather than carried-forward estimates. The earlier
+**Where these numbers came from.** Functions 841 and Rules 499 were re-measured
+on 2026-08-28 against the exact current source revision and fresh isolated
+emulators; the other four rows retain their 2026-08-27 verified runs (Voice
+Moment local review/custom availability, the More transition fix and Velvet
+Prism product sound). Flutter VM 1361 passed in one invocation, the real Chrome
+Blob lifecycle passed 1/1, and `flutter analyze` was clean on those bytes.
+Storage 60 and family media 11 also ran against fresh isolated emulators rather
+than the occupied local 8080 endpoint. Both web release compilation and the
+dedicated browser preview harness compiled successfully. The 65 Functions files
+and 121 total Flutter test files (120 VM-compatible plus one browser-only) are
+current `find` results rather than carried-forward estimates. The earlier
 figures this row used to carry (Rules 485, Functions 783/62, Flutter 1198/114)
 are kept in the movement log below as history.
 
@@ -486,6 +486,48 @@ written) while being independent of what else exists.
 The general rule: assert on a delta or on a scoped fixture, never on an
 absolute count over a collection your file does not exclusively own.
 
+### Premium billing release matrix
+
+`functions/test/stripe_billing.test.js` is the executable source contract for
+ADR-118. Before any provider rollout it must cover all of these independently:
+
+- exact catalog values: recurring EUR 6/month and EUR 60/year, prepaid BLIK
+  PLN 26/30 days and PLN 260/365 days;
+- strict `{plan, paymentMethod?}` parsing, including default `recurring`,
+  explicit `blik` and refusal of every unexpected or client-authoritative
+  field;
+- configured-Price validation for two live/test-matched recurring EUR Prices
+  and two live/test-matched one-time PLN Prices, including wrong Product,
+  interval, amount, currency, tax contract and mixed livemode refusal;
+- subscription Checkout with exactly `[card,paypal]` for the recurring path and
+  one-time Checkout with exactly `[blik]` for the prepaid path, with retry
+  idempotency bound to both plan and method;
+- paid-Invoice authority for card/PayPal, successful signed one-time-payment
+  authority for BLIK, no grant from a redirect/unpaid event, exact fixed BLIK
+  period end, replay absorption and no second Subscription;
+- recurring Portal/cancel-at-period-end behavior, explicit absence of a BLIK
+  Portal action, Auth-deletion cancellation, pagination over every open
+  Checkout Session, Customer-create/delete races and late-event
+  non-resurrection;
+- export discovery with `STRIPE_BILLING_EXPORTS` disabled (catalog only,
+  checkout unavailable) and enabled (exactly Checkout, Portal, webhook and
+  Auth-deletion billing handlers added);
+- the production guard rejecting `sk_test_`, test Prices, test webhook events
+  or `STRIPE_EXPECTED_MODE=test` for `yovoice-ec54a`.
+
+Those tests use provider fakes and the Firestore emulator. They prove mapping,
+authorization, transactions and idempotency in source; they do **not** prove
+that Stripe has activated PayPal/BLIK for the live account, that either method
+is offered to a particular customer, or that production webhooks arrive. The
+four live-method smokes and reconciliation in DEPLOYMENT.md are separate release
+evidence. Stripe test mode may run only against the Functions emulator or a
+future non-production Firebase project, never production.
+
+The 2026-08-28 catalog-only production smoke is intentionally narrower: the
+callable returned EUR 6/EUR 60, 17% annual savings and both capability flags
+false. It proves truthful fail-closed catalog availability, not a working
+provider checkout.
+
 ## Dart tests — real, but narrow
 
 `test/` — **1361 VM tests across 120 compatible files**, plus **1 real-Chrome
@@ -650,7 +692,14 @@ Worth naming plainly rather than leaving implicit:
   functions still lack focused coverage.
 - Premium store purchase verification: no IAP client or App Store/Google Play
   adapter is configured, so there is no real checkout path to exercise.
-  `verifyPurchase` deliberately declines and only the admin grant path works.
+  `verifyPurchase` deliberately declines and only the protected-owner grant
+  path works.
+- Stripe web billing has focused fake/emulator coverage but no deployed provider
+  integration. No automated suite proves live card or PayPal renewal, live BLIK
+  presentation/settlement, Portal configuration or production webhook delivery.
+  Do not bridge that gap by putting Stripe test-mode credentials in
+  `yovoice-ec54a`; use the isolated environment rule above and retain the live
+  operator smoke as explicit release evidence.
 - Crash visibility on web: Crashlytics (added 2026-08-08) covers iOS and
   Android only — the Flutter web build still has no crash/error
   reporting channel beyond the browser console.

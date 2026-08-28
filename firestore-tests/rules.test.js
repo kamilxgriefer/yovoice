@@ -4444,6 +4444,7 @@ async function main() {
         "billingRateLimits",
         "billingCheckoutLocks",
         "stripeWebhookEvents",
+        "stripeCustomerCleanup",
       ];
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         for (const name of collections) {

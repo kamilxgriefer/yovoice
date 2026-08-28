@@ -286,6 +286,40 @@ for exactly which four situations justify reaching for a function instead
 of a direct write, and [Backend.md](Backend.md) for the full inventory of
 what exists today.
 
+## Premium billing boundary (source-ready; provider rollout disabled)
+
+Premium billing is another explicit server-authoritative exception to the
+client-direct model. The client may request only the allowlisted contract
+`{plan, paymentMethod?}`. `paymentMethod` defaults to `recurring`,
+which opens hosted Checkout with card and PayPal for either the EUR 6 monthly
+or EUR 60 annual subscription. `blik` opens a separate one-time Checkout:
+PLN 26 grants 30 days on the monthly plan, while PLN 260 grants 365 days on
+the annual plan. Neither BLIK purchase renews automatically.
+
+Cloud Functions, not either client, bind that request to immutable Stripe
+Prices, Checkout mode, permitted payment methods and fixed return URLs. A
+Checkout redirect never grants access. Signed Stripe webhooks re-read the
+canonical provider object and project the paid period into the server-owned
+`entitlements/{uid}` document. Recurring card/PayPal access follows the
+Subscription and paid-Invoice lifecycle; both BLIK offers follow the
+successful one-time payment and are represented from the start as fixed
+prepaid windows with no renewal.
+
+The secret-free `getPremiumBillingContext` catalog was deployed to production
+on 2026-08-28 and reports `checkoutAvailable=false`; no provider mutation
+handler, provider configuration or public checkout is live. Rollout remains
+disabled until the four live Prices,
+PayPal, BLIK, Portal, signed webhook, legal copy and reconciliation gates in
+[DEPLOYMENT.md](DEPLOYMENT.md#stripe-premium-rollout-source-ready-provider-rollout-disabled)
+pass. Production project `yovoice-ec54a` accepts live Stripe objects and
+credentials only; Stripe test mode belongs to local/emulator or a future
+non-production project and must never be configured in production. See
+[ADR-118](Decisions.md#adr-118-premium-pairs-recurring-eur-with-non-renewing-prepaid-blik).
+The deployed catalog remains renderable while
+`STRIPE_BILLING_EXPORTS!=enabled`; that operator flag withholds Checkout,
+Portal, webhook and Auth-deletion billing exports and reports checkout as
+unavailable.
+
 ## LiveKit interaction
 
 Summarized in the data-flow example above; full detail — token structure,
@@ -382,6 +416,12 @@ Summary only — full detail, including the CI workflow's exact steps, is in
 - **LiveKit Cloud** — voice room infrastructure.
 - **Resend** — transactional email (verification, password reset), via
   Firebase Auth's custom SMTP settings ([ADR-008](Decisions.md#adr-008-resend-smtp-instead-of-firebases-default-email-sender)).
+- **Stripe** — hosted Premium Checkout, recurring billing, the customer
+  cancellation portal and signed payment webhooks; source-ready, provider
+  rollout disabled.
+- **PayPal** — an optional recurring payment method presented inside Stripe
+  Checkout after the Stripe account is approved and enabled; YO Voice does not
+  integrate a second entitlement authority.
 - **Vercel** — hosts `yovoice-website`.
 
 See [DEPENDENCIES.md](DEPENDENCIES.md) for why these specific services and

@@ -2112,59 +2112,111 @@ infrastructure short of the Firestore emulator (rules only) — see
 staging Firebase project" decision if the team or user base ever grows
 enough to justify the added complexity.
 
-## Stripe Premium rollout (blocked; no live mutations performed)
+## Stripe Premium rollout (source-ready; provider rollout disabled)
 
-Do not deploy billing until seller/VAT/refund/dispute decisions are approved.
-Then roll out in this order:
+The secret-free `getPremiumBillingContext` callable was deployed and verified
+on 2026-08-28 with `checkoutAvailable=false`; none of the four Stripe mutation
+handlers was exported or deployed. No live Stripe object, credential, webhook
+or checkout is proven by that catalog deployment or by source readiness. Keep
+billing disabled until the seller/business, applicable tax and
+customer-facing refund/dispute handling have been approved and configured; do
+not publish claims this repository does not establish. Then release in this
+order:
 
-1. In live Stripe create one Premium Product and two recurring PLN Prices:
-   1999/month and 19999/year, both `tax_behavior=inclusive`. Do not add manual
-   `currency_options`; this implementation uses Checkout Adaptive Pricing.
-2. Configure Stripe Tax registrations/business identity and verify the final
-   customer receipt/invoice wording. Tax ID collection remains off until a B2B
-   policy exists.
-3. Create one active Customer Portal configuration. Enable cancellation and
-   Price updates; allow exactly both Prices on the same Product. Verify both
-   have the identical inclusive tax behavior.
-4. Set Firebase parameters `STRIPE_MONTHLY_PRICE_ID`,
-   `STRIPE_YEARLY_PRICE_ID`, `STRIPE_PORTAL_CONFIGURATION_ID` and
-   `STRIPE_EXPECTED_MODE=live`; set Secret Manager values
-   `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`. Never point
-   `yovoice-ec54a` at test mode.
-5. Deploy Firestore Rules first (operational billing collections are denied to
-   clients), then only the billing Functions plus Auth-deletion cancellation,
-   then clients. Register the live Stripe webhook endpoint for Checkout
-   completed/async succeeded/async failed, Subscription lifecycle and Invoice
-   paid/payment failed events, plus `charge.refunded` and
-   `charge.dispute.created`.
-6. Smoke with a new disposable account: monthly Checkout in PLN and a Stripe-
-   localized country, paid entitlement, Portal monthly→yearly, cancel-at-period
-   end showing `ends`, cancellation, failed payment, webhook replay, suspended
-   payer Portal access, and Auth deletion canceling the subscription. Confirm
-   no duplicate Customers/subscriptions and no recreated deleted `users` doc.
-   Send signed test events for a full refund (access revoked, all subscriptions
-   canceled), partial refund (access preserved, support review recorded), and
-   dispute creation (access revoked).
-7. Reconcile Stripe subscriptions against `billingAccounts` and
-   `entitlements`; every Stripe Customer must map to exactly one uid, every
-   active entitlement must have a paid canonical latest Invoice, and all event
-   failures must be retried to a `stripeWebhookEvents` receipt.
+1. Re-run the source gates below. Confirm the client request is exactly
+   `{plan, paymentMethod?}`, with `paymentMethod` defaulting to
+   `recurring` and accepting only `blik` otherwise. Amount, currency, Price,
+   Customer, payment-method list and return URLs must remain server-owned.
+2. In **live** Stripe create one Premium Product and four immutable Prices:
+   EUR 600/month recurring, EUR 6000/year recurring, PLN 2600 one-time and PLN
+   26000 one-time. The one-time Prices back the 30-day and 365-day BLIK offers;
+   they must not carry a recurring interval or reusable mandate. All four must
+   match the source validator and the same live Product. Configure business,
+   receipt/invoice and tax settings only from approved real account data.
+3. Activate cards and PayPal for both recurring EUR Prices. Complete any Stripe
+   [PayPal activation](https://docs.stripe.com/payments/paypal/activate) and
+   [recurring approval](https://docs.stripe.com/payments/paypal/set-up-future-payments#enable-recurring-payments),
+   then prove it is actually offered to an eligible live customer; merely
+   seeing PayPal in Dashboard is not evidence. Confirm the source sends exactly
+   `payment_method_types=[card,paypal]` for recurring Checkout and prove no
+   other enabled Dashboard method leaks into this product. Activate
+   [BLIK](https://docs.stripe.com/payments/blik) for the two one-time PLN Prices
+   and prove Checkout presents it only on the prepaid path. Do not market
+   provider availability before these account/country checks pass.
+4. Create one active Customer Portal configuration for the two recurring EUR
+   Prices. It must allow cancellation and only approved recurring plan changes.
+   Neither BLIK Price belongs in Portal subscription updates because BLIK does
+   not renew.
+5. Publish the reviewed Terms and Privacy copy before exposing Checkout. The
+   copy must distinguish recurring card/PayPal from prepaid BLIK, state the
+   paid terms (30 or 365 days), and explain cancellation without inventing tax
+   or refund rules.
+6. Set Firebase parameters `STRIPE_MONTHLY_PRICE_ID`,
+   `STRIPE_YEARLY_PRICE_ID`, `STRIPE_BLIK_MONTHLY_PRICE_ID`,
+   `STRIPE_BLIK_YEARLY_PRICE_ID`, `STRIPE_PORTAL_CONFIGURATION_ID` and
+   `STRIPE_EXPECTED_MODE=live`. Set Secret Manager values
+   `STRIPE_SECRET_KEY=sk_live_…` and the **live endpoint's**
+   `STRIPE_WEBHOOK_SECRET`. Read every value back without printing secret
+   material and verify all four Price ids resolve to live objects.
+   Keep `STRIPE_BILLING_EXPORTS` disabled throughout this preparation; the
+   secret-free catalog must still return `checkoutAvailable=false`.
+7. Register the live signed webhook for the exact Checkout, asynchronous
+   payment, Subscription, Invoice and financial-risk events handled by the
+   source. Only after the endpoint, secrets and four live Price ids are ready,
+   set `STRIPE_BILLING_EXPORTS=enabled`. Deploy Firestore Rules first if their
+   billing denial changed, then only the Premium billing Functions and
+   Auth-deletion cancellation. Read back the export list and context; all four
+   mutation handlers must be ACTIVE and checkout must become available only at
+   this explicit cutover. Do not expose a compatible client beforehand.
+8. With explicitly authorized internal live accounts, smoke each of the four
+   offers: EUR monthly card, EUR annual PayPal, PLN monthly BLIK and PLN annual
+   BLIK. Prove card/PayPal create one canonical Subscription and Portal access;
+   cancel-at-period-end must show `ends` while retaining the paid window. Prove
+   BLIK creates no Subscription or Portal action, grants exactly 30/365 days,
+   writes `source=stripe_prepaid` plus `renewalBehavior=none`, exposes the exact
+   end date and requires a new purchase after expiry. A redirect
+   before webhook confirmation must grant nothing.
+9. Exercise failed/abandoned Checkout, async payment failure, webhook replay,
+   duplicate/concurrent Checkout, suspended payer Portal access and Auth
+   deletion. Confirm no duplicate Customer/subscription, no extension from an
+   unpaid renewal, no replayed prepaid grant and no recreated deleted user.
+10. Reconcile Stripe against `billingAccounts`, `entitlements` and
+    `stripeWebhookEvents`. Every Customer must map to exactly one uid; every
+    recurring entitlement needs its paid canonical Invoice; every BLIK
+    entitlement needs one successful one-time payment receipt and the exact
+    fixed end date. Resolve every failed event before enabling general access,
+    then monitor Checkout failures, webhook retries and entitlement drift.
 
 Predeploy gates:
 
 ```bash
+node --check functions/premium/billing_context.js
 node --check functions/premium/stripe_billing.js
 node --test functions/test/stripe_billing.test.js
 firebase emulators:exec --only firestore --project demo-yovoice \
   "node firestore-tests/rules.test.js"
 ```
 
-Rollback: disable new Checkout entry points first, keep Portal and webhook
-available so existing payers can cancel, restore the prior Functions/rules
-from the predeploy snapshot, and continue processing signed provider events.
-Do not delete `billingAccounts` or webhook receipts; they are required for
-reconciliation, refunds and replay. Stripe Product/Prices should be archived
-only after no active subscription references them.
+Run Stripe test mode only against the Functions emulator or a separate
+non-production Firebase project. **Never** put `sk_test_`, test Price ids, a
+test webhook secret or `STRIPE_EXPECTED_MODE=test` in `yovoice-ec54a`; do not
+send Stripe CLI test events to the production webhook. Production smoke uses
+live objects and therefore requires explicit operator authorization.
+
+With `STRIPE_BILLING_EXPORTS` disabled, deployment discovery must export the
+secret-free catalog but no Checkout, Portal, webhook or Stripe Auth-deletion
+handler. With it enabled in an isolated/predeploy environment, discovery must
+export exactly those four additional handlers and require the live rollout
+configuration. A UI-only hidden button is not a billing launch gate.
+
+Rollback: stop creation of new Checkout sessions first, while leaving the live
+webhook and recurring Customer Portal available so existing payers can cancel
+and late provider events can reconcile. Do not revoke an already-paid BLIK term
+merely because new sales are paused. Restore only a revision that understands
+all four Prices and both lifecycle shapes; the superseded ADR-067 two-Price PLN
+implementation is not a valid rollback target. Never delete
+`billingAccounts`, entitlements or webhook receipts. Archive Prices only after
+no active Subscription or paid prepaid term depends on them.
 
 ## Direct 1:1 call rollout
 

@@ -2288,6 +2288,9 @@ service cloud.firestore {
     match /stripeWebhookEvents/{eventId} {
       allow read, write: if false;
     }
+    match /stripeCustomerCleanup/{cleanupId} {
+      allow read, write: if false;
+    }
 
     // One server-owned pointer to a creator's canonical published Voice
     // Moment. Public profile surfaces know the creator uid and may fetch that

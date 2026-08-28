@@ -393,32 +393,67 @@ Every function currently sets `enforceAppCheck: false` — see
 [ADR-004](Decisions.md#adr-004-firebase-app-check-integrated-client-side-enforcement-deliberately-off),
 and [Bugs.md](Bugs.md) for current status and why it's not flipped yet.
 
-## Stripe Premium billing (source only; not deployed)
+## Stripe Premium billing (source-ready; provider rollout disabled)
 
-`functions/premium/stripe_billing.js` exposes a deterministic billing catalog,
-server-created Checkout and Customer Portal sessions, a signed webhook, and an
-Auth-deletion cancellation trigger. Base Prices are PLN 19.99 monthly and PLN
-199.99 yearly including tax. Checkout Adaptive Pricing—not client conversion
-and not manual `currency_options`—produces the final local currency.
+`functions/premium/stripe_billing.js` owns the deterministic billing catalog,
+server-created Checkout and Customer Portal sessions, the signed webhook and
+Auth-deletion cancellation. The request contract is exactly
+`{plan, paymentMethod?}`: `plan` is `monthly` or `yearly`, and
+`paymentMethod` defaults to `recurring` and may otherwise be only `blik`.
 
-The webhook validates both configured Prices (amount, interval, inclusive tax,
-same Product and live/test mode), then re-reads Subscription + latest Invoice.
-It writes the private billing lifecycle, `entitlements/{uid}`, cosmetic user
-mirror and event receipt atomically. New access requires a paid Invoice; an
-unpaid renewal cannot extend the prior paid period. Customer metadata is never
-accepted as ownership authority.
+The server maps that request to four immutable Stripe Prices:
 
-A dispute or full refund cancels every nonterminal subscription returned for
-the canonical Customer and atomically revokes access. A partial refund does not
-make an automatic access decision; it marks `billingReviewRequired` and writes
-a replay-safe support-review receipt. Auth deletion also expires open Checkout,
-pages all Customer subscriptions and cancels each nonterminal one.
+| Plan | Checkout mode | Payment methods | Price | Paid access |
+|---|---|---|---|---|
+| Monthly | subscription | card + PayPal | EUR 6 | recurring monthly |
+| Annual | subscription | card + PayPal | EUR 60 | recurring annually |
+| Monthly | one-time | BLIK | PLN 26 | 30 days, no renewal |
+| Annual | one-time | BLIK | PLN 260 | 365 days, no renewal |
 
-Required server parameters/secrets: `STRIPE_SECRET_KEY`,
-`STRIPE_WEBHOOK_SECRET`, `STRIPE_MONTHLY_PRICE_ID`,
-`STRIPE_YEARLY_PRICE_ID`, `STRIPE_PORTAL_CONFIGURATION_ID` and
-`STRIPE_EXPECTED_MODE`. The production project `yovoice-ec54a` accepts only
-`live`. See DEPLOYMENT.md for the blocked rollout.
+The client cannot submit an amount, currency, Price id, Customer id, Firebase
+uid, Checkout mode, payment-method list or return URL. Stripe Checkout owns the
+payment credential surface and final pre-confirmation amount disclosure; YO
+Voice performs no client-side exchange-rate or tax calculation.
+
+Recurring access is projected only after a signed event re-reads the canonical
+Subscription and paid latest Invoice. An unpaid renewal cannot extend the
+previous paid window. Subscription Checkout sends the exact provider allowlist
+`payment_method_types=[card,paypal]`; BLIK Checkout sends only `[blik]`.
+BLIK never creates renewal authority: a signed successful
+one-time payment grants exactly the configured 30- or 365-day window and writes
+`source=stripe_prepaid` with `renewalBehavior=none`. The success redirect is informational
+for every method and cannot grant Premium. A user must complete a new BLIK
+purchase after expiry to continue.
+
+The Stripe Customer Portal manages only recurring card/PayPal billing. Cancel
+at period end prevents a future renewal while retaining the already-paid window.
+BLIK has nothing to cancel or switch in the Portal. Auth deletion expires open
+Checkout and cancels nonterminal subscriptions; private provider bindings and
+event receipts remain available for reconciliation and late signed events.
+Refund, dispute, seller, tax and B2B handling remain separate launch-policy
+gates; technical access safeguards are not a published refund policy.
+
+Required secrets are `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`. Required
+parameters are `STRIPE_MONTHLY_PRICE_ID`, `STRIPE_YEARLY_PRICE_ID`,
+`STRIPE_BLIK_MONTHLY_PRICE_ID`, `STRIPE_BLIK_YEARLY_PRICE_ID`,
+`STRIPE_PORTAL_CONFIGURATION_ID` and `STRIPE_EXPECTED_MODE`. Production project
+`yovoice-ec54a` accepts only `live`, `sk_live_`, live Prices and live events;
+test-mode objects belong only in local/emulator or a future non-production
+Firebase project. Source readiness does not mean provider readiness or a live
+checkout. See
+[DEPLOYMENT.md](DEPLOYMENT.md#stripe-premium-rollout-source-ready-provider-rollout-disabled).
+
+`getPremiumBillingContext` is a separate secret-free export so Premium can
+render the truthful catalog while mutations are withheld. Unless
+`STRIPE_BILLING_EXPORTS=enabled`, it reports `checkoutAvailable=false` and
+`functions/index.js` does not register Checkout, Portal, webhook or
+Auth-deletion Stripe handlers. Enable that flag only in the ordered live
+rollout, after every required provider object and secret exists.
+
+That catalog-only callable was deployed to `yovoice-ec54a` on 2026-08-28 and
+its production response was verified as EUR 6 monthly, EUR 60 annually,
+17% annual savings, `checkoutAvailable=false` and `portalAvailable=false`.
+This deploy did not publish any Stripe mutation handler.
 
 ## Profile visibility (source only; not deployed)
 

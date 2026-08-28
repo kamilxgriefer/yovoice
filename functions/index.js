@@ -406,14 +406,14 @@ const {
   verifyPurchase,
   expirePremiumIdentity,
 } = require("./premium/entitlements");
-// ADR-067: Stripe billing is implemented and tested in source, but its live
-// configuration (STRIPE_SECRET_KEY, prices, tax) deliberately does not exist
-// yet. Requiring the module registers its params, and the Functions CLI
-// validates every declared secret at deploy discovery even when no Stripe
-// endpoint is in the --only list — an unconfigured secret therefore blocks
-// deploying the entire codebase. The endpoints register only when the
-// operator explicitly turns the rollout on (functions/.env:
-// STRIPE_BILLING_EXPORTS=enabled) after the live Stripe setup exists.
+const {
+  getPremiumBillingContext,
+} = require("./premium/billing_context");
+// Secret-bound Stripe mutations register only when the operator explicitly
+// turns the rollout on (functions/.env: STRIPE_BILLING_EXPORTS=enabled).
+// Requiring that module during deploy discovery registers its parameters and
+// secrets, so keeping it behind the rollout flag lets the independent public
+// catalog deploy even before provider configuration is complete.
 const stripeBillingEnabled =
   process.env.STRIPE_BILLING_EXPORTS === "enabled";
 const { createStageBFunctions } = require("./integrity/stage_b_functions");
@@ -444,15 +444,17 @@ const {
 exports.adminSetPremiumEntitlements = adminSetPremiumEntitlements;
 exports.verifyPurchase = verifyPurchase;
 exports.expirePremiumIdentity = expirePremiumIdentity;
+// The public catalog never binds provider secrets. It remains available with
+// checkoutAvailable=false even while the secret-bound payment endpoints are
+// disabled, so clients can render Premium without fabricating availability.
+exports.getPremiumBillingContext = getPremiumBillingContext;
 if (stripeBillingEnabled) {
   const {
-    getPremiumBillingContext,
     createPremiumCheckoutSession,
     createPremiumPortalSession,
     stripePremiumWebhook,
     onAuthUserDeletedCancelStripe,
   } = require("./premium/stripe_billing");
-  exports.getPremiumBillingContext = getPremiumBillingContext;
   exports.createPremiumCheckoutSession = createPremiumCheckoutSession;
   exports.createPremiumPortalSession = createPremiumPortalSession;
   exports.stripePremiumWebhook = stripePremiumWebhook;

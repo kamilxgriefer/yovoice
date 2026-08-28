@@ -779,8 +779,8 @@ someone decide what to pick up next.
   [TESTING.md](TESTING.md#current-counts). **These rules were
   DEPLOYED on 2026-08-16.** This entry read "The new Firestore rules still
   require a manual deploy" until then. Store verification adapters remain
-  unconfigured, so `adminSetPremiumEntitlements` is still the only working
-  grant path — and note that Premium expiry had never once run in
+  unconfigured, so the protected-owner-only `adminSetPremiumEntitlements` is
+  still the only working grant path — and note that Premium expiry had never once run in
   production until this date's index deploy (see
   [Bugs.md](Bugs.md#infrastructure)). See
   [ADR-053](Decisions.md#adr-053-paid-capabilities-come-only-from-the-trusted-entitlement-and-every-entry-boundary-fails-closed).
@@ -1626,19 +1626,27 @@ regression test pinning the contract.
   in Console → Functions → Logs yet, so treat that as UNVERIFIED. Real
   mobile-store checkout is still not operational: `verifyPurchase`
   deliberately declines because no App Store/Play verification adapter or IAP
-  client is configured. Stripe web Checkout/Portal and webhook authority are
-  implemented and tested in source under ADR-067, but not deployed; live Stripe
-  and legal/tax configuration remain blocked.
+  client is configured. The revised Stripe web catalog is deployed under
+  ADR-118: recurring card/PayPal is EUR 6 monthly or EUR 60 annually; prepaid
+  BLIK is PLN 26 for 30 days or PLN 260 for 365 days and never renews. Provider
+  mutation handlers, signed live webhook and controlled four-method production
+  verification are **not deployed**, so the catalog reports checkout and Portal
+  unavailable. The 2026-08-28 production smoke verified the secret-free
+  callable response without exposing any payment entry point.
 - **Actions**:
   1. ~~Deploy the tested `firestore.rules` update.~~ **DONE 2026-08-16.**
      Instead, confirm one real `expirePremiumIdentity` run succeeds.
-  2. Complete ADR-067's blocked Stripe rollout: one live Product, inclusive PLN
-     Prices at 19.99/month and 199.99/year (17% annual saving), Adaptive
-     Pricing, Tax registrations, Portal and signed webhooks. Separately create
-     equivalent App Store/Play products only when mobile IAP adapters are
-     designed; store-localized prices remain authoritative on those platforms.
-  3. Interim: grant premium via the `adminSetPremiumEntitlements`
-     callable (admin/superAdmin only).
+  2. Complete ADR-118's blocked provider rollout: one live Product, two
+     recurring EUR Prices, two one-time PLN Prices, approved card/PayPal/BLIK
+     activation, recurring-only Portal, reviewed Terms/Privacy, live secrets,
+     signed webhooks and four-path smoke/reconciliation. Keep all Stripe test
+     objects outside production `yovoice-ec54a`.
+  3. Keep the superseded ADR-067 PLN 19.99/199.99 two-Price catalog out of
+     production; it is not a rollback target for the four-Price lifecycle.
+  4. Separately create App Store/Play products only when mobile IAP adapters
+     are designed; store-localized prices remain authoritative there.
+  5. Interim: grant Premium via the protected-owner-only
+     `adminSetPremiumEntitlements` callable.
 
 ### 0f. Room experience redesign on shared primitives
 

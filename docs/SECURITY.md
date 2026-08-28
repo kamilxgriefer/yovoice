@@ -792,31 +792,67 @@ scaled to this project's actual size rather than a boilerplate policy no
 one would act on. See [CONTRIBUTING.md](CONTRIBUTING.md) for what this
 looks like if the project ever gains outside contributors.
 
-## Stripe billing boundary (source only; not deployed)
+## Stripe billing boundary (source-ready; provider rollout disabled)
 
-The client selects only `monthly` or `yearly`; it cannot provide amount,
-currency, Price, Customer, Firebase uid or return URL. Checkout and Portal use
-fixed HTTPS destinations. A canonical server-created `billingAccounts/{uid}`
-binding—not mutable Stripe metadata—owns the Customer. Provider secrets and all
-operational billing collections are server-only.
+The client request is restricted to `{plan, paymentMethod?}`.
+`plan` is `monthly` or `yearly`; `paymentMethod` defaults to `recurring` and
+may otherwise be only `blik`. The client cannot provide amount, currency,
+Price, Checkout mode,
+allowed payment methods, Customer, Firebase uid or return URL. The server maps
+the request to exactly four immutable Prices: recurring EUR 6/month and EUR
+60/year for card + PayPal, or one-time PLN 26/30 days and PLN 260/365 days for
+BLIK. Checkout and Portal use fixed HTTPS destinations.
 
-Webhook acceptance requires Stripe signature, deployment livemode match,
-validated immutable Prices and a paid latest Invoice for first activation.
-Entitlement + billing + event receipt use one transaction, replay is absorbed,
-and every transaction retry fetches current Stripe state so an older active
-handler cannot resurrect canceled access. Checkout creation uses a lease plus a
-persisted provider idempotency token and checks existing subscriptions. Portal
-authorization deliberately permits the authenticated payer even when their app
-account is suspended, so moderation cannot trap recurring charges.
+Recurring Checkout sends the exact Stripe allowlist `[card,paypal]`; prepaid
+Checkout sends only `[blik]`. Dashboard defaults or newly enabled account
+methods therefore cannot silently expand the product contract.
 
-Production deployment is fail-closed unless `yovoice-ec54a` uses `sk_live_`,
-live Prices and live webhook events. App Check enforcement remains off pending
-the project-wide monitored rollout; it is not treated as billing authorization.
-Full refunds and newly-created disputes fail closed by canceling every
-nonterminal canonical Customer subscription and revoking access. Partial
-refunds preserve the current paid entitlement and create a private support
-review audit; no financial or proration conclusion is inferred. Seller/VAT,
-refund-money timing and B2B policy remain launch blockers.
+A canonical server-created `billingAccounts/{uid}` binding—not mutable Stripe
+metadata—owns the Customer. Provider secrets, payment lifecycle and operational
+billing collections are server-only. Checkout creation uses a lease plus a
+persisted provider idempotency token bound to plan and payment method. It
+rejects a second nonterminal Subscription; a prepaid BLIK payment never creates
+or implies a reusable debit mandate.
+
+Customer creation also writes a private cleanup intent before crossing the
+provider boundary. If account deletion wins the race, the unbound Customer is
+deleted or stripped of its Firebase metadata and unresolved cleanup remains a
+server-only manual-review record. Auth deletion paginates and expires every
+open Checkout Session for the canonical Customer before canceling subscriptions.
+
+Webhook acceptance requires the Stripe signature, exact deployment livemode,
+validated immutable Price and a fresh canonical provider read. Recurring first
+activation requires a paid latest Invoice; a BLIK grant requires the signed
+successful one-time payment and receives a fixed end date immediately. The
+success redirect, client metadata and an `active` UI state are never authority.
+Entitlement, billing and event receipt commit transactionally, replay is
+absorbed, and an older handler cannot resurrect canceled or expired access.
+
+Portal authorization deliberately permits the authenticated payer even when
+their app account is suspended, so moderation cannot trap recurring charges.
+The Portal applies only to card/PayPal subscriptions; BLIK has no future charge
+to cancel. App Check enforcement remains off pending the project-wide monitored
+rollout and is not billing authorization.
+
+Production is fail-closed unless `yovoice-ec54a` uses `STRIPE_EXPECTED_MODE=live`,
+an `sk_live_` secret, four live Prices and live webhook events with the live
+signing secret. Mixed live/test objects, test Prices, `sk_test_` and test-mode
+events are rejected. Test mode is permitted only with the Functions emulator
+or a separately created non-production Firebase project; it must never be used
+to simulate a production purchase. Seller/tax/B2B choices and customer-facing
+refund handling remain launch gates. Internal financial-event safeguards are
+not a published tax or refund policy.
+
+`STRIPE_BILLING_EXPORTS` is the operator launch gate, not an authorization
+substitute. When it is not `enabled`, the secret-free catalog remains available
+but reports checkout unavailable and the four provider handlers are absent from
+the export graph. It may be enabled in production only after all live-mode
+checks above pass.
+
+The catalog-only callable was deployed and verified in production on
+2026-08-28 with the gate disabled. Checkout, Portal, webhook and Auth-deletion
+billing handlers remained absent; the deployment therefore introduced no
+payment or entitlement mutation surface.
 
 ## Profile visibility boundary (source only; not deployed)
 

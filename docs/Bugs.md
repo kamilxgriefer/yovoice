@@ -2142,7 +2142,8 @@ permission flags).
   entitlement model, admin grant and access gates exist, but no IAP client or
   store receipt-verification adapter is configured; `verifyPurchase`
   deliberately declines rather than trusting the device. Only the guarded
-  `adminSetPremiumEntitlements` callable can grant working Premium today. See
+  protected-owner-only `adminSetPremiumEntitlements` callable can grant working
+  Premium today. See
   [Roadmap.md](Roadmap.md#0e-premium-billing-adapters).
 - **RESOLVED 2026-08-16 — `app.yovoice.app` is LIVE.** This entry said
   "DNS record not added yet … needs Cloudflare access only the domain
@@ -2391,18 +2392,22 @@ permission flags).
   create rules require byte-for-byte equality with its `displayName`, exact
   schemas and server-time timestamps; focused Flutter tests and Rules emulator
   cases cover canonical, stale, forged and missing-profile paths.
-- **OPEN — Stripe Premium is implemented and tested in source but is not ready
-  for production deployment.** Code now fixes the old profile redirect, uses
-  hosted Checkout/Portal, exact PLN 19.99/199.99 inclusive base Prices,
-  Adaptive Pricing, paid-Invoice webhook authority and Auth-deletion
-  cancellation. No live Stripe objects, secrets, webhook, Portal configuration
-  or Functions were created/deployed in this work. Launch remains blocked on
-  seller-of-record/VAT identity, consumer refund-money timing and disclosure,
-  Stripe Tax registrations, live Price/Product creation, Portal
-  configuration and a controlled smoke/reconciliation run. Do not publish tax
-  or refund claims until those decisions exist. Access behavior is pinned:
-  full refund/dispute revokes and cancels; partial refund creates a private
-  support-review case without automatic revocation.
+- **PARTIALLY DEPLOYED 2026-08-28 — revised Stripe Premium catalog is live,
+  but provider rollout and checkout remain disabled.** The secret-free
+  production callable now returns the truthful catalog with checkout and
+  Portal unavailable; no Stripe mutation handler was deployed. ADR-118
+  replaces ADR-067's old PLN
+  19.99/199.99 recurring catalog with card/PayPal at EUR 6 monthly or EUR 60
+  annually, plus non-renewing BLIK at PLN 26/30 days or PLN 260/365 days. The
+  source owns hosted Checkout/Portal, signed webhook authority, idempotent
+  billing-to-entitlement projection and production live/test separation. No
+  live Product/Prices, PayPal/BLIK activation, secrets, webhook, Portal or
+  four-method production smoke is recorded here, so source readiness must not
+  be presented as a working purchase path. Launch also remains blocked on
+  approved seller/business, applicable tax, B2B and customer-facing
+  refund/dispute handling. Do not publish legal, tax or refund claims until
+  those decisions exist, and never use Stripe test mode in production
+  `yovoice-ec54a`.
 - **Fixed in source — Google Sign-In on Flutter Web returned Google error 400
   `redirect_uri_mismatch`.** The deployed bundle used
   `auth.yovoice.app/__/auth/handler`, but that redirect was not registered on

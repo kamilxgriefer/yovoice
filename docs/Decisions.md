@@ -79,10 +79,11 @@ given a false-precision date.
 | [090](#adr-090-session-cleanup-converges-on-authservicesignout-because-a-write-the-rules-authorize-by-session-cannot-live-after-the-session-ends) | Session cleanup converges on `AuthService.signOut()` | Accepted in source | 2026-08-19 |
 | [115](#adr-115-voice-moment-review-stays-local-availability-is-user-sized-the-root-lifecycle-is-server-authoritative) | Voice Moment review stays local; availability is user-sized; the root lifecycle is server-authoritative | Deployed | 2026-08-27 |
 | [116](#adr-116-product-sound-is-a-material-feedback-system-not-a-set-of-jingles) | Product sound is a material feedback system, not a set of jingles | Hosting deployed; native/FCM held | 2026-08-27 |
+| [118](#adr-118-premium-pairs-recurring-eur-with-non-renewing-prepaid-blik) | Premium pairs recurring EUR with non-renewing prepaid BLIK | Catalog deployed; provider rollout disabled | 2026-08-28 |
 
 > **The index is incomplete and has been for a while**: rows for ADR-020
 > through ADR-052 were never added, and neither were ADR-062–065,
-> ADR-067–071, ADR-075–076 or ADR-078–081, though the records themselves
+> ADR-067–071, ADR-075–076, ADR-078–081 or ADR-117, though the records themselves
 > are all present below. Noted rather than silently left, and not repaired
 > here — it is a mechanical pass of its own. The records are numbered
 > chronologically, so browsing the headings works meanwhile.
@@ -1685,7 +1686,9 @@ marketing portrait — production must not ship fake people.
   list — one source so app and marketing surfaces can't drift. This ADR's
   historical €9.99 / €89.99 placeholder was superseded by ADR-067: PLN
   19.99/month and PLN 199.99/year (17% saving; ≈ PLN 16.67/month), with Stripe
-  Checkout authoritative for the final localized web price.
+  Checkout authoritative for the final localized web price. ADR-118 later
+  superseded that undeployed catalog with recurring EUR 6/EUR 60 and prepaid,
+  non-renewing BLIK PLN 26/PLN 260.
 - Both screens take optional injected services (`entitlementService`,
   `profileService`) so widget tests run against fakes.
 
@@ -4513,7 +4516,8 @@ retry closes that outage without weakening the limit.
 
 ## ADR-067: Stripe owns payment and cancellation; Firestore owns access; localized prices are finalized only in Checkout
 
-**Status:** accepted in source, not deployed (2026-08-18).
+**Status:** superseded by ADR-118 before deployment; retained as the
+2026-08-18 historical decision.
 
 YO Voice web billing uses two immutable recurring Stripe Prices on one Product:
 PLN 19.99/month and PLN 199.99/year, both `tax_behavior=inclusive`. The app may
@@ -5064,6 +5068,12 @@ of the real ADR-067 go-live, after live Stripe configuration exists.
 **Consequences.** The codebase deploys without fake secrets and without
 half-configured billing endpoints appearing in production. The go-live
 checklist gains one explicit step.
+
+**Amended 2026-08-28.** ADR-118 supersedes ADR-067's catalog, but not this
+gate. `getPremiumBillingContext` is now a separate secret-free export; with the
+flag disabled it renders truthful EUR and PLN offers while reporting checkout
+unavailable. Enabling the flag still adds exactly Checkout, Portal, webhook and
+Auth-deletion Stripe handlers, and now belongs to ADR-118's live-only rollout.
 
 ## ADR-081: Ledger fingerprint mismatches are terminal, and canonical content is a pure function of the event's identity
 
@@ -7243,3 +7253,110 @@ Hosting serves the pinned client bytes, and Android build 5 is available to
 the internal tester list. The unauthenticated production callable smoke proves
 the deployed start endpoint returns the expected authorization contract; the
 first signed-in two-device call remains part of tester acceptance.
+
+## ADR-118: Premium pairs recurring EUR with non-renewing prepaid BLIK
+
+**Status**: Catalog deployed; provider rollout and checkout disabled
+**Date**: 2026-08-28
+
+### Context
+
+ADR-067 established the correct security boundary—Stripe owns payment and
+cancellation while Firestore owns access—but its commercial catalog no longer
+matches the product decision. It modeled two recurring PLN card Prices and had
+no truthful path for a member who wants PayPal or wants to pay with BLIK without
+authorizing renewal. Extending that catalog by making BLIK recurring would be
+misleading: the product being offered is a prepaid term, not a reusable BLIK
+mandate.
+
+The replacement also needs a hard environment boundary. YO Voice has one
+production Firebase project and no staging Firebase project. Pointing that
+project at Stripe test mode would make test objects look like production
+billing state to real clients and webhooks.
+
+### Decision
+
+The source catalog has four server-owned offers on one Stripe Premium Product:
+
+| Plan | Method | Price | Entitlement | Renewal |
+|---|---|---|---|---|
+| Monthly | card or PayPal | EUR 6 | recurring monthly period | automatic until canceled |
+| Annual | card or PayPal | EUR 60 | recurring annual period | automatic until canceled |
+| Monthly | BLIK | PLN 26 | exactly 30 days prepaid | none |
+| Annual | BLIK | PLN 260 | exactly 365 days prepaid | none |
+
+The only client request is `{plan, paymentMethod?}`. `plan` is
+`monthly` or `yearly`; omitted `paymentMethod` means `recurring`, while `blik`
+selects the prepaid path. Functions map the request to
+`STRIPE_MONTHLY_PRICE_ID`, `STRIPE_YEARLY_PRICE_ID`,
+`STRIPE_BLIK_MONTHLY_PRICE_ID` or `STRIPE_BLIK_YEARLY_PRICE_ID`. The client
+never submits an amount, Price id, Checkout mode, payment-method list, uid or
+return URL.
+
+Recurring Checkout uses Stripe subscription mode with the exact
+`payment_method_types=[card,paypal]` allowlist; PayPal still appears only when
+the live Stripe account/customer is eligible. Its paid Invoice and canonical
+Subscription drive `entitlements/{uid}`. The Customer Portal is the management
+and cancellation surface; cancellation prevents the next renewal and the
+already-paid period remains bounded by `currentPeriodEnd`.
+
+BLIK Checkout uses one-time payment mode and a PLN Price. A signed successful
+provider event grants one fixed 30- or 365-day entitlement and writes
+`source=stripe_prepaid` with `renewalBehavior=none`. It creates no Subscription,
+appears in no subscription-switch Portal flow and never charges again
+automatically. At expiry the member must deliberately buy another prepaid term.
+
+Every method uses hosted Checkout. The success redirect is display-only and
+cannot grant access. Signed webhooks re-read canonical Stripe state and commit
+the private billing binding, entitlement and replay receipt together. Existing
+rate limits, Checkout lease/idempotency, canonical Customer binding, late-event
+handling and Auth-deletion cancellation remain part of the boundary.
+
+Production `yovoice-ec54a` must fail closed unless
+`STRIPE_EXPECTED_MODE=live`, the secret starts with `sk_live_`, all four Prices
+are live and the event matches the live webhook secret. `sk_test_`, test Prices,
+test events and `STRIPE_EXPECTED_MODE=test` are permitted only with local
+emulators or a separately created non-production Firebase project—never in
+production.
+
+### Reasoning
+
+Two recurring EUR offers make the comparable subscription prices explicit,
+while two PLN BLIK offers reflect how the prepaid product is actually charged
+and avoid implying a future debit. Exact 30/365-day wording is more honest than
+calling a non-recurring payment a calendar subscription. Keeping one provider
+preserves one signed event authority and one canonical customer-to-uid binding;
+PayPal is a Stripe Checkout method, not a second entitlement writer.
+
+Separating recurring and prepaid lifecycles in server data prevents UI copy or
+a stale redirect from turning BLIK into a subscription. Live-only production
+configuration removes the ambiguous state where real Firebase accounts obtain
+access from sandbox money.
+
+### Consequences
+
+- ADR-118 supersedes ADR-067's two recurring PLN Prices and corresponding
+  rollout/catalog language. ADR-067's server-authoritative ownership,
+  signature, idempotency and Portal principles remain valid. The old two-Price
+  implementation is not a rollback target.
+- Source-ready does not mean purchasable. Checkout remains disabled until the
+  live Product/Prices, PayPal/BLIK activation, recurring-only Portal, live
+  webhook, reviewed Terms/Privacy and four-path smoke/reconciliation complete
+  in the order documented in DEPLOYMENT.md.
+- `STRIPE_BILLING_EXPORTS` stays disabled during provider preparation. The
+  secret-free catalog was deployed on 2026-08-28 and remains available, but
+  the four provider handlers and
+  `checkoutAvailable=true` appear only at the explicit live cutover.
+- PayPal or BLIK may be absent for an ineligible account/customer even when
+  source supports it. The UI must show an honest unavailable state and must not
+  fabricate provider availability.
+- BLIK access has no cancel-at-period-end action because there is no future
+  charge. The account UI must show its exact end date and that renewal requires
+  a new purchase.
+- Seller/business identity, applicable tax/B2B configuration and customer-facing
+  refund/dispute handling are launch decisions outside this ADR. Terms and
+  product copy must not invent them; technical financial-event safeguards do
+  not become a public refund policy.
+- App Store and Google Play purchases remain separate future adapters.
+  `verifyPurchase` continues to fail closed until signed store verification is
+  implemented.
