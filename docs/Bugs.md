@@ -1194,6 +1194,16 @@ permission flags).
 
 ## UI
 
+- **Fixed in source 2026-08-29 — Home Moments rendered a large filler card,
+  friend-only identities and profile suggestions without audio.** Mobile and
+  desktop Home now render a story-style avatar rail: the signed-in avatar
+  first, followed authors only, and only when an active Voice Moment has a
+  playable audio URL. Multiple Moments from one author become one ordered
+  chain. The empty card, duplicate Find creators/Record actions, desktop
+  profile shortcuts and divider are gone; a quiet rail ends after the user's
+  avatar. Following-load failure fails closed. See ADR-123. The source change
+  awaits the next coordinated tester build.
+
 - **FIXED AND RELEASED TO WEB/MOBILE BETA 2026-08-28 — Vibe saved successfully but disappeared on
   full profiles.** The editor wrote `statusMessage`, the model read it back,
   and compact profile previews already used it; both the signed-in member's

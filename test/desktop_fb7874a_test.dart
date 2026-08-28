@@ -23,73 +23,48 @@ void main() {
   const me = 'me-uid';
   const host = 'host-uid';
 
-  group('Find creators (Moments empty state)', () {
-    testWidgets('is a secondary OutlinedButton, at least 150x40, and calls '
-        'the real Discover callback by tap and by keyboard', (tester) async {
-      tester.view.physicalSize = const Size(1200, 500);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
+  group('Moments avatar-only empty state', () {
+    testWidgets(
+      'keeps only the own avatar and its accessible record action',
+      (tester) async {
+        tester.view.physicalSize = const Size(1200, 500);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
 
-      var discovered = 0;
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: DesktopMomentsStrip(
-              onOpenMoment: (_) {},
-              onCreateMoment: () {},
-              onSeeAll: () {},
-              onDiscover: () => discovered++,
+        var created = 0;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: DesktopMomentsStrip(
+                onOpenMoment: (_) {},
+                onCreateMoment: () => created++,
+                onSeeAll: () {},
+              ),
             ),
           ),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 60));
+        );
+        await tester.pump(const Duration(milliseconds: 60));
 
-      final button = find.widgetWithText(OutlinedButton, 'Find creators');
-      expect(button, findsOneWidget, reason: 'must stay a secondary button');
+        expect(find.text('Moments from your circle'), findsOneWidget);
+        expect(find.byKey(const ValueKey('home-your-moment')), findsOneWidget);
+        expect(
+          find.textContaining('No Moments from your circle yet'),
+          findsNothing,
+        );
+        expect(find.text('Find creators'), findsNothing);
 
-      final size = tester.getSize(button);
-      expect(size.width, greaterThanOrEqualTo(150));
-      expect(size.height, greaterThanOrEqualTo(40));
-
-      // Secondary, not a stretched CTA: it must occupy a small fraction
-      // of the strip it sits in.
-      final stripWidth = tester.getSize(find.byType(DesktopMomentsStrip)).width;
-      expect(
-        size.width,
-        lessThan(stripWidth * 0.35),
-        reason: 'Find creators must not read as a full-width primary CTA',
-      );
-
-      await tester.tap(button);
-      await tester.pump();
-      expect(discovered, 1);
-
-      // Keyboard: reach it by real traversal, then activate. Focus.of()
-      // on the button's own context looks for an ANCESTOR Focus and
-      // throws — the button's node is a descendant of that context.
-      var reached = false;
-      for (var i = 0; i < 10 && !reached; i++) {
-        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        final plus = find.byKey(const ValueKey('home-record-moment'));
+        expect(plus, findsOneWidget);
+        expect(tester.getSize(plus), const Size(44, 44));
+        await tester.tap(plus);
         await tester.pump();
-        final focused = primaryFocus?.context?.widget;
-        reached =
-            focused != null &&
-            find
-                .descendant(of: button, matching: find.byWidget(focused))
-                .evaluate()
-                .isNotEmpty;
-      }
-      expect(reached, isTrue, reason: 'Tab never reached Find creators');
+        expect(created, 1);
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pump();
-      expect(discovered, 2, reason: 'keyboard activation must also fire');
-
-      expect(tester.takeException(), isNull);
-    }, timeout: const Timeout(Duration(seconds: 60)));
+        expect(tester.takeException(), isNull);
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
   });
-
 
   group('Room banner participant preview', () {
     late FakeFirebaseFirestore db;

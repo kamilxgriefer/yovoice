@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart'
     show RoomVisual;
+import 'package:yovoice/features/moments/data/models/moment_chain.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/premium/data/premium_plans.dart';
@@ -105,8 +106,7 @@ class MobileMomentsStrip extends StatelessWidget {
     required this.currentUserId,
     required this.onOpenMoment,
     required this.onCreateMoment,
-    required this.onDiscover,
-    this.onOpenOwnChain,
+    this.onOpenChain,
     this.expiryClock,
     super.key,
   });
@@ -116,12 +116,11 @@ class MobileMomentsStrip extends StatelessWidget {
   final String currentUserId;
   final ValueChanged<VoiceMoment> onOpenMoment;
   final VoidCallback onCreateMoment;
-  final VoidCallback onDiscover;
 
   /// Opens the signed-in user's whole ACTIVE chain in the story viewer.
   /// Optional so existing callers keep working; when null the bubble
   /// falls back to [onOpenMoment] with the newest.
-  final ValueChanged<List<VoiceMoment>>? onOpenOwnChain;
+  final ValueChanged<List<VoiceMoment>>? onOpenChain;
 
   /// Uses the same instant as an injected [HomeFeedService] in widget tests.
   final DateTime Function()? expiryClock;
@@ -130,23 +129,36 @@ class MobileMomentsStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final others = moments
-        .where((m) => m.authorId != currentUserId)
+    final playable = moments
+        .where((moment) => moment.audioUrl?.trim().isNotEmpty == true)
         .toList(growable: false);
-    // ALL of your own live Moments, newest first — the chain the bubble
-    // opens. The bubble used to open the recorder unconditionally, so on
-    // a phone there was no way to play back what you had already posted
-    // from Home at all — and when nobody else had posted, your tile was
-    // not even rendered.
-    final mineAll = currentUserId.isEmpty
-        ? const <VoiceMoment>[]
-        : moments
-              .where((m) => m.authorId == currentUserId)
-              .toList(growable: false);
-    final mine = mineAll.isEmpty ? null : mineAll.first;
+    final chains = buildMomentChains(playable);
+    MomentChain? mineChain;
+    if (currentUserId.isNotEmpty) {
+      for (final chain in chains) {
+        if (chain.authorId == currentUserId) {
+          mineChain = chain;
+          break;
+        }
+      }
+    }
+    final others = chains
+        .where((chain) => chain.authorId != currentUserId)
+        .toList(growable: false);
+    final shown = others.take(12).toList(growable: false);
+    // Keep the same oldest-to-newest chain contract for every author,
+    // including the signed-in user.
+    final mineAll = mineChain?.moments ?? const <VoiceMoment>[];
+    final mine = mineAll.isEmpty ? null : mineAll.last;
+    final visibleMoments = <VoiceMoment>[
+      ...?mineChain?.moments,
+      for (final chain in shown) ...chain.moments,
+    ];
 
     return MomentExpiryListTransition(
-      moments: moments,
+      // Expiry announcements and focus recovery must describe only avatars
+      // that actually exist in the capped rail.
+      moments: visibleMoments,
       clock: expiryClock ?? DateTime.now,
       transitionScope: 'mobile-home-moments',
       announcementBuilder: (count) => count == 1
@@ -157,7 +169,9 @@ class MobileMomentsStrip extends StatelessWidget {
           key: const ValueKey('home-your-moment'),
           focusNode: mine == null ? null : tileFocusNode(mine.id),
           label: 'Your Moment',
-          photoUrl: mine?.authorPhotoUrl ?? profile?.photoUrl,
+          // The profile is authoritative. A Moment's denormalized photo can
+          // be older than a newly saved avatar.
+          photoUrl: profile?.photoUrl,
           displayName: profile?.displayName,
           showAdd: true,
           // A real count of YOUR live Moments — the chain badge.
@@ -169,8 +183,8 @@ class MobileMomentsStrip extends StatelessWidget {
                     : 'Play your Voice Moment'),
           onTap: mine == null
               ? onCreateMoment
-              : (onOpenOwnChain != null
-                    ? () => onOpenOwnChain!(mineAll)
+              : (onOpenChain != null
+                    ? () => onOpenChain!(mineAll)
                     : () => onOpenMoment(mine)),
           onAddTap: onCreateMoment,
         );
@@ -187,44 +201,34 @@ class MobileMomentsStrip extends StatelessWidget {
                 title: 'Moments from your circle',
               ),
             ),
-            if (others.isEmpty)
-              // Your tile stays even when the circle is quiet: it is the one
-              // real thing on the row, and hiding it was why a phone had no
-              // entry point to your own Moment.
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            // This is a story rail, not an empty-state card. The signed-in
+            // avatar is always first; every other avatar proves that person
+            // has an active Voice Moment the viewer can open.
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              clipBehavior: Clip.none,
+              child: Row(
                 children: [
                   yours,
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _EmptyMoments(
-                      onDiscover: onDiscover,
-                      onCreate: onCreateMoment,
+                  for (final chain in shown) ...[
+                    const SizedBox(width: 12),
+                    _MomentBubble(
+                      key: ValueKey('home-moment-${chain.moments.last.id}'),
+                      focusNode: tileFocusNode(chain.moments.last.id),
+                      label: chain.authorName,
+                      photoUrl: chain.authorPhotoUrl,
+                      displayName: chain.authorName,
+                      semanticLabel: chain.length == 1
+                          ? 'Play Voice Moment from ${chain.authorName}'
+                          : 'Play ${chain.length} Voice Moments from ${chain.authorName}',
+                      onTap: onOpenChain == null
+                          ? () => onOpenMoment(chain.moments.last)
+                          : () => onOpenChain!(chain.moments),
                     ),
-                  ),
-                ],
-              )
-            else
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                clipBehavior: Clip.none,
-                child: Row(
-                  children: [
-                    yours,
-                    for (final moment in others.take(12)) ...[
-                      const SizedBox(width: 12),
-                      _MomentBubble(
-                        key: ValueKey('home-moment-${moment.id}'),
-                        focusNode: tileFocusNode(moment.id),
-                        label: moment.authorName,
-                        photoUrl: moment.authorPhotoUrl,
-                        displayName: moment.authorName,
-                        onTap: () => onOpenMoment(moment),
-                      ),
-                    ],
                   ],
-                ),
+                ],
               ),
+            ),
           ],
         );
       },
@@ -269,98 +273,108 @@ class _MomentBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
+      // Followed-author tiles are one atomic action. The own tile keeps
+      // descendants because its nested plus exposes a separate record action.
+      excludeSemantics: !showAdd,
       label: semanticLabel ?? label,
       child: InkWell(
         focusNode: focusNode,
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
         child: SizedBox(
-          width: 72,
+          width: showAdd ? 94 : 72,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(2.5),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: const LinearGradient(
-                        colors: [AppColors.primary, AppColors.secondary],
-                      ),
-                    ),
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Color(0xFF0C0814),
-                      ),
-                      child: UserAvatar(
-                        radius: MobileMomentsStrip._tile / 2 - 9,
-                        photoUrl: photoUrl,
-                        displayName: displayName,
-                        fallbackIcon: Icons.person_rounded,
-                      ),
-                    ),
-                  ),
-                  if (count != null)
-                    Positioned(
-                      left: -3,
-                      top: -3,
+              SizedBox(
+                width: showAdd ? 94 : MobileMomentsStrip._tile,
+                height: MobileMomentsStrip._tile,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
                       child: Container(
-                        key: const ValueKey('home-your-moment-count'),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
+                        padding: const EdgeInsets.all(2.5),
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(999),
+                          shape: BoxShape.circle,
                           gradient: const LinearGradient(
                             colors: [AppColors.primary, AppColors.secondary],
                           ),
-                          border: Border.all(
-                            color: const Color(0xFF0C0814),
-                            width: 2,
-                          ),
                         ),
-                        child: Text(
-                          '$count',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Color(0xFF0C0814),
+                          ),
+                          child: UserAvatar(
+                            radius: MobileMomentsStrip._tile / 2 - 9,
+                            photoUrl: photoUrl,
+                            displayName: displayName,
+                            fallbackIcon: Icons.person_rounded,
                           ),
                         ),
                       ),
                     ),
-                  if (showAdd)
-                    Positioned(
-                      right: -2,
-                      bottom: -2,
-                      child: _AddMomentBadge(
-                        onTap: onAddTap,
+                    if (count != null)
+                      Positioned(
+                        left: -3,
+                        top: -3,
                         child: Container(
-                          width: 22,
-                          height: 22,
-                          alignment: Alignment.center,
+                          key: const ValueKey('home-your-moment-count'),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: AppColors.primary,
+                            borderRadius: BorderRadius.circular(999),
+                            gradient: const LinearGradient(
+                              colors: [AppColors.primary, AppColors.secondary],
+                            ),
                             border: Border.all(
                               color: const Color(0xFF0C0814),
                               width: 2,
                             ),
                           ),
-                          child: const Icon(
-                            Icons.add_rounded,
-                            size: 13,
-                            color: Colors.white,
+                          child: Text(
+                            '$count',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                ],
+                    if (showAdd)
+                      Positioned(
+                        right: 0,
+                        bottom: 0,
+                        child: _AddMomentBadge(
+                          onTap: onAddTap,
+                          child: Container(
+                            width: 22,
+                            height: 22,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: AppColors.primary,
+                              border: Border.all(
+                                color: const Color(0xFF0C0814),
+                                width: 2,
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.add_rounded,
+                              size: 13,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
               const SizedBox(height: 6),
               Text(
@@ -401,82 +415,11 @@ class _AddMomentBadge extends StatelessWidget {
         key: const ValueKey('home-record-moment'),
         onTap: onTap,
         customBorder: const CircleBorder(),
-        child: child,
-      ),
-    );
-  }
-}
-
-class _EmptyMoments extends StatelessWidget {
-  const _EmptyMoments({required this.onDiscover, required this.onCreate});
-
-  final VoidCallback onDiscover;
-  final VoidCallback onCreate;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: Colors.white.withValues(alpha: .02),
-        border: Border.all(color: const Color(0xFF241A33)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            'No Moments from your circle yet — follow a few voices and '
-            'their latest lands here.',
-            style: TextStyle(
-              color: Color(0xFF9A90AC),
-              fontSize: 12.5,
-              height: 1.35,
-            ),
-          ),
-          const SizedBox(height: 12),
-          // Wrap, not Row: two buttons plus their labels do not fit a
-          // 320pt phone side by side at larger text scales.
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              OutlinedButton(
-                onPressed: onDiscover,
-                style: OutlinedButton.styleFrom(
-                  side: BorderSide(
-                    color: AppColors.primary.withValues(alpha: .45),
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  minimumSize: const Size(140, 44),
-                ),
-                child: const Text(
-                  'Find creators',
-                  style: TextStyle(
-                    color: Color(0xFFD3A5FF),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              TextButton(
-                onPressed: onCreate,
-                style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
-                child: const Text(
-                  'Record a Moment',
-                  style: TextStyle(
-                    color: Color(0xFFD3A5FF),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
+        child: SizedBox(
+          width: 44,
+          height: 44,
+          child: Align(alignment: Alignment.bottomLeft, child: child),
+        ),
       ),
     );
   }

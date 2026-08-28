@@ -56,7 +56,7 @@ class DesktopHome extends StatefulWidget {
     required this.onOpenMoment,
     required this.onCreateMoment,
     required this.onSeeAllMoments,
-    this.onOpenOwnChain,
+    this.onOpenChain,
     required this.onOpenConversation,
     required this.onOpenClub,
     required this.onSeeAllChats,
@@ -91,8 +91,8 @@ class DesktopHome extends StatefulWidget {
   final VoidCallback onCreateMoment;
   final VoidCallback onSeeAllMoments;
 
-  /// Opens the signed-in user's active chain in the story viewer.
-  final ValueChanged<List<VoiceMoment>>? onOpenOwnChain;
+  /// Opens one author's active Voice Moment chain in the story viewer.
+  final ValueChanged<List<VoiceMoment>>? onOpenChain;
 
   /// The existing chat screen, club surface, Chats and Clubs destinations.
   final ValueChanged<Conversation> onOpenConversation;
@@ -271,7 +271,7 @@ class _DesktopHomeState extends State<DesktopHome> {
               children: [
                 _GreetingHeader(profile: _profile),
                 const SizedBox(height: 20),
-                // 1. Who can I hear from or open as a profile suggestion?
+                // 1. Which followed voices have a Moment I can hear?
                 DesktopMomentsStrip(
                   profile: _profile,
                   feedService: widget.feedService,
@@ -279,12 +279,9 @@ class _DesktopHomeState extends State<DesktopHome> {
                   followService: widget.followService,
                   currentUserId: widget.currentUserId,
                   onOpenMoment: widget.onOpenMoment,
-                  onOpenOwnChain: widget.onOpenOwnChain,
+                  onOpenChain: widget.onOpenChain,
                   onCreateMoment: widget.onCreateMoment,
                   onSeeAll: widget.onSeeAllMoments,
-                  onDiscover: widget.onFindCreators ?? widget.onSeeAllRooms,
-                  onOpenProfile: (userId) =>
-                      showProfilePreview(context, userId: userId),
                 ),
                 gap,
                 // 2. Which rooms can I join?

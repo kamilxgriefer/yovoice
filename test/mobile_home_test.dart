@@ -10,6 +10,9 @@ import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
+import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/profile/data/models/follow_user.dart';
+import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -18,6 +21,19 @@ import 'package:yovoice/features/staff/data/staff_capabilities.dart';
 /// Mobile Home ("Voice Briefing") coverage: real data in every module,
 /// the retired hero composition gone, honest empty states, and clean
 /// layout at narrow and large phone sizes.
+class _StreamFollowService extends FollowService {
+  _StreamFollowService({
+    required this.stream,
+    required super.firestore,
+    required super.auth,
+  });
+
+  final Stream<List<FollowUser>> stream;
+
+  @override
+  Stream<List<FollowUser>> watchFollowing(String userId) => stream;
+}
+
 void main() {
   const uid = 'me-uid';
 
@@ -89,6 +105,52 @@ void main() {
     });
   }
 
+  Future<void> seedFollowing(String userId, String name) async {
+    await db.collection('publicProfiles').doc(userId).set({
+      'uid': userId,
+      'displayName': name,
+      'username': name.toLowerCase(),
+    });
+    await db
+        .collection('users')
+        .doc(uid)
+        .collection('following')
+        .doc(userId)
+        .set({'uid': userId, 'followedAt': Timestamp.now()});
+  }
+
+  Future<void> seedFriend(String userId, String name) async {
+    await db.collection('publicProfiles').doc(userId).set({
+      'uid': userId,
+      'displayName': name,
+      'username': name.toLowerCase(),
+    });
+    await db.collection('users').doc(uid).collection('friends').doc(userId).set(
+      {'friendId': userId, 'createdAt': Timestamp.now()},
+    );
+  }
+
+  Future<void> seedMoment({
+    required String id,
+    required String authorId,
+    required String authorName,
+    String? audioUrl,
+    Duration age = const Duration(minutes: 5),
+  }) async {
+    final createdAt = DateTime.now().subtract(age);
+    await db.collection('voiceMoments').doc(id).set({
+      'authorId': authorId,
+      'authorName': authorName,
+      'audioUrl': audioUrl ?? 'https://example.invalid/$id.m4a',
+      'durationSeconds': 8,
+      'likeCount': 0,
+      'commentCount': 0,
+      'isPublished': true,
+      'createdAt': Timestamp.fromDate(createdAt),
+      'expiresAt': Timestamp.fromDate(createdAt.add(const Duration(hours: 24))),
+    });
+  }
+
   setUp(() async {
     ProfileService.resetCurrentProfileCache();
     db = FakeFirebaseFirestore();
@@ -110,8 +172,11 @@ void main() {
     VoidCallback? onCreateMoment,
     VoidCallback? onCreateRoom,
     VoidCallback? onProfile,
+    ValueChanged<VoiceMoment>? onOpenMoment,
+    ValueChanged<List<VoiceMoment>>? onOpenChain,
     ValueChanged<Conversation>? onOpenConversation,
     StaffCapabilityService? capabilityService,
+    FollowService? followService,
     int unreadNotificationCount = 0,
   }) {
     final firebaseAuth = auth();
@@ -125,12 +190,15 @@ void main() {
       onOpenProfile: onProfile ?? () {},
       onCreateMoment: onCreateMoment ?? () {},
       onCreateRoom: onCreateRoom ?? () {},
-      onOpenMoment: (_) {},
+      onOpenMoment: onOpenMoment ?? (_) {},
+      onOpenChain: onOpenChain,
       onOpenComments: (_) {},
       onOpenConversation: onOpenConversation ?? (_) {},
       onSeeAllChats: () {},
       roomService: RoomService(firestore: db, auth: firebaseAuth),
       friendService: FriendService(firestore: db, auth: firebaseAuth),
+      followService:
+          followService ?? FollowService(firestore: db, auth: firebaseAuth),
       profileService: ProfileService(firestore: db, auth: firebaseAuth),
       feedService: HomeFeedService(firestore: db, auth: firebaseAuth),
       messageService: MessageService(firestore: db, auth: firebaseAuth),
@@ -228,15 +296,15 @@ void main() {
     await tester.pump();
     expect(opened?.name, 'Evening Talks');
 
-    // Creator discovery is its own destination; room discovery must stay put.
-    await tester.tap(find.text('Find creators'));
-    await tester.pump();
-    expect(creators, 1);
-    expect(discover, 0);
-
-    await tester.tap(find.text('Record a Moment'));
+    // A quiet rail contains no filler card or duplicate actions. Recording
+    // remains available from the signed-in avatar and its plus badge.
+    expect(find.text('Find creators'), findsNothing);
+    expect(find.text('Record a Moment'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('home-your-moment')));
     await tester.pump();
     expect(moment, 1);
+    expect(creators, 0);
+    expect(discover, 0);
 
     // Friends is a bottom-navigation destination now, not a Home card.
     expect(friends, 0);
@@ -322,6 +390,128 @@ void main() {
     expect(find.textContaining('No rooms to show yet'), findsOneWidget);
     // The recommended list hides rather than showing filler rows.
     expect(find.text('Recommended now'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'Moments rail is self plus followed authors with playable audio',
+    (tester) async {
+      usePhone(tester, const Size(390, 1000));
+      await seedFriend('friend-only', 'Friend only');
+      await seedMoment(
+        id: 'friend-moment',
+        authorId: 'friend-only',
+        authorName: 'Friend only',
+      );
+      await seedFollowing('followed', 'Followed voice');
+      await seedMoment(
+        id: 'followed-older',
+        authorId: 'followed',
+        authorName: 'Followed voice',
+        age: const Duration(minutes: 10),
+      );
+      await seedMoment(
+        id: 'followed-newer',
+        authorId: 'followed',
+        authorName: 'Followed voice',
+      );
+      await seedFollowing('silent', 'Silent profile');
+      await seedMoment(
+        id: 'silent-document',
+        authorId: 'silent',
+        authorName: 'Silent profile',
+        audioUrl: '',
+      );
+
+      List<VoiceMoment>? openedChain;
+      await tester.pumpWidget(
+        host(buildHome(onOpenChain: (moments) => openedChain = moments)),
+      );
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 60));
+      }
+
+      expect(find.byKey(const ValueKey('home-your-moment')), findsOneWidget);
+      expect(find.text('Followed voice'), findsOneWidget);
+      expect(find.text('Friend only'), findsNothing);
+      expect(find.text('Silent profile'), findsNothing);
+
+      await tester.tap(find.text('Followed voice'));
+      await tester.pump();
+      expect(openedChain?.map((moment) => moment.id), [
+        'followed-older',
+        'followed-newer',
+      ]);
+    },
+  );
+
+  testWidgets('initial following stream failure fails closed to the own tile', (
+    tester,
+  ) async {
+    usePhone(tester, const Size(390, 1000));
+    await seedMoment(
+      id: 'stream-followed-moment',
+      authorId: 'stream-followed',
+      authorName: 'Stream followed',
+    );
+    final firebaseAuth = auth();
+    final followService = _StreamFollowService(
+      stream: Stream<List<FollowUser>>.error(
+        StateError('following unavailable'),
+      ),
+      firestore: db,
+      auth: firebaseAuth,
+    );
+
+    await tester.pumpWidget(host(buildHome(followService: followService)));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    expect(find.text('Stream followed'), findsNothing);
+    expect(find.byKey(const ValueKey('home-your-moment')), findsOneWidget);
+  });
+
+  testWidgets('avatar-only Moments rail fits 320px at 200 percent text', (
+    tester,
+  ) async {
+    usePhone(tester, const Size(320, 640));
+    await seedFollowing('followed-long', 'Aleksandra Bardzo Długie Nazwisko');
+    await seedMoment(
+      id: 'followed-long-moment',
+      authorId: 'followed-long',
+      authorName: 'Aleksandra Bardzo Długie Nazwisko',
+    );
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(
+          size: Size(320, 640),
+          textScaler: TextScaler.linear(2),
+        ),
+        child: host(buildHome()),
+      ),
+    );
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    final own = find.byKey(const ValueKey('home-your-moment'));
+    expect(own, findsOneWidget);
+    expect(
+      MediaQuery.textScalerOf(tester.element(own)).scale(10),
+      20,
+      reason: 'the regression must exercise 200% text, not the default',
+    );
+    expect(
+      find.textContaining('No Moments from your circle yet'),
+      findsNothing,
+    );
+    expect(find.text('Aleksandra Bardzo Długie Nazwisko'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel(
+        'Play Voice Moment from Aleksandra Bardzo Długie Nazwisko',
+      ),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 

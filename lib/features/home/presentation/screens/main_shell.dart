@@ -269,7 +269,7 @@ class _MainShellState extends State<MainShell>
     onCreateMoment: _openCreateMoment,
     onCreateRoom: () => unawaited(_openCreateRoom()),
     onOpenMoment: (moment) => unawaited(_openMoment(moment)),
-    onOpenOwnChain: (mine) => unawaited(_openOwnChain(mine)),
+    onOpenChain: (moments) => unawaited(_openMomentChain(moments)),
     onOpenComments: (moment) => unawaited(
       Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
@@ -295,7 +295,7 @@ class _MainShellState extends State<MainShell>
     onViewAllFriends: () => _onDestinationSelected(2),
     onStartRoom: () => unawaited(_openCreateRoom()),
     onOpenMoment: (moment) => unawaited(_openMoment(moment)),
-    onOpenOwnChain: (mine) => unawaited(_openOwnChain(mine)),
+    onOpenChain: (moments) => unawaited(_openMomentChain(moments)),
     onCreateMoment: _openCreateMoment,
     onSeeAllMoments: () =>
         unawaited(_openMoreDestination(MoreDestination.moments)),
@@ -893,14 +893,13 @@ class _MainShellState extends State<MainShell>
     );
   }
 
-  /// Opens the signed-in user's own ACTIVE chain in the story viewer:
-  /// every live Moment, oldest first — the multi-Moment surface Home's
-  /// "Your Moment" tiles show a count badge for. Falls back to the
-  /// single-Moment sheet when the chain somehow arrives empty.
-  Future<void> _openOwnChain(List<VoiceMoment> mine) async {
-    final chains = buildMomentChains(mine);
+  /// Opens one author's ACTIVE chain in the story viewer, oldest first.
+  /// Falls back to the single-Moment sheet if a malformed mixed-author
+  /// list somehow arrives without a usable chain.
+  Future<void> _openMomentChain(List<VoiceMoment> moments) async {
+    final chains = buildMomentChains(moments);
     if (chains.isEmpty) {
-      if (mine.isNotEmpty) await _openMoment(mine.first);
+      if (moments.isNotEmpty) await _openMoment(moments.first);
       return;
     }
     await showMomentStoryViewer(

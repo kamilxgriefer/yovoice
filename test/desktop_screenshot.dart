@@ -204,6 +204,17 @@ Future<void> _seedCircle(FakeFirebaseFirestore db) async {
     await db.collection('users').doc(_me).collection('friends').doc(id).set(
       <String, dynamic>{'friendId': id, 'createdAt': Timestamp.now()},
     );
+    await db.collection('publicProfiles').doc(id).set(<String, dynamic>{
+      'uid': id,
+      'displayName': name,
+      'username': name.toLowerCase(),
+      'photoUrl': null,
+    });
+    if (index == 0) {
+      await db.collection('users').doc(_me).collection('following').doc(id).set(
+        <String, dynamic>{'uid': id, 'followedAt': Timestamp.now()},
+      );
+    }
   }
   await db.collection('voiceMoments').doc('m1').set(<String, dynamic>{
     'authorId': 'friend-0',
@@ -539,6 +550,7 @@ void main() {
               onSeeAllChats: () {},
               roomService: RoomService(firestore: db, auth: auth),
               friendService: FriendService(firestore: db, auth: auth),
+              followService: FollowService(firestore: db, auth: auth),
               profileService: ProfileService(firestore: db, auth: auth),
               feedService: HomeFeedService(firestore: db, auth: auth),
               messageService: MessageService(firestore: db, auth: auth),

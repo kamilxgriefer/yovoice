@@ -4,7 +4,6 @@ import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
@@ -21,7 +20,6 @@ import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
-import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 
@@ -575,6 +573,13 @@ void main() {
         caption: 'A full-name layout regression',
       );
       await seedFriend('follow-long', 'Katarzyna Wierzbicka');
+      await seedFollowing('follow-long', 'Katarzyna Wierzbicka');
+      await seedMoment(
+        id: 'moment-follow-long',
+        authorId: 'follow-long',
+        authorName: 'Katarzyna Wierzbicka',
+        caption: 'Another full-name layout regression',
+      );
 
       useDesktop(tester, const Size(1100, 800));
       await tester.pumpWidget(host(buildHome()));
@@ -610,10 +615,11 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('shows one tile per person from real friend/following '
-        'Moments, plus the user\'s own Moment slot', (tester) async {
+    testWidgets('shows one tile per followed person with an active Moment, '
+        'plus the user\'s own Moment slot', (tester) async {
       useDesktop(tester, const Size(1440, 820));
       await seedFriend('friend-1', 'Ola');
+      await seedFollowing('friend-1', 'Ola');
       await seedFollowing('creator-1', 'Marek');
       await seedMoment(
         id: 'm1',
@@ -640,6 +646,13 @@ void main() {
         authorId: 'stranger',
         authorName: 'Nobody',
         caption: 'Not in the circle',
+      );
+      await seedFriend('friend-only', 'Friend only');
+      await seedMoment(
+        id: 'm-friend-only',
+        authorId: 'friend-only',
+        authorName: 'Friend only',
+        caption: 'Friends are not automatically followed voices',
       );
       // In the circle but DEAD: past its 24-hour life. The expiry filter
       // must keep it off Home even before the sweeper marks it.
@@ -675,6 +688,7 @@ void main() {
       expect(find.text('Marek'), findsOneWidget);
       // Nobody outside friends/following/self may appear.
       expect(find.text('Nobody'), findsNothing);
+      expect(find.text('Friend only'), findsNothing);
       // A Moment past its expiresAt stays dead and off Home. A Moment
       // with NO expiresAt is permanent and shows — the amended
       // availability contract, not a regression.
@@ -690,6 +704,7 @@ void main() {
         'the existing creation flow', (tester) async {
       useDesktop(tester, const Size(1440, 820));
       await seedFriend('friend-1', 'Ola');
+      await seedFollowing('friend-1', 'Ola');
       await seedMoment(
         id: 'm1',
         authorId: 'friend-1',
@@ -727,99 +742,41 @@ void main() {
       expect(seeAllMoments, 1);
     });
 
-    testWidgets('the rail shows profile suggestions without inline Follow '
-        'actions', (tester) async {
+    testWidgets('never shows profile-only suggestions in the Moments rail', (
+      tester,
+    ) async {
       useDesktop(tester, const Size(1440, 900));
-      // Ola is a friend and online; Marek is already followed.
+      // Neither a friend nor a followed profile without audio belongs here.
       await seedFriend('friend-1', 'Ola');
       await seedFollowing('creator-1', 'Marek');
-      // A friend who is also already followed must NOT be offered again.
-      await seedFriend('friend-2', 'Zosia');
-      await seedFollowing('friend-2', 'Zosia');
 
-      final firebaseAuth = auth();
-      String? openedProfile;
-      var profileOpens = 0;
-      await tester.pumpWidget(
-        host(
-          DesktopMomentsStrip(
-            currentUserId: uid,
-            profile: ProfileService(
-              firestore: db,
-              auth: firebaseAuth,
-            ).watchCurrentProfile(),
-            feedService: HomeFeedService(firestore: db, auth: firebaseAuth),
-            friendService: FriendService(firestore: db, auth: firebaseAuth),
-            followService: FollowService(firestore: db, auth: firebaseAuth),
-            onOpenMoment: (_) {},
-            onCreateMoment: () {},
-            onSeeAll: () {},
-            onDiscover: () {},
-            onOpenProfile: (userId) {
-              openedProfile = userId;
-              profileOpens += 1;
-            },
-          ),
-        ),
-      );
+      await tester.pumpWidget(host(buildHome()));
       for (var i = 0; i < 8; i++) {
         await tester.pump(const Duration(milliseconds: 60));
       }
 
-      // Ola remains a profile shortcut; Zosia and Marek are not suggested.
-      // Following belongs on the profile surface, not in this Moments rail.
+      expect(find.text('Your Moment'), findsOneWidget);
+      expect(find.text('Ola'), findsNothing);
+      expect(find.text('Marek'), findsNothing);
       expect(find.text('Follow'), findsNothing);
-      final profileShortcut = find.bySemanticsLabel('Open profile for Ola');
-      expect(profileShortcut, findsOneWidget);
-      expect(tester.getSize(profileShortcut).width, greaterThanOrEqualTo(44));
-      expect(tester.getSize(profileShortcut).height, greaterThanOrEqualTo(44));
-
-      await tester.tap(find.text('Ola'));
-      await tester.pump();
-      expect(openedProfile, 'friend-1');
-      expect(profileOpens, 1);
-
-      Focus.of(tester.element(find.text('Ola'))).requestFocus();
-      await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.sendKeyEvent(LogicalKeyboardKey.space);
-      expect(openedProfile, 'friend-1');
-      expect(profileOpens, 3);
-
-      final olaAvatar = find.byWidgetPredicate(
-        (widget) => widget is UserAvatar && widget.displayName == 'Ola',
-      );
-      expect(olaAvatar, findsOneWidget);
-      expect(find.text('Zosia'), findsNothing);
     });
 
-    testWidgets('empty circle: a compact state with one Discover action, '
-        'never a blank band', (tester) async {
+    testWidgets('empty circle is an avatar-only rail without filler or CTAs', (
+      tester,
+    ) async {
       useDesktop(tester, const Size(1440, 820));
-      var discover = 0;
-      var creators = 0;
-
-      await tester.pumpWidget(
-        host(
-          buildHome(
-            onSeeAll: () => discover++,
-            onFindCreators: () => creators++,
-          ),
-        ),
-      );
+      await tester.pumpWidget(host(buildHome()));
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 60));
       }
 
-      expect(find.text('People & Moments'), findsOneWidget);
-      // Creation stays reachable even with nothing to show.
+      expect(find.text('Moments from your circle'), findsOneWidget);
       expect(find.text('Your Moment'), findsOneWidget);
-      expect(find.text('Find creators'), findsOneWidget);
-
-      await tester.tap(find.text('Find creators'));
-      await tester.pump();
-      expect(creators, 1);
-      expect(discover, 0);
+      expect(
+        find.textContaining('No Moments from your circle yet'),
+        findsNothing,
+      );
+      expect(find.text('Find creators'), findsNothing);
     });
   });
 

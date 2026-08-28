@@ -16,6 +16,17 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Home Voice Moments are a truthful avatar-only story rail** (2026-08-29,
+  ADR-123, **SOURCE ONLY; NATIVE STORE BUILD PENDING**): mobile and desktop now
+  keep the signed-in avatar first and show only followed authors who have
+  active, playable Voice Moments. One author occupies one bubble and opens the
+  complete ordered chain. Friend-only profiles, silent documents, profile
+  suggestions, the large empty card and its duplicate CTAs no longer fill the
+  rail. Relationship failures fail closed to the own-avatar entry point;
+  recommendations are deferred until a block-safe server source exists.
+  Responsive regression coverage includes 320 px at 200% text and 44 px create
+  targets.
+
 - **Room covers can be composed by the host instead of being silently
   center-cropped** (2026-08-29, ADR-122, **SOURCE ONLY; NATIVE STORE BUILD
   PENDING**): Create Community/Podcast Room and Room Settings now share a real

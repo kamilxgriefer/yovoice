@@ -4,6 +4,7 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/moments/data/models/moment_chain.dart';
 import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -11,7 +12,6 @@ import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_acce
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
-import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 /// "Moments from your circle" — the desktop Home strip that sits between
@@ -19,10 +19,9 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 ///
 /// DATA: [HomeFeedService.watchSocialMoments] — the same stream the
 /// Moments destination and mobile Home already read. It emits published
-/// Voice Moments whose author is the signed-in user, one of their
-/// friends (`users/{uid}/friends`) or someone they follow
-/// (`users/{uid}/following`), newest first. Nothing here queries anything
-/// else, and nobody is shown who is not in one of those three sets.
+/// Voice Moments newest first. Presentation then keeps only the signed-in
+/// user and followed authors with playable audio. Friend data contributes
+/// a verified online dot only; it never creates a story tile.
 ///
 /// One tile per PERSON (their newest Moment), so a prolific poster cannot
 /// push everyone else out of the strip.
@@ -37,13 +36,11 @@ class DesktopMomentsStrip extends StatefulWidget {
     required this.onOpenMoment,
     required this.onCreateMoment,
     required this.onSeeAll,
-    required this.onDiscover,
-    this.onOpenOwnChain,
+    this.onOpenChain,
     this.profile,
     this.feedService,
     this.friendService,
     this.followService,
-    this.onOpenProfile,
     this.currentUserId,
     this.expiryClock,
     super.key,
@@ -59,7 +56,7 @@ class DesktopMomentsStrip extends StatefulWidget {
   /// every live Moment, oldest first, not just the newest. Optional so
   /// existing callers keep working; when null the tile falls back to
   /// [onOpenMoment] with the newest.
-  final ValueChanged<List<VoiceMoment>>? onOpenOwnChain;
+  final ValueChanged<List<VoiceMoment>>? onOpenChain;
 
   /// The existing Moment creation flow (RecordVoiceMomentScreen).
   final VoidCallback onCreateMoment;
@@ -67,26 +64,18 @@ class DesktopMomentsStrip extends StatefulWidget {
   /// Moments, inside the fixed desktop shell (content slot, not a route).
   final VoidCallback onSeeAll;
 
-  /// Empty state's single action — Discover, also a content slot.
-  final VoidCallback onDiscover;
-
   /// The signed-in profile, shared with the rest of Home rather than
   /// opening a second listener for one avatar.
   final Stream<UserProfile>? profile;
 
   final HomeFeedService? feedService;
 
-  /// Presence and the people this account already knows — the source for
-  /// both the online dots and profile suggestions.
+  /// Presence for followed authors who are also friends. Friend edges never
+  /// create a tile on their own.
   final FriendService? friendService;
 
-  /// Reads the existing following edges so profile suggestions never repeat
-  /// people this account already follows. The strip does not mutate follows.
+  /// The relationship gate for this rail. The strip does not mutate follows.
   final FollowService? followService;
-
-  /// Opens someone's profile preview. Optional: without it a person tile
-  /// still shows, it just does not navigate.
-  final ValueChanged<String>? onOpenProfile;
 
   /// The signed-in uid, used to read who this account already follows.
   final String? currentUserId;
@@ -130,19 +119,6 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
     }
   }
 
-  /// Newest Moment per author, newest author first — the signed-in user
-  /// excluded, because they already own the leading "Your Moment" tile.
-  List<VoiceMoment> _newestPerAuthor(List<VoiceMoment> moments, String? me) {
-    final seen = <String>{};
-    final result = <VoiceMoment>[];
-    for (final moment in moments) {
-      if (moment.authorId.isEmpty || moment.authorId == me) continue;
-      if (!seen.add(moment.authorId)) continue;
-      result.add(moment);
-    }
-    return result;
-  }
-
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<UserProfile>(
@@ -169,29 +145,45 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                       in followingSnapshot.data ?? const <FollowUser>[])
                     user.uid,
                 };
-                // The segment past the divider: profile shortcuts for people
-                // this account already knows but has not followed yet. Real
-                // people from a real edge — never invented suggestions.
-                final profileSuggestions = friends
-                    .where(
-                      (friend) =>
-                          friend.id != profile?.uid &&
-                          !followed.contains(friend.id),
-                    )
-                    .take(2)
-                    .toList(growable: false);
-
                 return StreamBuilder<List<VoiceMoment>>(
                   stream: _moments,
                   builder: (context, snapshot) {
                     final all = snapshot.data ?? const <VoiceMoment>[];
-                    final mine = all
-                        .where((moment) => moment.authorId == profile?.uid)
+                    final playable = all
+                        .where(
+                          (moment) =>
+                              moment.audioUrl?.trim().isNotEmpty == true,
+                        )
                         .toList(growable: false);
-                    final others = _newestPerAuthor(all, profile?.uid);
+                    final chains = buildMomentChains(playable);
+                    final explicitUserId = widget.currentUserId?.trim();
+                    final ownUserId = explicitUserId?.isNotEmpty == true
+                        ? explicitUserId!
+                        : (profile?.uid ?? '');
+                    MomentChain? mine;
+                    for (final chain in chains) {
+                      if (chain.authorId == ownUserId) {
+                        mine = chain;
+                        break;
+                      }
+                    }
+                    final others = chains
+                        .where(
+                          (chain) =>
+                              chain.authorId != ownUserId &&
+                              followed.contains(chain.authorId),
+                        )
+                        .toList(growable: false);
+                    final shown = others.take(7).toList(growable: false);
+                    final visibleMoments = <VoiceMoment>[
+                      ...?mine?.moments,
+                      for (final chain in shown) ...chain.moments,
+                    ];
 
                     return MomentExpiryListTransition(
-                      moments: all,
+                      // Expiry announcements and focus recovery must describe
+                      // only tiles that are actually present in this rail.
+                      moments: visibleMoments,
                       clock: widget.expiryClock ?? DateTime.now,
                       transitionScope: 'desktop-home-moments',
                       announcementBuilder: (count) => count == 1
@@ -205,78 +197,49 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                               expiryRecoveryFocus: recoveryFocus,
                               onSeeAll: widget.onSeeAll,
                               // Nothing to "see all" of until the circle has posted.
-                              showSeeAll: others.isNotEmpty || mine.isNotEmpty,
-                              onDiscover: widget.onDiscover,
-                              showDiscover:
-                                  others.isNotEmpty ||
-                                  profileSuggestions.isNotEmpty,
+                              showSeeAll: others.isNotEmpty || mine != null,
                             ),
                             LayoutBuilder(
-                              builder: (context, constraints) {
-                                final tileWidth = _MomentTile.widthFor(context);
+                              builder: (context, _) {
                                 final tileHeight = _MomentTile.heightFor(
                                   context,
                                 );
-                                // "Your Moment" always holds the first slot; the rest
-                                // of the width decides how many people fit, capped at
-                                // the 8 the composition is designed around.
-                                final fits =
-                                    ((constraints.maxWidth + _tileGap) /
-                                            (tileWidth + _tileGap))
-                                        .floor();
-                                final capacity = (fits - 1).clamp(0, 7);
-                                final shown = others
-                                    .take(capacity)
-                                    .toList(growable: false);
 
                                 final tiles = <Widget>[
                                   _YourMomentTile(
                                     profile: profile,
-                                    mine: mine,
-                                    focusNode: mine.isEmpty
+                                    mine:
+                                        mine?.moments ?? const <VoiceMoment>[],
+                                    focusNode: mine == null
                                         ? null
-                                        : tileFocusNode(mine.first.id),
+                                        : tileFocusNode(mine.moments.last.id),
                                     onCreate: widget.onCreateMoment,
                                     onOpen: widget.onOpenMoment,
-                                    onOpenChain: widget.onOpenOwnChain,
+                                    onOpenChain: widget.onOpenChain,
                                   ),
-                                  for (final moment in shown)
+                                  for (final chain in shown)
                                     _MomentTile(
                                       key: ValueKey(
-                                        'desktop-home-moment-${moment.id}',
+                                        'desktop-home-moment-${chain.moments.last.id}',
                                       ),
-                                      moment: moment,
-                                      focusNode: tileFocusNode(moment.id),
-                                      onTap: () => widget.onOpenMoment(moment),
-                                      online: online.contains(moment.authorId),
+                                      moment: chain.moments.last,
+                                      chainLength: chain.length,
+                                      focusNode: tileFocusNode(
+                                        chain.moments.last.id,
+                                      ),
+                                      onTap: widget.onOpenChain == null
+                                          ? () => widget.onOpenMoment(
+                                              chain.moments.last,
+                                            )
+                                          : () => widget.onOpenChain!(
+                                              chain.moments,
+                                            ),
+                                      online: online.contains(chain.authorId),
                                     ),
                                 ];
 
-                                // Nothing from the circle and no profile suggestion:
-                                // the quiet state fills the band rather than leaving
-                                // it blank.
-                                if (others.isEmpty &&
-                                    profileSuggestions.isEmpty) {
-                                  return SizedBox(
-                                    height: tileHeight,
-                                    child: Row(
-                                      children: [
-                                        tiles.first,
-                                        const SizedBox(width: 14),
-                                        Expanded(
-                                          flex: 3,
-                                          child: _CircleQuietState(
-                                            onDiscover: widget.onDiscover,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                }
-
-                                // ONE row, packed from the left: people you can hear,
-                                // then the divider, then profile shortcuts. Following
-                                // belongs on the profile surface, not in this rail.
+                                // One compact story rail. Every avatar after the
+                                // signed-in user is followed and has playable audio.
                                 return SizedBox(
                                   height: tileHeight,
                                   child: SingleChildScrollView(
@@ -291,22 +254,6 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
                                           if (i > 0)
                                             const SizedBox(width: _tileGap),
                                           tiles[i],
-                                        ],
-                                        if (profileSuggestions.isNotEmpty) ...[
-                                          const _RailDivider(),
-                                          for (
-                                            var i = 0;
-                                            i < profileSuggestions.length;
-                                            i++
-                                          ) ...[
-                                            if (i > 0)
-                                              const SizedBox(width: _tileGap),
-                                            _PersonSuggestionTile(
-                                              person: profileSuggestions[i],
-                                              onOpenProfile:
-                                                  widget.onOpenProfile,
-                                            ),
-                                          ],
                                         ],
                                       ],
                                     ),
@@ -329,38 +276,16 @@ class _DesktopMomentsStripState extends State<DesktopMomentsStrip> {
   }
 }
 
-/// The hairline between "people whose Moments you can hear" and suggested
-/// profile shortcuts — two different offers, one rail.
-class _RailDivider extends StatelessWidget {
-  const _RailDivider();
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: 1,
-    height: 52,
-    margin: const EdgeInsets.symmetric(horizontal: 16),
-    color: const Color(0xFF2E2140),
-  );
-}
-
 class _StripHeading extends StatelessWidget {
   const _StripHeading({
     required this.expiryRecoveryFocus,
     required this.onSeeAll,
     required this.showSeeAll,
-    required this.onDiscover,
-    required this.showDiscover,
   });
 
   final FocusNode expiryRecoveryFocus;
   final VoidCallback onSeeAll;
   final bool showSeeAll;
-
-  final VoidCallback onDiscover;
-
-  /// False only when the empty state is showing, which carries the same
-  /// action itself — the rail must never offer `Find creators` twice.
-  final bool showDiscover;
 
   @override
   Widget build(BuildContext context) {
@@ -372,11 +297,11 @@ class _StripHeading extends StatelessWidget {
             child: MomentExpiryFocusTarget(
               key: const ValueKey('desktop-home-moments-heading'),
               focusNode: expiryRecoveryFocus,
-              semanticLabel: 'People and Moments',
+              semanticLabel: 'Moments from your circle',
               child: const Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'People & Moments',
+                  'Moments from your circle',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 16.5,
@@ -386,41 +311,13 @@ class _StripHeading extends StatelessWidget {
               ),
             ),
           ),
-          if (showDiscover)
-            TextButton(
-              onPressed: onDiscover,
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Find creators',
-                    style: TextStyle(
-                      color: Color(0xFFD3A5FF),
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  SizedBox(width: 3),
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    size: 16,
-                    color: Color(0xFFD3A5FF),
-                  ),
-                ],
-              ),
-            ),
           if (showSeeAll)
             TextButton(
               onPressed: onSeeAll,
               style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: const Size(44, 44),
+                tapTargetSize: MaterialTapTargetSize.padded,
               ),
               child: const Row(
                 mainAxisSize: MainAxisSize.min,
@@ -498,6 +395,7 @@ class _MomentTile extends StatelessWidget {
     required this.moment,
     required this.focusNode,
     required this.onTap,
+    this.chainLength = 1,
     this.online = false,
     super.key,
   });
@@ -505,6 +403,7 @@ class _MomentTile extends StatelessWidget {
   final VoiceMoment moment;
   final FocusNode focusNode;
   final VoidCallback onTap;
+  final int chainLength;
 
   /// The author's own `isOnline`, for friends only — the rail never
   /// guesses presence for someone it cannot read it for.
@@ -541,55 +440,62 @@ class _MomentTile extends StatelessWidget {
     return SizedBox(
       width: widthFor(context),
       height: heightFor(context),
-      child: InkWell(
-        focusNode: focusNode,
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _PresenceDot(
-              online: online,
-              child: _MomentRing(
-                highlighted: fresh,
-                child: UserAvatar(
-                  radius: 25,
-                  photoUrl: moment.authorPhotoUrl,
-                  displayName: moment.authorName,
+      child: Semantics(
+        button: true,
+        excludeSemantics: true,
+        label: chainLength == 1
+            ? 'Play Voice Moment from ${moment.authorName}'
+            : 'Play $chainLength Voice Moments from ${moment.authorName}',
+        child: InkWell(
+          focusNode: focusNode,
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _PresenceDot(
+                online: online,
+                child: _MomentRing(
+                  highlighted: fresh,
+                  child: UserAvatar(
+                    radius: 25,
+                    photoUrl: moment.authorPhotoUrl,
+                    displayName: moment.authorName,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 7),
-            _MomentNameLabel(name: moment.authorName),
-            const SizedBox(height: 2),
-            SizedBox(
-              height: actionHeightFor(context),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  UserIdentityBadges(
-                    uid: moment.authorId,
-                    variant: IdentityBadgeVariant.icon,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    // Both are facts the document carries: freshly posted,
-                    // or exactly how long the recording runs.
-                    fresh ? 'New' : moment.durationLabel,
-                    maxLines: 1,
-                    style: TextStyle(
-                      color: fresh
-                          ? const Color(0xFFE879F9)
-                          : const Color(0xFF9A90AC),
-                      fontSize: 10.5,
-                      fontWeight: fresh ? FontWeight.w800 : FontWeight.w600,
+              const SizedBox(height: 7),
+              _MomentNameLabel(name: moment.authorName),
+              const SizedBox(height: 2),
+              SizedBox(
+                height: actionHeightFor(context),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    UserIdentityBadges(
+                      uid: moment.authorId,
+                      variant: IdentityBadgeVariant.icon,
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 4),
+                    Text(
+                      // Both are facts the document carries: freshly posted,
+                      // or exactly how long the recording runs.
+                      fresh ? 'New' : moment.durationLabel,
+                      maxLines: 1,
+                      style: TextStyle(
+                        color: fresh
+                            ? const Color(0xFFE879F9)
+                            : const Color(0xFF9A90AC),
+                        fontSize: 10.5,
+                        fontWeight: fresh ? FontWeight.w800 : FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -659,68 +565,6 @@ class _PresenceDot extends StatelessWidget {
   }
 }
 
-/// A profile shortcut for someone this account already knows.
-///
-/// The VIP mark reads `premiumIdentity` off their user document — the
-/// server-written mirror Cloud Functions maintain, never a flag this client
-/// decides. Follow controls deliberately live on the person's profile, where
-/// the relationship has context, instead of competing with Moment playback.
-class _PersonSuggestionTile extends StatelessWidget {
-  const _PersonSuggestionTile({
-    required this.person,
-    required this.onOpenProfile,
-  });
-
-  final FriendUser person;
-  final ValueChanged<String>? onOpenProfile;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: _MomentTile.widthFor(context),
-      height: _MomentTile.heightFor(context),
-      child: AccessibleTapRegion(
-        onTap: onOpenProfile == null ? null : () => onOpenProfile!(person.id),
-        semanticLabel: 'Open profile for ${person.displayName}',
-        tooltip: 'Open ${person.displayName}\'s profile',
-        borderRadius: 14,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _PresenceDot(
-              online: person.isOnline,
-              child: _MomentRing(
-                highlighted: false,
-                child: UserAvatar(
-                  radius: 25,
-                  photoUrl: person.photoUrl,
-                  displayName: person.displayName,
-                  premium: person.premiumIdentity,
-                ),
-              ),
-            ),
-            const SizedBox(height: 5),
-            _MomentNameLabel(name: person.displayName),
-            const SizedBox(height: 2),
-            SizedBox(
-              height: _MomentTile.actionHeightFor(context),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  UserIdentityBadges(
-                    uid: person.id,
-                    variant: IdentityBadgeVariant.icon,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 /// The signed-in user's slot. Opens their ACTIVE CHAIN — every live
 /// Moment, as a story — when they have any; the small plus always opens
 /// the existing creation flow, with any number of Moments already live
@@ -746,8 +590,8 @@ class _YourMomentTile extends StatelessWidget {
 
   final UserProfile? profile;
 
-  /// The signed-in user's live Moments, newest first (the stream's
-  /// order). Empty when nothing is live right now.
+  /// The signed-in user's live Moments, oldest first (story order).
+  /// Empty when nothing is live right now.
   final List<VoiceMoment> mine;
   final FocusNode? focusNode;
   final VoidCallback onCreate;
@@ -756,7 +600,7 @@ class _YourMomentTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final newest = mine.isEmpty ? null : mine.first;
+    final newest = mine.isEmpty ? null : mine.last;
     final fresh =
         newest?.createdAt != null &&
         DateTime.now().difference(newest!.createdAt!) <
@@ -784,70 +628,39 @@ class _YourMomentTile extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  _MomentRing(
-                    highlighted: fresh,
-                    child: UserAvatar(
-                      radius: 25,
-                      photoUrl: profile?.photoUrl,
-                      displayName: profile?.displayName,
-                      fallbackIcon: Icons.person_rounded,
-                    ),
-                  ),
-                  // The chain badge: how many of YOUR Moments are live
-                  // right now — a real count from the same stream that
-                  // renders them, never an estimate.
-                  if (mine.length > 1)
-                    Positioned(
-                      left: -1,
-                      top: -1,
-                      child: Container(
-                        key: const ValueKey('home-your-moment-count'),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(999),
-                          gradient: const LinearGradient(
-                            colors: [AppColors.primary, AppColors.secondary],
-                          ),
-                          border: Border.all(
-                            color: const Color(0xFF0C0814),
-                            width: 2,
-                          ),
-                        ),
-                        child: Text(
-                          '${mine.length}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                          ),
+              SizedBox(
+                width: 99,
+                height: _MomentRing.size + 8,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: _MomentRing(
+                        highlighted: fresh,
+                        child: UserAvatar(
+                          radius: 25,
+                          photoUrl: profile?.photoUrl,
+                          displayName: profile?.displayName,
+                          fallbackIcon: Icons.person_rounded,
                         ),
                       ),
                     ),
-                  // Nested inside the tile's own InkWell on purpose: the
-                  // innermost recognizer wins the tap, so the plus still
-                  // means "record" while every other pixel of the tile
-                  // means "play mine".
-                  Positioned(
-                    right: -1,
-                    bottom: -1,
-                    child: Tooltip(
-                      message: 'Record a Voice Moment',
-                      child: InkWell(
-                        key: const ValueKey('home-record-moment'),
-                        onTap: onCreate,
-                        customBorder: const CircleBorder(),
+                    // The chain badge: how many of YOUR Moments are live
+                    // right now — a real count from the same stream that
+                    // renders them, never an estimate.
+                    if (mine.length > 1)
+                      Positioned(
+                        left: -1,
+                        top: -1,
                         child: Container(
-                          width: 22,
-                          height: 22,
-                          alignment: Alignment.center,
+                          key: const ValueKey('home-your-moment-count'),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
-                            shape: BoxShape.circle,
+                            borderRadius: BorderRadius.circular(999),
                             gradient: const LinearGradient(
                               colors: [AppColors.primary, AppColors.secondary],
                             ),
@@ -856,16 +669,64 @@ class _YourMomentTile extends StatelessWidget {
                               width: 2,
                             ),
                           ),
-                          child: const Icon(
-                            Icons.add_rounded,
-                            size: 13,
-                            color: Colors.white,
+                          child: Text(
+                            '${mine.length}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                    // Nested inside the tile's own InkWell on purpose: the
+                    // innermost recognizer wins the tap, so the plus still
+                    // means "record" while every other pixel of the tile
+                    // means "play mine".
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Tooltip(
+                        message: 'Record a Voice Moment',
+                        child: InkWell(
+                          key: const ValueKey('home-record-moment'),
+                          onTap: onCreate,
+                          customBorder: const CircleBorder(),
+                          child: SizedBox(
+                            width: 44,
+                            height: 44,
+                            child: Align(
+                              alignment: Alignment.bottomLeft,
+                              child: Container(
+                                width: 22,
+                                height: 22,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  gradient: const LinearGradient(
+                                    colors: [
+                                      AppColors.primary,
+                                      AppColors.secondary,
+                                    ],
+                                  ),
+                                  border: Border.all(
+                                    color: const Color(0xFF0C0814),
+                                    width: 2,
+                                  ),
+                                ),
+                                child: const Icon(
+                                  Icons.add_rounded,
+                                  size: 13,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               const SizedBox(height: 7),
               const _MomentNameLabel(name: 'Your Moment'),
@@ -893,66 +754,6 @@ class _YourMomentTile extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// Shown beside "Your Moment" when nobody in the circle has posted —
-/// one line and one existing action, not a full-width blank panel.
-class _CircleQuietState extends StatelessWidget {
-  const _CircleQuietState({required this.onDiscover});
-
-  final VoidCallback onDiscover;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 76,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: Colors.white.withValues(alpha: .02),
-        border: Border.all(color: const Color(0xFF241A33)),
-      ),
-      child: Row(
-        children: [
-          const Expanded(
-            child: Text(
-              'No Moments from your circle yet — follow a few voices and '
-              'their latest lands here.',
-              style: TextStyle(
-                color: Color(0xFF9A90AC),
-                fontSize: 12.5,
-                height: 1.35,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          OutlinedButton(
-            onPressed: onDiscover,
-            style: OutlinedButton.styleFrom(
-              side: BorderSide(color: AppColors.primary.withValues(alpha: .45)),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(999),
-              ),
-              // Wider than the label strictly needs: at 14pt the text sat
-              // hard against the pill's radius. Still a secondary action —
-              // outlined, not filled, and nowhere near full width.
-              padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 10),
-              minimumSize: const Size(150, 40),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            child: const Text(
-              'Find creators',
-              style: TextStyle(
-                color: Color(0xFFD3A5FF),
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

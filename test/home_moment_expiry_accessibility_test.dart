@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
@@ -23,10 +24,16 @@ import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
 final _anchor = DateTime.utc(2026, 8, 27, 12);
 
-VoiceMoment _moment(String id, {required DateTime expiresAt}) => VoiceMoment(
+VoiceMoment _moment(
+  String id, {
+  required DateTime expiresAt,
+  String authorId = 'friend',
+  String authorName = 'Friend',
+  DateTime? createdAt,
+}) => VoiceMoment(
   id: id,
-  authorId: 'friend',
-  authorName: 'Friend',
+  authorId: authorId,
+  authorName: authorName,
   authorPhotoUrl: null,
   caption: 'caption $id',
   audioUrl: 'https://cdn.example/$id.m4a',
@@ -34,7 +41,7 @@ VoiceMoment _moment(String id, {required DateTime expiresAt}) => VoiceMoment(
   likeCount: 0,
   commentCount: 0,
   isPublished: true,
-  createdAt: _anchor.subtract(const Duration(minutes: 5)),
+  createdAt: createdAt ?? _anchor.subtract(const Duration(minutes: 5)),
   expiresAt: expiresAt,
   schemaVersion: 2,
   status: 'published',
@@ -96,6 +103,23 @@ List<Map<Object?, Object?>> _captureAnnouncements(WidgetTester tester) {
 
 List<String> _messages(List<Map<Object?, Object?>> captured) =>
     captured.map((event) => event['message'] as String).toList(growable: false);
+
+Future<void> _seedFollowing(
+  FakeFirebaseFirestore firestore,
+  String userId,
+) async {
+  await firestore.collection('publicProfiles').doc(userId).set({
+    'uid': userId,
+    'displayName': 'Friend',
+    'username': 'friend',
+  });
+  await firestore
+      .collection('users')
+      .doc('me')
+      .collection('following')
+      .doc(userId)
+      .set({'uid': userId, 'followedAt': Timestamp.now()});
+}
 
 class _Clock {
   _Clock(this.now);
@@ -191,7 +215,6 @@ void main() {
               expiryClock: () => clock.now,
               onOpenMoment: (_) {},
               onCreateMoment: () {},
-              onDiscover: () {},
             ),
           ),
         ),
@@ -224,6 +247,61 @@ void main() {
     },
   );
 
+  testWidgets('mobile expiry stays silent for the capped thirteenth author', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final semantics = tester.ensureSemantics();
+    final announcements = _captureAnnouncements(tester);
+    final clock = _Clock(_anchor);
+    final shown = <VoiceMoment>[
+      for (var index = 0; index < 12; index++)
+        _moment(
+          'shown-$index',
+          authorId: 'shown-author-$index',
+          authorName: 'Shown $index',
+          createdAt: _anchor.subtract(Duration(seconds: index)),
+          expiresAt: _anchor.add(const Duration(hours: 1)),
+        ),
+    ];
+    final hidden = _moment(
+      'hidden-thirteenth',
+      authorId: 'hidden-author',
+      authorName: 'Hidden thirteenth',
+      createdAt: _anchor.subtract(const Duration(minutes: 10)),
+      expiresAt: _anchor.add(const Duration(seconds: 10)),
+    );
+
+    Future<void> pump(List<VoiceMoment> moments) => tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MobileMomentsStrip(
+            moments: moments,
+            profile: _profile(),
+            currentUserId: 'me',
+            expiryClock: () => clock.now,
+            onOpenMoment: (_) {},
+            onCreateMoment: () {},
+          ),
+        ),
+      ),
+    );
+
+    await pump([...shown, hidden]);
+    expect(
+      find.byKey(const ValueKey('home-moment-hidden-thirteenth')),
+      findsNothing,
+    );
+
+    clock.now = hidden.expiresAt!;
+    await pump(shown);
+    await tester.pump();
+
+    expect(_messages(announcements), isEmpty);
+    semantics.dispose();
+  });
+
   testWidgets(
     'visible desktop Home strip announces once and recovers a removed tile',
     (tester) async {
@@ -235,6 +313,7 @@ void main() {
       final feed = _ControlledFeed(auth);
       addTearDown(feed.close);
       final db = FakeFirebaseFirestore();
+      await _seedFollowing(db, 'friend');
       final expiring = _moment(
         'desktop-expiring',
         expiresAt: _anchor.add(const Duration(seconds: 10)),
@@ -253,7 +332,6 @@ void main() {
               onOpenMoment: (_) {},
               onCreateMoment: () {},
               onSeeAll: () {},
-              onDiscover: () {},
             ),
           ),
         ),
@@ -293,6 +371,56 @@ void main() {
     },
   );
 
+  testWidgets('desktop expiry stays silent for a hidden non-followed Moment', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final semantics = tester.ensureSemantics();
+    final announcements = _captureAnnouncements(tester);
+    final clock = _Clock(_anchor);
+    final feed = _ControlledFeed(auth);
+    addTearDown(feed.close);
+    final db = FakeFirebaseFirestore();
+    final hidden = _moment(
+      'hidden-friend-only',
+      authorId: 'not-followed',
+      authorName: 'Hidden user',
+      expiresAt: _anchor.add(const Duration(seconds: 10)),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DesktopMomentsStrip(
+            profile: Stream<UserProfile>.value(_profile()),
+            feedService: feed,
+            friendService: FriendService(firestore: db, auth: auth),
+            followService: FollowService(firestore: db, auth: auth),
+            currentUserId: 'me',
+            expiryClock: () => clock.now,
+            onOpenMoment: (_) {},
+            onCreateMoment: () {},
+            onSeeAll: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    feed.emit([hidden]);
+    await tester.pump(const Duration(milliseconds: 2));
+    await tester.pump(const Duration(milliseconds: 2));
+    expect(find.text('Hidden user'), findsNothing);
+
+    clock.now = hidden.expiresAt!;
+    feed.emit(const <VoiceMoment>[]);
+    await tester.pump();
+    await tester.pump();
+
+    expect(_messages(announcements), isEmpty);
+    semantics.dispose();
+  });
+
   testWidgets('cached desktop Home strip stays silent while hidden', (
     tester,
   ) async {
@@ -322,7 +450,6 @@ void main() {
                 onOpenMoment: (_) {},
                 onCreateMoment: () {},
                 onSeeAll: () {},
-                onDiscover: () {},
               ),
               Center(
                 child: FilledButton(

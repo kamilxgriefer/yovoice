@@ -7676,3 +7676,48 @@ instead of weakening it for a UI convenience.
   a physical iOS/Android gallery-and-gesture pass remains release evidence for
   the next native tester build. The Firestore Rules hardening is source-only
   until the coordinated backend release.
+
+## ADR-123: Home Voice Moments are an avatar rail, not an empty-state dashboard
+
+**Status**: Implemented in source; native store build pending
+**Date**: 2026-08-29
+
+### Context
+
+When no followed account had posted, mobile Home placed a large explanatory
+card with Find creators and Record a Moment beside the signed-in avatar.
+Desktop repeated that empty state and also appended friend profiles without
+audio. The shared social feed admits friends as well as followed accounts, and
+mobile rendered one avatar per Moment document, so the rail could show an
+unfollowed friend, an unplayable profile or the same person several times.
+
+### Decision
+
+Home treats this section as a story rail. The signed-in avatar is always first;
+without a Moment it records, with Moments it opens the active chain, and its
+separate plus remains the create action. Every later avatar must be an account
+the viewer follows with at least one active document carrying a non-empty audio
+URL. Moments are grouped into one oldest-to-newest chain per author and tapping
+the avatar opens that complete chain. Friend data may decorate a followed
+author with a real presence dot but cannot create a tile. Relationship-stream
+failure fails closed to the signed-in avatar only.
+
+The empty explanatory card, inline discovery CTA, desktop profile suggestions
+and divider are removed. Recommendations remain optional and are deliberately
+absent until a server-backed feed can respect account status and both block
+directions while guaranteeing an active playable Moment. The broader Moments
+destination keeps its existing social feed; this narrower contract is applied
+only on Home.
+
+### Consequences
+
+- A quiet rail is intentionally short rather than visually filled.
+- Find creators remains available in the app's existing navigation and Moment
+  creation remains available from the signed-in avatar; neither is duplicated
+  inside the rail.
+- The current social source is globally bounded before the Home filter, so a
+  future backend projection is still needed if the product promises exhaustive
+  delivery for accounts following many active authors.
+- Mobile and desktop share the same identity, playback and fail-closed
+  contract. Automated coverage pins followed-only filtering, playable audio,
+  per-author chains, 44 px create targets and 320 px layout at 200% text.

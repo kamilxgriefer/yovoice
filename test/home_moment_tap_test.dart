@@ -1,3 +1,5 @@
+import 'dart:async';
+
 // Home's "Your Moment" tile: the reported "I click my own avatar and
 // nothing happens".
 //
@@ -15,6 +17,7 @@
 //     else had posted — so on a phone your own Moment could not be opened
 //     from Home under any circumstances.
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -25,14 +28,16 @@ import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_moments_strip.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home_sections.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/profile/data/models/follow_user.dart';
 import 'package:yovoice/features/profile/data/models/profile_visibility.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 const _me = 'me';
 
-UserProfile _profile() => UserProfile(
+UserProfile _profile({String? photoUrl}) => UserProfile(
   uid: _me,
   email: 'me@example.com',
   displayName: 'Kamil',
@@ -42,7 +47,7 @@ UserProfile _profile() => UserProfile(
   nativeLanguage: '',
   spokenLanguages: const [],
   learningLanguages: const [],
-  photoUrl: null,
+  photoUrl: photoUrl,
   bannerUrl: null,
   website: '',
   accountType: AccountType.personal,
@@ -64,11 +69,11 @@ UserProfile _profile() => UserProfile(
   profileVisibility: ProfileVisibility.public,
 );
 
-VoiceMoment _mine() => VoiceMoment(
+VoiceMoment _mine({String? authorPhotoUrl}) => VoiceMoment(
   id: 'mine',
   authorId: _me,
   authorName: 'Kamil',
-  authorPhotoUrl: null,
+  authorPhotoUrl: authorPhotoUrl,
   caption: 'hello',
   audioUrl: 'https://cdn.example/mine.m4a',
   durationSeconds: 2,
@@ -92,6 +97,19 @@ class _Feed extends HomeFeedService {
       Stream<List<VoiceMoment>>.value(moments);
 }
 
+class _StreamFollowService extends FollowService {
+  _StreamFollowService({
+    required this.stream,
+    required super.firestore,
+    required super.auth,
+  });
+
+  final Stream<List<FollowUser>> stream;
+
+  @override
+  Stream<List<FollowUser>> watchFollowing(String userId) => stream;
+}
+
 void main() {
   late PublicIdentityRepository originalIdentity;
 
@@ -110,10 +128,17 @@ void main() {
     PublicIdentityRepository.instance = originalIdentity;
   });
 
-  group('the desktop People & Moments rail', () {
-    Future<({List<String> opened, List<int> created})> pumpStrip(
+  group('the desktop Moments from your circle rail', () {
+    Future<
+      ({List<String> opened, List<List<String>> chains, List<int> created})
+    >
+    pumpStrip(
       WidgetTester tester, {
       required List<VoiceMoment> moments,
+      List<String> followedAuthors = const <String>[],
+      bool openChains = false,
+      bool includeProfile = true,
+      Stream<List<FollowUser>>? followingStream,
     }) async {
       final db = FakeFirebaseFirestore();
       final auth = MockFirebaseAuth(
@@ -121,7 +146,22 @@ void main() {
         mockUser: MockUser(uid: _me),
       );
       final opened = <String>[];
+      final chains = <List<String>>[];
       final created = <int>[];
+
+      for (final userId in followedAuthors) {
+        await db.collection('publicProfiles').doc(userId).set({
+          'uid': userId,
+          'displayName': 'Ola',
+          'username': 'ola',
+        });
+        await db
+            .collection('users')
+            .doc(_me)
+            .collection('following')
+            .doc(userId)
+            .set({'uid': userId, 'followedAt': Timestamp.now()});
+      }
 
       await tester.binding.setSurfaceSize(const Size(1176, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -130,22 +170,36 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: DesktopMomentsStrip(
-              profile: Stream<UserProfile>.value(_profile()),
+              profile: includeProfile
+                  ? Stream<UserProfile>.value(_profile())
+                  : null,
               feedService: _Feed(moments, firestore: db, auth: auth),
               friendService: FriendService(firestore: db, auth: auth),
-              followService: FollowService(firestore: db, auth: auth),
+              followService: followingStream == null
+                  ? FollowService(firestore: db, auth: auth)
+                  : _StreamFollowService(
+                      stream: followingStream,
+                      firestore: db,
+                      auth: auth,
+                    ),
               currentUserId: _me,
               onOpenMoment: (moment) => opened.add(moment.id),
+              onOpenChain: openChains
+                  ? (moments) => chains.add(
+                      moments
+                          .map((moment) => moment.id)
+                          .toList(growable: false),
+                    )
+                  : null,
               onCreateMoment: () => created.add(1),
               onSeeAll: () {},
-              onDiscover: () {},
             ),
           ),
         ),
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
-      return (opened: opened, created: created);
+      return (opened: opened, chains: chains, created: created);
     }
 
     testWidgets('tapping the LABEL under your avatar opens your Moment — the '
@@ -185,6 +239,33 @@ void main() {
       );
     });
 
+    testWidgets(
+      'currentUserId keeps the own chain playable while profile loads, and '
+      'the avatar center does not trigger the plus',
+      (tester) async {
+        final calls = await pumpStrip(
+          tester,
+          moments: [_mine()],
+          openChains: true,
+          includeProfile: false,
+        );
+
+        final ownTile = find.byKey(const ValueKey('home-your-moment'));
+        final avatar = find.descendant(
+          of: ownTile,
+          matching: find.byType(UserAvatar),
+        );
+        expect(avatar, findsOneWidget);
+        await tester.tap(avatar);
+        await tester.pump();
+
+        expect(calls.chains, [
+          ['mine'],
+        ]);
+        expect(calls.created, isEmpty);
+      },
+    );
+
     testWidgets('with no Moment of your own the tile opens the recorder', (
       tester,
     ) async {
@@ -197,14 +278,91 @@ void main() {
       expect(calls.created, hasLength(1));
       expect(calls.opened, isEmpty);
     });
+
+    testWidgets('a followed author occupies one tile and opens their chain', (
+      tester,
+    ) async {
+      final older = _mine().copyWith(
+        id: 'desktop-other-older',
+        authorId: 'other',
+        authorName: 'Ola',
+        createdAt: DateTime.now().subtract(const Duration(minutes: 10)),
+      );
+      final newer = older.copyWith(
+        id: 'desktop-other-newer',
+        createdAt: DateTime.now(),
+      );
+      final calls = await pumpStrip(
+        tester,
+        moments: [newer, older],
+        followedAuthors: const ['other'],
+        openChains: true,
+      );
+
+      expect(find.text('Ola'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Play 2 Voice Moments from Ola'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Ola'));
+      await tester.pump();
+      expect(calls.chains, [
+        ['desktop-other-older', 'desktop-other-newer'],
+      ]);
+      expect(calls.opened, isEmpty);
+      final seeAll = find.widgetWithText(TextButton, 'See all');
+      expect(tester.getSize(seeAll).width, greaterThanOrEqualTo(44));
+      expect(tester.getSize(seeAll).height, greaterThanOrEqualTo(44));
+    });
+
+    testWidgets('a following stream error fails closed to the own tile', (
+      tester,
+    ) async {
+      final controller = StreamController<List<FollowUser>>.broadcast(
+        sync: true,
+      );
+      addTearDown(controller.close);
+      final other = _mine().copyWith(
+        id: 'follow-stream-other',
+        authorId: 'other',
+        authorName: 'Ola',
+      );
+      await pumpStrip(
+        tester,
+        moments: [other],
+        followingStream: controller.stream,
+      );
+
+      controller.add(const [
+        FollowUser(
+          uid: 'other',
+          displayName: 'Ola',
+          username: 'ola',
+          photoUrl: null,
+          followedAt: null,
+        ),
+      ]);
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(find.text('Ola'), findsOneWidget);
+
+      controller.addError(StateError('following unavailable'));
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(find.text('Ola'), findsNothing);
+      expect(find.text('Your Moment'), findsOneWidget);
+    });
   });
 
   group('the mobile Moments strip', () {
-    Future<({List<String> opened, List<int> created})> pumpStrip(
+    Future<
+      ({List<String> opened, List<List<String>> chains, List<int> created})
+    >
+    pumpStrip(
       WidgetTester tester, {
       required List<VoiceMoment> moments,
+      String? profilePhotoUrl,
     }) async {
       final opened = <String>[];
+      final chains = <List<String>>[];
       final created = <int>[];
 
       await tester.binding.setSurfaceSize(const Size(390, 844));
@@ -217,29 +375,60 @@ void main() {
               padding: const EdgeInsets.all(16),
               child: MobileMomentsStrip(
                 moments: moments,
-                profile: _profile(),
+                profile: _profile(photoUrl: profilePhotoUrl),
                 currentUserId: _me,
                 onOpenMoment: (moment) => opened.add(moment.id),
+                onOpenChain: (moments) => chains.add(
+                  moments.map((moment) => moment.id).toList(growable: false),
+                ),
                 onCreateMoment: () => created.add(1),
-                onDiscover: () {},
               ),
             ),
           ),
         ),
       );
       await tester.pump();
-      return (opened: opened, created: created);
+      return (opened: opened, chains: chains, created: created);
     }
 
-    testWidgets('your own bubble plays your Moment instead of always opening '
-        'the recorder', (tester) async {
-      final calls = await pumpStrip(tester, moments: [_mine()]);
+    testWidgets('your avatar center opens the oldest-to-newest own chain '
+        'instead of the recorder', (tester) async {
+      final older = _mine().copyWith(
+        id: 'mine-older',
+        createdAt: DateTime.now().subtract(const Duration(minutes: 10)),
+      );
+      final newer = older.copyWith(id: 'mine-newer', createdAt: DateTime.now());
+      final calls = await pumpStrip(tester, moments: [newer, older]);
 
-      await tester.tap(find.byKey(const ValueKey('home-your-moment')));
+      final avatar = find.descendant(
+        of: find.byKey(const ValueKey('home-your-moment')),
+        matching: find.byType(UserAvatar),
+      );
+      await tester.tap(avatar);
       await tester.pump();
 
-      expect(calls.opened, ['mine']);
+      expect(calls.chains, [
+        ['mine-older', 'mine-newer'],
+      ]);
+      expect(calls.opened, isEmpty);
       expect(calls.created, isEmpty);
+    });
+
+    testWidgets('your tile uses the current profile avatar, not the stale '
+        'photo denormalized into a Moment', (tester) async {
+      await pumpStrip(
+        tester,
+        moments: [_mine(authorPhotoUrl: 'https://old.example/avatar.jpg')],
+        profilePhotoUrl: 'https://new.example/avatar.jpg',
+      );
+
+      final avatar = tester.widget<UserAvatar>(
+        find.descendant(
+          of: find.byKey(const ValueKey('home-your-moment')),
+          matching: find.byType(UserAvatar),
+        ),
+      );
+      expect(avatar.photoUrl, 'https://new.example/avatar.jpg');
     });
 
     testWidgets('your own bubble survives a quiet circle — it was hidden '
@@ -247,11 +436,12 @@ void main() {
       final calls = await pumpStrip(tester, moments: [_mine()]);
 
       expect(find.byKey(const ValueKey('home-your-moment')), findsOneWidget);
-      // The quiet-circle copy is still shown beside it, not instead of it.
       expect(
         find.textContaining('No Moments from your circle yet'),
-        findsOneWidget,
+        findsNothing,
       );
+      expect(find.text('Find creators'), findsNothing);
+      expect(find.text('Record a Moment'), findsNothing);
       expect(tester.takeException(), isNull);
       expect(calls.created, isEmpty);
     });
@@ -259,6 +449,10 @@ void main() {
     testWidgets('the plus badge records, and with no Moment of your own the '
         'bubble does too', (tester) async {
       final withMine = await pumpStrip(tester, moments: [_mine()]);
+      expect(
+        tester.getSize(find.byKey(const ValueKey('home-record-moment'))),
+        const Size(44, 44),
+      );
       await tester.tap(find.byKey(const ValueKey('home-record-moment')));
       await tester.pump();
       expect(withMine.created, hasLength(1));
@@ -269,6 +463,40 @@ void main() {
       await tester.pump();
       expect(withoutMine.created, hasLength(1));
       expect(withoutMine.opened, isEmpty);
+    });
+
+    testWidgets('one followed author bubble opens their whole active chain', (
+      tester,
+    ) async {
+      final older = VoiceMoment(
+        id: 'other-older',
+        authorId: 'other',
+        authorName: 'Ola',
+        authorPhotoUrl: null,
+        caption: '',
+        audioUrl: 'https://cdn.example/older.m4a',
+        durationSeconds: 2,
+        likeCount: 0,
+        commentCount: 0,
+        isPublished: true,
+        createdAt: DateTime.now().subtract(const Duration(minutes: 10)),
+        schemaVersion: 2,
+        status: 'published',
+      );
+      final newer = older.copyWith(
+        id: 'other-newer',
+        audioUrl: 'https://cdn.example/newer.m4a',
+        createdAt: DateTime.now(),
+      );
+      final calls = await pumpStrip(tester, moments: [newer, older]);
+
+      expect(find.text('Ola'), findsOneWidget);
+      await tester.tap(find.text('Ola'));
+      await tester.pump();
+      expect(calls.chains, [
+        ['other-older', 'other-newer'],
+      ]);
+      expect(calls.opened, isEmpty);
     });
   });
 }
