@@ -1,19 +1,25 @@
-import 'dart:typed_data';
-
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/core/theme/space_identity.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
+import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_image_service.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_experience_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/rooms/presentation/room_cover_editor.dart';
 import 'package:yovoice/features/rooms/presentation/screens/create_room_screen.dart';
+
+String _managedRoomCoverUrl(String roomId) =>
+    'https://firebasestorage.googleapis.com/v0/b/'
+    'yovoice-ec54a.firebasestorage.app/o/'
+    'room_images%2F$roomId%2Fcover_100.jpg?alt=media';
 
 /// A picker/uploader that never touches Storage.
 ///
@@ -28,30 +34,82 @@ class _FakeImageService implements RoomImageService {
   int pickCalls = 0;
   int uploadCalls = 0;
   String? uploadedForRoom;
+  Uint8List? uploadedBytes;
+  final List<String?> deletedUrls = <String?>[];
 
   @override
-  Future<XFile?> pickImage() async {
+  Future<XFile?> pickRoomCoverSource() async {
     pickCalls++;
     return pickResult;
   }
 
   @override
-  Future<String> uploadRoomImage({
+  Future<String> uploadRoomCover({
     required String roomId,
-    required XFile file,
+    required Uint8List bytes,
   }) async {
     uploadCalls++;
     uploadedForRoom = roomId;
+    uploadedBytes = bytes;
     if (uploadFails) throw StateError('Storage rejected the upload.');
-    return 'https://example.invalid/$roomId.jpg';
+    return _managedRoomCoverUrl(roomId);
+  }
+
+  @override
+  Future<void> deleteManagedRoomCover({
+    required String roomId,
+    required String? url,
+  }) async {
+    deletedUrls.add(url);
   }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _LostAckCreateRoomService extends RoomService {
+  _LostAckCreateRoomService({
+    required FakeFirebaseFirestore firestore,
+    required MockFirebaseAuth auth,
+    required this.commitBeforeThrow,
+    this.serverReadFails = false,
+  }) : super(firestore: firestore, auth: auth);
+
+  final bool commitBeforeThrow;
+  final bool serverReadFails;
+
+  @override
+  Future<void> updateImageUrl({
+    required String roomId,
+    required String imageUrl,
+  }) async {
+    if (commitBeforeThrow) {
+      await super.updateImageUrl(roomId: roomId, imageUrl: imageUrl);
+    }
+    throw StateError('The write acknowledgement was lost.');
+  }
+
+  @override
+  Future<VoiceRoom> getRoomFromServer(String roomId) async {
+    if (serverReadFails) {
+      throw StateError('The authoritative read is unavailable.');
+    }
+    return getRoom(roomId);
+  }
+}
+
 XFile _fakeImage() =>
     XFile.fromData(Uint8List.fromList(List.filled(64, 7)), name: 'cover.jpg');
+
+Future<PickedRoomCover?> _passthroughCoverEditor(
+  BuildContext context,
+  RoomImageService imageService,
+) async {
+  final picked = await imageService.pickRoomCoverSource();
+  if (picked == null) return null;
+  final bytes = await picked.readAsBytes();
+  return PickedRoomCover(bytes: bytes);
+}
 
 void main() {
   const uid = 'host-uid';
@@ -70,7 +128,15 @@ void main() {
     });
   });
 
-  Widget host(Widget child) => MaterialApp(home: child);
+  Widget host(Widget child, {double textScale = 1}) => MaterialApp(
+    builder: (context, page) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      child: page!,
+    ),
+    home: child,
+  );
 
   void useSize(WidgetTester tester, Size size) {
     tester.view.physicalSize = size;
@@ -81,12 +147,19 @@ void main() {
   CreateRoomScreen build({
     RoomExperience experience = RoomExperience.community,
     RoomImageService? images,
+    RoomCoverEditorCallback? coverEditor,
+    RoomService? roomService,
   }) {
     final firebaseAuth = auth();
     return CreateRoomScreen(
       experience: experience,
-      roomService: RoomService(firestore: db, auth: firebaseAuth),
+      roomService:
+          roomService ?? RoomService(firestore: db, auth: firebaseAuth),
       imageService: images ?? _FakeImageService(),
+      // Real crop geometry is covered by image_crop_screen_test. The wizard
+      // gets a deterministic editor seam so its picker/cancel/upload state can
+      // be verified without decoding a bitmap in every unrelated test.
+      coverEditor: coverEditor ?? _passthroughCoverEditor,
       // Injected too: it constructs a NotificationService, which needs a
       // Firebase app the test does not have.
       experienceService: RoomExperienceService(
@@ -248,6 +321,43 @@ void main() {
   });
 
   group('cover', () {
+    testWidgets('picker has one semantic action and visible keyboard focus', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      useSize(tester, const Size(430, 1000));
+      final images = _FakeImageService(pickResult: _fakeImage());
+      await tester.pumpWidget(host(build(images: images)));
+      await settle(tester);
+
+      expect(find.bySemanticsLabel('Choose a cover image'), findsOneWidget);
+      expect(find.bySemanticsLabel('Choose cover'), findsNothing);
+
+      for (var i = 0; i < 12; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        if (find
+            .byKey(const ValueKey('cover-picker-focus-ring-light'))
+            .evaluate()
+            .isNotEmpty) {
+          break;
+        }
+      }
+      expect(
+        find.byKey(const ValueKey('cover-picker-focus-ring-dark')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('cover-picker-focus-ring-light')),
+        findsOneWidget,
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await settle(tester);
+      expect(images.pickCalls, 1);
+      semantics.dispose();
+    });
+
     testWidgets('select, preview, replace and remove', (tester) async {
       useSize(tester, const Size(430, 2000));
       final images = _FakeImageService(pickResult: _fakeImage());
@@ -274,6 +384,72 @@ void main() {
       await settle(tester);
       expect(find.byType(Image), findsNothing);
       expect(find.text('Choose cover'), findsOneWidget);
+    });
+
+    testWidgets('cancelling Replace preserves the confirmed composition', (
+      tester,
+    ) async {
+      useSize(tester, const Size(430, 2000));
+      final images = _FakeImageService();
+      var editorCalls = 0;
+      final cropped = Uint8List.fromList(List.filled(96, 11));
+      Future<PickedRoomCover?> editor(
+        BuildContext context,
+        RoomImageService imageService,
+      ) async {
+        editorCalls++;
+        if (editorCalls == 2) return null;
+        return PickedRoomCover(bytes: cropped);
+      }
+
+      await tester.pumpWidget(host(build(images: images, coverEditor: editor)));
+      await settle(tester);
+      await tester.tap(find.text('Choose cover'));
+      await settle(tester);
+      expect(find.text('Replace'), findsOneWidget);
+
+      await tester.tap(find.text('Replace'));
+      await settle(tester);
+
+      expect(editorCalls, 2);
+      expect(find.text('Replace'), findsOneWidget);
+      expect(find.text('Choose cover'), findsNothing);
+    });
+
+    testWidgets('the second confirmed crop is the one uploaded', (
+      tester,
+    ) async {
+      useSize(tester, const Size(430, 2000));
+      final images = _FakeImageService();
+      final first = Uint8List.fromList(List.filled(96, 31));
+      final second = Uint8List.fromList(List.filled(96, 47));
+      var editorCalls = 0;
+      Future<PickedRoomCover?> editor(
+        BuildContext context,
+        RoomImageService imageService,
+      ) async {
+        editorCalls++;
+        return PickedRoomCover(bytes: editorCalls == 1 ? first : second);
+      }
+
+      await tester.pumpWidget(host(build(images: images, coverEditor: editor)));
+      await settle(tester);
+      await tester.tap(find.text('Choose cover'));
+      await settle(tester);
+      await tester.tap(find.text('Replace'));
+      await settle(tester);
+      await tester.enterText(find.byType(TextFormField).first, 'Latest crop');
+      await tester.tap(find.text('Continue'));
+      await settle(tester);
+      await tester.tap(find.text('Continue'));
+      await settle(tester);
+      await tester.tap(find.text('Create Room'));
+      await settle(tester);
+
+      tester.takeException();
+      expect(editorCalls, 2);
+      expect(images.uploadedBytes, second);
+      expect(images.uploadedBytes, isNot(first));
     });
 
     testWidgets('a failed upload leaves a usable room and says so', (
@@ -306,8 +482,151 @@ void main() {
       expect(rooms.docs, hasLength(1));
       expect(rooms.docs.single.data()['imageUrl'], isNull);
       expect(images.uploadCalls, 1);
+      expect(images.uploadedBytes, isNotNull);
       expect(find.textContaining('cover did not upload'), findsOneWidget);
     });
+
+    testWidgets('successful create publishes the confirmed bytes and URL', (
+      tester,
+    ) async {
+      useSize(tester, const Size(430, 2000));
+      final sourceBytes = Uint8List.fromList(List.filled(128, 23));
+      final images = _FakeImageService(
+        pickResult: XFile.fromData(sourceBytes, name: 'source.jpg'),
+      );
+      await tester.pumpWidget(host(build(images: images)));
+      await settle(tester);
+
+      await tester.tap(find.text('Choose cover'));
+      await settle(tester);
+      await tester.enterText(find.byType(TextFormField).first, 'Cover success');
+      await tester.tap(find.text('Continue'));
+      await settle(tester);
+      await tester.tap(find.text('Continue'));
+      await settle(tester);
+      await tester.tap(find.text('Create Room'));
+      await settle(tester);
+
+      tester.takeException();
+      final room = (await db.collection('rooms').get()).docs.single;
+      expect(images.uploadCalls, 1);
+      expect(images.uploadedForRoom, room.id);
+      expect(images.uploadedBytes, sourceBytes);
+      expect(room.data()['imageUrl'], _managedRoomCoverUrl(room.id));
+    });
+
+    testWidgets(
+      'create treats a committed pointer with lost acknowledgement as success',
+      (tester) async {
+        useSize(tester, const Size(430, 2000));
+        final firebaseAuth = auth();
+        final service = _LostAckCreateRoomService(
+          firestore: db,
+          auth: firebaseAuth,
+          commitBeforeThrow: true,
+        );
+        final images = _FakeImageService(pickResult: _fakeImage());
+        await tester.pumpWidget(
+          host(build(images: images, roomService: service)),
+        );
+        await settle(tester);
+
+        await tester.tap(find.text('Choose cover'));
+        await settle(tester);
+        await tester.enterText(
+          find.byType(TextFormField).first,
+          'Committed cover',
+        );
+        await tester.tap(find.text('Continue'));
+        await settle(tester);
+        await tester.tap(find.text('Continue'));
+        await settle(tester);
+        await tester.tap(find.text('Create Room'));
+        await settle(tester);
+
+        tester.takeException();
+        final room = (await db.collection('rooms').get()).docs.single;
+        expect(room.data()['imageUrl'], _managedRoomCoverUrl(room.id));
+        expect(images.deletedUrls, isEmpty);
+        expect(find.textContaining('cover did not upload'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'create deletes the new object only after server confirms pointer mismatch',
+      (tester) async {
+        useSize(tester, const Size(430, 2000));
+        final firebaseAuth = auth();
+        final service = _LostAckCreateRoomService(
+          firestore: db,
+          auth: firebaseAuth,
+          commitBeforeThrow: false,
+        );
+        final images = _FakeImageService(pickResult: _fakeImage());
+        await tester.pumpWidget(
+          host(build(images: images, roomService: service)),
+        );
+        await settle(tester);
+
+        await tester.tap(find.text('Choose cover'));
+        await settle(tester);
+        await tester.enterText(
+          find.byType(TextFormField).first,
+          'Rejected cover',
+        );
+        await tester.tap(find.text('Continue'));
+        await settle(tester);
+        await tester.tap(find.text('Continue'));
+        await settle(tester);
+        await tester.tap(find.text('Create Room'));
+        await settle(tester);
+
+        tester.takeException();
+        final room = (await db.collection('rooms').get()).docs.single;
+        final uploadedUrl = _managedRoomCoverUrl(room.id);
+        expect(room.data()['imageUrl'], isNull);
+        expect(images.deletedUrls, [uploadedUrl]);
+        expect(find.textContaining('cover did not upload'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'create preserves the upload when lost acknowledgement stays ambiguous',
+      (tester) async {
+        useSize(tester, const Size(430, 2000));
+        final firebaseAuth = auth();
+        final service = _LostAckCreateRoomService(
+          firestore: db,
+          auth: firebaseAuth,
+          commitBeforeThrow: false,
+          serverReadFails: true,
+        );
+        final images = _FakeImageService(pickResult: _fakeImage());
+        await tester.pumpWidget(
+          host(build(images: images, roomService: service)),
+        );
+        await settle(tester);
+
+        await tester.tap(find.text('Choose cover'));
+        await settle(tester);
+        await tester.enterText(
+          find.byType(TextFormField).first,
+          'Ambiguous cover',
+        );
+        await tester.tap(find.text('Continue'));
+        await settle(tester);
+        await tester.tap(find.text('Continue'));
+        await settle(tester);
+        await tester.tap(find.text('Create Room'));
+        await settle(tester);
+
+        tester.takeException();
+        final room = (await db.collection('rooms').get()).docs.single;
+        expect(room.data()['imageUrl'], isNull);
+        expect(images.deletedUrls, isEmpty);
+        expect(find.textContaining('cover did not upload'), findsOneWidget);
+      },
+    );
 
     testWidgets('nothing uploads when creation is abandoned', (tester) async {
       useSize(tester, const Size(430, 2000));
@@ -490,5 +809,35 @@ void main() {
         expect(tester.takeException(), isNull);
       });
     }
+
+    testWidgets('selected cover actions fit at 320pt and 200% text', (
+      tester,
+    ) async {
+      useSize(tester, const Size(320, 640));
+      final cropped = Uint8List.fromList(List.filled(96, 18));
+      await tester.pumpWidget(
+        host(
+          build(
+            coverEditor: (context, imageService) async =>
+                PickedRoomCover(bytes: cropped),
+          ),
+          textScale: 2,
+        ),
+      );
+      await settle(tester);
+      await tester.ensureVisible(find.text('Choose cover'));
+      await settle(tester);
+      await tester.tap(find.text('Choose cover'));
+      await settle(tester);
+
+      expect(find.text('Replace'), findsOneWidget);
+      expect(find.text('Remove'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      for (final label in ['Replace', 'Remove']) {
+        final rect = tester.getRect(find.text(label));
+        expect(rect.left, greaterThanOrEqualTo(0));
+        expect(rect.right, lessThanOrEqualTo(320));
+      }
+    });
   });
 }

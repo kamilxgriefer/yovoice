@@ -16,6 +16,27 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Room covers can be composed by the host instead of being silently
+  center-cropped** (2026-08-29, ADR-122, **SOURCE ONLY; NATIVE STORE BUILD
+  PENDING**): Create Community/Podcast Room and Room Settings now share a real
+  21:9 editor with pinch zoom, drag, reset, keyboard/single-pointer controls
+  and a central compact-card safety guide. Only the confirmed 1600×686 JPEG is
+  uploaded; cancelling Replace preserves the prior composition. Upload and
+  lost-acknowledgement recovery never delete a potentially published object,
+  superseded media is cleaned after a confirmed pointer flip even if the
+  settings route closes, and status/delete actions cannot race an upload.
+  Closed/archived rooms explain that they must be reopened before Storage can
+  accept new art and offer a nearby Reopen action, while suspended rooms stay
+  under moderation control. The production-themed editor was visually
+  inspected in real local web renders at 320×640 and 1440×900; automated
+  coverage pins 320 px/200% text, pixel-level zoom/pan output, validation,
+  cancellation, replacement and every recovery branch. Firestore Rules and
+  the defensive model parser also reject malformed, external or cross-room
+  public cover pointers while preserving the live Club-bound avatar on Club
+  Lounges; source allocation and decoded dimensions are bounded.
+  The complete Firestore Rules suite passes 523/523; Rules remain source-only
+  until the coordinated backend release.
+
 - **Podcast Studio is a producer-led show surface, not a recolored Community
   Room** (2026-08-28, ADR-120, **DEPLOYED TO WEB + FIRESTORE RULES; iOS
   BUILD 9 TESTING; ANDROID BUILD 9 INTERNAL**): the

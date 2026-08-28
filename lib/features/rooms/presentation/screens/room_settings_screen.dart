@@ -6,6 +6,7 @@ import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_image_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/rooms/presentation/room_cover_editor.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
 const _background = Color(0xFF080711);
@@ -21,12 +22,14 @@ class RoomSettingsScreen extends StatefulWidget {
     this.roomService,
     this.roomImageService,
     this.clubService,
+    this.coverEditor,
     super.key,
   });
 
   final VoiceRoom room;
   final RoomService? roomService;
   final RoomImageService? roomImageService;
+  final RoomCoverEditorCallback? coverEditor;
 
   /// Resolves club ownership when [room] is a club lounge. Optional: the
   /// screen constructs its own where Firebase allows; where it cannot, a
@@ -44,23 +47,55 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
       widget.roomImageService ?? RoomImageService();
 
   String? _imageUrl;
-  bool _uploadingCover = false;
+  bool _changingCover = false;
 
   /// The cover is part of the room's identity (stage backdrop + Home/
-  /// Discover card). Uploaded immediately on pick — unlike the text
-  /// fields it has its own storage lifecycle, and the card should update
-  /// live for everyone as soon as the host confirms the picker.
+  /// Discover card). The host first confirms a manual crop; only that final
+  /// JPEG is uploaded and published. Lock before opening the picker so a fast
+  /// double tap cannot stack pickers/crop screens or race two pointer updates.
   Future<void> _changeCover() async {
-    if (_uploadingCover) return;
+    if (_changingCover || _busy) return;
+    setState(() => _changingCover = true);
     try {
-      final picked = await _images.pickImage();
-      if (picked == null || !mounted) return;
-      setState(() => _uploadingCover = true);
-      final url = await _images.uploadRoomImage(
+      final editor = widget.coverEditor ?? RoomCoverEditor.pickAndCrop;
+      final cover = await editor(context, _images);
+      if (cover == null || !mounted) return;
+      final previousUrl = _imageUrl;
+      final url = await _images.uploadRoomCover(
         roomId: widget.room.id,
-        file: picked,
+        bytes: cover.bytes,
       );
-      await _service.updateImageUrl(roomId: widget.room.id, imageUrl: url);
+      try {
+        await _service.updateImageUrl(roomId: widget.room.id, imageUrl: url);
+      } catch (error, stackTrace) {
+        // A failed write acknowledgement can still mean the pointer committed.
+        // Re-read before deleting so cleanup can never break a valid cover.
+        var pointerRead = false;
+        var committed = false;
+        try {
+          final canonical = await _service.getRoomFromServer(widget.room.id);
+          pointerRead = true;
+          committed = canonical.imageUrl == url;
+        } catch (_) {
+          // Ambiguous state: preserve the uploaded object and the original
+          // error. A later room deletion still cleans the whole prefix.
+        }
+        if (!committed) {
+          if (pointerRead) {
+            await _images.deleteManagedRoomCover(
+              roomId: widget.room.id,
+              url: url,
+            );
+          }
+          Error.throwWithStackTrace(error, stackTrace);
+        }
+      }
+      // Cleanup is data lifecycle, not UI lifecycle. Leaving this route after
+      // the pointer commits must not skip removal of the superseded object.
+      await _images.deleteManagedRoomCover(
+        roomId: widget.room.id,
+        url: previousUrl,
+      );
       if (!mounted) return;
       setState(() => _imageUrl = url);
     } catch (error) {
@@ -76,7 +111,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
         ),
       );
     } finally {
-      if (mounted) setState(() => _uploadingCover = false);
+      if (mounted) setState(() => _changingCover = false);
     }
   }
 
@@ -140,7 +175,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
   }
 
   Future<void> _save() async {
-    if (!_formKey.currentState!.validate() || _busy) return;
+    if (!_formKey.currentState!.validate() || _busy || _changingCover) return;
     setState(() => _busy = true);
     try {
       await _service.updateRoomSettings(
@@ -175,7 +210,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
   }
 
   Future<void> _setStatus(RoomStatus status) async {
-    if (_busy) return;
+    if (_busy || _changingCover) return;
     final label = switch (status) {
       RoomStatus.active => 'open',
       RoomStatus.closed => 'close',
@@ -214,7 +249,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
           ),
         ) ??
         false;
-    if (!confirmed) return;
+    if (!confirmed || _busy || _changingCover) return;
     setState(() => _busy = true);
     try {
       await _service.setRoomStatus(widget.room.id, status);
@@ -242,7 +277,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
     // call deleteRoomSelf — the server refuses lounges and the user would
     // get a dialog whose Delete can only ever fail. Lounges go through
     // _deleteClub().
-    if (widget.room.storedClubId != null) return;
+    if (widget.room.storedClubId != null || _busy || _changingCover) return;
     final confirmed =
         await showDialog<bool>(
           context: context,
@@ -271,7 +306,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
           ),
         ) ??
         false;
-    if (!confirmed || _busy) return;
+    if (!confirmed || _busy || _changingCover) return;
     setState(() => _busy = true);
     try {
       await _service.deleteRoom(widget.room.id);
@@ -299,7 +334,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
   /// copy — the dialog names the Club and says what actually goes away.
   Future<void> _deleteClub(Club club) async {
     final service = _clubService;
-    if (service == null) return;
+    if (service == null || _busy || _changingCover) return;
     final confirmed =
         await showDialog<bool>(
           context: context,
@@ -328,7 +363,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
           ),
         ) ??
         false;
-    if (!confirmed || _busy) return;
+    if (!confirmed || _busy || _changingCover) return;
     setState(() => _busy = true);
     try {
       await service.deleteClub(club.id);
@@ -364,7 +399,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: _busy ? null : _save,
+            onPressed: _busy || _changingCover ? null : _save,
             child: const Text(
               'SAVE',
               style: TextStyle(fontWeight: FontWeight.w900),
@@ -397,31 +432,48 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  OutlinedButton.icon(
-                    onPressed: _uploadingCover ? null : _changeCover,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: const BorderSide(color: Color(0xFF3A2C49)),
-                      minimumSize: const Size.fromHeight(46),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+                  if (widget.room.isActive)
+                    OutlinedButton.icon(
+                      onPressed: _changingCover || _busy ? null : _changeCover,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Color(0xFF3A2C49)),
+                        minimumSize: const Size.fromHeight(46),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                       ),
+                      icon: _changingCover
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.image_rounded, size: 18),
+                      label: Text(
+                        _changingCover
+                            ? 'Updating cover…'
+                            : _imageUrl?.trim().isNotEmpty == true
+                            ? 'Change cover'
+                            : 'Add cover',
+                      ),
+                    )
+                  else if (widget.room.status == RoomStatus.suspended)
+                    const _CoverStatusNotice(
+                      icon: Icons.gavel_rounded,
+                      message:
+                          'This room is suspended by moderation. Its cover '
+                          "can't be changed until the suspension is lifted.",
+                    )
+                  else
+                    _CoverStatusNotice(
+                      icon: Icons.lock_open_rounded,
+                      message: 'Reopen this room to edit its cover.',
+                      actionLabel: 'Reopen room',
+                      onAction: _busy || _changingCover
+                          ? null
+                          : () => _setStatus(RoomStatus.active),
                     ),
-                    icon: _uploadingCover
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.image_rounded, size: 18),
-                    label: Text(
-                      _uploadingCover
-                          ? 'Uploading…'
-                          : _imageUrl?.trim().isNotEmpty == true
-                          ? 'Change cover'
-                          : 'Add cover',
-                    ),
-                  ),
                   const SizedBox(height: 4),
                   const Text(
                     'The cover becomes the room card on Home and Discover '
@@ -565,26 +617,34 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
               _Section(
                 title: 'Room status',
                 children: [
-                  if (!widget.room.isActive)
+                  if (widget.room.isClosed || widget.room.isArchived)
                     _ActionTile(
                       icon: Icons.lock_open_rounded,
                       title: 'Open room',
                       subtitle: 'Make this room available again.',
-                      onTap: () => _setStatus(RoomStatus.active),
+                      onTap: _busy || _changingCover
+                          ? null
+                          : () => _setStatus(RoomStatus.active),
                     ),
-                  if (!widget.room.isClosed)
+                  if (widget.room.status != RoomStatus.suspended &&
+                      !widget.room.isClosed)
                     _ActionTile(
                       icon: Icons.lock_rounded,
                       title: 'Close room',
                       subtitle: 'Pause access without deleting anything.',
-                      onTap: () => _setStatus(RoomStatus.closed),
+                      onTap: _busy || _changingCover
+                          ? null
+                          : () => _setStatus(RoomStatus.closed),
                     ),
-                  if (!widget.room.isArchived)
+                  if (widget.room.status != RoomStatus.suspended &&
+                      !widget.room.isArchived)
                     _ActionTile(
                       icon: Icons.archive_rounded,
                       title: 'Archive room',
                       subtitle: 'Hide it from Discover and keep all data.',
-                      onTap: () => _setStatus(RoomStatus.archived),
+                      onTap: _busy || _changingCover
+                          ? null
+                          : () => _setStatus(RoomStatus.archived),
                     ),
                   if (widget.room.storedClubId == null)
                     _ActionTile(
@@ -592,7 +652,7 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
                       title: 'Delete room',
                       subtitle: 'Permanently delete the room and its data.',
                       danger: true,
-                      onTap: _delete,
+                      onTap: _busy || _changingCover ? null : _delete,
                     )
                   else if (_clubStream != null)
                     // A club lounge is deleted only by deleting its Club,
@@ -619,7 +679,9 @@ class _RoomSettingsScreenState extends State<RoomSettingsScreen> {
                               'Permanently delete the whole Club — its '
                               'lounge, chat, channels, members and invites.',
                           danger: true,
-                          onTap: () => _deleteClub(club),
+                          onTap: _busy || _changingCover
+                              ? null
+                              : () => _deleteClub(club),
                         );
                       },
                     ),
@@ -776,26 +838,89 @@ class _ActionTile extends StatelessWidget {
   final IconData icon;
   final String title;
   final String subtitle;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final bool danger;
 
   @override
   Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    final actionColor = danger ? _danger : _primary;
     return Material(
       color: Colors.transparent,
       child: ListTile(
         contentPadding: EdgeInsets.zero,
-        leading: Icon(icon, color: danger ? _danger : _primary),
+        enabled: enabled,
+        leading: Icon(icon, color: enabled ? actionColor : _muted),
         title: Text(
           title,
           style: TextStyle(
-            color: danger ? _danger : Colors.white,
+            color: enabled ? (danger ? _danger : Colors.white) : _muted,
             fontWeight: FontWeight.w800,
           ),
         ),
         subtitle: Text(subtitle, style: const TextStyle(color: _muted)),
-        trailing: const Icon(Icons.chevron_right_rounded, color: _muted),
+        trailing: Icon(
+          Icons.chevron_right_rounded,
+          color: enabled ? _muted : _muted.withValues(alpha: .45),
+        ),
         onTap: onTap,
+      ),
+    );
+  }
+}
+
+class _CoverStatusNotice extends StatelessWidget {
+  const _CoverStatusNotice({
+    required this.icon,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final IconData icon;
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF100C19),
+        border: Border.all(color: _border),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 10, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, size: 20, color: _muted),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    message,
+                    style: const TextStyle(color: _muted, height: 1.35),
+                  ),
+                ),
+              ],
+            ),
+            if (actionLabel != null) ...[
+              const SizedBox(height: 2),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: onAction,
+                  icon: const Icon(Icons.lock_open_rounded, size: 18),
+                  label: Text(actionLabel!),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

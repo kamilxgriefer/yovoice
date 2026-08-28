@@ -659,7 +659,55 @@ service cloud.firestore {
       return ordinary || family;
     }
 
-    function roomCreateShapeAllowed() {
+    // Room covers are rendered on public discovery surfaces. Restrict the
+    // pointer to this project's Storage prefix so a host cannot poison the
+    // shared room stream with a non-string value or turn every room-card view
+    // into a request to attacker-controlled infrastructure. Legacy appspot
+    // and current firebasestorage.app bucket names are both accepted.
+    function managedClubLoungeImageUrlAllowed(roomId, value, data) {
+      let clubId = data.get('clubId', '');
+      let clubPath = /databases/$(database)/documents/clubs/$(clubId);
+      let currentBucket =
+          '^https://firebasestorage[.]googleapis[.]com/v0/b/' +
+          'yovoice-ec54a[.]firebasestorage[.]app/o/clubs%2F' +
+          '[A-Za-z0-9_-]{1,128}%2F' + clubId +
+          '%2F(avatar|avatar_[0-9]+[.](jpg|jpeg|png|webp))([?].*)?$';
+      let legacyBucket =
+          '^https://firebasestorage[.]googleapis[.]com/v0/b/' +
+          'yovoice-ec54a[.]appspot[.]com/o/clubs%2F' +
+          '[A-Za-z0-9_-]{1,128}%2F' + clubId +
+          '%2F(avatar|avatar_[0-9]+[.](jpg|jpeg|png|webp))([?].*)?$';
+      return clubId is string &&
+          clubId.matches('^[A-Za-z0-9_-]{1,128}$') &&
+          data.get('roomKind', '') == 'clubLounge' &&
+          exists(clubPath) &&
+          get(clubPath).data.get('loungeRoomId', '') == roomId &&
+          get(clubPath).data.get('avatarUrl', null) == value &&
+          (value.matches(currentBucket) || value.matches(legacyBucket));
+    }
+
+    function managedRoomImageUrlAllowed(roomId, value, data) {
+      let currentBucket =
+          '^https://firebasestorage[.]googleapis[.]com/v0/b/' +
+          'yovoice-ec54a[.]firebasestorage[.]app/o/room_images%2F' +
+          roomId + '%2F[^/?%]{1,256}[.](jpg|png)([?].*)?$';
+      let legacyBucket =
+          '^https://firebasestorage[.]googleapis[.]com/v0/b/' +
+          'yovoice-ec54a[.]appspot[.]com/o/room_images%2F' +
+          roomId + '%2F[^/?%]{1,256}[.](jpg|png)([?].*)?$';
+      return value == null || (
+        roomId.matches('^[A-Za-z0-9_-]{1,160}$') &&
+        value is string &&
+        value.size() <= 2048 &&
+        (
+          value.matches(currentBucket) ||
+          value.matches(legacyBucket) ||
+          managedClubLoungeImageUrlAllowed(roomId, value, data)
+        )
+      );
+    }
+
+    function roomCreateShapeAllowed(roomId) {
       let data = request.resource.data;
       return data.keys().hasAll([
             'hostId', 'hostName', 'name', 'description', 'category',
@@ -690,6 +738,11 @@ service cloud.firestore {
           data.visibility in ['public', 'private'] &&
           data.roomType in ['temporary', 'community'] &&
           data.status == 'active' &&
+          managedRoomImageUrlAllowed(
+            roomId,
+            data.get('imageUrl', null),
+            data
+          ) &&
           data.participantCount is int &&
           data.participantCount >= 0 &&
           data.memberCount is int &&
@@ -1056,6 +1109,14 @@ service cloud.firestore {
         'stageLimit', 'targetAudience', 'topicTags', 'roomGuidelines',
         'conversationStyle', 'newcomerFriendly', 'showFormat', 'updatedAt'
       ]) &&
+          (
+            !changed.hasAny(['imageUrl']) ||
+            managedRoomImageUrlAllowed(
+              roomId,
+              request.resource.data.get('imageUrl', null),
+              request.resource.data
+            )
+          ) &&
           request.resource.data.updatedAt == request.time &&
           resource.data.get('status', 'active') in
             ['active', 'closed', 'archived'] &&
@@ -3137,7 +3198,7 @@ service cloud.firestore {
       allow create: if isVerified() &&
           isActiveAccount() &&
           request.resource.data.hostId == request.auth.uid &&
-          roomCreateShapeAllowed() &&
+          roomCreateShapeAllowed(roomId) &&
           roomMetadataValid(request.resource.data) &&
           roomTypeFieldsScoped(request.resource.data) &&
           roomCreateAuthorityAllowed(roomId);

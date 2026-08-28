@@ -38,6 +38,26 @@ Future<ui.Image> _landscapeCropMarker() async {
   return recorder.endRecording().toImage(width, height);
 }
 
+Future<ui.Image> _roomCoverCropMarker() async {
+  const width = 2100;
+  const height = 900;
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  canvas.drawRect(
+    Rect.fromLTWH(0, 0, 700, height.toDouble()),
+    Paint()..color = const Color(0xFFFF0000),
+  );
+  canvas.drawRect(
+    Rect.fromLTWH(700, 0, 700, height.toDouble()),
+    Paint()..color = const Color(0xFF00FF00),
+  );
+  canvas.drawRect(
+    Rect.fromLTWH(1400, 0, 700, height.toDouble()),
+    Paint()..color = const Color(0xFF0000FF),
+  );
+  return recorder.endRecording().toImage(width, height);
+}
+
 Future<void> _pumpCrop(
   WidgetTester tester, {
   required ui.Image image,
@@ -212,7 +232,11 @@ void main() {
         expect(rect.left, greaterThanOrEqualTo(0));
         expect(rect.top, greaterThanOrEqualTo(0));
         expect(rect.right, lessThanOrEqualTo(testCase.surface.width));
-        expect(rect.bottom, lessThanOrEqualTo(testCase.surface.height));
+        expect(
+          rect.bottom,
+          lessThanOrEqualTo(testCase.surface.height),
+          reason: '$label must remain visible without scrolling',
+        );
       }
       expect(tester.takeException(), isNull);
     });
@@ -272,6 +296,171 @@ void main() {
   });
 
   testWidgets(
+    'room cover exposes a 21:9 manual frame and central safe-area at 200% text',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final image = await _solidImage(1200, 900);
+      addTearDown(image.dispose);
+
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: ImageCropScreen.roomCover(image: image),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Adjust cover'), findsOneWidget);
+      expect(find.bySemanticsLabel('Adjust room cover'), findsOneWidget);
+      expect(find.text('Use cover'), findsOneWidget);
+      expect(
+        find.textContaining('Keep faces, logos and text inside the center'),
+        findsOneWidget,
+      );
+      expect(find.text('COMPACT SAFE'), findsOneWidget);
+      final preview = find.bySemanticsLabel('Room cover crop preview');
+      expect(preview, findsOneWidget);
+      final frame = tester.getRect(find.byType(InteractiveViewer));
+      expect(frame.width / frame.height, closeTo(21 / 9, .01));
+
+      final primary = find.widgetWithText(FilledButton, 'Use cover');
+      await tester.ensureVisible(primary);
+      await tester.pumpAndSettle();
+      for (final button in [
+        find.widgetWithText(OutlinedButton, 'Cancel'),
+        primary,
+      ]) {
+        final rect = tester.getRect(button);
+        expect(rect.left, greaterThanOrEqualTo(0));
+        expect(rect.right, lessThanOrEqualTo(320));
+        expect(rect.bottom, lessThanOrEqualTo(632));
+      }
+
+      final guide = tester.widget<FractionallySizedBox>(
+        find.byType(FractionallySizedBox),
+      );
+      expect(guide.widthFactor, closeTo(9 / 21, .001));
+      expect(guide.heightFactor, 1);
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    },
+  );
+
+  testWidgets('room cover confirmation exports one canonical 1600x686 JPEG', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final image = await _solidImage(1800, 1000);
+    addTearDown(image.dispose);
+
+    final navigatorKey = GlobalKey<NavigatorState>();
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigatorKey,
+        home: const Scaffold(body: SizedBox.expand()),
+      ),
+    );
+    final resultFuture = navigatorKey.currentState!.push<Uint8List>(
+      MaterialPageRoute<Uint8List>(
+        builder: (_) => ImageCropScreen.roomCover(image: image),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Use cover'));
+    await tester.pump();
+
+    expect(
+      find.bySemanticsLabel('Processing cover. Please wait.'),
+      findsOneWidget,
+    );
+
+    // The decoded native image remains owned by RoomCoverEditor until this
+    // render completes. System Back/Escape must not pop the route and dispose
+    // that image while the encoder is still reading it.
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(find.text('Adjust cover'), findsOneWidget);
+    expect(find.text('Processing cover. Please wait.'), findsOneWidget);
+
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 800)),
+    );
+    await tester.pumpAndSettle();
+
+    final bytes = await resultFuture;
+    expect(bytes, isNotNull);
+    final output = img.decodeJpg(bytes!)!;
+    expect(output.width, 1600);
+    expect(output.height, 686);
+  });
+
+  testWidgets(
+    'room cover zoom and reposition change the exported composition',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final image = await _roomCoverCropMarker();
+      addTearDown(image.dispose);
+
+      final navigatorKey = GlobalKey<NavigatorState>();
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigatorKey,
+          home: const Scaffold(body: SizedBox.expand()),
+        ),
+      );
+      final resultFuture = navigatorKey.currentState!.push<Uint8List>(
+        MaterialPageRoute<Uint8List>(
+          builder: (_) => ImageCropScreen.roomCover(image: image),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      for (var index = 0; index < 5; index += 1) {
+        await tester.tap(find.byKey(const ValueKey('crop-zoom-in')));
+        await tester.pump();
+      }
+      for (var index = 0; index < 20; index += 1) {
+        await tester.tap(find.byKey(const ValueKey('crop-move-right')));
+        await tester.pump();
+      }
+      final matrix = tester
+          .widget<InteractiveViewer>(find.byType(InteractiveViewer))
+          .transformationController!
+          .value;
+      expect(matrix.getMaxScaleOnAxis(), greaterThan(.3));
+      expect(matrix.getTranslation().x, closeTo(0, .1));
+
+      await tester.tap(find.text('Use cover'));
+      await tester.pump();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 800)),
+      );
+      await tester.pumpAndSettle();
+
+      final output = img.decodeJpg((await resultFuture)!)!;
+      final center = output.getPixel(output.width ~/ 2, output.height ~/ 2);
+      expect(center.r, greaterThan(220));
+      expect(center.g, lessThan(35));
+      expect(center.b, lessThan(35));
+    },
+  );
+
+  testWidgets(
     'named 44px controls provide keyboard and single-pointer crop actions',
     (tester) async {
       final semantics = tester.ensureSemantics();
@@ -309,7 +498,11 @@ void main() {
 
       final preview = find.bySemanticsLabel('Avatar crop preview');
       expect(preview, findsOneWidget);
-      expect(tester.getSemantics(preview).value, 'Zoom 100 percent');
+      expect(
+        tester.getSemantics(preview).value,
+        'Zoom 100 percent. Position 50 percent horizontal, 50 percent '
+        'vertical.',
+      );
 
       final viewer = tester.widget<InteractiveViewer>(
         find.byType(InteractiveViewer),
@@ -328,7 +521,8 @@ void main() {
       final zoomedScale = viewer.transformationController!.value
           .getMaxScaleOnAxis();
       expect(zoomedScale, greaterThan(initialScale));
-      expect(tester.getSemantics(preview).value, 'Zoom 120 percent');
+      expect(tester.getSemantics(preview).value, contains('Zoom 120 percent'));
+      expect(tester.getSemantics(preview).value, contains('Position'));
 
       final beforeNudge = viewer.transformationController!.value
           .getTranslation()
@@ -339,6 +533,7 @@ void main() {
         viewer.transformationController!.value.getTranslation().x,
         greaterThan(beforeNudge),
       );
+      expect(tester.getSemantics(preview).value, contains('Position'));
       _expectImageCoversViewport(tester);
       semantics.dispose();
     },

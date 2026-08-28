@@ -1,4 +1,5 @@
 import 'dart:ui' as ui;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -99,4 +100,37 @@ void main() {
     expect(decoded.width, 1920);
     expect(decoded.height, 1080);
   });
+
+  test(
+    'decode rejects hostile encoded dimensions before a full frame',
+    () async {
+      final hostile = img.Image(width: ImageCrop.maxEncodedEdge + 1, height: 1);
+      final bytes = Uint8List.fromList(img.encodePng(hostile));
+
+      await expectLater(
+        ImageCrop.decode(bytes),
+        throwsA(
+          isA<ProfileImageException>().having(
+            (error) => error.message,
+            'message',
+            contains('too large to process safely'),
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'decode downsamples accepted large sources to a bounded frame',
+    () async {
+      final large = img.Image(width: 4000, height: 1000);
+      final decoded = await ImageCrop.decode(
+        Uint8List.fromList(img.encodePng(large)),
+      );
+      addTearDown(decoded.dispose);
+
+      expect(decoded.width, ImageCrop.maxDecodedEdge);
+      expect(decoded.height, 800);
+    },
+  );
 }

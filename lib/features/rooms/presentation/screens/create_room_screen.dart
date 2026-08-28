@@ -3,7 +3,6 @@ import 'dart:typed_data';
 
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/core/audio/ui_sound.dart';
 import 'package:yovoice/core/audio/ui_sound_service.dart';
@@ -14,6 +13,7 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_experience_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_image_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
+import 'package:yovoice/features/rooms/presentation/room_cover_editor.dart';
 import 'package:yovoice/features/rooms/presentation/screens/room_entry_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 
@@ -33,6 +33,7 @@ class CreateRoomScreen extends StatefulWidget {
     this.roomService,
     this.imageService,
     this.experienceService,
+    this.coverEditor,
     super.key,
   });
 
@@ -42,6 +43,7 @@ class CreateRoomScreen extends StatefulWidget {
   final RoomService? roomService;
   final RoomImageService? imageService;
   final RoomExperienceService? experienceService;
+  final RoomCoverEditorCallback? coverEditor;
 
   @override
   State<CreateRoomScreen> createState() => _CreateRoomScreenState();
@@ -77,7 +79,6 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   RoomType _roomType = RoomType.community;
   ShowFormat _showFormat = ShowFormat.solo;
 
-  XFile? _coverFile;
   Uint8List? _coverBytes;
   bool _pickingCover = false;
   String? _coverError;
@@ -108,18 +109,13 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
       _coverError = null;
     });
     try {
-      // The SAME service the room settings screen uses — picking, the
-      // size/dimension caps and the Storage path all stay in one place.
-      final file = await _imageService.pickImage();
-      if (file == null) return;
-      final bytes = await file.readAsBytes();
-      if (bytes.length > 8 * 1024 * 1024) {
-        throw StateError('Choose an image smaller than 8 MB.');
-      }
-      if (!mounted) return;
+      final editor = widget.coverEditor ?? RoomCoverEditor.pickAndCrop;
+      final cover = await editor(context, _imageService);
+      // Null means the picker or crop screen was cancelled. A cancelled
+      // Replace keeps the previous composition rather than blanking it.
+      if (!mounted || cover == null) return;
       setState(() {
-        _coverFile = file;
-        _coverBytes = bytes;
+        _coverBytes = cover.bytes;
       });
     } catch (error) {
       if (!mounted) return;
@@ -131,7 +127,6 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
 
   void _removeCover() {
     setState(() {
-      _coverFile = null;
       _coverBytes = null;
       _coverError = null;
     });
@@ -240,14 +235,50 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
       // flow cannot leave an orphaned object behind. A failure here leaves
       // a usable room with no cover, which the host can set from room
       // settings — it is reported, not swallowed.
-      if (_coverFile != null) {
+      var roomForEntry = room;
+      if (_coverBytes != null) {
         setState(() => _uploadProgress = 0);
         try {
-          final url = await _imageService.uploadRoomImage(
+          final url = await _imageService.uploadRoomCover(
             roomId: room.id,
-            file: _coverFile!,
+            bytes: _coverBytes!,
           );
-          await _roomService.updateImageUrl(roomId: room.id, imageUrl: url);
+          try {
+            await _roomService.updateImageUrl(roomId: room.id, imageUrl: url);
+          } catch (error, stackTrace) {
+            // The Firestore SDK can lose an acknowledgement after committing.
+            // Only delete the new object when a successful re-read proves the
+            // pointer did not move; an ambiguous read leaves it recoverable.
+            var pointerRead = false;
+            var committed = false;
+            try {
+              final canonical = await _roomService.getRoomFromServer(room.id);
+              pointerRead = true;
+              committed = canonical.imageUrl == url;
+              if (committed) roomForEntry = canonical;
+            } catch (_) {
+              // Preserve the original write failure and uploaded object.
+            }
+            if (!committed) {
+              if (pointerRead) {
+                await _imageService.deleteManagedRoomCover(
+                  roomId: room.id,
+                  url: url,
+                );
+              }
+              Error.throwWithStackTrace(error, stackTrace);
+            }
+          }
+          // `createRoom` returned before the pointer flip. Re-read so the
+          // very first room frame gets the confirmed cover instead of waiting
+          // for its stream to emit a second document.
+          try {
+            roomForEntry = await _roomService.getRoom(room.id);
+          } catch (_) {
+            // The pointer already committed; RoomEntryScreen's canonical
+            // room stream will converge even if this best-effort refresh did
+            // not answer.
+          }
         } catch (error) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -269,7 +300,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
       await Navigator.of(context).pushReplacement(
         MaterialPageRoute<void>(
           builder: (_) =>
-              RoomEntryScreen(room: room, playInitialJoinSound: false),
+              RoomEntryScreen(room: roomForEntry, playInitialJoinSound: false),
         ),
       );
     } catch (error) {
@@ -980,14 +1011,14 @@ class _CoverPicker extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Semantics(
-          button: true,
+        _AccessibleCoverPickerAction(
+          enabled: !busy,
+          busy: busy,
           label: bytes == null ? 'Choose a cover image' : 'Replace cover image',
-          child: InkWell(
-            onTap: busy ? null : onPick,
-            borderRadius: BorderRadius.circular(18),
+          onTap: onPick,
+          child: AspectRatio(
+            aspectRatio: 21 / 9,
             child: Container(
-              height: 156,
               clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(18),
@@ -1070,7 +1101,9 @@ class _CoverPicker extends StatelessWidget {
         ],
         if (onRemove != null) ...[
           const SizedBox(height: 8),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
             children: [
               TextButton.icon(
                 onPressed: onPick,
@@ -1095,6 +1128,90 @@ class _CoverPicker extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+class _AccessibleCoverPickerAction extends StatefulWidget {
+  const _AccessibleCoverPickerAction({
+    required this.enabled,
+    required this.busy,
+    required this.label,
+    required this.onTap,
+    required this.child,
+  });
+
+  final bool enabled;
+  final bool busy;
+  final String label;
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  State<_AccessibleCoverPickerAction> createState() =>
+      _AccessibleCoverPickerActionState();
+}
+
+class _AccessibleCoverPickerActionState
+    extends State<_AccessibleCoverPickerAction> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final onTap = widget.enabled ? widget.onTap : null;
+    return Semantics(
+      excludeSemantics: true,
+      container: true,
+      button: true,
+      enabled: widget.enabled,
+      liveRegion: widget.busy,
+      label: widget.label,
+      value: widget.busy ? 'Processing cover. Please wait.' : null,
+      onTap: onTap,
+      child: InkWell(
+        onTap: onTap,
+        canRequestFocus: widget.enabled,
+        onFocusChange: (focused) {
+          if (mounted && focused != _focused) {
+            setState(() => _focused = focused);
+          }
+        },
+        borderRadius: BorderRadius.circular(18),
+        child: Stack(
+          fit: StackFit.passthrough,
+          children: [
+            widget.child,
+            if (_focused)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: Padding(
+                    padding: const EdgeInsets.all(2),
+                    child: DecoratedBox(
+                      key: const ValueKey('cover-picker-focus-ring-dark'),
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: const Color(0xFF09050F),
+                          width: 5,
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(2),
+                        child: DecoratedBox(
+                          key: const ValueKey('cover-picker-focus-ring-light'),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.white, width: 2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

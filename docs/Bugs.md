@@ -107,6 +107,26 @@ about things that are broken, risky, or need verification.
   200% text. **DEPLOYED TO WEB 2026-08-27; NATIVE STORE BUILD PENDING.** This
   is a corrective amendment to ADR-025.
 
+- **FIXED IN SOURCE 2026-08-29 — room covers bypassed the crop editor and
+  could not be positioned by their owner.** Create Room and Room Settings sent
+  the picked source straight to a fixed `BoxFit.cover` presentation, so a host
+  could replace an image but could not choose which faces, logo or text would
+  survive the wide room card. Both flows now use one 21:9 editor, upload only
+  its final 1600×686 JPEG and retain the previous crop when Replace is
+  cancelled. The fix also closes the adjacent lifecycle defects: system Back
+  cannot dispose the decoded image during encoding, native codecs are
+  released, double taps cannot stack editors, leaving Settings cannot skip
+  superseded-object cleanup, and status/delete cannot race an upload. A lost
+  Firestore acknowledgement deletes new media only after an authoritative
+  server read proves the pointer did not commit; an unavailable read preserves
+  it for recovery. Closed/archived rooms explain the active-room Storage rule
+  and offer a nearby confirmed Reopen action; a moderation-suspended room has
+  no host-controlled status escape hatch. Firestore Rules now also reject
+  non-string, oversized, external and cross-room cover pointers, while keeping
+  a Club Lounge bound to the exact managed avatar on its live Club root. The
+  client parser ignores hostile legacy/Admin data and the decoder bounds both
+  encoded dimensions and decoded memory. See ADR-122.
+
 - **FIXED IN SOURCE 2026-08-27 — Message in Profile Preview appeared to do
   nothing when the preview was opened above another sheet.** The callback
   popped Profile Preview and immediately looked up a navigator through that

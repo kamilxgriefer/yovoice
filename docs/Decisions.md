@@ -7594,3 +7594,85 @@ read their conversations but cannot forge another participant's state.
   Byte-level upload progress remains future work.
 - Physical iOS/Android two-device tests are mandatory release evidence for
   background/terminated push, large media, LiveKit audio and mute latency.
+
+## ADR-122: Room covers publish one host-confirmed 21:9 artifact
+
+**Status**: Implemented in source; native store build pending
+**Date**: 2026-08-29
+
+### Context
+
+Room creation and Room Settings let a host pick or replace cover art, but both
+flows immediately accepted the picker result. Every consumer then applied its
+own `BoxFit.cover`, leaving the host unable to decide which part of a portrait
+or oversized image survived the wide room card. Reusing profile-banner crop
+metadata would have introduced a second rendering contract into existing room
+documents, while uploading the original would retain unnecessary bytes and
+make every consumer repeat transform logic.
+
+Replacement also spans Storage and Firestore without a cross-service
+transaction. A Firestore write can commit while its acknowledgement is lost;
+blindly deleting the just-uploaded object in that case would publish a broken
+pointer. Conversely, tying superseded-object cleanup to a mounted Settings
+widget would leak the old object whenever the host left during upload.
+
+### Decision
+
+Create Community/Podcast Room and Room Settings share `RoomCoverEditor`: pick a
+bounded JPG/PNG/WebP source, decode locally, let the host zoom and reposition
+inside a fixed 21:9 frame, then return one 1600×686 JPEG. A centered 9:21 guide
+marks the narrow area most likely to survive taller compact cards. The room schema
+continues to store only `imageUrl`; the original and crop metadata never leave
+the device. Cancelling the picker or editor changes nothing, and replacing a
+pending create composition uploads only the latest confirmed bytes.
+
+The Storage service accepts only the final bounded JPEG contract and deletes
+only an object whose resolved Firebase bucket and exact
+`room_images/{roomId}/{file}` path match. After an image URL write error, the
+client performs a server-only Firestore read: a matching pointer is success, a
+confirmed mismatch permits new-object cleanup, and an unavailable/cache/
+pending read preserves the object and original error. Once a pointer commits,
+old-object cleanup runs independently of widget lifetime. Settings serializes
+cover upload against Save, status and deletion. Closed/archived rooms explain
+the active-room Storage rule and offer a nearby confirmed Reopen action;
+moderation-suspended rooms expose no host status command. System Back/Escape
+cannot pop the crop route while JPEG encoding owns the decoded image, and both
+generated images and native codecs are disposed deterministically.
+
+Because room documents feed public card queries, Firestore Rules accept a
+cover pointer only when it is null or a bounded string targeting this exact
+room under YO Voice's current/legacy Firebase Storage bucket. A Club Lounge may
+instead use only the managed avatar URL stored on its live Club root, whose
+`loungeRoomId` must name that room; cross-owner and cross-Club substitutions are
+denied. The model repeats the managed-path validation defensively so malformed
+Admin/legacy data degrades to the gradient without breaking a shared stream or
+fetching attacker infrastructure.
+The picker checks `XFile.length()` before allocation; the decoder rejects
+hostile encoded dimensions and downsamples accepted sources to a 3200 px edge
+before materializing a frame.
+
+### Reasoning
+
+One canonical artifact preserves every existing consumer and keeps the direct
+Firestore schema backward compatible. Local composition gives the host an
+honest preview without adding a display-time transform matrix to mobile, web
+and desktop. Exact-path cleanup and fail-safe lost-acknowledgement recovery
+prefer a recoverable orphan over a broken published URL. Serializing the room
+lifecycle with upload follows the deployed Storage authorization boundary
+instead of weakening it for a UI convenience.
+
+### Consequences
+
+- Re-cropping requires selecting an image again; the original is intentionally
+  not retained in Storage.
+- Existing managed room covers and canonical Club Lounge avatars remain valid
+  and need no migration.
+- External legacy room-cover pointers stop rendering; managed legacy JPG/PNG
+  objects in the YO Voice bucket remain valid.
+- Closed or archived rooms must be reopened before their art can change.
+- Automated tests prove geometry, pixel composition, Rules poisoning defenses,
+  bounded decoding, Club-avatar binding and state recovery; the local web
+  render proves layout, but
+  a physical iOS/Android gallery-and-gesture pass remains release evidence for
+  the next native tester build. The Firestore Rules hardening is source-only
+  until the coordinated backend release.

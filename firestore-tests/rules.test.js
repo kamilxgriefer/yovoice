@@ -124,10 +124,14 @@ async function main() {
   function createHostRoomBatch(
     db,
     roomId,
-    { hostName = "Host", participantName = "Host" } = {},
+    {
+      hostName = "Host",
+      participantName = "Host",
+      imageUrl = undefined,
+    } = {},
   ) {
     const batch = writeBatch(db);
-    batch.set(doc(db, `rooms/${roomId}`), {
+    const room = {
       hostId: "host-uid",
       hostName,
       name: "Test room",
@@ -147,7 +151,9 @@ async function main() {
       membersCanStartVoice: false,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-    });
+    };
+    if (imageUrl !== undefined) room.imageUrl = imageUrl;
+    batch.set(doc(db, `rooms/${roomId}`), room);
     batch.set(doc(db, `rooms/${roomId}/participants/host-uid`), {
       userId: "host-uid",
       displayName: participantName,
@@ -174,6 +180,61 @@ async function main() {
       await assertFails(
         createHostRoomBatch(db, "forged-host-participant", {
           participantName: "Arbitrary Participant Name",
+        }).commit(),
+      );
+    },
+  );
+
+  const managedRoomCover = (roomId, bucket =
+    "yovoice-ec54a.firebasestorage.app") =>
+    `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/` +
+    `room_images%2F${roomId}%2Fhost-uid_123.jpg?alt=media&token=test`;
+  const managedClubAvatar = (ownerId, clubId, bucket =
+    "yovoice-ec54a.firebasestorage.app") =>
+    `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/` +
+    `clubs%2F${ownerId}%2F${clubId}%2Favatar` +
+    "?alt=media&generation=123&token=test";
+
+  await check(
+    "SECURITY ROOMS: create rejects malformed, oversized and external cover pointers",
+    async () => {
+      const db = host.firestore();
+      for (const [roomId, imageUrl] of [
+        ["cover-object-create", {}],
+        ["cover-external-create", "https://tracker.example/cover.jpg"],
+        ["cover-oversized-create", `https://${"a".repeat(2050)}`],
+        [
+          "cover-sibling-create",
+          managedRoomCover("different-room"),
+        ],
+      ]) {
+        await assertFails(
+          createHostRoomBatch(db, roomId, { imageUrl }).commit(),
+        );
+      }
+      await assertFails(
+        createHostRoomBatch(db, ".*", {
+          imageUrl: managedRoomCover("victim-room"),
+        }).commit(),
+      );
+    },
+  );
+
+  await check(
+    "ROOMS: create accepts only this room's managed current or legacy cover",
+    async () => {
+      const db = host.firestore();
+      await assertSucceeds(
+        createHostRoomBatch(db, "managed-cover-create", {
+          imageUrl: managedRoomCover("managed-cover-create"),
+        }).commit(),
+      );
+      await assertSucceeds(
+        createHostRoomBatch(db, "legacy-cover-create", {
+          imageUrl: managedRoomCover(
+            "legacy-cover-create",
+            "yovoice-ec54a.appspot.com",
+          ).replace(".jpg", ".png"),
         }).commit(),
       );
     },
@@ -431,6 +492,106 @@ async function main() {
       }),
     );
   });
+
+  await check(
+    "SECURITY ROOMS: host update cannot poison public imageUrl",
+    async () => {
+      const ref = doc(host.firestore(), "rooms/room1");
+      for (const imageUrl of [
+        {},
+        "https://tracker.example/cover.jpg",
+        `https://${"a".repeat(2050)}`,
+        managedRoomCover("different-room"),
+        managedRoomCover("room1").replace(
+          "room_images%2F",
+          "room_images%2F..%2F",
+        ),
+      ]) {
+        await assertFails(
+          updateDoc(ref, { imageUrl, updatedAt: serverTimestamp() }),
+        );
+      }
+      await assertSucceeds(
+        updateDoc(ref, {
+          imageUrl: managedRoomCover("room1"),
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await assertSucceeds(
+        createHostRoomBatch(host.firestore(), "[a-z]+").commit(),
+      );
+      await assertFails(
+        updateDoc(doc(host.firestore(), "rooms/[a-z]+"), {
+          imageUrl: managedRoomCover("victim-room"),
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
+    "ROOMS: Club Lounge accepts only its live Club's managed avatar",
+    async () => {
+      const clubId = "cover-club";
+      const roomId = `club_lounge_${clubId}`;
+      const avatarUrl = managedClubAvatar("host-uid", clubId);
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await setDoc(doc(db, `clubs/${clubId}`), {
+          ownerId: "host-uid",
+          name: "Cover Club",
+          type: "community",
+          status: "active",
+          avatarUrl,
+          loungeRoomId: roomId,
+        });
+        await setDoc(doc(db, `rooms/${roomId}`), {
+          hostId: "host-uid",
+          hostName: "Host",
+          name: "Cover Club Lounge",
+          description: "Private voice lounge for Cover Club members.",
+          category: "club",
+          visibility: "private",
+          language: "English",
+          maxParticipants: null,
+          participantCount: 0,
+          memberCount: 1,
+          isLive: false,
+          roomType: "community",
+          status: "active",
+          imageUrl: null,
+          approvalRequired: false,
+          slowModeSeconds: 0,
+          autoMuteNewUsers: false,
+          membersCanStartVoice: true,
+          experience: "community",
+          clubId,
+          roomKind: "clubLounge",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+      });
+
+      const ref = doc(host.firestore(), `rooms/${roomId}`);
+      await assertSucceeds(
+        updateDoc(ref, { imageUrl: avatarUrl, updatedAt: serverTimestamp() }),
+      );
+      for (const imageUrl of [
+        managedClubAvatar("victim-owner", "victim-club"),
+        managedClubAvatar("different-owner", clubId),
+      ]) {
+        await assertFails(
+          updateDoc(ref, { imageUrl, updatedAt: serverTimestamp() }),
+        );
+      }
+      await assertFails(
+        updateDoc(doc(host.firestore(), "rooms/room1"), {
+          imageUrl: avatarUrl,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
 
   await check(
     "SECURITY ROOMS: a private-room participant row cannot be self-forged",

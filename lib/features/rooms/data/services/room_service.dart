@@ -297,6 +297,23 @@ class RoomService {
     return VoiceRoom.fromFirestore(document);
   }
 
+  /// Authoritative read for destructive recovery decisions. A normal get may
+  /// fall back to a stale cache while the network is unhealthy; that is useful
+  /// for UI, but it must never be used as proof that a lost-ACK write did not
+  /// commit before deleting its Storage object.
+  Future<VoiceRoom> getRoomFromServer(String roomId) async {
+    final document = await _rooms
+        .doc(roomId)
+        .get(const GetOptions(source: Source.server));
+    if (document.metadata.isFromCache || document.metadata.hasPendingWrites) {
+      throw StateError('The room state is not yet confirmed by the server.');
+    }
+    if (!document.exists) {
+      throw StateError('The room no longer exists.');
+    }
+    return VoiceRoom.fromFirestore(document);
+  }
+
   Stream<bool> watchIsParticipant(String roomId) {
     return _rooms
         .doc(roomId)

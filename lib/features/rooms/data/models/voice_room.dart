@@ -3,6 +3,68 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 
+const _roomCoverBuckets = <String>{
+  'yovoice-ec54a.firebasestorage.app',
+  'yovoice-ec54a.appspot.com',
+};
+
+/// A room document is public, so parsing stays fail-closed even if legacy or
+/// Admin-written data predates the current Rules. Only this project's exact
+/// room-cover object may trigger a network image fetch; malformed types and
+/// external URLs degrade to the room's gradient instead of breaking a shared
+/// query stream or tracking viewers.
+String? _readManagedRoomCover(
+  Object? value,
+  String roomId, {
+  required String? clubId,
+  required bool isClubLounge,
+}) {
+  if (value is! String) return null;
+  final normalized = value.trim();
+  if (normalized.isEmpty || normalized.length > 2048) return null;
+  final uri = Uri.tryParse(normalized);
+  if (uri == null ||
+      uri.scheme != 'https' ||
+      uri.host != 'firebasestorage.googleapis.com') {
+    return null;
+  }
+  final segments = uri.pathSegments;
+  if (segments.length != 5 ||
+      segments[0] != 'v0' ||
+      segments[1] != 'b' ||
+      !_roomCoverBuckets.contains(segments[2]) ||
+      segments[3] != 'o') {
+    return null;
+  }
+  final objectSegments = segments[4].split('/');
+  final isRoomCover =
+      objectSegments.length == 3 &&
+      objectSegments[0] == 'room_images' &&
+      objectSegments[1] == roomId &&
+      RegExp(
+        r'^[A-Za-z0-9_-]+_[0-9]+\.(?:jpg|png)$',
+      ).hasMatch(objectSegments[2]);
+  if (isRoomCover) return normalized;
+
+  final safeClubId = clubId?.trim();
+  final isClubAvatar =
+      isClubLounge &&
+      safeClubId != null &&
+      RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(safeClubId) &&
+      roomId == 'club_lounge_$safeClubId' &&
+      objectSegments.length == 4 &&
+      objectSegments[0] == 'clubs' &&
+      RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(objectSegments[1]) &&
+      objectSegments[2] == safeClubId &&
+      RegExp(
+        r'^(?:avatar|avatar_[0-9]+\.(?:jpg|jpeg|png|webp))$',
+      ).hasMatch(objectSegments[3]);
+  if (!isClubAvatar) {
+    return null;
+  }
+  return normalized;
+}
+
 enum RoomType {
   temporary,
   community;
@@ -220,6 +282,15 @@ class VoiceRoom {
       return value is Timestamp ? value.toDate() : null;
     }
 
+    final rawClubId = data['clubId'];
+    final storedClubId = rawClubId is String ? rawClubId.trim() : null;
+    final clubId = storedClubId?.isNotEmpty == true
+        ? storedClubId
+        : (document.id.startsWith('club_lounge_')
+              ? document.id.substring('club_lounge_'.length)
+              : null);
+    final isClubLounge = data['roomKind'] == 'clubLounge';
+
     return VoiceRoom(
       id: document.id,
       hostId: data['hostId'] as String? ?? '',
@@ -236,7 +307,12 @@ class VoiceRoom {
       isLive: data['isLive'] as bool? ?? false,
       roomType: RoomType.fromValue(data['roomType']),
       status: RoomStatus.fromValue(data['status']),
-      imageUrl: data['imageUrl'] as String?,
+      imageUrl: _readManagedRoomCover(
+        data['imageUrl'],
+        document.id,
+        clubId: clubId,
+        isClubLounge: isClubLounge,
+      ),
       approvalRequired: data['approvalRequired'] as bool? ?? false,
       slowModeSeconds: (data['slowModeSeconds'] as num?)?.toInt() ?? 0,
       autoMuteNewUsers: data['autoMuteNewUsers'] as bool? ?? true,
@@ -261,15 +337,9 @@ class VoiceRoom {
           .toInt(),
       deletionInProgress: data['deletionInProgress'] as bool? ?? false,
       // The forgiving value, for identity and routing.
-      clubId:
-          data['clubId'] as String? ??
-          (document.id.startsWith('club_lounge_')
-              ? document.id.substring('club_lounge_'.length)
-              : null),
+      clubId: clubId,
       // The literal field, for authority. Deliberately NOT prefix-derived.
-      storedClubId: (data['clubId'] as String?)?.trim().isNotEmpty == true
-          ? (data['clubId'] as String).trim()
-          : null,
+      storedClubId: storedClubId?.isNotEmpty == true ? storedClubId : null,
     );
   }
 

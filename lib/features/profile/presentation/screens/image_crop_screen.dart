@@ -1,11 +1,13 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import 'package:yovoice/features/profile/data/services/image_crop.dart';
 import 'package:yovoice/features/profile/data/services/profile_image_rules.dart';
 
-/// The avatar/banner crop editor: pinch to zoom, drag to reposition,
+/// The shared image crop editor: pinch to zoom, drag to reposition,
 /// fixed-frame crop with a live preview of exactly what will be visible.
 ///
 /// Consumer-app mechanics, not developer chrome: the crop frame is fixed
@@ -15,10 +17,24 @@ import 'package:yovoice/features/profile/data/services/profile_image_rules.dart'
 /// asset stays a clean square. Returns the processed JPEG bytes, or null
 /// on cancel.
 class ImageCropScreen extends StatefulWidget {
-  const ImageCropScreen({required this.image, required this.kind, super.key});
+  const ImageCropScreen({
+    required this.image,
+    required ProfileImageKind kind,
+    super.key,
+  }) : _kind = kind,
+       roomCover = false;
+
+  /// Room covers have their own 21:9 composition. Keeping this as a named
+  /// constructor preserves the established profile API while letting room
+  /// creation/settings reuse the exact same gesture, keyboard and export
+  /// pipeline without pretending a room cover is a profile banner.
+  const ImageCropScreen.roomCover({required this.image, super.key})
+    : _kind = null,
+      roomCover = true;
 
   final ui.Image image;
-  final ProfileImageKind kind;
+  final ProfileImageKind? _kind;
+  final bool roomCover;
 
   @override
   State<ImageCropScreen> createState() => _ImageCropScreenState();
@@ -29,8 +45,24 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
   Size _viewport = Size.zero;
   bool _processing = false;
 
-  ProfileImageRules get _rules => ProfileImageRules.of(widget.kind);
-  bool get _isAvatar => widget.kind == ProfileImageKind.avatar;
+  ProfileImageRules? get _profileRules =>
+      widget.roomCover ? null : ProfileImageRules.of(widget._kind!);
+  bool get _isAvatar => widget._kind == ProfileImageKind.avatar;
+  bool get _isRoomCover => widget.roomCover;
+  double get _aspectRatio => _isRoomCover ? 21 / 9 : _profileRules!.aspectRatio;
+  int get _outputWidth => _isRoomCover ? 1600 : _profileRules!.maxOutputEdge;
+  String get _title => switch ((widget._kind, widget.roomCover)) {
+    // Keep the visual title readable beside Close and Reset on narrow phones.
+    // Semantics below still announces the full room-cover task.
+    (_, true) => 'Adjust cover',
+    (ProfileImageKind.avatar, false) => 'Adjust your avatar',
+    _ => 'Adjust your banner',
+  };
+  String get _previewLabel => switch ((widget._kind, widget.roomCover)) {
+    (_, true) => 'Room cover crop preview',
+    (ProfileImageKind.avatar, false) => 'Avatar crop preview',
+    _ => 'Banner crop preview',
+  };
   double get _imageWidth => widget.image.width.toDouble();
   double get _imageHeight => widget.image.height.toDouble();
 
@@ -91,6 +123,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
       ),
     );
     if (mounted) setState(() {});
+    _announceCropAdjustment();
   }
 
   void _nudge(Offset delta) {
@@ -102,6 +135,49 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
       translation: Offset(translation.x, translation.y) + delta,
     );
     if (mounted) setState(() {});
+    _announceCropAdjustment();
+  }
+
+  String _cropSemanticValue() {
+    if (_viewport == Size.zero) return 'Crop preview loading';
+    final cover = _coverScale(_viewport);
+    final scale = _controller.value.getMaxScaleOnAxis();
+    final source = ImageCrop.sourceRectFor(
+      matrix: _controller.value,
+      viewport: _viewport,
+      imageSize: Size(_imageWidth, _imageHeight),
+    );
+    final zoom = (scale / cover * 100).round();
+    final horizontal = (source.center.dx / _imageWidth * 100).round();
+    final vertical = (source.center.dy / _imageHeight * 100).round();
+    return 'Zoom $zoom percent. Position $horizontal percent horizontal, '
+        '$vertical percent vertical.';
+  }
+
+  void _announceCropAdjustment() {
+    if (!mounted || _viewport == Size.zero) return;
+    unawaited(
+      SemanticsService.sendAnnouncement(
+        View.of(context),
+        _cropSemanticValue(),
+        Directionality.of(context),
+      ),
+    );
+  }
+
+  void _explainBlockedBack() {
+    if (!_processing || !mounted) return;
+    const message = 'Processing cover. Please wait.';
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(content: Text(message)));
+    unawaited(
+      SemanticsService.sendAnnouncement(
+        View.of(context),
+        message,
+        Directionality.of(context),
+      ),
+    );
   }
 
   Widget _cropControls() {
@@ -116,58 +192,82 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     final minY = rawMinY < 0 ? rawMinY : 0.0;
     const epsilon = .1;
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        _CropControlButton(
-          key: const ValueKey('crop-zoom-out'),
-          tooltip: 'Zoom out',
-          icon: Icons.remove_rounded,
-          onPressed: ready && !_processing && scale > cover + epsilon
-              ? () => _adjustZoom(1 / 1.2)
-              : null,
-        ),
-        _CropControlButton(
-          key: const ValueKey('crop-zoom-in'),
-          tooltip: 'Zoom in',
-          icon: Icons.add_rounded,
-          onPressed: ready && !_processing && scale < cover * 6 - epsilon
-              ? () => _adjustZoom(1.2)
-              : null,
-        ),
-        _CropControlButton(
-          key: const ValueKey('crop-move-left'),
-          tooltip: 'Move photo left',
-          icon: Icons.arrow_left_rounded,
-          onPressed: ready && !_processing && translation.x > minX + epsilon
-              ? () => _nudge(const Offset(-20, 0))
-              : null,
-        ),
-        _CropControlButton(
-          key: const ValueKey('crop-move-up'),
-          tooltip: 'Move photo up',
-          icon: Icons.arrow_drop_up_rounded,
-          onPressed: ready && !_processing && translation.y > minY + epsilon
-              ? () => _nudge(const Offset(0, -20))
-              : null,
-        ),
-        _CropControlButton(
-          key: const ValueKey('crop-move-down'),
-          tooltip: 'Move photo down',
-          icon: Icons.arrow_drop_down_rounded,
-          onPressed: ready && !_processing && translation.y < -epsilon
-              ? () => _nudge(const Offset(0, 20))
-              : null,
-        ),
-        _CropControlButton(
-          key: const ValueKey('crop-move-right'),
-          tooltip: 'Move photo right',
-          icon: Icons.arrow_right_rounded,
-          onPressed: ready && !_processing && translation.x < -epsilon
-              ? () => _nudge(const Offset(20, 0))
-              : null,
-        ),
-      ],
+    final zoomControls = <Widget>[
+      _CropControlButton(
+        key: const ValueKey('crop-zoom-out'),
+        tooltip: 'Zoom out',
+        icon: Icons.remove_rounded,
+        onPressed: ready && !_processing && scale > cover + epsilon
+            ? () => _adjustZoom(1 / 1.2)
+            : null,
+      ),
+      _CropControlButton(
+        key: const ValueKey('crop-zoom-in'),
+        tooltip: 'Zoom in',
+        icon: Icons.add_rounded,
+        onPressed: ready && !_processing && scale < cover * 6 - epsilon
+            ? () => _adjustZoom(1.2)
+            : null,
+      ),
+    ];
+    final positionControls = <Widget>[
+      _CropControlButton(
+        key: const ValueKey('crop-move-left'),
+        tooltip: 'Move photo left',
+        icon: Icons.arrow_left_rounded,
+        onPressed: ready && !_processing && translation.x > minX + epsilon
+            ? () => _nudge(const Offset(-20, 0))
+            : null,
+      ),
+      _CropControlButton(
+        key: const ValueKey('crop-move-up'),
+        tooltip: 'Move photo up',
+        icon: Icons.arrow_drop_up_rounded,
+        onPressed: ready && !_processing && translation.y > minY + epsilon
+            ? () => _nudge(const Offset(0, -20))
+            : null,
+      ),
+      _CropControlButton(
+        key: const ValueKey('crop-move-down'),
+        tooltip: 'Move photo down',
+        icon: Icons.arrow_drop_down_rounded,
+        onPressed: ready && !_processing && translation.y < -epsilon
+            ? () => _nudge(const Offset(0, 20))
+            : null,
+      ),
+      _CropControlButton(
+        key: const ValueKey('crop-move-right'),
+        tooltip: 'Move photo right',
+        icon: Icons.arrow_right_rounded,
+        onPressed: ready && !_processing && translation.x < -epsilon
+            ? () => _nudge(const Offset(20, 0))
+            : null,
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scaledBody = MediaQuery.textScalerOf(context).scale(14);
+        final stackGroups = constraints.maxWidth <= 360 || scaledBody >= 21;
+        final zoom = _CropControlGroup(
+          semanticsLabel: 'Zoom controls',
+          children: zoomControls,
+        );
+        final position = _CropControlGroup(
+          semanticsLabel: 'Position controls',
+          children: positionControls,
+        );
+        if (stackGroups) {
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [zoom, const SizedBox(height: 4), position],
+          );
+        }
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [zoom, const SizedBox(width: 18), position],
+        );
+      },
     );
   }
 
@@ -180,8 +280,8 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
         viewport: _viewport,
         imageSize: Size(_imageWidth, _imageHeight),
       );
-      final outputWidth = _rules.maxOutputEdge;
-      final outputHeight = (_rules.maxOutputEdge / _rules.aspectRatio).round();
+      final outputWidth = _outputWidth;
+      final outputHeight = (_outputWidth / _aspectRatio).round();
       final bytes = await ImageCrop.renderCroppedJpeg(
         image: widget.image,
         sourceRect: sourceRect,
@@ -215,195 +315,398 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0D0618),
-      appBar: AppBar(
+    return PopScope(
+      // Encoding reads the decoded native image asynchronously. System Back
+      // or Escape must not dispose that image underneath the renderer; the
+      // route becomes dismissible again as soon as processing finishes.
+      canPop: !_processing,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _explainBlockedBack();
+      },
+      child: Scaffold(
         backgroundColor: const Color(0xFF0D0618),
-        foregroundColor: Colors.white,
-        leading: IconButton(
-          icon: const Icon(Icons.close_rounded),
-          tooltip: 'Cancel',
-          onPressed: _processing ? null : () => Navigator.of(context).pop(),
-        ),
-        title: Text(_isAvatar ? 'Adjust your avatar' : 'Adjust your banner'),
-        actions: [
-          TextButton(
-            onPressed: _processing
-                ? null
-                : () => setState(() => _resetTo(_viewport)),
-            child: const Text('Reset'),
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF0D0618),
+          foregroundColor: Colors.white,
+          leading: IconButton(
+            icon: const Icon(Icons.close_rounded),
+            tooltip: 'Cancel',
+            onPressed: _processing ? null : () => Navigator.of(context).pop(),
           ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    // Fixed crop frame sized to the REAL final aspect
-                    // ratio; the image moves beneath it.
-                    final maxWidth = constraints.maxWidth;
-                    final maxHeight = constraints.maxHeight;
-                    var frameWidth = maxWidth;
-                    var frameHeight = frameWidth / _rules.aspectRatio;
-                    if (frameHeight > maxHeight) {
-                      frameHeight = maxHeight;
-                      frameWidth = frameHeight * _rules.aspectRatio;
-                    }
-                    final viewport = Size(frameWidth, frameHeight);
-                    if (_viewport != viewport) {
-                      _viewport = viewport;
-                      _resetTo(viewport);
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (mounted && _viewport == viewport) setState(() {});
-                      });
-                    }
-                    final cover = _coverScale(viewport);
-                    final percent =
-                        (_controller.value.getMaxScaleOnAxis() / cover * 100)
-                            .round();
-
-                    return ClipRRect(
-                      borderRadius: BorderRadius.circular(_isAvatar ? 0 : 22),
-                      child: SizedBox(
-                        width: frameWidth,
-                        height: frameHeight,
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Semantics(
+          title: Text(
+            _title,
+            semanticsLabel: _isRoomCover ? 'Adjust room cover' : null,
+          ),
+          actions: [
+            TextButton(
+              onPressed: _processing
+                  ? null
+                  : () => setState(() => _resetTo(_viewport)),
+              child: const Text('Reset'),
+            ),
+          ],
+        ),
+        body: LayoutBuilder(
+          builder: (context, pageConstraints) => Column(
+            children: [
+              Expanded(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        // Fixed crop frame sized to the REAL final aspect
+                        // ratio; the image moves beneath it.
+                        final maxWidth = constraints.maxWidth;
+                        final maxHeight = constraints.maxHeight;
+                        if (maxWidth <= 0 || maxHeight <= 0) {
+                          return const SizedBox.shrink();
+                        }
+                        var frameWidth = maxWidth;
+                        var frameHeight = frameWidth / _aspectRatio;
+                        if (frameHeight > maxHeight) {
+                          frameHeight = maxHeight;
+                          frameWidth = frameHeight * _aspectRatio;
+                        }
+                        final viewport = Size(frameWidth, frameHeight);
+                        if (_viewport != viewport) {
+                          _viewport = viewport;
+                          _resetTo(viewport);
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted && _viewport == viewport) {
+                              setState(() {});
+                            }
+                          });
+                        }
+                        final cover = _coverScale(viewport);
+                        return ClipRRect(
+                          borderRadius: BorderRadius.circular(
+                            _isAvatar ? 0 : 22,
+                          ),
+                          child: SizedBox(
+                            width: frameWidth,
+                            height: frameHeight,
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                Semantics(
+                                  container: true,
+                                  label: _previewLabel,
+                                  value: _cropSemanticValue(),
+                                  child: InteractiveViewer(
+                                    transformationController: _controller,
+                                    constrained: false,
+                                    boundaryMargin: EdgeInsets.zero,
+                                    minScale: cover,
+                                    maxScale: cover * 6,
+                                    clipBehavior: Clip.hardEdge,
+                                    onInteractionUpdate: (_) {
+                                      if (mounted) setState(() {});
+                                    },
+                                    child: SizedBox(
+                                      width: _imageWidth,
+                                      height: _imageHeight,
+                                      child: RawImage(
+                                        image: widget.image,
+                                        fit: BoxFit.fill,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                // Avatar: circular mask preview — everything
+                                // outside the circle is dimmed exactly as the
+                                // app will crop it visually, while the stored
+                                // square stays intact underneath.
+                                if (_isAvatar)
+                                  IgnorePointer(
+                                    child: CustomPaint(
+                                      painter: _CircleMaskPainter(),
+                                    ),
+                                  ),
+                                IgnorePointer(
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      border: Border.all(
+                                        color: Colors.white.withValues(
+                                          alpha: .35,
+                                        ),
+                                      ),
+                                      borderRadius: BorderRadius.circular(
+                                        _isAvatar ? 0 : 22,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                if (_isRoomCover)
+                                  const IgnorePointer(
+                                    child: _RoomCoverSafeAreaOverlay(),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  // At extreme text sizes the footer becomes independently
+                  // scrollable instead of collapsing the crop frame to zero.
+                  maxHeight: pageConstraints.maxHeight * .75,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 640),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            child: Semantics(
                               container: true,
-                              label: _isAvatar
-                                  ? 'Avatar crop preview'
-                                  : 'Banner crop preview',
-                              value: 'Zoom $percent percent',
-                              child: InteractiveViewer(
-                                transformationController: _controller,
-                                constrained: false,
-                                boundaryMargin: EdgeInsets.zero,
-                                minScale: cover,
-                                maxScale: cover * 6,
-                                clipBehavior: Clip.hardEdge,
-                                onInteractionUpdate: (_) {
-                                  if (mounted) setState(() {});
-                                },
-                                child: SizedBox(
-                                  width: _imageWidth,
-                                  height: _imageHeight,
-                                  child: RawImage(
-                                    image: widget.image,
-                                    fit: BoxFit.fill,
-                                  ),
-                                ),
-                              ),
+                              explicitChildNodes: true,
+                              label: 'Crop controls',
+                              child: _cropControls(),
                             ),
-                            // Avatar: circular mask preview — everything
-                            // outside the circle is dimmed exactly as the
-                            // app will crop it visually, while the stored
-                            // square stays intact underneath.
-                            if (_isAvatar)
-                              IgnorePointer(
-                                child: CustomPaint(
-                                  painter: _CircleMaskPainter(),
-                                ),
-                              ),
-                            IgnorePointer(
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  border: Border.all(
-                                    color: Colors.white.withValues(alpha: .35),
-                                  ),
-                                  borderRadius: BorderRadius.circular(
-                                    _isAvatar ? 0 : 22,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                       ),
-                    );
-                  },
+                      Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 640),
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+                            child: Text(
+                              _isRoomCover
+                                  ? 'Everything in the frame appears on wide covers. '
+                                        'Keep faces, logos and text inside the center '
+                                        'guide for compact cards.'
+                                  : 'Pinch or use controls · drag or use arrows',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: .68),
+                                fontSize: 12.5,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      SafeArea(
+                        top: false,
+                        child: Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 640),
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: OutlinedButton(
+                                      onPressed: _processing
+                                          ? null
+                                          : () => Navigator.of(context).pop(),
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: Colors.white,
+                                        side: const BorderSide(
+                                          color: Color(0xFF3A3151),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 15,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            16,
+                                          ),
+                                        ),
+                                      ),
+                                      child: const Text('Cancel'),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: FilledButton(
+                                      onPressed: _processing ? null : _confirm,
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: const Color(
+                                          0xFF7B2FF7,
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 15,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            16,
+                                          ),
+                                        ),
+                                      ),
+                                      child: _processing
+                                          ? Semantics(
+                                              liveRegion: true,
+                                              label:
+                                                  'Processing cover. Please wait.',
+                                              child: const ExcludeSemantics(
+                                                child: Row(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment.center,
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    SizedBox(
+                                                      width: 18,
+                                                      height: 18,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                            strokeWidth: 2,
+                                                            color: Colors.white,
+                                                          ),
+                                                    ),
+                                                    SizedBox(width: 7),
+                                                    Flexible(
+                                                      child: Text(
+                                                        'Processing…',
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            )
+                                          : Text(
+                                              _isRoomCover
+                                                  ? 'Use cover'
+                                                  : 'Use photo',
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The wide crop is the canonical room-cover asset, but compact Home and
+/// Discover cards use a taller viewport. This guide marks the central area
+/// that survives both presentations so hosts can keep faces, logos and text
+/// away from the outer edges without storing display-time crop metadata.
+class _RoomCoverSafeAreaOverlay extends StatelessWidget {
+  const _RoomCoverSafeAreaOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              flex: 6,
+              child: ColoredBox(color: Color(0x520D0618)),
+            ),
+            const Spacer(flex: 9),
+            const Expanded(
+              flex: 6,
+              child: ColoredBox(color: Color(0x520D0618)),
+            ),
+          ],
+        ),
+        Center(
+          child: FractionallySizedBox(
+            // 9/21 of the wide frame is a centred square — the most
+            // restrictive shape used by mobile room thumbnails.
+            widthFactor: 9 / 21,
+            heightFactor: 1,
+            child: DecoratedBox(
+              decoration: const BoxDecoration(
+                border: Border.symmetric(
+                  vertical: BorderSide(color: Color(0xFF0D0618), width: 5),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: DecoratedBox(
+                  decoration: const BoxDecoration(
+                    border: Border.symmetric(
+                      vertical: BorderSide(color: Colors.white, width: 2),
+                    ),
+                  ),
+                  child: const Align(
+                    alignment: Alignment.topCenter,
+                    child: Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Color(0xD90D0618),
+                          borderRadius: BorderRadius.all(Radius.circular(999)),
+                        ),
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          child: Text(
+                            'COMPACT SAFE',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 7.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: .35,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Semantics(
-              container: true,
-              explicitChildNodes: true,
-              label: 'Crop controls',
-              child: _cropControls(),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 2, 20, 8),
-            child: Text(
-              'Pinch or use controls · drag or use arrows',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: .55),
-                fontSize: 12.5,
-              ),
-            ),
-          ),
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: _processing
-                          ? null
-                          : () => Navigator.of(context).pop(),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        side: const BorderSide(color: Color(0xFF3A3151)),
-                        padding: const EdgeInsets.symmetric(vertical: 15),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      child: const Text('Cancel'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: _processing ? null : _confirm,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF7B2FF7),
-                        padding: const EdgeInsets.symmetric(vertical: 15),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      child: _processing
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Text(
-                              'Use photo',
-                              style: TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
+        ),
+      ],
+    );
+  }
+}
+
+class _CropControlGroup extends StatelessWidget {
+  const _CropControlGroup({
+    required this.semanticsLabel,
+    required this.children,
+  });
+
+  final String semanticsLabel;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      label: semanticsLabel,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFF171023),
+          border: Border.all(color: const Color(0xFF3A3151)),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+          child: Row(mainAxisSize: MainAxisSize.min, children: children),
+        ),
       ),
     );
   }

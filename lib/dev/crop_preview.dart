@@ -1,8 +1,9 @@
 // Developer-only harness for the avatar/banner crop editor.
 //
 // Generates a test image locally and opens the REAL ImageCropScreen so
-// the editor (pinch/drag/reset/confirm, circular avatar mask, 16:9
-// banner frame, JPEG render) can be visually verified on Web without a
+// the editor (pinch/drag/reset/confirm, circular avatar mask, 16:9 profile
+// banner frame, 21:9 room-cover frame, JPEG render) can be visually verified
+// on Web without a
 // signed-in Firebase session or an OS file dialog.
 //
 // Run with:
@@ -14,6 +15,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/profile/data/services/profile_image_rules.dart';
 import 'package:yovoice/features/profile/presentation/screens/image_crop_screen.dart';
 
@@ -59,7 +61,7 @@ class _PreviewApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(),
+      theme: AppTheme.darkTheme,
       home: const _Launcher(),
     );
   }
@@ -90,6 +92,28 @@ class _Launcher extends StatelessWidget {
     );
   }
 
+  Future<void> _openRoomCover(BuildContext context) async {
+    final image = await _makeTestImage(1600, 1200);
+    if (!context.mounted) return;
+    final bytes = await Navigator.of(context).push<Object?>(
+      MaterialPageRoute<Object?>(
+        builder: (_) => ImageCropScreen.roomCover(image: image),
+      ),
+    );
+    image.dispose();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          bytes == null
+              ? 'Editor cancelled'
+              : 'Cropped room-cover JPEG rendered: '
+                    '${(bytes as dynamic).length} bytes',
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -106,6 +130,11 @@ class _Launcher extends StatelessWidget {
             FilledButton(
               onPressed: () => _open(context, ProfileImageKind.banner),
               child: const Text('Open banner editor'),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () => _openRoomCover(context),
+              child: const Text('Open room-cover editor'),
             ),
           ],
         ),

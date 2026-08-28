@@ -20,18 +20,51 @@ import 'package:yovoice/features/profile/data/services/profile_image_rules.dart'
 class ImageCrop {
   ImageCrop._();
 
+  static const maxEncodedEdge = 16384;
+  static const maxEncodedPixels = 32 * 1024 * 1024;
+  static const maxDecodedEdge = 3200;
+
   /// Decodes picked bytes into a [ui.Image] for the editor. Throws the
   /// product's own "couldn't process" error on undecodable data instead
   /// of leaking codec exceptions.
   static Future<ui.Image> decode(Uint8List bytes) async {
+    ui.ImmutableBuffer? buffer;
+    ui.ImageDescriptor? descriptor;
+    ui.Codec? codec;
     try {
-      final codec = await ui.instantiateImageCodec(bytes);
+      buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+      descriptor = await ui.ImageDescriptor.encoded(buffer);
+      final width = descriptor.width;
+      final height = descriptor.height;
+      if (width <= 0 ||
+          height <= 0 ||
+          width > maxEncodedEdge ||
+          height > maxEncodedEdge ||
+          width * height > maxEncodedPixels) {
+        throw const ProfileImageException(
+          'This image is too large to process safely. Choose another one.',
+        );
+      }
+
+      final scale = width > height
+          ? (width > maxDecodedEdge ? maxDecodedEdge / width : 1.0)
+          : (height > maxDecodedEdge ? maxDecodedEdge / height : 1.0);
+      codec = await descriptor.instantiateCodec(
+        targetWidth: (width * scale).round(),
+        targetHeight: (height * scale).round(),
+      );
       final frame = await codec.getNextFrame();
       return frame.image;
+    } on ProfileImageException {
+      rethrow;
     } catch (_) {
       throw const ProfileImageException(
         "We couldn't process this image. Try another one.",
       );
+    } finally {
+      codec?.dispose();
+      descriptor?.dispose();
+      buffer?.dispose();
     }
   }
 
@@ -87,19 +120,25 @@ class ImageCrop {
       outputWidth,
       outputHeight,
     );
-    final rgba = await rendered.toByteData(format: ui.ImageByteFormat.rawRgba);
-    if (rgba == null) {
-      throw const ProfileImageException(
-        "We couldn't process this image. Try another one.",
+    try {
+      final rgba = await rendered.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
       );
-    }
+      if (rgba == null) {
+        throw const ProfileImageException(
+          "We couldn't process this image. Try another one.",
+        );
+      }
 
-    final raw = img.Image.fromBytes(
-      width: outputWidth,
-      height: outputHeight,
-      bytes: rgba.buffer,
-      numChannels: 4,
-    );
-    return Uint8List.fromList(img.encodeJpg(raw, quality: quality));
+      final raw = img.Image.fromBytes(
+        width: outputWidth,
+        height: outputHeight,
+        bytes: rgba.buffer,
+        numChannels: 4,
+      );
+      return Uint8List.fromList(img.encodeJpg(raw, quality: quality));
+    } finally {
+      rendered.dispose();
+    }
   }
 }
