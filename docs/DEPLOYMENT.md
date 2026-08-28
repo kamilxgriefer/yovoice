@@ -35,10 +35,12 @@ browser smoke and CodeQL workflows all passed; the full Flutter VM suite was
 App Store Connect accepted and processed signed build `1.0.0 (10)`. It is
 **Testing** in both permanent groups: `YO Voice Internal Testers` and the
 external `YO Voice Beta Testers`; automatic tester notification was enabled.
-The external group contains one tester whose App Store Connect status remains
-`Invited`, so that account must accept the latest TestFlight invitation using
-the same Apple ID before the update appears. The 54,478,469-byte IPA SHA-256
-is `db49d11c1822c96b693468c7eeba0957c30a86dba57c45321db1e89a25ac44ba`;
+All six existing external testers were consolidated into that permanent
+group, including the four accounts previously stranded on builds 2/3. Two
+accounts still marked `Invited` were reinvited and must accept the latest
+TestFlight email using the same Apple ID before the update appears. The
+54,478,469-byte IPA SHA-256 is
+`db49d11c1822c96b693468c7eeba0957c30a86dba57c45321db1e89a25ac44ba`;
 inspection confirmed bundle `app.yovoice`, iOS 15 minimum, production APNs,
 Apple Sign-In and `get-task-allow=false`.
 
