@@ -15,6 +15,62 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Released 2026-08-28: direct-chat reliability and mobile build 11
+
+**WEB, BACKEND AND BOTH PERMANENT MOBILE TESTER CHANNELS RELEASED from
+`a67036b5678c02dc9991328ff15463d5b9611689`.** Direct chats now use an
+optimistic, fair text outbox; silent paged read receipts; restart-safe private
+photo and voice-message payloads; active-conversation foreground-alert
+suppression; and a crash-safe one-to-one call lifecycle with atomic busy locks
+and replacement-call protection. The recurring unread-count warning was
+removed rather than shown during recoverable background reconciliation.
+
+Hosting workflow
+[33210891530](https://github.com/kamilxgriefer/yovoice/actions/runs/33210891530)
+passed the full pinned verification gate and deployed the exact build-11 web
+artifact. `https://yovoice-ec54a.web.app/version.json` reports `1.0.0 (11)`;
+its live `main.dart.js` is 6,398,623 bytes. The public marketing origin
+`yovoice.app` is a separate Vercel/Next.js deployment and deliberately does
+not expose Flutter's `version.json` endpoint.
+
+The managed Firestore field override now has TTL enabled for
+`notificationDeliveryEvents.expiresAt`. Ten direct-message, room, invite and
+direct-call producers plus `onNotificationCreated` are **ACTIVE** in
+`europe-west1` on Node 22 at source hash
+`b45c89c53b16d46d57e4588b890e95e8350c49e7`; notification delivery retry is
+enabled only after the new terminal dispatch claim made replay safe. Storage
+rules were unchanged. The new Firestore Rules are intentionally **not yet
+deployed**: App Store Connect still reports active installs on builds 2, 3 and
+10, whose client-side fallback writes the hardened rules remove. Deploying the
+rules before those testers update would trade a security migration for a
+known compatibility outage.
+
+Google Play Internal Testing reports `11 (1.0.0)` as **Available to internal
+testers**, published on 28 August at 23:15 CEST. The persistent 11-account
+`YO Voice Internal Testers` list remains selected and includes
+`mikegabrielpl@gmail.com`. The 104,548,700-byte AAB SHA-256 is
+`cea7778417c4e584bd4b6166ee6db29b539297d92024298317d983d089ce228a`;
+its package is `app.yovoice`, version code 11, min SDK 24 and target SDK 36.
+
+App Store Connect accepted and processed `1.0.0 (11)`, then showed it as
+**Testing** in both permanent groups: `YO Voice Internal Testers` and the
+six-account external `YO Voice Beta Testers`. Automatic tester notification
+was enabled when build 11 was submitted to the external group. The
+54,531,746-byte IPA SHA-256 is
+`0d75f0c570e8435ff919e0e13cb8046078082922e394ff54f4628f47cd2a1a5a`;
+inspection confirmed bundle `app.yovoice`, build 11 and iOS 15 minimum. Xcode
+reported `Upload succeeded`; missing third-party framework dSYM warnings did
+not block TestFlight but may limit symbolication inside those frameworks.
+
+Release verification passed Flutter VM **1461/1461**, Functions **907/907**,
+Firestore Rules **519/519**, Storage Rules **60/60**, combined Family media
+**11/11**, the real-Chrome audio lifecycle **1/1**, sound generation checks,
+release compilation and `flutter analyze`. Independent backend, release and
+principal reviews returned **SHIP** with no P0-P3 findings. No physical iOS or
+Android device was connected to this workstation, so an end-to-end two-device
+APNs/FCM, image/voice transfer and LiveKit call-latency smoke remains explicit
+tester acceptance rather than a fabricated verification result.
+
 ### Released 2026-08-28: saved Vibe and mobile build 10
 
 **WEB AND BOTH MOBILE TESTER CHANNELS RELEASED from
