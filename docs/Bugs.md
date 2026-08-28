@@ -1173,7 +1173,7 @@ permission flags).
 
 ## UI
 
-- **FIXED IN SOURCE 2026-08-28 — Vibe saved successfully but disappeared on
+- **FIXED AND RELEASED TO WEB/MOBILE BETA 2026-08-28 — Vibe saved successfully but disappeared on
   full profiles.** The editor wrote `statusMessage`, the model read it back,
   and compact profile previews already used it; both the signed-in member's
   older Voice identity card and the full friend-profile route omitted it.
@@ -1185,7 +1185,9 @@ permission flags).
   the shared profile stream; production-widget coverage pins both full-profile
   routes, including 320 px/200% accessibility layouts. Browser inspection
   covered the shared card at 390, 768 and 1180 px plus the actual friend route
-  at 1280 px with no visible overflow. **WEB/MOBILE BUILD 10 RELEASE PENDING.**
+  at 1280 px with no visible overflow. The pinned Hosting artifact is live,
+  TestFlight build 10 is Testing in both permanent tester groups, and Google
+  Play Internal Testing exposes version code 10 to the selected cohort.
 
 - **FIXED AND RELEASED TO WEB/MOBILE BETA 2026-08-28 — Podcast Room behaved like a recolored
   Community Room and ignored parts of its own creation contract.** The screen

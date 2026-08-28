@@ -1233,6 +1233,16 @@ someone decide what to pick up next.
   preserved. Quick check-ins and invitation accept/decline are implemented
   and tested. Still to build: production Family Moment recording/upload;
   Storage rules alone are not a shipped user-facing feature.
+- Saved Vibe on the full profile (2026-08-28; **RELEASED TO WEB, TESTFLIGHT
+  BUILD 10 AND ANDROID INTERNAL BUILD 10**): `statusMessage` now appears on
+  both the signed-in Voice identity card and the full friend-profile route
+  through one responsive headline. Vibe alone counts as a populated identity,
+  a website-only identity no longer falls into the empty state, the exact
+  80-character editor limit remains readable at 320 px/200% text, and long
+  website values are bounded. The pinned Hosting artifact was byte-verified;
+  App Store Connect shows build 10 as Testing in the permanent internal and
+  external groups, while Google Play shows version code 10 available to the
+  11-account internal cohort. Full Flutter VM: 1410/1410; analyze: clean.
 - Full documentation system — Vision/Architecture/Features/Roadmap/
   Firebase/Backend/Flutter/UI/Decisions/Bugs plus this evolution pass
   (`02275bd`, `26d11a2`, and this session's commit).
@@ -1240,29 +1250,6 @@ someone decide what to pick up next.
 ---
 
 ## In Progress
-
-### Saved Vibe on the full profile
-
-- **Status**: Implementation and local verification complete; **web Hosting,
-  TestFlight build 10 and Android Internal build 10 release pending**.
-- **Description**: `statusMessage` already saved to Firestore, round-tripped
-  through `UserProfile` and appeared in compact previews, but the signed-in
-  Voice identity card and the full friend-profile route never rendered it.
-  Both routes now share one responsive headline. Vibe counts as a valid
-  identity by itself and preserves the exact 80-character editor limit at
-  320 px with 200% text. A website-only identity no longer falls into the
-  empty state.
-- **Verification**: One regression drives the real Save path through Firestore
-  and the shared stream; three separate widget regressions render the exact
-  signed-in card, while the full friend-profile responsive matrix pins the
-  same value on the other full route. Browser inspection covered the shared
-  card at 390, 768 and 1180 px plus the actual friend route at 1280 px. Full
-  Flutter VM: 1410/1410; analyze: clean.
-- **Release work**: Commit/push the reviewed bytes, pass exact-SHA CI, deploy
-  the pinned Hosting artifact and verify its hashes, then publish signed build
-  10 to both permanent internal tester cohorts.
-- **Priority**: High — the field currently looks as if Save lost the user's
-  data even though persistence succeeded.
 
 ### Moderator and super-moderator Premium preview (ADR-119)
 

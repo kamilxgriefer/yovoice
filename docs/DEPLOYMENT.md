@@ -15,6 +15,42 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Released 2026-08-28: saved Vibe and mobile build 10
+
+**WEB AND BOTH MOBILE TESTER CHANNELS RELEASED from
+`5fd845a522962cf1f4cf6ec2a347adb0b3238efa`.** Saved profile Vibe now renders
+on both the signed-in full profile and the full friend-profile route, shares
+one responsive headline, respects the 80-character editor limit at 320 px and
+200% text, and no longer treats a website-only identity as empty.
+
+Hosting workflow
+[33198255075](https://github.com/kamilxgriefer/yovoice/actions/runs/33198255075)
+deployed the pinned artifact. The live 6,350,453-byte `main.dart.js` matches
+the workflow artifact at SHA-256
+`6bc415a7047416ab93874e90e84055217e12b3ba1d7bf2e3b3ee99e6f44c5b2f`,
+and `version.json` reports `1.0.0 (10)`. Exact-SHA Flutter verification,
+browser smoke and CodeQL workflows all passed; the full Flutter VM suite was
+1,410/1,410 and `flutter analyze` was clean.
+
+App Store Connect accepted and processed signed build `1.0.0 (10)`. It is
+**Testing** in both permanent groups: `YO Voice Internal Testers` and the
+external `YO Voice Beta Testers`; automatic tester notification was enabled.
+The external group contains one tester whose App Store Connect status remains
+`Invited`, so that account must accept the latest TestFlight invitation using
+the same Apple ID before the update appears. The 54,478,469-byte IPA SHA-256
+is `db49d11c1822c96b693468c7eeba0957c30a86dba57c45321db1e89a25ac44ba`;
+inspection confirmed bundle `app.yovoice`, iOS 15 minimum, production APNs,
+Apple Sign-In and `get-task-allow=false`.
+
+Google Play Internal Testing reports `10 (1.0.0)` as **Available to internal
+testers**, published on 28 August at 20:22 CEST. The selected 11-account
+`YO Voice Internal Testers` list includes `mikegabrielpl@gmail.com`. The
+104,305,258-byte AAB SHA-256 is
+`e90b9b62b5bc27dd74505f30c2c4f8c7aa52e08b77ebdf137dbb781d28f2bfa1`;
+its package is `app.yovoice`, version code 10, min SDK 24 and target SDK 36.
+Production App Store and Google Play submissions remain separate from these
+tester releases.
+
 ### Released 2026-08-28: Podcast Studio and mobile build 9
 
 **WEB, RULES AND MOBILE BETA RELEASED.** Podcast Studio was deployed from
