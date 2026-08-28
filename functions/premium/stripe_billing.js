@@ -698,7 +698,9 @@ function makeStripeBillingHandlers({
     // window for quantity/promotion-code or unapproved Price updates.
     const [prices, configuration] = await Promise.all([
       loadPrices(),
-      stripe.billingPortal.configurations.retrieve(portalConfigurationId),
+      stripe.billingPortal.configurations.retrieve(portalConfigurationId, {
+        expand: ["features.subscription_update.products"],
+      }),
     ]);
     const cancelEnabled =
       configuration.active === true &&

@@ -734,6 +734,22 @@ test("suspended or unverified payer can still open their canonical Stripe portal
   assert.equal(result.url, "https://billing.stripe.test/session");
 });
 
+test("portal configuration retrieval expands subscription update products", async () => {
+  const fake = stripeFake();
+  const originalRetrieve = fake.billingPortal.configurations.retrieve;
+  let retrieveArguments;
+  fake.billingPortal.configurations.retrieve = async (...args) => {
+    retrieveArguments = args;
+    return originalRetrieve(...args);
+  };
+  await handlers({ firestore: new FakeFirestore(), stripe: fake })
+    .loadPortalConfiguration();
+  assert.deepEqual(retrieveArguments, [
+    "bpc_test",
+    { expand: ["features.subscription_update.products"] },
+  ]);
+});
+
 test("portal fails closed unless cancellation and both plan switches are enabled", async () => {
   const firestore = new FakeFirestore({
     "entitlements/user": { source: "stripe", status: "active" },
