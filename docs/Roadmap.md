@@ -16,6 +16,14 @@ someone decide what to pick up next.
 
 ## Done
 
+- **iOS build 7 accepted by App Store Connect** (2026-08-28,
+  **UPLOADED — PROCESSING / TESTER ASSIGNMENT PENDING**): signed
+  `1.0.0 (7)` was uploaded from `9a92072`, passed App Store package analysis
+  and entered Apple processing. TestFlight availability is intentionally not
+  claimed until the processed build is visible in the intended tester group.
+  Android remains on active Internal Testing build 7 because no mobile-client
+  code changed after that already-published bundle.
+
 - **Android adaptive launcher icon respects the platform safe area**
   (2026-08-28, **ANDROID BUILD 7 INTERNAL — AVAILABLE TO 10 TESTERS**): the
   Android 8+ foreground inset moves from 8% to 16%, bringing the full YO mark
@@ -26,7 +34,7 @@ someone decide what to pick up next.
   build.
 
 - **P0 Google/Apple sign-in and registration recovery** (2026-08-28,
-  **DEPLOYED TO WEB; ANDROID BUILD 6 INTERNAL; iOS BUILD 6 UPLOADED TO APP
+  **DEPLOYED TO WEB; ANDROID BUILD 7 INTERNAL; iOS BUILD 7 UPLOADED TO APP
   STORE CONNECT**; TestFlight availability and real-account smoke pending):
   Login and Registration now expose the same federated actions. Valid provider
   sessions are no longer rolled back by a concurrent or transient Firestore

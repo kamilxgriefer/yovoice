@@ -15,6 +15,38 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Uploaded 2026-08-28: iOS build 7 and mobile beta access audit
+
+**APP STORE CONNECT UPLOAD ACCEPTED from
+`9a92072b8032271f031a8520b8078f9f86341ff4`.** The signed iOS
+`1.0.0 (7)` archive passed bundle, version, distribution-signature and
+production APNs entitlement inspection. App Store Connect completed package
+analysis, accepted all 54,407,157 bytes and reported `Upload succeeded` at
+13:34 CEST; Apple then moved the package into processing. The IPA SHA-256 is
+`302abfb857592b0eb0fc55374b7a7f245bfdeb60592ee04ad3d936b0def0403f`.
+This is a TestFlight upload, not an App Store production submission.
+
+Do not describe build 7 as available in TestFlight until App Store Connect
+finishes processing and the build is visibly assigned to the intended tester
+group. The upload session does not expose that later group-assignment state,
+so this remains an explicit release gate. Xcode also warned that several
+prebuilt third-party frameworks did not include matching dSYMs; the binary was
+accepted, but crash symbolication for those frameworks may be incomplete.
+
+The matching Android binary did not need a duplicate upload: Google Play was
+re-checked directly and still reports `7 (1.0.0)` as active and available on
+Internal Testing, with the existing 10-account list selected. Testers must use
+the Internal Testing opt-in link while signed in to one of those Google
+accounts; the draft application is not discoverable through normal Play Store
+search. Google rejects addresses that are not registered Google accounts.
+
+The exact SHA passed the full Flutter analysis/test and web build workflow
+[33166426929](https://github.com/kamilxgriefer/yovoice/actions/runs/33166426929),
+[browser smoke](https://github.com/kamilxgriefer/yovoice/actions/runs/33166426905)
+and [CodeQL](https://github.com/kamilxgriefer/yovoice/actions/runs/33166426942).
+There were no mobile-client changes after Android build 7; the intervening
+Premium commits are backend/catalog work with live checkout still disabled.
+
 ### Released 2026-08-28: Android adaptive launcher safe area and build 7
 
 **ANDROID INTERNAL DEPLOYED from

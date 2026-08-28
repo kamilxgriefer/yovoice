@@ -2430,10 +2430,12 @@ permission flags).
   actions from Login, transient Apple availability failures can be retried,
   and iOS declares `GIDClientID`. Automated tests/config checks are not a real
   provider login: new-account and returning-account smokes on production web
-  and store-installed builds remain release evidence. The signed iOS build 6
+  and store-installed builds remain release evidence. The signed iOS build 7
   artifact passed entitlement/configuration inspection and App Store Connect
-  accepted it for TestFlight processing; tester availability and a
-  real-account smoke remain pending.
+  accepted it for TestFlight processing; tester-group availability and a
+  real-account smoke remain pending. Android build 7 remains active on
+  Internal Testing; testers must opt in with an address registered as a Google
+  account rather than searching for the still-draft app in Play Store.
 - **Fixed in source and provider configuration — Sign in with Apple was a
   placeholder.** Apple App ID `app.yovoice` now has the capability, Service ID
   `app.yovoice.web` owns the three verified web domains and Firebase callback,
