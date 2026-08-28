@@ -1974,6 +1974,32 @@ regression test pinning the contract.
 - **Future considerations**: None pressing until mobile distribution
   (#13) is further along.
 
+### 15. Direct chat reliability and latency
+
+- **Status (2026-08-28)**: Critical correctness pass complete in source;
+  deployment and two-device release smoke pending.
+- **Delivered**: immediate optimistic text bubbles; per-conversation outbox
+  isolation; silent, single-flight and paged read receipts; replay-safe
+  activity/FCM notifications with source revalidation, terminal dispatch and a
+  managed 30-day TTL; active-chat foreground suppression; restart-safe
+  direct-call start; bounded exactly-one foreground call alerts; local
+  voice-message preview; a durable account-scoped photo/voice outbox with
+  reservation rotation and failed Retry/Discard; and a server-only conversation
+  root/message mutation boundary enforced by Rules.
+- **Release target**: local tap-to-bubble p95 <= 50 ms, warm server ACK p95 <=
+  750 ms, recipient visibility p95 <= 1 s, exactly zero message alerts while
+  that same conversation is foregrounded, and one background alert per
+  notification generation. These are measurable targets, not a 1 ms
+  internet-delivery promise.
+- **Known next work**: byte-level media upload progress; shared/ref-counted
+  conversation and notification listeners; older message pagination past the
+  current 250-message live window; production latency traces/dashboards; and a
+  synthetic two-account canary.
+- **Cost decision deferred**: keeping `sendDirectMessage` and
+  `startDirectCall` warm with `minInstances=1` removes measured 2–3 second
+  scale-to-zero starts but creates recurring infrastructure cost. Do not turn
+  it on implicitly; approve cost and monitoring together.
+
 ---
 
 ## Explicitly not planned right now

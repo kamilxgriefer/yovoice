@@ -14,23 +14,31 @@ correction silently broke all three anchors.)*
 
 | Suite | Command | Count |
 |---|---|---|
-| Firestore rules | `npm --prefix firestore-tests test` | **512** checks |
+| Firestore rules | `npm --prefix firestore-tests test` | **519** checks |
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
-| Cloud Functions | `npm --prefix functions test` | **892** tests (67 `*.test.js` files) |
-| Flutter VM | `flutter test` | **1410** tests (126 VM-compatible files) |
+| Cloud Functions | `npm --prefix functions test` | **907** tests (69 `*.test.js` files) |
+| Flutter VM | `flutter test` | **1461** tests (130 VM-compatible files) |
 | Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart` | **1** test (1 browser-only file) |
 
-**Where these numbers came from.** Functions 892 and Rules 512 were re-measured
-on 2026-08-28 against the exact current source and fresh isolated emulators;
-the final role-transition pass also repeated its focused Auth/Firestore matrix
-at 76/76. Flutter VM 1410 passed in one invocation, the real Chrome Blob
-lifecycle passed 1/1, and `flutter analyze` was clean on those bytes. Storage
-60 and family media 11 also ran against fresh isolated emulators rather than an
-occupied local 8080 endpoint. Both web release compilation and the dedicated
-browser preview harness compiled successfully. The 67 Functions files and 127
-total Flutter test files (126 VM-compatible plus one browser-only) are current
-`find` results rather than carried-forward estimates. The earlier
+**Where these numbers came from.** Functions 907 and Rules 519 were re-measured
+on 2026-08-28 against the exact current source and Node 22. A deliberately
+sequential full Functions run reached 901/903 because two unrelated suites
+shared one long-lived emulator: the global identity scrub counted another
+file's conversation and a social-graph query timed out under accumulated
+emulator load. Fresh isolated reruns passed 2/2 and 22/22 respectively; the
+fragile global scrub aggregate was corrected to assert its exact fixture state
+instead of exclusive ownership of a shared collection. The final chat/push
+security matrices passed 47/47 Flutter, 9/9 pure Functions and 24/24 emulator
+checks. A final direct-call lock audit added four emulator regressions for late
+cancel/decline/end and expiry preserving a replacement call's locks; the exact
+concurrent Functions gate then passed 907/907 on a fresh emulator pair.
+Flutter VM 1461 passed in one invocation, the real Chrome Blob lifecycle passed
+1/1, and `flutter analyze` was clean on those bytes. Storage 60 and family
+media 11 also ran against fresh isolated emulators rather than an occupied
+local 8080 endpoint. Web and signed Android release compilation succeeded. The
+69 Functions files and 131 total Flutter test files (130 VM-compatible plus one
+browser-only) are current `find` results rather than carried-forward estimates. The earlier
 figures this row used to carry (Rules 485, Functions 783/62, Flutter 1198/114)
 are kept in the movement log below as history.
 
@@ -158,6 +166,22 @@ suite, so isolated ports are real isolation rather than documentation only.
 > the full friend-profile responsive matrix pins the same Vibe after opening a
 > different member's full profile. Rules, Functions, Storage, family media and
 > browser-only coverage are unchanged.
+
+> **Movement, 2026-08-28 (ADR-121 direct chat, media, push and calls).**
+> Flutter VM **1410/126 → 1461/130** adds active-conversation foreground
+> suppression, silent paged receipts, cross-conversation text outbox fairness,
+> durable image/voice payloads, expiry/clock-skew rotation, failed-only
+> Retry/Discard, restart-safe direct-call request identity and bounded
+> exactly-one alert arbitration. Functions **899/67 → 907/69** adds terminal
+> push-claim/source-conflict and managed-ledger-TTL coverage; the focused
+> backend re-review passed **9/9** pure and **24/24** emulator tests, then four
+> replacement-lock regressions closed the final direct-call race. Rules
+> **512 → 519** closes conversation-root and message mutation fallbacks.
+> Storage **60**, family media **11** and real-Chrome **1/1** remain green. A
+> Four final race regressions additionally pin account-switch revalidation,
+> active-call lost-ACK recovery, atomic same-pair start acquisition and an
+> independently expiring token-safe alert claim. The final independent review
+> reproduced every prior P1/P2 failure and returned SHIP with no P0-P3 finding.
 
 > **Movement, 2026-08-17.** Rules 301 → **318** (`c75720a`, the
 > account-status gating; the suite ran 310 passed / 8 failed against the
@@ -504,7 +528,7 @@ bounded local outbox instead — see the Flutter section below.
 
 ## Cloud Functions — real coverage, unevenly distributed
 
-`functions/test/` — **892 tests across 67 `*.test.js` files**, run with
+`functions/test/` — **907 tests across 69 `*.test.js` files**, run with
 `node --test test/*.test.js` against the Auth + Firestore emulators, and
 gating the Hosting release in CI like the rules suites do. A separate
 `npm --prefix functions run test:smoke` drives two trigger smokes and one
@@ -526,7 +550,9 @@ exactly as strong (one document scanned, one scrub planned, nothing
 written) while being independent of what else exists.
 
 The general rule: assert on a delta or on a scoped fixture, never on an
-absolute count over a collection your file does not exclusively own.
+absolute count over a collection your file does not exclusively own. The
+2026-08-28 direct-chat release gate ran the exact concurrent suite against a
+fresh Auth + Firestore emulator pair: **907 passed, 0 failed**.
 
 ### Premium billing release matrix
 

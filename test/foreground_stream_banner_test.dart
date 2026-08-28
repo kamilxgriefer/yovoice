@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/app/app.dart';
+import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 
@@ -17,14 +18,16 @@ void main() {
     String id, {
     bool isRead = false,
     bool bellSuppressed = false,
+    NotificationType type = NotificationType.follow,
+    String? targetId,
   }) {
     return AppNotification(
       id: id,
-      type: NotificationType.follow,
+      type: type,
       actorId: 'actor-$id',
       actorName: 'Actor $id',
       actorPhotoUrl: null,
-      targetId: null,
+      targetId: targetId,
       targetLabel: null,
       isRead: isRead,
       createdAt: DateTime.utc(2026, 8, 18, 12),
@@ -413,4 +416,58 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(shown, ['b', 'd']);
   });
+
+  test(
+    'FCM-first active-DM suppression cannot replay after chat closes',
+    () async {
+      final auth = StreamController<User?>.broadcast();
+      final feed = StreamController<List<AppNotification>>.broadcast();
+      final shown = <String>[];
+      final active = ActiveConversationRegistry()..enter('conversation-1');
+      final source = ForegroundNotificationStreamSource(
+        authStates: auth.stream,
+        watchNotifications: () => feed.stream,
+        showBanner: (arrival) {
+          shown.add(arrival.id);
+          return true;
+        },
+      )..start();
+      addTearDown(source.dispose);
+
+      auth.add(MockUser(uid: 'me-uid'));
+      await Future<void>.delayed(Duration.zero);
+      feed.add(const <AppNotification>[]);
+      await Future<void>.delayed(Duration.zero);
+
+      final decision = source.claimPushBanner('dm-1');
+      expect(
+        await presentForegroundNotificationDecision(
+          decision: decision,
+          present: () async {
+            final suppressed = shouldSuppressForegroundNotification(
+              type: NotificationType.directMessage,
+              targetId: 'conversation-1',
+              activeConversations: active,
+            );
+            if (suppressed) return true;
+            shown.add('fcm-dm-1');
+            return true;
+          },
+        ),
+        isTrue,
+      );
+
+      active.leave('conversation-1');
+      feed.add([
+        notification(
+          'dm-1',
+          type: NotificationType.directMessage,
+          targetId: 'conversation-1',
+        ),
+      ]);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(shown, isEmpty);
+    },
+  );
 }

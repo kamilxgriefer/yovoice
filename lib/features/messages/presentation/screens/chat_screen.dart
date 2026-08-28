@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -10,6 +11,8 @@ import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/calls/presentation/screens/direct_call_screen.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/widgets/message_bubble.dart';
@@ -76,6 +79,8 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription<List<Message>>? _messagesSubscription;
   StreamSubscription<List<OutboxEntry>>? _outboxSubscription;
   StreamSubscription<OutboxEntry>? _deliveredSubscription;
+  StreamSubscription<List<DirectAttachmentOutboxEntry>>?
+  _mediaOutboxSubscription;
 
   Timer? _typingTimer;
   Message? _replyTo;
@@ -89,6 +94,8 @@ class _ChatScreenState extends State<ChatScreen> {
   DateTime? _lastTypingHeartbeat;
   bool _suppressTypingListener = false;
   List<OutboxEntry> _outboxEntries = const <OutboxEntry>[];
+  List<DirectAttachmentOutboxEntry> _mediaOutboxEntries =
+      const <DirectAttachmentOutboxEntry>[];
   final Map<String, OutboxEntry> _awaitingSnapshots = {};
   Set<String> _committedMessageIds = const <String>{};
 
@@ -98,11 +105,15 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _typingFailureReported = false;
 
   /// Read receipts follow the conversation snapshot, not the build cycle:
-  /// [_newestMarkedMessageId] is the newest message we already marked read
-  /// for, so N rebuilds of the same snapshot cost zero extra writes, and a
-  /// failure is reported once per visit — same contract as typing above.
+  /// [_newestMarkedMessageId] is the newest incoming unread message we already
+  /// marked, so N rebuilds (and snapshots containing only our own messages)
+  /// cost zero extra writes.
   String? _newestMarkedMessageId;
-  bool _markReadFailureReported = false;
+  bool _markReadRequested = false;
+  bool _markReadInFlight = false;
+  Timer? _markReadRetryTimer;
+  int _markReadRetryAttempt = 0;
+  late final String _registeredConversationId;
 
   String get _currentUserId =>
       (widget.auth ?? FirebaseAuth.instance).currentUser?.uid ?? '';
@@ -110,6 +121,8 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    _registeredConversationId = widget.conversationId;
+    ActiveConversationRegistry.instance.enter(_registeredConversationId);
     // Broadcast so the state's own mark-read listener below and the
     // message list's StreamBuilder can share one service stream.
     _messages = _service
@@ -136,16 +149,35 @@ class _ChatScreenState extends State<ChatScreen> {
     _deliveredSubscription = _service.outbox.delivered.listen(
       _handleOutboxDelivered,
     );
+    final mediaOutbox = _service.attachmentOutbox;
+    _mediaOutboxEntries = mediaOutbox.entries
+        .where((entry) => entry.conversationId == widget.conversationId)
+        .toList(growable: false);
+    _mediaOutboxSubscription = mediaOutbox.changes.listen(
+      _handleMediaOutboxChanged,
+    );
     unawaited(_loadOutbox());
     _controller.addListener(_handleTyping);
   }
 
   @override
+  void didUpdateWidget(covariant ChatScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    assert(
+      oldWidget.conversationId == widget.conversationId,
+      'A ChatScreen state cannot be reused for a different conversation.',
+    );
+  }
+
+  @override
   void dispose() {
+    ActiveConversationRegistry.instance.leave(_registeredConversationId);
     _typingTimer?.cancel();
+    _markReadRetryTimer?.cancel();
     unawaited(_messagesSubscription?.cancel());
     unawaited(_outboxSubscription?.cancel());
     unawaited(_deliveredSubscription?.cancel());
+    unawaited(_mediaOutboxSubscription?.cancel());
     _controller
       ..removeListener(_handleTyping)
       ..dispose();
@@ -210,6 +242,12 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _loadOutbox() async {
     await _service.outbox.load();
     _handleOutboxChanged(_service.outbox.entries);
+    try {
+      await _service.attachmentOutbox.load();
+      _handleMediaOutboxChanged(_service.attachmentOutbox.entries);
+    } catch (error) {
+      debugPrint('ChatScreen media outbox load failed: $error');
+    }
   }
 
   bool _belongsToThisChat(OutboxEntry entry) =>
@@ -224,6 +262,15 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _outboxEntries = entries
           .where(_belongsToThisChat)
+          .toList(growable: false);
+    });
+  }
+
+  void _handleMediaOutboxChanged(List<DirectAttachmentOutboxEntry> entries) {
+    if (!mounted) return;
+    setState(() {
+      _mediaOutboxEntries = entries
+          .where((entry) => entry.conversationId == widget.conversationId)
           .toList(growable: false);
     });
   }
@@ -298,36 +345,77 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       });
     }
-    if (messages.isEmpty) return;
-    final newestId = messages.first.id;
+    final unreadIncoming = messages.where(
+      (message) =>
+          message.senderId != _currentUserId &&
+          !message.readBy.contains(_currentUserId),
+    );
+    if (unreadIncoming.isEmpty) return;
+    final newestId = unreadIncoming.first.id;
     if (newestId == _newestMarkedMessageId) return;
     _newestMarkedMessageId = newestId;
-    unawaited(_markRead());
+    _markReadRequested = true;
+    unawaited(_drainMarkRead());
   }
 
-  Future<void> _markRead() async {
+  /// Serialises read-cursor work and coalesces snapshot bursts. Firestore can
+  /// emit once per message updated by a paged mark-read; starting another
+  /// callable for every such snapshot both races the cursor and consumes the
+  /// per-minute integrity limit.
+  Future<void> _drainMarkRead() async {
+    if (_markReadInFlight) return;
+    _markReadInFlight = true;
     try {
-      await _service.markConversationRead(widget.conversationId);
-    } catch (error) {
-      debugPrint('ChatScreen read-receipt update failed: $error');
+      while (_markReadRequested) {
+        _markReadRequested = false;
+        final attemptedNewestMessageId = _newestMarkedMessageId;
+        try {
+          await _service.markConversationRead(widget.conversationId);
+          _markReadRetryAttempt = 0;
+          _markReadRetryTimer?.cancel();
+          _markReadRetryTimer = null;
+        } catch (error) {
+          debugPrint('ChatScreen read-receipt update failed: $error');
 
-      // Let the next conversation change retry instead of pinning the
-      // failed newest message as "already marked".
-      _newestMarkedMessageId = null;
+          // Do not erase a newer request that arrived while this page was in
+          // flight. With no newer request, let the next relevant snapshot
+          // retry instead of pinning the failed message as already marked.
+          if (_newestMarkedMessageId == attemptedNewestMessageId) {
+            _newestMarkedMessageId = null;
+            _scheduleMarkReadRetry();
+          }
 
-      if (!mounted || _markReadFailureReported) return;
-
-      // Stale unread badges elsewhere must not fail invisibly — but a
-      // snackbar per snapshot would be a storm, so once per visit, like
-      // the typing-presence failure above. Never raw exception text.
-      _markReadFailureReported = true;
-      _showMessage(
-        friendlyErrorMessage(
-          error,
-          fallback: 'Unread counts may not update right now.',
-        ),
-      );
+          // This is background bookkeeping, not an action the person can
+          // repair from inside the conversation. Send/media/call failures
+          // remain explicitly actionable; receipts stay silent and retry.
+        }
+      }
+    } finally {
+      _markReadInFlight = false;
+      // A synchronous snapshot callback can queue work between the final
+      // while-condition and this finally block. Do not strand that request.
+      if (_markReadRequested) unawaited(_drainMarkRead());
     }
+  }
+
+  void _scheduleMarkReadRetry() {
+    if (!mounted || _markReadRetryTimer != null) return;
+    const delays = <Duration>[
+      Duration(seconds: 1),
+      Duration(seconds: 2),
+      Duration(seconds: 4),
+      Duration(seconds: 8),
+      Duration(seconds: 16),
+      Duration(seconds: 30),
+    ];
+    final delay = delays[_markReadRetryAttempt.clamp(0, delays.length - 1)];
+    _markReadRetryAttempt++;
+    _markReadRetryTimer = Timer(delay, () {
+      _markReadRetryTimer = null;
+      if (!mounted) return;
+      _markReadRequested = true;
+      unawaited(_drainMarkRead());
+    });
   }
 
   Future<void> _startDirectCall() async {
@@ -349,22 +437,32 @@ class _ChatScreenState extends State<ChatScreen> {
         await _calls.cancel(callId);
         return;
       }
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          fullscreenDialog: true,
-          builder: (_) => DirectCallScreen(
-            callId: callId!,
-            callService: _calls,
-            currentUserId: _currentUserId,
-            participantName:
-                (widget.auth ?? FirebaseAuth.instance)
-                    .currentUser
-                    ?.displayName ??
-                (widget.auth ?? FirebaseAuth.instance).currentUser?.email ??
-                'YO Voice user',
+      // A mounted chat hidden under the fullscreen call is not active. Leave
+      // the foreground-notification registry for the route lifetime so a DM
+      // received during the call still banners/sounds.
+      ActiveConversationRegistry.instance.leave(_registeredConversationId);
+      try {
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            fullscreenDialog: true,
+            builder: (_) => DirectCallScreen(
+              callId: callId!,
+              callService: _calls,
+              currentUserId: _currentUserId,
+              participantName:
+                  (widget.auth ?? FirebaseAuth.instance)
+                      .currentUser
+                      ?.displayName ??
+                  (widget.auth ?? FirebaseAuth.instance).currentUser?.email ??
+                  'YO Voice user',
+            ),
           ),
-        ),
-      );
+        );
+      } finally {
+        if (mounted) {
+          ActiveConversationRegistry.instance.enter(_registeredConversationId);
+        }
+      }
     } catch (error) {
       if (!mounted) return;
       _showMessage(
@@ -444,6 +542,24 @@ class _ChatScreenState extends State<ChatScreen> {
     await _service.discardQueuedMessage(entry.id);
   }
 
+  Future<void> _retryQueuedAttachment(DirectAttachmentOutboxEntry entry) async {
+    try {
+      await _service.retryFailedAttachment(entry.id);
+    } catch (error) {
+      if (mounted) _showMessage(intentionalOrFriendly(error));
+    }
+  }
+
+  Future<void> _discardQueuedAttachment(
+    DirectAttachmentOutboxEntry entry,
+  ) async {
+    try {
+      await _service.discardQueuedAttachment(entry.id);
+    } catch (error) {
+      if (mounted) _showMessage(intentionalOrFriendly(error));
+    }
+  }
+
   List<OutboxEntry> _visibleOutboxEntries() {
     final byId = <String, OutboxEntry>{
       for (final entry in _outboxEntries) entry.id: entry,
@@ -458,6 +574,10 @@ class _ChatScreenState extends State<ChatScreen> {
           ..sort((a, b) => b.queuedAt.compareTo(a.queuedAt));
     return visible;
   }
+
+  List<DirectAttachmentOutboxEntry> _visibleMediaOutboxEntries() =>
+      List<DirectAttachmentOutboxEntry>.of(_mediaOutboxEntries)
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
   Future<void> _messageActions(Message message) async {
     if (message.isDeleted) {
@@ -788,10 +908,12 @@ class _ChatScreenState extends State<ChatScreen> {
                     stream: _messages,
                     builder: (context, snapshot) {
                       final queuedMessages = _visibleOutboxEntries();
+                      final queuedMedia = _visibleMediaOutboxEntries();
                       final hasHistoryError = snapshot.hasError;
                       if (snapshot.connectionState == ConnectionState.waiting &&
                           !snapshot.hasData &&
-                          queuedMessages.isEmpty) {
+                          queuedMessages.isEmpty &&
+                          queuedMedia.isEmpty) {
                         return const Center(
                           child: CircularProgressIndicator(
                             color: _primary,
@@ -800,7 +922,9 @@ class _ChatScreenState extends State<ChatScreen> {
                         );
                       }
 
-                      if (hasHistoryError && queuedMessages.isEmpty) {
+                      if (hasHistoryError &&
+                          queuedMessages.isEmpty &&
+                          queuedMedia.isEmpty) {
                         return const Center(
                           child: Text(
                             'Could not load this conversation.',
@@ -811,7 +935,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
                       final messages = snapshot.data ?? const <Message>[];
 
-                      if (messages.isEmpty && queuedMessages.isEmpty) {
+                      if (messages.isEmpty &&
+                          queuedMessages.isEmpty &&
+                          queuedMedia.isEmpty) {
                         return _EmptyConversation(
                           name: widget.otherDisplayName,
                           photoUrl: widget.otherPhotoUrl,
@@ -822,6 +948,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         reverse: true,
                         padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
                         itemCount:
+                            queuedMedia.length +
                             queuedMessages.length +
                             messages.length +
                             (hasHistoryError ? 1 : 0),
@@ -837,8 +964,21 @@ class _ChatScreenState extends State<ChatScreen> {
 
                           final contentIndex =
                               index - (hasHistoryError ? 1 : 0);
-                          if (contentIndex < queuedMessages.length) {
-                            final entry = queuedMessages[contentIndex];
+                          if (contentIndex < queuedMedia.length) {
+                            final entry = queuedMedia[contentIndex];
+                            return _QueuedMediaMessageCard(
+                              key: ValueKey('queued-media-${entry.id}'),
+                              entry: entry,
+                              onRetry: () =>
+                                  unawaited(_retryQueuedAttachment(entry)),
+                              onDiscard: () =>
+                                  unawaited(_discardQueuedAttachment(entry)),
+                            );
+                          }
+
+                          final textIndex = contentIndex - queuedMedia.length;
+                          if (textIndex < queuedMessages.length) {
+                            final entry = queuedMessages[textIndex];
                             final accepted = !_outboxEntries.any(
                               (queued) => queued.id == entry.id,
                             );
@@ -854,7 +994,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           }
 
                           final messageIndex =
-                              contentIndex - queuedMessages.length;
+                              textIndex - queuedMessages.length;
                           final message = messages[messageIndex];
                           final nextMessage = messageIndex + 1 < messages.length
                               ? messages[messageIndex + 1]
@@ -1530,6 +1670,141 @@ class _QueuedTextMessageBubble extends StatelessWidget {
   }
 }
 
+class _QueuedMediaMessageCard extends StatelessWidget {
+  const _QueuedMediaMessageCard({
+    required this.entry,
+    required this.onRetry,
+    required this.onDiscard,
+    super.key,
+  });
+
+  final DirectAttachmentOutboxEntry entry;
+  final VoidCallback onRetry;
+  final VoidCallback onDiscard;
+
+  String get _kind =>
+      entry.type == MessageType.voice ? 'Voice message' : 'Photo';
+
+  String get _status => switch (entry.status) {
+    DirectAttachmentOutboxStatus.queued => 'Sending…',
+    DirectAttachmentOutboxStatus.retrying => 'Waiting for connection',
+    DirectAttachmentOutboxStatus.failed => 'Not sent',
+  };
+
+  IconData get _kindIcon => entry.type == MessageType.voice
+      ? Icons.graphic_eq_rounded
+      : Icons.image_outlined;
+
+  @override
+  Widget build(BuildContext context) {
+    final failed = entry.status == DirectAttachmentOutboxStatus.failed;
+    final statusColor = failed
+        ? const Color(0xFFFF9BB3)
+        : const Color(0xFFD9B7F2);
+    final maxWidth = (MediaQuery.sizeOf(context).width * 0.82).clamp(
+      220.0,
+      380.0,
+    );
+
+    return Semantics(
+      container: true,
+      label: 'Your $_kind. Status: $_status.',
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: Container(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          margin: const EdgeInsets.only(left: 24, bottom: 10),
+          padding: const EdgeInsets.fromLTRB(14, 12, 10, 8),
+          decoration: BoxDecoration(
+            color: _ChatScreenState._surface2,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(20),
+              topRight: Radius.circular(20),
+              bottomLeft: Radius.circular(20),
+              bottomRight: Radius.circular(5),
+            ),
+            border: Border.all(
+              color: failed ? const Color(0xFFFF668B) : const Color(0xFF63328B),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF3A1855),
+                      borderRadius: BorderRadius.circular(13),
+                    ),
+                    child: Icon(_kindIcon, color: const Color(0xFFD690FF)),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _kind,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _status,
+                          style: TextStyle(
+                            color: statusColor,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 4,
+                runSpacing: 4,
+                children: [
+                  if (failed) ...[
+                    TextButton(
+                      key: ValueKey('discard-media-${entry.id}'),
+                      onPressed: onDiscard,
+                      style: TextButton.styleFrom(
+                        foregroundColor: const Color(0xFFD9B7F2),
+                        minimumSize: const Size(84, 44),
+                      ),
+                      child: const Text('Discard'),
+                    ),
+                    FilledButton(
+                      key: ValueKey('retry-media-${entry.id}'),
+                      onPressed: onRetry,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _ChatScreenState._primary,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size(84, 44),
+                      ),
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _Composer extends StatelessWidget {
   const _Composer({
     required this.controller,
@@ -1745,6 +2020,9 @@ class _VoiceMessageRecorderSheetState
   final VoiceMomentRecorder _recorder = VoiceMomentRecorder();
   Timer? _timer;
   RecordedAudio? _audio;
+  AudioPlayer? _previewPlayer;
+  StreamSubscription<PlayerState>? _previewStateSubscription;
+  PlayerState _previewState = PlayerState.stopped;
   int _durationSeconds = 0;
   bool _recording = false;
   bool _publishing = false;
@@ -1753,6 +2031,8 @@ class _VoiceMessageRecorderSheetState
   @override
   void dispose() {
     _timer?.cancel();
+    unawaited(_previewStateSubscription?.cancel());
+    unawaited(_previewPlayer?.dispose());
     unawaited(_recorder.dispose());
     unawaited(_audio?.discard());
     super.dispose();
@@ -1764,6 +2044,7 @@ class _VoiceMessageRecorderSheetState
       await _finishRecording();
       return;
     }
+    await _stopPreview();
     final previous = _audio;
     _audio = null;
     if (previous != null) await previous.discard();
@@ -1821,6 +2102,52 @@ class _VoiceMessageRecorderSheetState
     }
   }
 
+  AudioPlayer _ensurePreviewPlayer() {
+    final existing = _previewPlayer;
+    if (existing != null) return existing;
+    final player = AudioPlayer();
+    _previewPlayer = player;
+    _previewStateSubscription = player.onPlayerStateChanged.listen((state) {
+      if (!mounted) return;
+      setState(() => _previewState = state);
+    });
+    return player;
+  }
+
+  Future<void> _stopPreview() async {
+    final player = _previewPlayer;
+    if (player == null) return;
+    try {
+      await player.stop();
+    } catch (_) {
+      // Recording/replacing must remain available even if audio teardown on
+      // one platform fails. The player is disposed with the sheet as well.
+    }
+    if (mounted) setState(() => _previewState = PlayerState.stopped);
+  }
+
+  Future<void> _togglePreview() async {
+    final audio = _audio;
+    if (audio == null || _publishing) return;
+    try {
+      final player = _ensurePreviewPlayer();
+      if (_previewState == PlayerState.playing) {
+        await player.pause();
+      } else if (_previewState == PlayerState.paused) {
+        await player.resume();
+      } else {
+        await player.play(audio.playbackSource);
+      }
+      if (mounted) setState(() => _error = null);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _error = 'This recording could not be previewed. Record it again.';
+        });
+      }
+    }
+  }
+
   Future<void> _send() async {
     final audio = _audio;
     if (audio == null || _publishing) return;
@@ -1829,6 +2156,7 @@ class _VoiceMessageRecorderSheetState
       _error = null;
     });
     try {
+      await _stopPreview();
       await widget.onSend(audio, _durationSeconds);
       _audio = null;
       await audio.discard();
@@ -1936,6 +2264,25 @@ class _VoiceMessageRecorderSheetState
               ),
               if (hasTake) ...[
                 const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _publishing ? null : _togglePreview,
+                    icon: Icon(
+                      _previewState == PlayerState.playing
+                          ? Icons.pause_rounded
+                          : Icons.play_arrow_rounded,
+                    ),
+                    label: Text(
+                      _previewState == PlayerState.playing
+                          ? 'Pause preview'
+                          : _previewState == PlayerState.paused
+                          ? 'Resume preview'
+                          : 'Preview voice message',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(

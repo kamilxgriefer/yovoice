@@ -173,17 +173,25 @@ class UiSoundService {
   Future<void>? _disposeFuture;
 
   Future<void> play(UiSound sound) async {
-    if (_disposed || !_enabled()) return;
+    await playWithResult(sound);
+  }
+
+  /// Reports whether the cue was actually accepted and completed by the
+  /// platform player. Critical callers (incoming calls) use the result to
+  /// hand presentation to their FCM fallback when preferences, cooldown,
+  /// disposal, supersession or an audio-engine failure made this path silent.
+  Future<bool> playWithResult(UiSound sound) async {
+    if (_disposed || !_enabled()) return false;
 
     final now = _clock();
     final lastSound = _lastPlayed[sound];
     if (lastSound != null && _inside(now, lastSound, sound.cooldown)) {
-      return;
+      return false;
     }
     final lastChannel = _lastChannelPlayed[sound.channel];
     if (lastChannel != null &&
         _inside(now, lastChannel, _channelCooldown(sound.channel))) {
-      return;
+      return false;
     }
 
     _lastPlayed[sound] = now;
@@ -195,8 +203,10 @@ class UiSoundService {
     final generation = (_channelGenerations[sound.channel] ?? 0) + 1;
     _channelGenerations[sound.channel] = generation;
     final previous = _channelTails[sound.channel] ?? Future<void>.value();
+    final outcome = Completer<bool>();
     final scheduled = previous.then((_) async {
       if (_disposed || _channelGenerations[sound.channel] != generation) {
+        outcome.complete(false);
         return;
       }
       try {
@@ -205,16 +215,19 @@ class UiSoundService {
           () => _playerFactory(sound.channel),
         );
         await player.play(sound.assetPath, volume: sound.volume);
+        outcome.complete(true);
       } catch (error) {
         // Audio feedback must never make the underlying user action fail.
         debugPrint(
           'UiSoundService: ${sound.name} could not play '
           '(${error.runtimeType}).',
         );
+        outcome.complete(false);
       }
     });
     _channelTails[sound.channel] = scheduled;
     await scheduled;
+    return outcome.future;
   }
 
   Future<void> dispose() => _disposeFuture ??= _dispose();

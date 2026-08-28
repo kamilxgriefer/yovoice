@@ -13,6 +13,8 @@ import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_payload_store.dart';
 import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
@@ -30,12 +32,14 @@ class _DirectAttachmentReservation {
     required this.messageId,
     required this.storagePath,
     required this.type,
+    required this.expiresAt,
   });
 
   final String conversationId;
   final String messageId;
   final String storagePath;
   final MessageType type;
+  final DateTime expiresAt;
 
   factory _DirectAttachmentReservation.fromResponse(
     Map<Object?, Object?> data,
@@ -44,6 +48,7 @@ class _DirectAttachmentReservation {
     final messageId = data['messageId'];
     final storagePath = data['storagePath'];
     final typeValue = data['type'];
+    final expiresAtMillis = data['expiresAtMillis'];
     final type = MessageType.values.where((item) => item.name == typeValue);
     if (conversationId is! String ||
         conversationId.isEmpty ||
@@ -51,6 +56,7 @@ class _DirectAttachmentReservation {
         messageId.isEmpty ||
         storagePath is! String ||
         storagePath.isEmpty ||
+        expiresAtMillis is! int ||
         type.isEmpty ||
         type.first == MessageType.text) {
       throw StateError('Malformed attachment reservation from YO Voice.');
@@ -60,29 +66,15 @@ class _DirectAttachmentReservation {
       messageId: messageId,
       storagePath: storagePath,
       type: type.first,
+      expiresAt: DateTime.fromMillisecondsSinceEpoch(expiresAtMillis),
     );
   }
 }
 
-class _PendingDirectAttachment {
-  _PendingDirectAttachment({
-    required this.type,
-    required this.contentType,
-    required this.durationSeconds,
-    required this.reserveRequestId,
-    required this.finalizeRequestId,
-  });
-
-  final MessageType type;
-  final String contentType;
-  final int? durationSeconds;
-  final String reserveRequestId;
-  final String finalizeRequestId;
-  _DirectAttachmentReservation? reservation;
-  String? generation;
-}
-
 class MessageService {
+  static const int _maxReadReceiptPagesPerPass = 100;
+  static const Duration _directAttachmentLeaseDuration = Duration(minutes: 15);
+
   /// The single production facade. Screens share its connectivity listener,
   /// retry timers and account-scoped outbox; tests keep using the injectable
   /// constructor below.
@@ -97,6 +89,8 @@ class MessageService {
     FirebaseFunctions? functions,
     FirebaseStorage? storage,
     MessageOutbox? outbox,
+    DirectAttachmentOutbox? attachmentOutbox,
+    DirectAttachmentPayloadStore? attachmentPayloadStore,
     Connectivity? connectivity,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
@@ -104,6 +98,8 @@ class MessageService {
        _functionsOverride = functions,
        _storageOverride = storage,
        _outboxOverride = outbox,
+       _attachmentOutboxOverride = attachmentOutbox,
+       _attachmentPayloadStoreOverride = attachmentPayloadStore,
        _connectivityOverride = connectivity,
        _useSharedLiveOutbox =
            firestore == null &&
@@ -112,6 +108,8 @@ class MessageService {
            functions == null &&
            storage == null &&
            outbox == null &&
+           attachmentOutbox == null &&
+           attachmentPayloadStore == null &&
            connectivity == null;
 
   final FirebaseFirestore _firestore;
@@ -120,12 +118,19 @@ class MessageService {
   final FirebaseFunctions? _functionsOverride;
   final FirebaseStorage? _storageOverride;
   final MessageOutbox? _outboxOverride;
+  final DirectAttachmentOutbox? _attachmentOutboxOverride;
+  final DirectAttachmentPayloadStore? _attachmentPayloadStoreOverride;
   final Connectivity? _connectivityOverride;
   final bool _useSharedLiveOutbox;
   MessageOutbox? _outbox;
   String? _outboxOwnerId;
   StreamSubscription<Object?>? _connectivitySubscription;
   final Map<MessageOutbox, Timer> _drainTimers = <MessageOutbox, Timer>{};
+  final Map<DirectAttachmentOutbox, Timer> _attachmentDrainTimers =
+      <DirectAttachmentOutbox, Timer>{};
+  final Map<String, Future<void>> _attachmentDeliveries = {};
+  DirectAttachmentOutbox? _attachmentOutbox;
+  String? _attachmentOutboxOwnerId;
 
   /// The queue of messages written but not yet accepted by the server.
   ///
@@ -154,9 +159,24 @@ class MessageService {
     return _outbox!;
   }
 
-  final Map<String, _PendingDirectAttachment> _pendingImageAttachments = {};
-  final Expando<Map<String, _PendingDirectAttachment>>
-  _pendingVoiceAttachments = Expando('directVoiceAttachments');
+  /// Account-scoped durable queue for photo and voice-message payloads.
+  DirectAttachmentOutbox get attachmentOutbox {
+    final override = _attachmentOutboxOverride;
+    if (override != null) return override;
+    final ownerId = _currentUserId;
+    if (_attachmentOutbox == null || _attachmentOutboxOwnerId != ownerId) {
+      final previousQueue = _attachmentOutbox;
+      if (previousQueue != null) {
+        _attachmentDrainTimers.remove(previousQueue)?.cancel();
+      }
+      _attachmentOutboxOwnerId = ownerId;
+      _attachmentOutbox = DirectAttachmentOutbox(
+        ownerId: ownerId,
+        payloadStore: _attachmentPayloadStoreOverride,
+      );
+    }
+    return _attachmentOutbox!;
+  }
 
   FirebaseStorage get _storage => _storageOverride ?? FirebaseStorage.instance;
 
@@ -216,6 +236,17 @@ class MessageService {
     }
     return error is FirebaseFunctionsException && error.code == 'unimplemented';
   }
+
+  bool _isAmbiguousTransportFailure(Object error) =>
+      error is FirebaseFunctionsException &&
+      const <String>{
+        'aborted',
+        'cancelled',
+        'deadline-exceeded',
+        'internal',
+        'unknown',
+        'unavailable',
+      }.contains(error.code);
 
   bool get _preferLegacyBehaviour => _legacyNotificationService != null;
 
@@ -365,9 +396,7 @@ class MessageService {
       'requestId': _newRequestId(),
     });
 
-    if (called) {
-      return;
-    }
+    if (called) return;
 
     final userId = _currentUserId;
     await _conversations.doc(conversationId).set({
@@ -675,6 +704,7 @@ class MessageService {
         final offline = result.isEmpty || result.every(_isNoNetwork);
         if (!offline) {
           unawaited(flushOutbox());
+          unawaited(flushAttachmentOutbox());
         }
       }, onError: (_) {});
     } catch (_) {
@@ -744,8 +774,11 @@ class MessageService {
   Future<void> resumeOutbox() async {
     final queue = outbox;
     await queue.load();
+    final mediaQueue = attachmentOutbox;
+    await mediaQueue.load();
     _listenForConnectivity();
     await _flushOutbox(queue);
+    await _flushAttachmentOutbox(mediaQueue);
   }
 
   Future<void> _flushOutbox(MessageOutbox queue) async {
@@ -756,6 +789,7 @@ class MessageService {
     if (!queue.tryBeginDelivery()) return;
     try {
       await queue.load();
+      final blockedThisPass = <String>{};
       while (true) {
         if (ownerId != null && _auth.currentUser?.uid != ownerId) {
           break;
@@ -763,13 +797,19 @@ class MessageService {
         // Re-read after every delivery. A second message can be queued while
         // the first callable is in flight; taking one snapshot here would
         // strand it until the one-second retry timer despite being online.
-        final due = queue.due();
+        final due = queue
+            .due()
+            .where((entry) => !blockedThisPass.contains(entry.conversationId))
+            .toList(growable: false);
         if (due.isEmpty) {
           break;
         }
         final delivered = await _attemptDelivery(due.first, queue: queue);
         if (!delivered) {
-          break;
+          // Preserve FIFO in this conversation, but do not make an unrelated
+          // healthy chat wait behind its backoff. The failed conversation is
+          // retried by the scheduled drain/connectivity listener.
+          blockedThisPass.add(due.first.conversationId);
         }
       }
     } finally {
@@ -807,6 +847,10 @@ class MessageService {
       timer.cancel();
     }
     _drainTimers.clear();
+    for (final timer in _attachmentDrainTimers.values) {
+      timer.cancel();
+    }
+    _attachmentDrainTimers.clear();
   }
 
   /// Sends an image through the server-reserved private attachment flow.
@@ -823,45 +867,19 @@ class MessageService {
       throw StateError('Choose a photo smaller than 8 MB.');
     }
     final contentType = _imageContentType(image);
-    final operationKey =
-        '$conversationId:$contentType:${sha256.convert(bytes)}';
-    final pending = _pendingImageAttachments.putIfAbsent(
-      operationKey,
-      () => _newPendingAttachment(
-        type: MessageType.image,
-        contentType: contentType,
-      ),
+    final queue = attachmentOutbox;
+    final entry = await queue.enqueue(
+      fingerprint: sha256.convert(bytes).toString(),
+      conversationId: conversationId,
+      type: MessageType.image,
+      contentType: contentType,
+      durationSeconds: null,
+      bytes: bytes,
+      reserveRequestId: _newRequestId(),
+      finalizeRequestId: _newRequestId(),
     );
-    try {
-      final reservation = pending.reservation ??=
-          await _reserveDirectAttachment(
-            conversationId: conversationId,
-            type: pending.type,
-            contentType: pending.contentType,
-            durationSeconds: pending.durationSeconds,
-            requestId: pending.reserveRequestId,
-          );
-      final generation = pending.generation ??= await _uploadDirectAttachment(
-        reservation,
-        contentType: contentType,
-        upload: (reference, metadata) async {
-          final snapshot = await reference.putData(bytes, metadata);
-          final stored = await snapshot.ref.getMetadata();
-          return stored.generation ?? '';
-        },
-      );
-      await _finalizeDirectAttachment(
-        reservation,
-        generation,
-        requestId: pending.finalizeRequestId,
-      );
-      _pendingImageAttachments.remove(operationKey);
-    } catch (error) {
-      if (!_isAmbiguousAttachmentFailure(error)) {
-        _pendingImageAttachments.remove(operationKey);
-      }
-      rethrow;
-    }
+    _listenForConnectivity();
+    await _deliverAttachment(entry.id, queue: queue);
   }
 
   /// Publishes an already-finished AAC/MP4 recording as a private voice DM.
@@ -878,64 +896,311 @@ class MessageService {
       throw StateError('Voice messages must be between 1 and 60 seconds.');
     }
     final contentType = normalizeAudioContentType(audio.contentType);
-    final operations =
-        _pendingVoiceAttachments[audio] ?? <String, _PendingDirectAttachment>{};
-    _pendingVoiceAttachments[audio] = operations;
-    final pending = operations.putIfAbsent(
-      conversationId,
-      () => _newPendingAttachment(
-        type: MessageType.voice,
-        contentType: contentType,
-        durationSeconds: durationSeconds,
-      ),
-    );
-    if (pending.contentType != contentType ||
-        pending.durationSeconds != durationSeconds) {
-      throw StateError(
-        'This recording already has a different pending send contract.',
+    final bytes = await audio.readBytes();
+    if (bytes.lengthInBytes != audio.byteLength) {
+      throw const VoiceRecordingException(
+        VoiceRecordingProblem.recordingUnusable,
+        'The recording changed before it could be saved safely.',
+        action: 'Record it again.',
       );
     }
+    final queue = attachmentOutbox;
+    final entry = await queue.enqueue(
+      fingerprint: sha256.convert(bytes).toString(),
+      conversationId: conversationId,
+      type: MessageType.voice,
+      contentType: contentType,
+      durationSeconds: durationSeconds,
+      bytes: bytes,
+      reserveRequestId: _newRequestId(),
+      finalizeRequestId: _newRequestId(),
+    );
+    _listenForConnectivity();
+    await _deliverAttachment(entry.id, queue: queue);
+  }
+
+  Future<void> flushAttachmentOutbox() =>
+      _flushAttachmentOutbox(attachmentOutbox);
+
+  Future<void> discardQueuedAttachment(String entryId) =>
+      attachmentOutbox.discard(entryId);
+
+  Future<void> retryFailedAttachment(String entryId) async {
+    final queue = attachmentOutbox;
+    final entry = await queue.retryNow(entryId);
+    if (entry == null) return;
+    await _deliverAttachment(entry.id, queue: queue);
+  }
+
+  Future<void> _flushAttachmentOutbox(DirectAttachmentOutbox queue) async {
+    if (_auth.currentUser?.uid != queue.ownerId) return;
+    await queue.load();
+    for (final entry in queue.due()) {
+      try {
+        await _deliverAttachment(entry.id, queue: queue);
+      } catch (_) {
+        // Interactive sends already surface their error. Background resume is
+        // intentionally quiet and leaves a durable retry/failed state.
+      }
+    }
+    _scheduleAttachmentDrain(queue);
+  }
+
+  void _scheduleAttachmentDrain(DirectAttachmentOutbox queue) {
+    if (_auth.currentUser?.uid != queue.ownerId ||
+        (_attachmentDrainTimers[queue]?.isActive ?? false)) {
+      return;
+    }
+    final pending = queue.entries.where(
+      (entry) => entry.status != DirectAttachmentOutboxStatus.failed,
+    );
+    if (pending.isEmpty) return;
+    final now = DateTime.now();
+    var delay = const Duration(seconds: 30);
+    for (final entry in pending) {
+      final next = entry.nextAttemptAt;
+      final until = next == null
+          ? const Duration(seconds: 1)
+          : next.difference(now);
+      if (until < delay) delay = until;
+    }
+    if (delay < const Duration(seconds: 1)) delay = const Duration(seconds: 1);
+    _attachmentDrainTimers[queue] = Timer(delay, () {
+      _attachmentDrainTimers.remove(queue);
+      unawaited(_flushAttachmentOutbox(queue));
+    });
+  }
+
+  Future<void> _deliverAttachment(
+    String entryId, {
+    required DirectAttachmentOutbox queue,
+  }) async {
+    final deliveryKey = _attachmentDeliveryKey(queue, entryId);
+    final existing = _attachmentDeliveries[deliveryKey];
+    if (existing != null) return existing;
+    final delivery = _performAttachmentDelivery(entryId, queue: queue);
+    _attachmentDeliveries[deliveryKey] = delivery;
     try {
-      final reservation = pending.reservation ??=
-          await _reserveDirectAttachment(
-            conversationId: conversationId,
-            type: pending.type,
-            contentType: pending.contentType,
-            durationSeconds: pending.durationSeconds,
-            requestId: pending.reserveRequestId,
+      await delivery;
+    } finally {
+      _attachmentDeliveries.remove(deliveryKey);
+    }
+  }
+
+  Future<void> _performAttachmentDelivery(
+    String entryId, {
+    required DirectAttachmentOutbox queue,
+  }) async {
+    if (_auth.currentUser?.uid != queue.ownerId) return;
+    var entry = queue.entry(entryId);
+    if (entry == null) return;
+    try {
+      // A lease can expire while the process is offline or between upload and
+      // finalize. Rotation is bounded and atomic in the manifest; the durable
+      // bytes never move and every new server input gets fresh idempotency IDs.
+      for (var rotations = 0; rotations < 3; rotations++) {
+        entry = queue.entry(entryId);
+        if (entry == null || _auth.currentUser?.uid != queue.ownerId) return;
+
+        var reservation = entry.reservation == null
+            ? null
+            : _reservationFromRecord(entry.reservation!);
+        if (reservation != null &&
+            queue.reservationNeedsRefresh(
+              entry,
+              safetyWindow: const Duration(seconds: 30),
+            )) {
+          // A previously-started finalize may have committed before its ACK
+          // was lost. Reconcile that stable request once before abandoning the
+          // old path; the backend ledger replays it even after lease expiry.
+          if (entry.finalizeAttempted &&
+              entry.generation != null &&
+              entry.generation!.isNotEmpty) {
+            try {
+              await _finalizeDirectAttachment(
+                reservation,
+                entry.generation!,
+                requestId: entry.finalizeRequestId,
+              );
+              if (_auth.currentUser?.uid != queue.ownerId) return;
+              await queue.complete(entry.id);
+              return;
+            } on FirebaseFunctionsException catch (error) {
+              if (error.code != 'failed-precondition' ||
+                  !queue.reservationNeedsRefresh(entry)) {
+                rethrow;
+              }
+            }
+          }
+          entry = (await queue.rotateExpiredReservation(
+            entry.id,
+            expectedMessageId: reservation.messageId,
+            reserveRequestId: _newRequestId(),
+            finalizeRequestId: _newRequestId(),
+            safetyWindow: const Duration(seconds: 30),
+          ))!;
+          continue;
+        }
+
+        if (reservation == null) {
+          try {
+            reservation = await _reserveDirectAttachment(
+              conversationId: entry.conversationId,
+              type: entry.type,
+              contentType: entry.contentType,
+              durationSeconds: entry.durationSeconds,
+              requestId: entry.reserveRequestId,
+            );
+          } catch (error) {
+            if (!_isAuthoritativeReservationInvalid(error)) rethrow;
+            await queue.rotateRejectedReservation(
+              entry.id,
+              expectedReserveRequestId: entry.reserveRequestId,
+              reserveRequestId: _newRequestId(),
+              finalizeRequestId: _newRequestId(),
+            );
+            continue;
+          }
+          if (_auth.currentUser?.uid != queue.ownerId) return;
+          entry = (await queue.setReservation(
+            entry.id,
+            _reservationRecord(reservation, queue: queue),
+          ))!;
+          if (queue.reservationNeedsRefresh(
+            entry,
+            safetyWindow: const Duration(seconds: 30),
+          )) {
+            entry = (await queue.rotateExpiredReservation(
+              entry.id,
+              expectedMessageId: reservation.messageId,
+              reserveRequestId: _newRequestId(),
+              finalizeRequestId: _newRequestId(),
+              safetyWindow: const Duration(seconds: 30),
+            ))!;
+            continue;
+          }
+        }
+
+        var generation = entry.generation;
+        if (generation == null || generation.isEmpty) {
+          try {
+            generation = await _uploadDirectAttachment(
+              reservation,
+              contentType: entry.contentType,
+              upload: (reference, metadata) => queue.payloadStore.upload(
+                queue.accountNamespace,
+                entry!.id,
+                reference,
+                metadata,
+              ),
+            );
+          } catch (error) {
+            if (_isAuthoritativeReservationInvalid(error)) {
+              await queue.rotateRejectedReservation(
+                entry.id,
+                expectedReserveRequestId: entry.reserveRequestId,
+                reserveRequestId: _newRequestId(),
+                finalizeRequestId: _newRequestId(),
+              );
+            } else {
+              if (!queue.reservationNeedsRefresh(entry)) rethrow;
+              await queue.rotateExpiredReservation(
+                entry.id,
+                expectedMessageId: reservation.messageId,
+                reserveRequestId: _newRequestId(),
+                finalizeRequestId: _newRequestId(),
+              );
+            }
+            continue;
+          }
+          if (_auth.currentUser?.uid != queue.ownerId) return;
+          entry = (await queue.setGeneration(entry.id, generation))!;
+        }
+
+        if (queue.reservationNeedsRefresh(
+          entry,
+          safetyWindow: const Duration(seconds: 30),
+        )) {
+          entry = (await queue.rotateExpiredReservation(
+            entry.id,
+            expectedMessageId: reservation.messageId,
+            reserveRequestId: _newRequestId(),
+            finalizeRequestId: _newRequestId(),
+            safetyWindow: const Duration(seconds: 30),
+          ))!;
+          continue;
+        }
+
+        entry = (await queue.markFinalizeAttempted(entry.id))!;
+        try {
+          await _finalizeDirectAttachment(
+            reservation,
+            generation,
+            requestId: entry.finalizeRequestId,
           );
-      final generation = pending.generation ??= await _uploadDirectAttachment(
-        reservation,
-        contentType: contentType,
-        upload: audio.uploadTo,
-      );
-      await _finalizeDirectAttachment(
-        reservation,
-        generation,
-        requestId: pending.finalizeRequestId,
-      );
-      operations.remove(conversationId);
+        } catch (error) {
+          if (_isAuthoritativeReservationInvalid(error)) {
+            await queue.rotateRejectedReservation(
+              entry.id,
+              expectedReserveRequestId: entry.reserveRequestId,
+              reserveRequestId: _newRequestId(),
+              finalizeRequestId: _newRequestId(),
+            );
+          } else {
+            if (error is! FirebaseFunctionsException ||
+                error.code != 'failed-precondition' ||
+                !queue.reservationNeedsRefresh(entry)) {
+              rethrow;
+            }
+            await queue.rotateExpiredReservation(
+              entry.id,
+              expectedMessageId: reservation.messageId,
+              reserveRequestId: _newRequestId(),
+              finalizeRequestId: _newRequestId(),
+            );
+          }
+          continue;
+        }
+        if (_auth.currentUser?.uid != queue.ownerId) return;
+        await queue.complete(entry.id);
+        return;
+      }
+      throw StateError('The attachment reservation kept expiring. Try again.');
     } catch (error) {
-      if (!_isAmbiguousAttachmentFailure(error)) {
-        operations.remove(conversationId);
+      if (_isAmbiguousAttachmentFailure(error)) {
+        await queue.markRetry(entryId, error);
+        _scheduleAttachmentDrain(queue);
+      } else {
+        await queue.markFailed(entryId, error);
       }
       rethrow;
     }
   }
 
-  _PendingDirectAttachment _newPendingAttachment({
-    required MessageType type,
-    required String contentType,
-    int? durationSeconds,
-  }) {
-    return _PendingDirectAttachment(
-      type: type,
-      contentType: contentType,
-      durationSeconds: durationSeconds,
-      reserveRequestId: _newRequestId(),
-      finalizeRequestId: _newRequestId(),
-    );
-  }
+  String _attachmentDeliveryKey(DirectAttachmentOutbox queue, String entryId) =>
+      '${queue.accountNamespace}:$entryId';
+
+  DirectAttachmentReservationRecord _reservationRecord(
+    _DirectAttachmentReservation reservation, {
+    required DirectAttachmentOutbox queue,
+  }) => DirectAttachmentReservationRecord(
+    conversationId: reservation.conversationId,
+    messageId: reservation.messageId,
+    storagePath: reservation.storagePath,
+    type: reservation.type,
+    expiresAt: reservation.expiresAt,
+    clientExpiresAt: queue.now.add(_directAttachmentLeaseDuration),
+  );
+
+  _DirectAttachmentReservation _reservationFromRecord(
+    DirectAttachmentReservationRecord reservation,
+  ) => _DirectAttachmentReservation(
+    conversationId: reservation.conversationId,
+    messageId: reservation.messageId,
+    storagePath: reservation.storagePath,
+    type: reservation.type,
+    expiresAt: reservation.expiresAt ?? DateTime.fromMillisecondsSinceEpoch(0),
+  );
 
   bool _isAmbiguousAttachmentFailure(Object error) {
     if (error is FirebaseFunctionsException) {
@@ -955,6 +1220,17 @@ class MessageService {
       }.contains(error.code);
     }
     return false;
+  }
+
+  bool _isAuthoritativeReservationInvalid(Object error) {
+    if (error is! FirebaseException || error.code != 'failed-precondition') {
+      return false;
+    }
+    final message = (error.message ?? '').toLowerCase();
+    if (!message.contains('reservation')) return false;
+    return message.contains('expired') ||
+        message.contains('invalid') ||
+        message.contains('changed');
   }
 
   String _imageContentType(XFile image) {
@@ -1202,15 +1478,74 @@ class MessageService {
   }
 
   Future<void> markConversationRead(String conversationId) async {
-    final called = await _tryCallable('markDirectConversationRead', {
-      'conversationId': conversationId,
-      'requestId': _newRequestId(),
-    });
+    if (!_preferLegacyBehaviour) {
+      final functions = _functions;
+      if (functions == null) {
+        throw StateError('Read receipts need a connection to YO Voice.');
+      }
+      try {
+        int? previousReadSequence;
+        for (var page = 0; page < _maxReadReceiptPagesPerPass; page++) {
+          // One page owns one idempotency id. A lost response retries that
+          // exact operation; only a confirmed cursor advance receives a new
+          // id for the following page.
+          final requestId = _newRequestId();
+          HttpsCallableResult<Map<Object?, Object?>>? response;
+          for (var attempt = 0; attempt < 2; attempt++) {
+            try {
+              response = await functions
+                  .httpsCallable('markDirectConversationRead')
+                  .call<Map<Object?, Object?>>({
+                    'conversationId': conversationId,
+                    'requestId': requestId,
+                  });
+              break;
+            } catch (error) {
+              if (attempt == 0 && _isAmbiguousTransportFailure(error)) {
+                await Future<void>.delayed(const Duration(milliseconds: 100));
+                continue;
+              }
+              rethrow;
+            }
+          }
+          if (response == null) {
+            throw StateError('The read-receipt service did not respond.');
+          }
+          final completed = response.data['completed'];
+          if (completed is! bool) {
+            throw StateError(
+              'The read-receipt service returned a malformed result.',
+            );
+          }
+          if (completed) return;
 
-    if (called) {
-      return;
+          final nextReadSequence = response.data['nextReadSequence'];
+          if (nextReadSequence is! num ||
+              nextReadSequence < 0 ||
+              nextReadSequence != nextReadSequence.roundToDouble() ||
+              (previousReadSequence != null &&
+                  nextReadSequence <= previousReadSequence)) {
+            throw StateError(
+              'The read-receipt service did not advance its cursor.',
+            );
+          }
+          previousReadSequence = nextReadSequence.toInt();
+        }
+        throw StateError(
+          'The read-receipt service exceeded its safe page limit.',
+        );
+      } catch (error) {
+        if (_isCallableUnavailable(error)) {
+          throw StateError(
+            'This build cannot update read receipts safely. Update YO Voice.',
+          );
+        }
+        rethrow;
+      }
     }
 
+    // Test/legacy-only behavior. Production roots and message documents are
+    // server-authoritative and Rules intentionally reject this path.
     final currentUserId = _currentUserId;
     final conversation = _conversations.doc(conversationId);
     final latest = await conversation

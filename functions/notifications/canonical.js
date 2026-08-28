@@ -1,11 +1,16 @@
 const crypto = require("node:crypto");
 
-const { FieldValue } = require("firebase-admin/firestore");
+const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 
 const { db, normalizeText } = require("../utils/firestore");
 
 const MAX_NAME = 80;
 const MAX_LABEL = 120;
+// Eventarc redelivery is useful for short outages, but an eternal receipt per
+// message would turn the highest-volume notification path into an unbounded
+// operational collection. Thirty days is deliberately much longer than the
+// delivery retry horizon while still allowing Firestore TTL to bound storage.
+const EVENT_LEDGER_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 function publicIdentity(uid, profile = {}) {
   const displayName = normalizeText(
@@ -79,7 +84,9 @@ async function createNotificationForEvent({
   notificationId,
   targetId = null,
   targetLabel = null,
+  bellSuppressed = false,
   sourcePath,
+  sourceGeneration = null,
   validate,
 }) {
   if (!eventId || !recipientId || !actorId || recipientId === actorId) {
@@ -96,6 +103,10 @@ async function createNotificationForEvent({
   );
   const notification = notificationReference(recipientId, notificationId);
   const ledger = eventLedgerReference(eventId);
+  const receiptCreatedAt = Timestamp.now();
+  const receiptExpiresAt = Timestamp.fromMillis(
+    receiptCreatedAt.toMillis() + EVENT_LEDGER_RETENTION_MS,
+  );
 
   return db.runTransaction(async (transaction) => {
     const [
@@ -119,18 +130,20 @@ async function createNotificationForEvent({
     );
 
     if (delivered.exists) return "skipped:replay";
+    let outcome = "written";
     if (!activeProfile(actor) || !activeProfile(recipient)) {
-      return "skipped:inactive";
-    }
-    if (
+      outcome = "skipped:inactive";
+    } else if (
       restrictionIsActive(actorRestriction.data()) ||
       restrictionIsActive(recipientRestriction.data())
     ) {
-      return "skipped:restricted";
-    }
-    if (actorBlock.exists || recipientBlock.exists) return "skipped:blocked";
-    if (validate && !(await validate(transaction))) {
-      return "skipped:invalid-source";
+      outcome = "skipped:restricted";
+    } else if (actorBlock.exists || recipientBlock.exists) {
+      outcome = "skipped:blocked";
+    } else if (validate && !(await validate(transaction))) {
+      outcome = "skipped:invalid-source";
+    } else if (existingNotification.exists) {
+      outcome = "skipped:already-written";
     }
 
     transaction.create(ledger, {
@@ -138,25 +151,35 @@ async function createNotificationForEvent({
       sourcePath: normalizeText(sourcePath, 512) || null,
       recipientId,
       notificationId,
-      createdAt: FieldValue.serverTimestamp(),
+      outcome,
+      createdAt: receiptCreatedAt,
+      expiresAt: receiptExpiresAt,
     });
-    if (existingNotification.exists) return "skipped:already-written";
+    if (outcome !== "written") return outcome;
+    const notificationData = canonicalNotificationData({
+      actorId,
+      actorProfile: actor.data(),
+      type,
+      targetId,
+      targetLabel,
+      dedupeKey: notificationId,
+      bellSuppressed,
+    });
+    const normalizedSourcePath = normalizeText(sourcePath, 512);
+    if (normalizedSourcePath) notificationData.sourcePath = normalizedSourcePath;
+    if (typeof sourceGeneration === "string" && sourceGeneration) {
+      notificationData.sourceGeneration = sourceGeneration.slice(0, 128);
+    }
     transaction.set(
       notification,
-      canonicalNotificationData({
-        actorId,
-        actorProfile: actor.data(),
-        type,
-        targetId,
-        targetLabel,
-        dedupeKey: notificationId,
-      }),
+      notificationData,
     );
-    return "written";
+    return outcome;
   });
 }
 
 module.exports = {
+  EVENT_LEDGER_RETENTION_MS,
   activeProfile,
   canonicalNotificationData,
   createNotificationForEvent,

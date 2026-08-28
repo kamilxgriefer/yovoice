@@ -7497,3 +7497,100 @@ audience strip, while a scrollable studio remained correct.
 - Real multi-device LiveKit promotion and audio-quality checks remain manual;
   widget tests prove the state composition and the emulator proves the write
   boundary, not the external media transport.
+
+## ADR-121: Direct chat correctness is replay-safe and foreground alerts have one owner
+
+**Status**: Implemented in source; production release pending
+**Date**: 2026-08-28
+
+### Context
+
+The direct-chat surface mixed four independent asynchronous systems: a local
+text outbox, Firestore snapshots, server-authoritative read/message callables
+and FCM. Background read bookkeeping displayed an unactionable snackbar and
+ran after outgoing messages. The client ignored the read callable's
+`completed=false` page boundary. At-least-once Firestore trigger delivery could
+rewrite an existing notification to unread, and a duplicate notification
+CloudEvent could send FCM twice. MainShell and foreground FCM also had no
+knowledge that the target conversation was already open.
+
+Direct-call start had the same ambiguous-response gap: the server could commit
+a ringing call and lose the HTTPS response, after which a retry hit the active
+call lock and the caller never learned the call id. Separately, Firestore Rules
+described conversation roots as server-owned while still allowing a
+participant to update every field except `participantIds`.
+
+### Decision
+
+Text submission remains local-first: the outbox emits its optimistic entry
+before preference persistence completes, while persistence still finishes
+before enqueue returns. Delivery remains sequential within one conversation;
+a retry/backoff in that conversation does not block a due entry in another.
+
+Read receipts run only for incoming messages not already read by the current
+user. One screen owns a single-flight drain that coalesces snapshot bursts.
+`markConversationRead` consumes the callable response and continues with a new
+request id while `completed=false`, requiring a strictly increasing cursor and
+stopping at a bounded 100 pages. Receipt failures remain diagnostic and
+retryable but never interrupt the conversation UI.
+
+Every server-derived activity event uses the existing atomic event ledger and
+notification write. Trigger replay therefore cannot overwrite, re-unread or
+resurrect the deterministic inbox row. The source message, room or social edge
+is revalidated in the same transaction as a terminal `dispatching` claim just
+before FCM. A crash or lost FCM acknowledgement after that claim is never
+re-sent; platform collapse identifiers provide a second generation-aware
+defence. Confirmed success advances to `sent`, while an ambiguous result stays
+honestly `dispatching`. Written and skipped outcomes share the same canonical
+30-day ledger, whose `expiresAt` field is managed by a versioned Firestore TTL
+policy.
+
+An in-process reference-counted active-conversation registry is consulted only
+by foreground presentation. It suppresses a direct-message/reply native alert,
+app banner and MainShell overlay when their target conversation is open.
+Background and terminated delivery do not consult it. Foreground direct-call
+sound is arbitrated between the Firestore coordinator and FCM so exactly one
+path owns presentation and the other can take over only after a proven
+presentation failure. Completed claims are retained briefly for late duplicate
+suppression, active claims time out, and the registry is capped at 64 entries.
+
+One call tap creates one high-entropy request id and persists it before the
+first network write, scoped to the signed-in account, peer and conversation.
+`startDirectCall` derives a deterministic call document from the caller and
+operation identity, stores the input hash, and returns the existing canonical
+result for an exact replay, including after a process restart and lost HTTPS
+response. Terminal refusal or a canonical response clears the matching local
+record; stale records expire after five minutes. Reusing the id with different
+input fails. Older clients without `requestId` retain the previous random-id
+behavior during rollout.
+
+Photo and voice attachments use an account-scoped durable outbox: the manifest
+and private payload survive restart, reserve/upload/finalize identifiers replay
+stably, and an authoritatively rejected or expired 15-minute reservation
+rotates both request ids plus the message/storage path without moving the
+payload. Device clock skew cannot trap the queue. Failed cards expose Retry and
+Discard; active uploads expose neither, so a discard/finalize privacy race is
+impossible. The outbox is bounded to 12 entries / 64 MiB and failed payloads
+remain explicit until the sender chooses.
+
+All writes to `conversations/{id}` roots are Admin-only. Text, media, typing,
+read, mute and archive mutations go through their owning callables; clients may
+read their conversations but cannot forge another participant's state.
+
+### Consequences
+
+- One millisecond end-to-end delivery is not an accepted SLO. A 60 Hz client
+  cannot paint faster than a 16.7 ms frame and a regional HTTPS/Firestore path
+  necessarily takes network round trips. Local optimistic latency and remote
+  delivery latency are measured separately.
+- `bellSuppressed` continues to mean “hide this carrier from the bell feed”,
+  not “disable background push”. Active-chat suppression is foreground-only.
+- The terminal FCM dispatch claim is at-most-once, not exactly-once. A crash
+  after the claim may lose the best-effort push while retaining the
+  authoritative inbox event; it cannot create a duplicate retry.
+- Installed clients that depended on direct root updates lose those fallback
+  writes when Rules deploy. The compatible callables must be active first.
+- Durable photo/voice recovery, retry/discard and expiry rotation are shipped.
+  Byte-level upload progress remains future work.
+- Physical iOS/Android two-device tests are mandatory release evidence for
+  background/terminated push, large media, LiveKit audio and mute latency.

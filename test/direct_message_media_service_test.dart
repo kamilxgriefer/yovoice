@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cloud_functions/cloud_functions.dart';
@@ -8,11 +9,16 @@ import 'package:firebase_storage_mocks/firebase_storage_mocks.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:yovoice/features/messages/data/services/direct_attachment_payload_store.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
+import 'package:yovoice/features/moments/data/services/audio_capture/audio_capture_io.dart';
 import 'package:yovoice/features/moments/data/services/recorded_audio.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   const conversationId = 'alice-uid_bob-uid';
   const messageId = 'm_0123456789abcdef0123456789abcdef01234567';
   const storagePath =
@@ -22,6 +28,13 @@ void main() {
     signedIn: true,
     mockUser: MockUser(uid: 'alice-uid', email: 'alice@yovoice.app'),
   );
+
+  late _MemoryPayloadStore payloadStore;
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    payloadStore = _MemoryPayloadStore();
+  });
 
   test('voice upload uses the reserved private path and retries finalize with '
       'one request id after a lost response', () async {
@@ -40,6 +53,7 @@ void main() {
       auth: signedInAuth(),
       functions: functions,
       storage: MockFirebaseStorage(),
+      attachmentPayloadStore: payloadStore,
     );
 
     await service.sendVoiceMessage(
@@ -48,10 +62,11 @@ void main() {
       durationSeconds: 7,
     );
 
-    expect(recording.uploadCount, 1);
-    expect(recording.uploadPath, storagePath);
-    expect(recording.contentTypeAtUpload, 'audio/mp4');
-    expect(recording.customMetadataAtUpload, {
+    expect(recording.uploadCount, 0);
+    expect(payloadStore.uploadCount, 1);
+    expect(payloadStore.uploadPath, storagePath);
+    expect(payloadStore.contentTypeAtUpload, 'audio/mp4');
+    expect(payloadStore.customMetadataAtUpload, {
       'yovoiceConversationId': conversationId,
       'yovoiceMessageId': messageId,
       'yovoiceMessagePath': 'conversations/$conversationId/messages/$messageId',
@@ -93,13 +108,15 @@ void main() {
       messageId: messageId,
       storagePath: storagePath,
     );
-    final recording = _CommitThenLoseResponseRecording();
+    final recording = _Recording(byteLength: 4096, contentType: 'audio/mp4');
     final storage = _RecoveryStorage();
+    payloadStore.commitThenLoseResponse = true;
     final service = MessageService(
       firestore: FakeFirebaseFirestore(),
       auth: signedInAuth(),
       functions: functions,
       storage: storage,
+      attachmentPayloadStore: payloadStore,
     );
 
     await service.sendVoiceMessage(
@@ -108,7 +125,8 @@ void main() {
       durationSeconds: 7,
     );
 
-    expect(recording.uploadCount, 1);
+    expect(recording.uploadCount, 0);
+    expect(payloadStore.uploadCount, 1);
     expect(functions.reservePayloads, hasLength(1));
     expect(functions.finalizePayloads, hasLength(1));
     expect(
@@ -132,6 +150,7 @@ void main() {
       auth: signedInAuth(),
       functions: functions,
       storage: MockFirebaseStorage(),
+      attachmentPayloadStore: payloadStore,
     );
 
     await expectLater(
@@ -156,7 +175,8 @@ void main() {
     );
 
     expect(functions.reservePayloads, hasLength(1));
-    expect(recording.uploadCount, 1);
+    expect(recording.uploadCount, 0);
+    expect(payloadStore.uploadCount, 1);
     expect(functions.finalizePayloads, hasLength(4));
     expect(
       functions.finalizePayloads.map((payload) => payload['requestId']).toSet(),
@@ -181,6 +201,54 @@ void main() {
     expect(committed.docs.single.id, messageId);
   });
 
+  test('Retry on a failed media entry preserves its valid reservation and '
+      'both idempotency ids', () async {
+    final functions = _AttachmentFunctions(
+      conversationId: conversationId,
+      messageId: messageId,
+      storagePath: storagePath,
+      rejectFinalize: true,
+    );
+    final service = MessageService(
+      firestore: FakeFirebaseFirestore(),
+      auth: signedInAuth(),
+      functions: functions,
+      storage: MockFirebaseStorage(),
+      attachmentPayloadStore: payloadStore,
+    );
+
+    await expectLater(
+      service.sendVoiceMessage(
+        conversationId: conversationId,
+        audio: _Recording(byteLength: 4096, contentType: 'audio/mp4'),
+        durationSeconds: 7,
+      ),
+      throwsA(isA<FirebaseFunctionsException>()),
+    );
+    final failed = service.attachmentOutbox.entries.single;
+    final reservation = failed.reservation;
+    final reserveRequestId = failed.reserveRequestId;
+    final finalizeRequestId = failed.finalizeRequestId;
+    expect(failed.status, DirectAttachmentOutboxStatus.failed);
+
+    functions.rejectFinalize = false;
+    await service.retryFailedAttachment(failed.id);
+
+    expect(service.attachmentOutbox.entries, isEmpty);
+    expect(functions.reservePayloads, hasLength(1));
+    expect(functions.reservePayloads.single['requestId'], reserveRequestId);
+    expect(functions.finalizePayloads, hasLength(2));
+    expect(
+      functions.finalizePayloads.map((item) => item['requestId']).toSet(),
+      <Object?>{finalizeRequestId},
+    );
+    expect(
+      functions.finalizePayloads.map((item) => item['messageId']).toSet(),
+      <Object?>{reservation?.messageId},
+    );
+    expect(payloadStore.uploadCount, 1);
+  });
+
   test('manual image retry keys identical bytes across distinct XFile objects '
       'to one pending operation', () async {
     const imageMessageId = 'm_abcdefabcdefabcdefabcdefabcdefabcdefabcd';
@@ -200,6 +268,7 @@ void main() {
       auth: signedInAuth(),
       functions: functions,
       storage: storage,
+      attachmentPayloadStore: payloadStore,
     );
     XFile photo() => XFile.fromData(
       Uint8List(256),
@@ -232,6 +301,404 @@ void main() {
     expect(committed.docs.single.id, imageMessageId);
   });
 
+  test('photo finalize resumes after a process restart with the same canonical '
+      'reservation and deletes its durable bytes only after success', () async {
+    const imageMessageId = 'm_restartimage0123456789012345678901234567';
+    const imageStoragePath =
+        'message_attachments/alice-uid/$conversationId/$imageMessageId.jpg';
+    final db = FakeFirebaseFirestore();
+    final functions = _LostFinalizeCommitFunctions(
+      db: db,
+      conversationId: conversationId,
+      messageId: imageMessageId,
+      storagePath: imageStoragePath,
+      mediaType: 'image',
+    );
+    final storage = _RecoveryStorage();
+    final preferences = await SharedPreferences.getInstance();
+    var now = DateTime.utc(2026, 8, 28, 12);
+    DirectAttachmentOutbox queue() => DirectAttachmentOutbox(
+      ownerId: 'alice-uid',
+      preferences: preferences,
+      payloadStore: payloadStore,
+      clock: () => now,
+    );
+    final firstQueue = queue();
+    final firstProcess = MessageService(
+      firestore: db,
+      auth: signedInAuth(),
+      functions: functions,
+      storage: storage,
+      attachmentOutbox: firstQueue,
+    );
+    final photo = XFile.fromData(
+      Uint8List(512),
+      mimeType: 'image/jpeg',
+      name: 'restart.jpg',
+    );
+
+    await expectLater(
+      firstProcess.sendImageMessage(
+        conversationId: conversationId,
+        image: photo,
+      ),
+      throwsA(isA<FirebaseFunctionsException>()),
+    );
+    expect(firstQueue.entries, hasLength(1));
+    final beforeRestart = firstQueue.entries.single;
+    expect(beforeRestart.reservation?.messageId, imageMessageId);
+    expect(beforeRestart.generation, 'generation-7');
+    expect(payloadStore.payloads, hasLength(1));
+    await firstProcess.dispose();
+
+    now = now.add(const Duration(seconds: 2));
+    final restartedQueue = queue();
+    final restartedProcess = MessageService(
+      firestore: db,
+      auth: signedInAuth(),
+      functions: functions,
+      storage: storage,
+      attachmentOutbox: restartedQueue,
+    );
+    await restartedProcess.flushAttachmentOutbox();
+
+    expect(restartedQueue.entries, isEmpty);
+    expect(payloadStore.payloads, isEmpty);
+    expect(functions.reservePayloads, hasLength(1));
+    expect(
+      storage.putCount,
+      1,
+      reason: 'the uploaded object is not duplicated',
+    );
+    expect(
+      functions.finalizePayloads.map((item) => item['requestId']).toSet(),
+      <Object?>{beforeRestart.finalizeRequestId},
+    );
+    final committed = await db
+        .collection('conversations')
+        .doc(conversationId)
+        .collection('messages')
+        .get();
+    expect(committed.docs.single.id, imageMessageId);
+    await restartedProcess.dispose();
+  });
+
+  test('voice payload survives a process restart before upload and retries '
+      'from the durable copy', () async {
+    const voiceMessageId = 'm_restartvoice0123456789012345678901234567';
+    const voiceStoragePath =
+        'message_attachments/alice-uid/$conversationId/$voiceMessageId.m4a';
+    final functions = _AttachmentFunctions(
+      conversationId: conversationId,
+      messageId: voiceMessageId,
+      storagePath: voiceStoragePath,
+    );
+    final preferences = await SharedPreferences.getInstance();
+    var now = DateTime.utc(2026, 8, 28, 12);
+    DirectAttachmentOutbox queue() => DirectAttachmentOutbox(
+      ownerId: 'alice-uid',
+      preferences: preferences,
+      payloadStore: payloadStore,
+      clock: () => now,
+    );
+    final tempDirectory = await Directory.systemTemp.createTemp(
+      'yovoice-durable-voice-test-',
+    );
+    addTearDown(() async {
+      if (await tempDirectory.exists()) {
+        await tempDirectory.delete(recursive: true);
+      }
+    });
+    final tempFile = File('${tempDirectory.path}/voice.m4a');
+    await tempFile.writeAsBytes(Uint8List(4096), flush: true);
+    final recording = FileRecordedAudio(tempFile, 4096);
+    payloadStore.uploadFailuresRemaining = 3;
+    final firstQueue = queue();
+    final firstProcess = MessageService(
+      firestore: FakeFirebaseFirestore(),
+      auth: signedInAuth(),
+      functions: functions,
+      storage: MockFirebaseStorage(),
+      attachmentOutbox: firstQueue,
+    );
+
+    await expectLater(
+      firstProcess.sendVoiceMessage(
+        conversationId: conversationId,
+        audio: recording,
+        durationSeconds: 7,
+      ),
+      throwsA(isA<FirebaseException>()),
+    );
+    expect(firstQueue.entries, hasLength(1));
+    final beforeRestart = firstQueue.entries.single;
+    expect(beforeRestart.reservation?.messageId, voiceMessageId);
+    expect(beforeRestart.generation, isNull);
+    expect(payloadStore.payloads, hasLength(1));
+    await firstProcess.dispose();
+    await recording.discard();
+    expect(await tempFile.exists(), isFalse);
+    payloadStore.uploadCount = 0;
+
+    now = now.add(const Duration(seconds: 2));
+    final restoredStorage = _RecoveryStorage();
+    final restartedQueue = queue();
+    final restartedProcess = MessageService(
+      firestore: FakeFirebaseFirestore(),
+      auth: signedInAuth(),
+      functions: functions,
+      storage: restoredStorage,
+      attachmentOutbox: restartedQueue,
+    );
+    await restartedProcess.flushAttachmentOutbox();
+
+    expect(restartedQueue.entries, isEmpty);
+    expect(payloadStore.payloads, isEmpty);
+    expect(payloadStore.uploadCount, 1);
+    expect(restoredStorage.putCount, 1);
+    expect(functions.reservePayloads, hasLength(1));
+    expect(functions.finalizePayloads, hasLength(1));
+    expect(
+      functions.finalizePayloads.single['requestId'],
+      beforeRestart.finalizeRequestId,
+    );
+    await restartedProcess.dispose();
+  });
+
+  test('a cold restart after reservation expiry rotates message path and both '
+      'idempotency ids without losing durable voice bytes', () async {
+    final preferences = await SharedPreferences.getInstance();
+    var now = DateTime.utc(2026, 8, 28, 12);
+    final functions = _ExpiringAttachmentFunctions(
+      conversationId: conversationId,
+      clock: () => now,
+    );
+    DirectAttachmentOutbox queue() => DirectAttachmentOutbox(
+      ownerId: 'alice-uid',
+      preferences: preferences,
+      payloadStore: payloadStore,
+      clock: () => now,
+    );
+    payloadStore.uploadFailuresRemaining = 3;
+    final firstQueue = queue();
+    final firstProcess = MessageService(
+      firestore: FakeFirebaseFirestore(),
+      auth: signedInAuth(),
+      functions: functions,
+      storage: MockFirebaseStorage(),
+      attachmentOutbox: firstQueue,
+    );
+
+    await expectLater(
+      firstProcess.sendVoiceMessage(
+        conversationId: conversationId,
+        audio: _Recording(byteLength: 4096, contentType: 'audio/mp4'),
+        durationSeconds: 7,
+      ),
+      throwsA(isA<FirebaseException>()),
+    );
+    final expired = firstQueue.entries.single;
+    final expiredMessageId = expired.reservation!.messageId;
+    final expiredReserveRequestId = expired.reserveRequestId;
+    final expiredFinalizeRequestId = expired.finalizeRequestId;
+    expect(payloadStore.payloads, hasLength(1));
+    await firstProcess.dispose();
+
+    now = now.add(const Duration(minutes: 16));
+    final restartedQueue = queue();
+    final restarted = MessageService(
+      firestore: FakeFirebaseFirestore(),
+      auth: signedInAuth(),
+      functions: functions,
+      storage: MockFirebaseStorage(),
+      attachmentOutbox: restartedQueue,
+    );
+    await restarted.flushAttachmentOutbox();
+
+    expect(restartedQueue.entries, isEmpty);
+    expect(payloadStore.payloads, isEmpty);
+    expect(functions.reservePayloads, hasLength(2));
+    expect(
+      functions.reservePayloads.map((item) => item['requestId']).toSet(),
+      hasLength(2),
+    );
+    expect(
+      functions.reservePayloads.last['requestId'],
+      isNot(expiredReserveRequestId),
+    );
+    expect(functions.finalizePayloads, hasLength(1));
+    expect(
+      functions.finalizePayloads.single['messageId'],
+      isNot(expiredMessageId),
+    );
+    expect(
+      functions.finalizePayloads.single['requestId'],
+      isNot(expiredFinalizeRequestId),
+    );
+    await restarted.dispose();
+  });
+
+  test('a server-expired finalize rotates even when the client clock is two '
+      'hours behind', () async {
+    final preferences = await SharedPreferences.getInstance();
+    final serverNow = DateTime.utc(2026, 8, 28, 12);
+    final clientNow = serverNow.subtract(const Duration(hours: 2));
+    final functions = _SkewedAttachmentFunctions(
+      conversationId: conversationId,
+      serverNow: serverNow,
+      rejectFirstFinalizeAsExpired: true,
+    );
+    final queue = DirectAttachmentOutbox(
+      ownerId: 'alice-uid',
+      preferences: preferences,
+      payloadStore: payloadStore,
+      clock: () => clientNow,
+    );
+    final service = MessageService(
+      firestore: FakeFirebaseFirestore(),
+      auth: signedInAuth(),
+      functions: functions,
+      storage: MockFirebaseStorage(),
+      attachmentOutbox: queue,
+    );
+
+    await service.sendVoiceMessage(
+      conversationId: conversationId,
+      audio: _Recording(byteLength: 4096, contentType: 'audio/mp4'),
+      durationSeconds: 7,
+    );
+
+    expect(functions.reservePayloads, hasLength(2));
+    expect(
+      functions.reservePayloads.map((item) => item['requestId']).toSet(),
+      hasLength(2),
+    );
+    expect(functions.finalizePayloads, hasLength(2));
+    expect(
+      functions.finalizePayloads.first['messageId'],
+      isNot(functions.finalizePayloads.last['messageId']),
+    );
+    expect(queue.entries, isEmpty);
+    await service.dispose();
+  });
+
+  test('an authoritative upload expiry rotates while the local lease still '
+      'looks valid', () async {
+    final preferences = await SharedPreferences.getInstance();
+    final serverNow = DateTime.utc(2026, 8, 28, 12);
+    final functions = _SkewedAttachmentFunctions(
+      conversationId: conversationId,
+      serverNow: serverNow,
+    );
+    payloadStore
+      ..uploadFailuresRemaining = 3
+      ..uploadFailure = FirebaseException(
+        plugin: 'firebase_storage',
+        code: 'failed-precondition',
+        message: 'The attachment reservation has expired.',
+      );
+    final queue = DirectAttachmentOutbox(
+      ownerId: 'alice-uid',
+      preferences: preferences,
+      payloadStore: payloadStore,
+      clock: () => serverNow.subtract(const Duration(hours: 2)),
+    );
+    final service = MessageService(
+      firestore: FakeFirebaseFirestore(),
+      auth: signedInAuth(),
+      functions: functions,
+      storage: MockFirebaseStorage(),
+      attachmentOutbox: queue,
+    );
+
+    await service.sendVoiceMessage(
+      conversationId: conversationId,
+      audio: _Recording(byteLength: 4096, contentType: 'audio/mp4'),
+      durationSeconds: 7,
+    );
+
+    expect(functions.reservePayloads, hasLength(2));
+    expect(payloadStore.uploadCount, 4);
+    expect(functions.finalizePayloads, hasLength(1));
+    expect(
+      functions.finalizePayloads.single['messageId'],
+      contains(List<String>.filled(40, '2').join()),
+    );
+    await service.dispose();
+  });
+
+  test('an authoritative reserve expiry gets a new reserve request within the '
+      'bounded delivery loop', () async {
+    final preferences = await SharedPreferences.getInstance();
+    final serverNow = DateTime.utc(2026, 8, 28, 12);
+    final functions = _SkewedAttachmentFunctions(
+      conversationId: conversationId,
+      serverNow: serverNow,
+      rejectFirstReserveAsExpired: true,
+    );
+    final queue = DirectAttachmentOutbox(
+      ownerId: 'alice-uid',
+      preferences: preferences,
+      payloadStore: payloadStore,
+      clock: () => serverNow,
+    );
+    final service = MessageService(
+      firestore: FakeFirebaseFirestore(),
+      auth: signedInAuth(),
+      functions: functions,
+      storage: MockFirebaseStorage(),
+      attachmentOutbox: queue,
+    );
+
+    await service.sendVoiceMessage(
+      conversationId: conversationId,
+      audio: _Recording(byteLength: 4096, contentType: 'audio/mp4'),
+      durationSeconds: 7,
+    );
+
+    expect(functions.reservePayloads, hasLength(2));
+    expect(
+      functions.reservePayloads.map((item) => item['requestId']).toSet(),
+      hasLength(2),
+    );
+    expect(functions.finalizePayloads, hasLength(1));
+    await service.dispose();
+  });
+
+  test('a freshly issued server lease does not rotate-loop when the client '
+      'clock is two hours ahead', () async {
+    final preferences = await SharedPreferences.getInstance();
+    final serverNow = DateTime.utc(2026, 8, 28, 12);
+    final functions = _SkewedAttachmentFunctions(
+      conversationId: conversationId,
+      serverNow: serverNow,
+    );
+    final queue = DirectAttachmentOutbox(
+      ownerId: 'alice-uid',
+      preferences: preferences,
+      payloadStore: payloadStore,
+      clock: () => serverNow.add(const Duration(hours: 2)),
+    );
+    final service = MessageService(
+      firestore: FakeFirebaseFirestore(),
+      auth: signedInAuth(),
+      functions: functions,
+      storage: MockFirebaseStorage(),
+      attachmentOutbox: queue,
+    );
+
+    await service.sendVoiceMessage(
+      conversationId: conversationId,
+      audio: _Recording(byteLength: 4096, contentType: 'audio/mp4'),
+      durationSeconds: 7,
+    );
+
+    expect(functions.reservePayloads, hasLength(1));
+    expect(payloadStore.uploadCount, 1);
+    expect(functions.finalizePayloads, hasLength(1));
+    await service.dispose();
+  });
+
   test(
     'server refusal never falls back to a client-owned media write',
     () async {
@@ -242,6 +709,7 @@ void main() {
         auth: signedInAuth(),
         functions: functions,
         storage: MockFirebaseStorage(),
+        attachmentPayloadStore: payloadStore,
       );
 
       await expectLater(
@@ -272,6 +740,7 @@ void main() {
         auth: signedInAuth(),
         functions: functions,
         storage: MockFirebaseStorage(),
+        attachmentPayloadStore: payloadStore,
       );
 
       await expectLater(
@@ -299,6 +768,82 @@ void main() {
   );
 }
 
+class _MemoryPayloadStore implements DirectAttachmentPayloadStore {
+  final Map<String, Uint8List> payloads = <String, Uint8List>{};
+  int uploadCount = 0;
+  int uploadFailuresRemaining = 0;
+  Object? uploadFailure;
+  bool commitThenLoseResponse = false;
+  String? uploadPath;
+  String? contentTypeAtUpload;
+  Map<String, String>? customMetadataAtUpload;
+
+  String _key(String namespace, String id) => '$namespace:$id';
+
+  @override
+  Future<void> write(String namespace, String id, Uint8List bytes) async {
+    payloads[_key(namespace, id)] = Uint8List.fromList(bytes);
+  }
+
+  @override
+  Future<bool> exists(String namespace, String id) async =>
+      payloads.containsKey(_key(namespace, id));
+
+  @override
+  Future<Set<String>> keys(String namespace) async {
+    final prefix = '$namespace:';
+    return payloads.keys
+        .where((key) => key.startsWith(prefix))
+        .map((key) => key.substring(prefix.length))
+        .toSet();
+  }
+
+  @override
+  Future<String> upload(
+    String namespace,
+    String id,
+    Reference reference,
+    SettableMetadata metadata,
+  ) async {
+    final bytes = payloads[_key(namespace, id)];
+    if (bytes == null) throw StateError('missing test payload');
+    uploadCount += 1;
+    uploadPath = reference.fullPath;
+    contentTypeAtUpload = metadata.contentType;
+    customMetadataAtUpload = metadata.customMetadata;
+    if (uploadFailuresRemaining > 0) {
+      uploadFailuresRemaining -= 1;
+      throw uploadFailure ??
+          FirebaseException(
+            plugin: 'firebase_storage',
+            code: 'unavailable',
+            message: 'temporary upload failure',
+          );
+    }
+    await reference.putData(bytes, metadata);
+    if (commitThenLoseResponse) {
+      commitThenLoseResponse = false;
+      throw FirebaseException(
+        plugin: 'firebase_storage',
+        code: 'unknown',
+        message: 'committed response was lost',
+      );
+    }
+    return 'generation-7';
+  }
+
+  @override
+  Future<void> delete(String namespace, String id) async {
+    payloads.remove(_key(namespace, id));
+  }
+
+  @override
+  Future<void> clear(String namespace) async {
+    final prefix = '$namespace:';
+    payloads.removeWhere((key, _) => key.startsWith(prefix));
+  }
+}
+
 class _Recording extends RecordedAudio {
   _Recording({required this.byteLength, required this.contentType});
 
@@ -314,6 +859,9 @@ class _Recording extends RecordedAudio {
   Map<String, String>? customMetadataAtUpload;
 
   @override
+  Future<Uint8List> readBytes() async => Uint8List(byteLength);
+
+  @override
   Future<String> uploadTo(
     Reference reference,
     SettableMetadata metadata,
@@ -323,33 +871,6 @@ class _Recording extends RecordedAudio {
     contentTypeAtUpload = metadata.contentType;
     customMetadataAtUpload = metadata.customMetadata;
     return 'generation-7';
-  }
-
-  @override
-  Future<void> discard() async {}
-}
-
-class _CommitThenLoseResponseRecording extends RecordedAudio {
-  int uploadCount = 0;
-
-  @override
-  int get byteLength => 4096;
-
-  @override
-  String get contentType => 'audio/mp4';
-
-  @override
-  Future<String> uploadTo(
-    Reference reference,
-    SettableMetadata metadata,
-  ) async {
-    uploadCount += 1;
-    await reference.putData(Uint8List(4096), metadata);
-    throw FirebaseException(
-      plugin: 'firebase_storage',
-      code: 'unknown',
-      message: 'The object committed, but the response was lost.',
-    );
   }
 
   @override
@@ -470,12 +991,14 @@ class _AttachmentFunctions implements FirebaseFunctions {
     required this.messageId,
     required this.storagePath,
     this.loseFirstFinalizeResponse = false,
+    this.rejectFinalize = false,
   });
 
   final String conversationId;
   final String messageId;
   final String storagePath;
   final bool loseFirstFinalizeResponse;
+  bool rejectFinalize;
   final List<Map<String, dynamic>> reservePayloads = [];
   final List<Map<String, dynamic>> finalizePayloads = [];
 
@@ -490,10 +1013,17 @@ class _AttachmentFunctions implements FirebaseFunctions {
           'messageId': messageId,
           'storagePath': storagePath,
           'type': 'voice',
+          'expiresAtMillis': DateTime.utc(2030).millisecondsSinceEpoch,
         };
       }
       if (name == 'finalizeDirectMessageAttachment') {
         finalizePayloads.add(payload);
+        if (rejectFinalize) {
+          throw FirebaseFunctionsException(
+            code: 'permission-denied',
+            message: 'finalize refused',
+          );
+        }
         if (loseFirstFinalizeResponse && finalizePayloads.length == 1) {
           throw FirebaseFunctionsException(
             code: 'unavailable',
@@ -541,6 +1071,7 @@ class _LostFinalizeCommitFunctions implements FirebaseFunctions {
           'messageId': messageId,
           'storagePath': storagePath,
           'type': mediaType,
+          'expiresAtMillis': DateTime.utc(2030).millisecondsSinceEpoch,
         };
       }
       if (name == 'finalizeDirectMessageAttachment') {
@@ -566,6 +1097,112 @@ class _LostFinalizeCommitFunctions implements FirebaseFunctions {
         return <Object?, Object?>{
           'conversationId': conversationId,
           'messageId': messageId,
+        };
+      }
+      throw StateError('Unexpected callable $name');
+    });
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _ExpiringAttachmentFunctions implements FirebaseFunctions {
+  _ExpiringAttachmentFunctions({
+    required this.conversationId,
+    required this.clock,
+  });
+
+  final String conversationId;
+  final DateTime Function() clock;
+  final List<Map<String, dynamic>> reservePayloads = [];
+  final List<Map<String, dynamic>> finalizePayloads = [];
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) {
+    return _CallableStub((parameters) async {
+      final payload = Map<String, dynamic>.from(parameters as Map);
+      if (name == 'reserveDirectMessageAttachment') {
+        reservePayloads.add(payload);
+        final digit = reservePayloads.length == 1 ? '1' : '2';
+        final messageId = 'm_${List<String>.filled(40, digit).join()}';
+        return <Object?, Object?>{
+          'conversationId': conversationId,
+          'messageId': messageId,
+          'storagePath':
+              'message_attachments/alice-uid/$conversationId/$messageId.m4a',
+          'type': 'voice',
+          'expiresAtMillis': clock()
+              .add(const Duration(minutes: 15))
+              .millisecondsSinceEpoch,
+        };
+      }
+      if (name == 'finalizeDirectMessageAttachment') {
+        finalizePayloads.add(payload);
+        return <Object?, Object?>{
+          'conversationId': conversationId,
+          'messageId': payload['messageId'],
+        };
+      }
+      throw StateError('Unexpected callable $name');
+    });
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _SkewedAttachmentFunctions implements FirebaseFunctions {
+  _SkewedAttachmentFunctions({
+    required this.conversationId,
+    required this.serverNow,
+    this.rejectFirstReserveAsExpired = false,
+    this.rejectFirstFinalizeAsExpired = false,
+  });
+
+  final String conversationId;
+  final DateTime serverNow;
+  final bool rejectFirstReserveAsExpired;
+  final bool rejectFirstFinalizeAsExpired;
+  final List<Map<String, dynamic>> reservePayloads = [];
+  final List<Map<String, dynamic>> finalizePayloads = [];
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) {
+    return _CallableStub((parameters) async {
+      final payload = Map<String, dynamic>.from(parameters as Map);
+      if (name == 'reserveDirectMessageAttachment') {
+        reservePayloads.add(payload);
+        if (rejectFirstReserveAsExpired && reservePayloads.length == 1) {
+          throw FirebaseFunctionsException(
+            code: 'failed-precondition',
+            message: 'The attachment reservation has expired.',
+          );
+        }
+        final digit = reservePayloads.length == 1 ? '1' : '2';
+        final messageId = 'm_${List<String>.filled(40, digit).join()}';
+        return <Object?, Object?>{
+          'conversationId': conversationId,
+          'messageId': messageId,
+          'storagePath':
+              'message_attachments/alice-uid/$conversationId/$messageId.m4a',
+          'type': 'voice',
+          'expiresAtMillis': serverNow
+              .add(const Duration(minutes: 15))
+              .millisecondsSinceEpoch,
+        };
+      }
+      if (name == 'finalizeDirectMessageAttachment') {
+        finalizePayloads.add(payload);
+        if (rejectFirstFinalizeAsExpired && finalizePayloads.length == 1) {
+          throw FirebaseFunctionsException(
+            code: 'failed-precondition',
+            message: 'The attachment reservation is invalid.',
+          );
+        }
+        return <Object?, Object?>{
+          'conversationId': conversationId,
+          'messageId': payload['messageId'],
         };
       }
       throw StateError('Unexpected callable $name');

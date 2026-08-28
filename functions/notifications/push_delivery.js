@@ -70,6 +70,7 @@ async function sendMulticastInChunks({ tokens, messaging, buildMessage }) {
   const failures = [];
   const batchErrors = [];
   let attempted = 0;
+  let successCount = 0;
 
   for (const tokenChunk of chunks(tokens, FCM_MULTICAST_LIMIT)) {
     attempted += tokenChunk.length;
@@ -82,7 +83,10 @@ async function sendMulticastInChunks({ tokens, messaging, buildMessage }) {
         : [];
       for (let index = 0; index < tokenChunk.length; index += 1) {
         const result = responses[index];
-        if (result?.success === true) continue;
+        if (result?.success === true) {
+          successCount += 1;
+          continue;
+        }
         const code = result?.error?.code ?? "messaging/unknown-error";
         if (STALE_TOKEN_CODES.has(code)) {
           staleTokens.add(tokenChunk[index]);
@@ -100,6 +104,7 @@ async function sendMulticastInChunks({ tokens, messaging, buildMessage }) {
 
   return {
     attempted,
+    successCount,
     staleTokens: [...staleTokens],
     failures,
     batchErrors,

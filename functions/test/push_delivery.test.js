@@ -70,6 +70,7 @@ describe("FCM multicast chunking", () => {
     assert.equal(FCM_MULTICAST_LIMIT, 500);
     assert.deepEqual(calls.map((call) => call.length), [500, 500, 1]);
     assert.equal(outcome.attempted, 1001);
+    assert.equal(outcome.successCount, 1001);
     assert.deepEqual(outcome.staleTokens, []);
   });
 
@@ -98,6 +99,7 @@ describe("FCM multicast chunking", () => {
       });
 
       assert.deepEqual(outcome.staleTokens, ["stale"]);
+      assert.equal(outcome.successCount, 0);
       assert.deepEqual(outcome.failures, [{ code: "messaging/internal-error" }]);
       assert.equal(JSON.stringify(outcome).includes("sensitive-token"), false);
     });
@@ -128,5 +130,6 @@ describe("FCM multicast chunking", () => {
       tokenCount: 500,
     }]);
     assert.equal(outcome.attempted, 501);
+    assert.equal(outcome.successCount, 1);
   });
 });

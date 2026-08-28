@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:yovoice/features/calls/presentation/direct_call_route_registry.dart';
+import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 
@@ -77,6 +79,20 @@ Future<bool> presentForegroundNotificationDecision({
   }
 }
 
+/// Direct-message pushes stay enabled for background delivery, but are
+/// redundant while their conversation is open. Incoming-call arbitration is
+/// handled separately by [DirectCallAlertRegistry], because FCM must remain a
+/// fallback if the foreground Firestore listener is recovering from an error.
+bool shouldSuppressForegroundNotification({
+  required NotificationType type,
+  required String? targetId,
+  required ActiveConversationRegistry activeConversations,
+}) {
+  final isConversationActivity =
+      type == NotificationType.directMessage || type == NotificationType.reply;
+  return isConversationActivity && activeConversations.contains(targetId);
+}
+
 /// Owns the FCM lifecycle end-to-end: permission request, token
 /// register/refresh/unregister, foreground local-notification display, and
 /// routing a tap back into the app. Every entry point is wrapped so a
@@ -122,16 +138,33 @@ class PushNotificationService {
     NotificationService? notificationService,
     FirebaseAuth? auth,
     Future<void> Function()? deleteMessagingToken,
+    ActiveConversationRegistry? activeConversations,
   }) : _notificationService = notificationService ?? NotificationService(),
        _auth = auth ?? FirebaseAuth.instance,
        _deleteMessagingToken =
-           deleteMessagingToken ?? FirebaseMessaging.instance.deleteToken;
+           deleteMessagingToken ?? FirebaseMessaging.instance.deleteToken,
+       _activeConversations =
+           activeConversations ?? ActiveConversationRegistry.instance;
+
+  @visibleForTesting
+  PushNotificationService.forTesting({
+    required NotificationService notificationService,
+    required FirebaseAuth auth,
+    required ActiveConversationRegistry activeConversations,
+    Future<void> Function()? deleteMessagingToken,
+  }) : this._(
+         notificationService: notificationService,
+         auth: auth,
+         activeConversations: activeConversations,
+         deleteMessagingToken: deleteMessagingToken,
+       );
 
   static final PushNotificationService instance = PushNotificationService._();
 
   final NotificationService _notificationService;
   final FirebaseAuth _auth;
   final Future<void> Function() _deleteMessagingToken;
+  final ActiveConversationRegistry _activeConversations;
   final PushTokenPrivacyGuard _tokenPrivacyGuard = PushTokenPrivacyGuard();
   final PushIdentityEpochGuard _identityEpochGuard = PushIdentityEpochGuard();
   final FlutterLocalNotificationsPlugin _localNotifications =
@@ -588,6 +621,7 @@ class PushNotificationService {
     final notification = message.notification;
     if (notification == null) return;
     final type = NotificationType.fromName(message.data['type'] as String?);
+    final targetId = message.data['targetId'] as String?;
     final isCall = type == NotificationType.directCall;
     final notificationId = message.data['notificationId'] as String?;
     final claimOwner = claimForegroundNotification;
@@ -610,61 +644,107 @@ class PushNotificationService {
     await presentForegroundNotificationDecision(
       decision: decision,
       present: () async {
-        if (kIsWeb) {
-          return _tryShowInAppForegroundNotification(
-            message,
-            notificationId: notificationId,
-          );
-        }
-        try {
-          await _localNotifications.show(
-            id: notification.hashCode,
-            title: notification.title,
-            body: notification.body,
-            notificationDetails: NotificationDetails(
-              android: AndroidNotificationDetails(
-                isCall ? androidCallChannelId : androidChannelId,
-                isCall ? 'YO Voice calls' : 'YO Voice notifications',
-                channelDescription: isCall
-                    ? 'Incoming private voice calls'
-                    : 'Messages, invitations and activity from YO Voice',
-                importance: isCall ? Importance.max : Importance.high,
-                priority: isCall ? Priority.max : Priority.high,
-                playSound: true,
-                sound: const RawResourceAndroidNotificationSound(
-                  androidSoundResource,
-                ),
-                enableVibration: true,
-                category: isCall
-                    ? AndroidNotificationCategory.call
-                    : AndroidNotificationCategory.social,
-              ),
-              iOS: const DarwinNotificationDetails(
-                presentAlert: true,
-                presentBadge: true,
-                presentSound: true,
-                sound: iosSoundFile,
-              ),
-            ),
-            payload:
-                '${message.data['type'] ?? ''}|'
-                '${message.data['targetId'] ?? ''}|'
-                '${message.data['actorId'] ?? ''}|'
-                '${message.data['notificationId'] ?? ''}',
-          );
+        // Reserve through the shared notification-id arbiter before deciding
+        // that an active conversation intentionally consumes this arrival.
+        // Otherwise FCM could return early, the chat could close, and a later
+        // Firestore snapshot would replay a stale foreground banner.
+        if (shouldSuppressForegroundNotification(
+          type: type,
+          targetId: targetId,
+          activeConversations: _activeConversations,
+        )) {
           return true;
-        } catch (error) {
-          // The native path did not accept a presentation. Try the in-app
-          // surface, and release the reservation to Firestore if that surface
-          // is not mounted either.
-          debugPrint(
-            'PushNotificationService: could not present a foreground '
-            'notification (${error.runtimeType}).',
+        }
+
+        DirectCallAlertClaim? callAlertClaim;
+        if (isCall && targetId != null && targetId.isNotEmpty) {
+          callAlertClaim = DirectCallAlertRegistry.claim(
+            targetId,
+            DirectCallAlertOwner.push,
           );
-          return _tryShowInAppForegroundNotification(
-            message,
-            notificationId: notificationId,
-          );
+          if (!callAlertClaim.ownsAlert) {
+            // The Firestore coordinator already owns the first attempt. Wait
+            // for its actual result: a failed audio presentation releases the
+            // call id so FCM can take over instead of leaving a silent route.
+            if (await callAlertClaim.result) return true;
+            callAlertClaim = DirectCallAlertRegistry.claim(
+              targetId,
+              DirectCallAlertOwner.push,
+            );
+            if (!callAlertClaim.ownsAlert) {
+              return await callAlertClaim.result;
+            }
+          }
+        }
+
+        var presented = false;
+        try {
+          if (kIsWeb) {
+            presented = _tryShowInAppForegroundNotification(
+              message,
+              notificationId: notificationId,
+            );
+            return presented;
+          }
+          try {
+            await _localNotifications.show(
+              id: notification.hashCode,
+              title: notification.title,
+              body: notification.body,
+              notificationDetails: NotificationDetails(
+                android: AndroidNotificationDetails(
+                  isCall ? androidCallChannelId : androidChannelId,
+                  isCall ? 'YO Voice calls' : 'YO Voice notifications',
+                  channelDescription: isCall
+                      ? 'Incoming private voice calls'
+                      : 'Messages, invitations and activity from YO Voice',
+                  importance: isCall ? Importance.max : Importance.high,
+                  priority: isCall ? Priority.max : Priority.high,
+                  playSound: true,
+                  sound: const RawResourceAndroidNotificationSound(
+                    androidSoundResource,
+                  ),
+                  enableVibration: true,
+                  category: isCall
+                      ? AndroidNotificationCategory.call
+                      : AndroidNotificationCategory.social,
+                ),
+                iOS: const DarwinNotificationDetails(
+                  presentAlert: true,
+                  presentBadge: true,
+                  presentSound: true,
+                  sound: iosSoundFile,
+                ),
+              ),
+              payload:
+                  '${message.data['type'] ?? ''}|'
+                  '${message.data['targetId'] ?? ''}|'
+                  '${message.data['actorId'] ?? ''}|'
+                  '${message.data['notificationId'] ?? ''}',
+            );
+            presented = true;
+            return true;
+          } catch (error) {
+            // The native path did not accept a presentation. Try the in-app
+            // surface, and release both reservations if that surface is not
+            // mounted either.
+            debugPrint(
+              'PushNotificationService: could not present a foreground '
+              'notification (${error.runtimeType}).',
+            );
+            presented = _tryShowInAppForegroundNotification(
+              message,
+              notificationId: notificationId,
+            );
+            return presented;
+          }
+        } finally {
+          if (callAlertClaim != null) {
+            DirectCallAlertRegistry.complete(
+              callAlertClaim,
+              presented: presented,
+            );
+          }
         }
       },
     );

@@ -59,16 +59,17 @@ about things that are broken, risky, or need verification.
   The ordered index, Functions, Firestore Rules, Storage Rules and Hosting
   rollout completed with byte read-back and controlled production smokes.
 
-- **OPEN, pre-existing, found while auditing the DM rules — the conversation
-  ROOT update rule pins only `participantIds`.** `firestore.rules:2132` lets
-  any participant rewrite `lastMessage`, `participantNames` and — the part
-  that matters — **the other party's `unreadCounts` and `readSequences`**.
-  That is the same forgery class the create-rule comment cites as the reason
-  the root is server-owned: the root is create-locked but not field-locked.
-  This is **already deployed** and is not a regression of the pending
-  server-only DM change, which ships the root rule unchanged. Closing it needs
-  a field allowlist pinning the caller's own keys, plus emulator cases for
-  cross-participant counter writes.
+- **FIXED IN SOURCE 2026-08-28 — the conversation root and message documents
+  still admitted client-side authority despite a server-owned contract.** The
+  old root rule pinned only `participantIds`, allowing a participant to forge
+  `lastMessage`, identity snapshots and either party's unread/read state; old
+  message rules also kept edit/delete/reaction/read fallback writes alive.
+  Current Rules make both surfaces server-write-only while preserving
+  participant reads. Text, media, typing, read, mute, archive, edit, delete and
+  reactions use their owning callables. The 519-case emulator gate includes
+  direct attacks on both participants' state and every retired message write.
+  Production Rules remain a separate rollout gate until build 11 is available
+  to the permanent tester cohorts.
 
 - **FIXED IN SOURCE 2026-08-27 — the message outbox existed but the chat waited
   for the network and rendered none of its states.** A text send now clears the
@@ -2511,3 +2512,27 @@ permission flags).
   also keep their action beside the title instead of wasting a separate row.
   Geometry and interaction regressions cover 320/390/430 px at 200% text, and
   the real-font screenshot harness includes the scrolled state.
+- **Fixed in source 2026-08-28 — direct chats could nag, duplicate alerts,
+  strand media and lose call setup.** The visible “Unread counts may not update right now.”
+  banner came from background read-receipt bookkeeping, which ran even for the
+  sender's own messages and surfaced an unactionable failure inside the chat.
+  Read work is now incoming-only, silent, single-flight and paged past the
+  server's 100-message boundary. An active conversation suppresses only its
+  foreground native alert, app banner and shell overlay; background delivery
+  remains enabled. Activity-trigger replay can no longer reset a notification
+  to unread or resurrect a deleted row, and each Firestore notification
+  generation uses a source-revalidated terminal FCM dispatch claim, platform
+  collapse ids and a managed 30-day event-ledger TTL. Text outbox delivery
+  remains FIFO per conversation without allowing one failed conversation to
+  block another. Photo and voice payloads now survive process restarts in an
+  account-scoped, bounded outbox; expired reservations rotate safely even when
+  the device clock is wrong, and Retry/Discard cannot race an active finalize.
+  Direct-call start persists one account/peer-scoped request id before the
+  network write and recovers the canonical call after restart or lost response,
+  instead of leaving the callee ringing while the caller cannot open or cancel
+  the call. Firestore Rules also enforce the documented
+  server-only conversation root, preventing a participant from forging either
+  member's unread/read cursor, typing state or last-message summary. See
+  ADR-121. Physical two-device background push, APNs/FCM, LiveKit audio and
+  weak-network media smoke remain release evidence rather than automated-test
+  claims.

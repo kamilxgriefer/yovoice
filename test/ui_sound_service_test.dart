@@ -213,10 +213,27 @@ void main() {
       },
     );
 
-    await service.play(UiSound.roomCreated);
+    expect(await service.playWithResult(UiSound.roomCreated), isFalse);
 
     expect(created, 0);
   });
+
+  test(
+    'critical callers can distinguish playback success from failure',
+    () async {
+      final successful = UiSoundService(
+        enabled: () => true,
+        playerFactory: (_) => _RecordingPlayer(),
+      );
+      expect(await successful.playWithResult(UiSound.notification), isTrue);
+
+      final failed = UiSoundService(
+        enabled: () => true,
+        playerFactory: (_) => _ThrowingPlayer(),
+      );
+      expect(await failed.playWithResult(UiSound.notification), isFalse);
+    },
+  );
 
   test('meaningful event families use separate lazy channels', () async {
     final players = <UiSoundChannel, _RecordingPlayer>{};

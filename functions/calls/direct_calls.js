@@ -1,4 +1,4 @@
-const { randomUUID } = require("node:crypto");
+const { createHash, randomUUID } = require("node:crypto");
 
 const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
@@ -10,6 +10,10 @@ const { AccessToken } = require("livekit-server-sdk");
 
 const { requireAuthentication } = require("../utils/auth");
 const { db, normalizeText } = require("../utils/firestore");
+const {
+  operationIdentity,
+  requireRequestId,
+} = require("../integrity/guards");
 const {
   canonicalNotificationData,
   notificationReference,
@@ -31,6 +35,23 @@ const RING_TTL_MS = 60 * 1000;
 const ACTIVE_CALL_TTL_MS = 8 * 60 * 60 * 1000;
 const TOKEN_TTL = "5m";
 const TOKEN_TTL_SECONDS = 5 * 60;
+const DIRECT_CALL_START_LIMITS = Object.freeze({
+  caller: Object.freeze({
+    windowMs: 10 * 60 * 1000,
+    maxEvents: 10,
+    cooldownMs: 3 * 1000,
+  }),
+  callee: Object.freeze({
+    windowMs: 10 * 60 * 1000,
+    maxEvents: 20,
+    cooldownMs: 1000,
+  }),
+  pair: Object.freeze({
+    windowMs: 10 * 60 * 1000,
+    maxEvents: 4,
+    cooldownMs: 10 * 1000,
+  }),
+});
 const TERMINAL_STATUSES = new Set([
   "declined",
   "cancelled",
@@ -212,6 +233,73 @@ function callControlReference(callId) {
   return db.doc(`directCallControlOutbox/${callId}`);
 }
 
+function directCallStartLimitReference(scope, ...subjectIds) {
+  if (!Object.hasOwn(DIRECT_CALL_START_LIMITS, scope) ||
+      subjectIds.length === 0 ||
+      subjectIds.some((uid) => typeof uid !== "string" || uid.length === 0)) {
+    throw new TypeError("A valid direct-call rate-limit scope is required.");
+  }
+  const subject = scope === "pair"
+    ? [...subjectIds].sort().join("\u0000")
+    : subjectIds.join("\u0000");
+  const id = createHash("sha256")
+    .update(`direct-call-start\u0000${scope}\u0000${subject}`)
+    .digest("hex");
+  return db.doc(`directCallStartLimits/${id}`);
+}
+
+function consumeDirectCallStartLimit({
+  transaction,
+  snapshot,
+  reference,
+  scope,
+  now,
+}) {
+  const config = DIRECT_CALL_START_LIMITS[scope];
+  if (!config) throw new TypeError(`Unknown direct-call limit scope: ${scope}`);
+  const data = snapshot.exists ? snapshot.data() ?? {} : {};
+  if (snapshot.exists &&
+      (data.schemaVersion !== 1 || data.scope !== scope ||
+       !Array.isArray(data.startedAt))) {
+    throw new HttpsError(
+      "data-loss",
+      "The private direct-call rate-limit state is invalid.",
+    );
+  }
+  const nowMillis = now.toMillis();
+  const stored = Array.isArray(data.startedAt) ? data.startedAt : [];
+  if (stored.length > 100 || stored.some((timestamp) => {
+    const millis = timestampMillis(timestamp);
+    return typeof timestamp?.toMillis !== "function" ||
+      millis === null || millis > nowMillis;
+  })) {
+    throw new HttpsError(
+      "data-loss",
+      "The private direct-call rate-limit state is invalid.",
+    );
+  }
+  const windowStart = nowMillis - config.windowMs;
+  const recent = stored
+    .filter((timestamp) => timestamp.toMillis() > windowStart)
+    .sort((first, second) => first.toMillis() - second.toMillis());
+  const latestMillis = recent.length === 0
+    ? null
+    : recent.at(-1).toMillis();
+  if ((latestMillis !== null && nowMillis - latestMillis < config.cooldownMs) ||
+      recent.length >= config.maxEvents) {
+    throw new HttpsError(
+      "resource-exhausted",
+      "Voice calling is temporarily rate-limited. Try again later.",
+    );
+  }
+  transaction.set(reference, {
+    schemaVersion: 1,
+    scope,
+    startedAt: [...recent, now],
+    updatedAt: now,
+  });
+}
+
 function missedCallNotificationId(callId) {
   return `missedCall_${callId}`;
 }
@@ -238,9 +326,23 @@ async function startDirectCallHandler(request) {
       "The conversation is not valid.",
     );
   }
+  const requestId = request.data?.requestId === undefined ||
+      request.data?.requestId === null
+    ? null
+    : requireRequestId(request.data.requestId);
+  const startIdentity = requestId === null
+    ? null
+    : operationIdentity(
+      "direct.call.start",
+      auth.uid,
+      requestId,
+      { calleeId, conversationId },
+    );
 
   const callRef = db.collection("directCalls").doc(
-    randomUUID().replaceAll("-", ""),
+    startIdentity === null
+      ? randomUUID().replaceAll("-", "")
+      : `call_${startIdentity.id.slice(0, 40)}`,
   );
   const callerRef = db.doc(`users/${auth.uid}`);
   const calleeRef = db.doc(`users/${calleeId}`);
@@ -256,6 +358,13 @@ async function startDirectCallHandler(request) {
   );
   const callerLockRef = callLockReference(auth.uid);
   const calleeLockRef = callLockReference(calleeId);
+  const callerStartLimitRef = directCallStartLimitReference("caller", auth.uid);
+  const calleeStartLimitRef = directCallStartLimitReference("callee", calleeId);
+  const pairStartLimitRef = directCallStartLimitReference(
+    "pair",
+    auth.uid,
+    calleeId,
+  );
   const conversationRef = db.doc(`conversations/${conversationId}`);
   const signalRef = incomingCallReference(calleeId, callRef.id);
   const notificationRef = notificationReference(
@@ -278,6 +387,10 @@ async function startDirectCallHandler(request) {
       callerLock,
       calleeLock,
       conversation,
+      existingCall,
+      callerStartLimit,
+      calleeStartLimit,
+      pairStartLimit,
     ] = await transaction.getAll(
       callerRef,
       calleeRef,
@@ -290,7 +403,31 @@ async function startDirectCallHandler(request) {
       callerLockRef,
       calleeLockRef,
       conversationRef,
+      callRef,
+      callerStartLimitRef,
+      calleeStartLimitRef,
+      pairStartLimitRef,
     );
+
+    if (existingCall.exists) {
+      const existing = existingCall.data() ?? {};
+      if (startIdentity === null ||
+          existing.startRequestId !== requestId ||
+          existing.startInputHash !== startIdentity.inputHash ||
+          existing.callerId !== auth.uid ||
+          existing.calleeId !== calleeId ||
+          existing.conversationId !== conversationId) {
+        throw new HttpsError(
+          "already-exists",
+          "This call requestId was already used for another call.",
+        );
+      }
+      return {
+        callId: callRef.id,
+        status: existing.status,
+        expiresAtMillis: timestampMillis(existing.expiresAt),
+      };
+    }
 
     const callerProfile = profileData(callerSnapshot, "Your");
     const calleeProfile = profileData(calleeSnapshot, "The selected");
@@ -317,6 +454,20 @@ async function startDirectCallHandler(request) {
       );
     }
 
+    for (const [scope, snapshot, reference] of [
+      ["caller", callerStartLimit, callerStartLimitRef],
+      ["callee", calleeStartLimit, calleeStartLimitRef],
+      ["pair", pairStartLimit, pairStartLimitRef],
+    ]) {
+      consumeDirectCallStartLimit({
+        transaction,
+        snapshot,
+        reference,
+        scope,
+        now,
+      });
+    }
+
     const caller = canonicalIdentity(auth.uid, callerProfile);
     const callee = canonicalIdentity(calleeId, calleeProfile);
     const participantIds = [auth.uid, calleeId].sort();
@@ -336,6 +487,10 @@ async function startDirectCallHandler(request) {
       answeredAt: null,
       endedAt: null,
       endedBy: null,
+      ...(startIdentity === null ? {} : {
+        startRequestId: requestId,
+        startInputHash: startIdentity.inputHash,
+      }),
     };
     transaction.create(callRef, callData);
     transaction.create(signalRef, {
@@ -393,7 +548,19 @@ async function transitionDirectCall(request, action) {
     let nextStatus;
 
     if (action === "accept") {
-      if (auth.uid !== call.calleeId || call.status !== "ringing") {
+      if (auth.uid !== call.calleeId) {
+        throw new HttpsError(
+          "failed-precondition",
+          "This call cannot be answered.",
+        );
+      }
+      // A callable response may be lost after the transaction committed. The
+      // desired state is therefore replay-safe for the same authorised actor.
+      // `ended` also proves that this ringing call was accepted first.
+      if (call.status === "active" || call.status === "ended") {
+        return { callId, status: call.status };
+      }
+      if (call.status !== "ringing") {
         throw new HttpsError(
           "failed-precondition",
           "This call cannot be answered.",
@@ -405,7 +572,14 @@ async function transitionDirectCall(request, action) {
       await assertCallPairAvailable(transaction, call, now.toMillis());
       nextStatus = "active";
     } else if (action === "decline") {
-      if (auth.uid !== call.calleeId || call.status !== "ringing") {
+      if (auth.uid !== call.calleeId) {
+        throw new HttpsError(
+          "failed-precondition",
+          "This call cannot be declined.",
+        );
+      }
+      if (call.status === "declined") return { callId, status: call.status };
+      if (call.status !== "ringing") {
         throw new HttpsError(
           "failed-precondition",
           "This call cannot be declined.",
@@ -413,7 +587,14 @@ async function transitionDirectCall(request, action) {
       }
       nextStatus = "declined";
     } else if (action === "cancel") {
-      if (auth.uid !== call.callerId || call.status !== "ringing") {
+      if (auth.uid !== call.callerId) {
+        throw new HttpsError(
+          "failed-precondition",
+          "This call cannot be cancelled.",
+        );
+      }
+      if (call.status === "cancelled") return { callId, status: call.status };
+      if (call.status !== "ringing") {
         throw new HttpsError(
           "failed-precondition",
           "This call cannot be cancelled.",
@@ -439,6 +620,12 @@ async function transitionDirectCall(request, action) {
     const expiresAt = isActive
       ? Timestamp.fromMillis(now.toMillis() + ACTIVE_CALL_TTL_MS)
       : call.expiresAt;
+    const lockReferences = isActive
+      ? []
+      : participants.map((userId) => callLockReference(userId));
+    const lockSnapshots = lockReferences.length === 0
+      ? []
+      : await transaction.getAll(...lockReferences);
     transaction.update(callRef, {
       status: nextStatus,
       updatedAt: now,
@@ -466,8 +653,10 @@ async function transitionDirectCall(request, action) {
         });
       }
     } else {
-      for (const userId of participants) {
-        transaction.delete(callLockReference(userId));
+      for (let index = 0; index < lockReferences.length; index += 1) {
+        if (lockSnapshots[index]?.data()?.callId === callId) {
+          transaction.delete(lockReferences[index]);
+        }
       }
       if (call.status === "active") {
         transaction.set(callControlReference(callId), {
@@ -613,6 +802,12 @@ async function expireDirectCall(callDocument, now = Timestamp.now()) {
     const participants = Array.isArray(call.participantIds)
       ? call.participantIds
       : [];
+    const lockReferences = participants.map((userId) =>
+      callLockReference(userId),
+    );
+    const lockSnapshots = lockReferences.length === 0
+      ? []
+      : await transaction.getAll(...lockReferences);
     transaction.update(current.ref, {
       status: "missed",
       updatedAt: now,
@@ -640,15 +835,25 @@ async function expireDirectCall(callDocument, now = Timestamp.now()) {
         dedupeKey: missedCallNotificationId(current.id),
       }),
     );
-    for (const userId of participants) {
-      transaction.delete(callLockReference(userId));
+    for (let index = 0; index < lockReferences.length; index += 1) {
+      if (lockSnapshots[index]?.data()?.callId === current.id) {
+        transaction.delete(lockReferences[index]);
+      }
     }
     return true;
   });
 }
 
 const startDirectCall = onCall(
-  { region: REGION, enforceAppCheck: false },
+  {
+    region: REGION,
+    // TestFlight/Play internal builds in the current beta cohort were shipped
+    // before App Check enforcement was enabled. Turning this on server-first
+    // would reject every such install. The transactional caller/callee/pair
+    // limiter below is the immediate abuse boundary; enforce App Check only
+    // after an attested client build has reached the whole tester cohort.
+    enforceAppCheck: false,
+  },
   startDirectCallHandler,
 );
 const acceptDirectCall = onCall(
@@ -740,6 +945,7 @@ const onDirectCallControlCreated = onDocumentCreated(
 
 module.exports = {
   ACTIVE_CALL_TTL_MS,
+  DIRECT_CALL_START_LIMITS,
   RING_TTL_MS,
   acceptDirectCall,
   assertDirectConversation,
@@ -750,6 +956,7 @@ module.exports = {
   createDirectCallTokenHandler,
   declineDirectCall,
   directCallRoomName,
+  directCallStartLimitReference,
   endDirectCall,
   exactFriendshipGuard,
   expireDirectCall,

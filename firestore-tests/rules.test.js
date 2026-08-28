@@ -3385,11 +3385,9 @@ async function main() {
   );
 
   // --- messages: edit / delete / reactions / read receipts ---
-  //
-  // conversations/{id}/messages/{id} update was `if false` before this
-  // session — editMessage/deleteMessage/toggleReaction/markConversationRead
-  // in message_service.dart all call update() on this exact path, so all
-  // four were silently broken in production despite correct Dart logic.
+  // Every supported mutation is server-authoritative. The callable validates
+  // account state, sanctions, blocks, media identity and root/message shape;
+  // a participant may never bypass that boundary with a direct SDK update.
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     await setDoc(doc(ctx.firestore(), "conversations/convo-1"), {
       participantIds: ["host-uid", "invitee-uid"],
@@ -3404,10 +3402,10 @@ async function main() {
     });
   });
 
-  await check("regression: sender can edit their own message", async () => {
+  await check("SECURITY: sender cannot bypass callable message editing", async () => {
     const db = host.firestore();
     const ref = doc(db, "conversations/convo-1/messages/msg-1");
-    await assertSucceeds(
+    await assertFails(
       updateDoc(ref, { content: "edited", editedAt: new Date() }),
     );
   });
@@ -3424,11 +3422,11 @@ async function main() {
   );
 
   await check(
-    "regression: sender can soft-delete their own message (deleteMessage's update shape)",
+    "SECURITY: sender cannot bypass callable soft-delete",
     async () => {
       const db = host.firestore();
       const ref = doc(db, "conversations/convo-1/messages/msg-1");
-      await assertSucceeds(
+      await assertFails(
         updateDoc(ref, {
           content: "",
           mediaUrl: null,
@@ -3441,11 +3439,11 @@ async function main() {
   );
 
   await check(
-    "regression: any participant can toggle their OWN reaction",
+    "SECURITY: participant cannot bypass callable reaction mutation",
     async () => {
       const db = invitee.firestore();
       const ref = doc(db, "conversations/convo-1/messages/msg-1");
-      await assertSucceeds(
+      await assertFails(
         updateDoc(ref, { "reactions.invitee-uid": "🔥" }),
       );
     },
@@ -3461,11 +3459,11 @@ async function main() {
   );
 
   await check(
-    "regression: a participant can mark a message read by adding themselves to readBy",
+    "SECURITY: participant cannot bypass callable read receipt mutation",
     async () => {
       const db = invitee.firestore();
       const ref = doc(db, "conversations/convo-1/messages/msg-1");
-      await assertSucceeds(
+      await assertFails(
         updateDoc(ref, { readBy: ["host-uid", "invitee-uid"] }),
       );
     },
@@ -3760,11 +3758,17 @@ async function main() {
   );
 
   await check(
-    "SECURITY: the recipient cannot rewrite who a notification claims is from",
+    "SECURITY: the recipient cannot rewrite notification authority or push state",
     async () => {
       const db = invitee.firestore();
       const ref = doc(db, "users/invitee-uid/notifications/notif-1");
       await assertFails(updateDoc(ref, { actorId: "invitee-uid" }));
+      await assertFails(
+        updateDoc(ref, {
+          pushDeliveryStatus: "sent",
+          pushAttemptCount: 3,
+        }),
+      );
     },
   );
 
@@ -4185,12 +4189,12 @@ async function main() {
 
   await check(
     "regression: server-only create did not break reading or the " +
-      "participant update paths",
+      "callable-only mutation boundary",
     async () => {
       // `allow create: if false` must not become `allow nothing`. Seed a
       // message the way the server would and prove a participant can still
-      // read it and mark it read — editMessage/toggleReaction/
-      // markConversationRead all depend on this.
+      // read it. Read receipts, edits and reactions cross the callable
+      // boundary; direct SDK updates must remain denied.
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
         await setDoc(
           doc(ctx.firestore(), "conversations/privacy-convo/messages/seeded"),
@@ -4207,7 +4211,7 @@ async function main() {
       const db = host.firestore();
       const ref = doc(db, "conversations/privacy-convo/messages/seeded");
       await assertSucceeds(getDoc(ref));
-      await assertSucceeds(
+      await assertFails(
         updateDoc(ref, { readBy: ["invitee-uid", "host-uid"] }),
       );
     },
@@ -6825,6 +6829,127 @@ async function main() {
           updatedAt: new Date(),
         }),
       );
+    },
+  );
+
+  const serverOwnedRootPath =
+    "conversations/server-owned-host-uid-invitee-uid";
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), serverOwnedRootPath), {
+      schemaVersion: 2,
+      pairKey: "host-uid_invitee-uid",
+      participantIds: ["host-uid", "invitee-uid"],
+      participantNames: { "host-uid": "Host", "invitee-uid": "Invitee" },
+      participantEmails: { "host-uid": "", "invitee-uid": "" },
+      participantPhotoUrls: { "host-uid": "", "invitee-uid": "" },
+      unreadCounts: { "host-uid": 0, "invitee-uid": 2 },
+      readSequences: { "host-uid": 3, "invitee-uid": 1 },
+      typing: {},
+      archivedBy: [],
+      mutedBy: [],
+      lastMessage: "server-authored summary",
+      lastMessageId: "message-3",
+      lastMessageSequence: 3,
+      lastMessageType: "text",
+      lastMessageSenderId: "invitee-uid",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  });
+
+  await check(
+    "SECURITY: a participant cannot mutate either member's unread cursor",
+    async () => {
+      await assertFails(
+        updateDoc(doc(host.firestore(), serverOwnedRootPath), {
+          unreadCounts: { "host-uid": 0, "invitee-uid": 0 },
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a participant cannot mutate either member's read sequence",
+    async () => {
+      await assertFails(
+        updateDoc(doc(host.firestore(), serverOwnedRootPath), {
+          readSequences: { "host-uid": 3, "invitee-uid": 3 },
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a participant cannot forge the last-message summary",
+    async () => {
+      await assertFails(
+        updateDoc(doc(host.firestore(), serverOwnedRootPath), {
+          lastMessage: "forged by participant",
+          lastMessageId: "forged-message",
+          lastMessageSequence: 99,
+          lastMessageType: "text",
+          lastMessageSenderId: "host-uid",
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a participant cannot publish typing state on the root",
+    async () => {
+      await assertFails(
+        updateDoc(doc(host.firestore(), serverOwnedRootPath), {
+          typing: {
+            "invitee-uid": { isTyping: true, updatedAt: new Date() },
+          },
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: a participant cannot rewrite conversation participants",
+    async () => {
+      await assertFails(
+        updateDoc(doc(host.firestore(), serverOwnedRootPath), {
+          participantIds: ["host-uid", "attacker-uid"],
+        }),
+      );
+    },
+  );
+
+  await check(
+    "SECURITY: archive and mute preferences are server-owned too",
+    async () => {
+      const reference = doc(host.firestore(), serverOwnedRootPath);
+      await assertFails(updateDoc(reference, { archivedBy: ["host-uid"] }));
+      await assertFails(updateDoc(reference, { mutedBy: ["host-uid"] }));
+    },
+  );
+
+  await check(
+    "Admin-authoritative conversation root updates bypass client Rules",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), serverOwnedRootPath), {
+          unreadCounts: { "host-uid": 0, "invitee-uid": 0 },
+          readSequences: { "host-uid": 3, "invitee-uid": 3 },
+          typing: {
+            "host-uid": { isTyping: false, updatedAt: new Date() },
+          },
+          lastMessage: "authoritative server update",
+          lastMessageId: "message-4",
+          lastMessageSequence: 4,
+          lastMessageSenderId: "host-uid",
+          updatedAt: new Date(),
+        });
+      });
+      const snapshot = await getDoc(
+        doc(host.firestore(), serverOwnedRootPath),
+      );
+      assert.equal(snapshot.data().lastMessage, "authoritative server update");
+      assert.equal(snapshot.data().lastMessageSequence, 4);
+      assert.equal(snapshot.data().unreadCounts["invitee-uid"], 0);
     },
   );
 
@@ -13099,6 +13224,12 @@ async function main() {
         callId: "call-security",
         status: "ringing",
       }),
+      setDoc(doc(db, "directCallStartLimits/call-callee-limit"), {
+        schemaVersion: 1,
+        scope: "callee",
+        startedAt: [new Date()],
+        updatedAt: new Date(),
+      }),
       setDoc(doc(db, "directCallControlOutbox/call-security"), {
         callId: "call-security",
         status: "pending",
@@ -13194,6 +13325,9 @@ async function main() {
       );
       await assertFails(
         getDoc(doc(calleeDb, "directCallControlOutbox/call-security")),
+      );
+      await assertFails(
+        getDoc(doc(calleeDb, "directCallStartLimits/call-callee-limit")),
       );
     },
   );

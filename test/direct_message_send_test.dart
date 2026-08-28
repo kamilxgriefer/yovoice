@@ -1,14 +1,17 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/services/direct_attachment_payload_store.dart';
 import 'package:yovoice/features/messages/data/services/message_outbox.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 
@@ -286,6 +289,42 @@ void main() {
       },
     );
 
+    test(
+      'one chat in backoff does not delay a healthy unrelated chat',
+      () async {
+        final outbox = MessageOutbox(
+          preferences: null,
+          baseBackoff: const Duration(minutes: 1),
+          maxBackoff: const Duration(minutes: 1),
+          random: Random(1),
+        );
+        await outbox.enqueue(
+          conversationId: 'offline-chat',
+          recipientId: 'offline-recipient',
+          text: 'wait for this chat',
+        );
+        await outbox.enqueue(
+          conversationId: 'healthy-chat',
+          recipientId: 'healthy-recipient',
+          text: 'send this now',
+        );
+        final server = _OneChatUnavailableFunctions('offline-chat');
+        final service = MessageService(
+          firestore: db,
+          auth: authFor(senderId),
+          functions: server,
+          outbox: outbox,
+        );
+
+        await service.flushOutbox();
+
+        expect(server.conversationIds, ['offline-chat', 'healthy-chat']);
+        expect(outbox.entries, hasLength(1));
+        expect(outbox.entries.single.conversationId, 'offline-chat');
+        expect(outbox.entries.single.state, OutboxState.retrying);
+      },
+    );
+
     test('one send leaves exactly one message, one unread increment and '
         'one conversation summary — the client adds nothing', () async {
       final server = _ServerSendFunctions(db, senderId: senderId);
@@ -528,6 +567,7 @@ void main() {
       'a cold restart resumes persisted delivery without a new send',
       () async {
         final preferences = await SharedPreferences.getInstance();
+        final attachmentPayloads = _EmptyAttachmentPayloadStore();
         final beforeRestart = MessageOutbox(
           preferences: preferences,
           baseBackoff: Duration.zero,
@@ -538,6 +578,7 @@ void main() {
           auth: authFor(senderId),
           functions: _UnavailableFunctions('unimplemented'),
           outbox: beforeRestart,
+          attachmentPayloadStore: attachmentPayloads,
         );
         await unavailable.sendTextMessage(
           conversationId: conversationId,
@@ -557,6 +598,7 @@ void main() {
           auth: authFor(senderId),
           functions: server,
           outbox: afterRestart,
+          attachmentPayloadStore: attachmentPayloads,
         );
 
         await relaunched.resumeOutbox();
@@ -1000,6 +1042,97 @@ void main() {
       expect(await unreadFor(recipientId), 0);
     });
   });
+
+  group('mark-read paging', () {
+    test(
+      'continues to completed with a fresh request id for every page',
+      () async {
+        final server = _ReadPagingFunctions(const <bool>[false, false, true]);
+        final service = MessageService(
+          firestore: db,
+          auth: authFor(recipientId),
+          functions: server,
+        );
+
+        await service.markConversationRead(conversationId);
+
+        expect(server.payloads, hasLength(3));
+        expect(
+          server.payloads.map((payload) => payload['conversationId']).toSet(),
+          <String>{conversationId},
+        );
+        final requestIds = server.payloads
+            .map((payload) => payload['requestId'] as String)
+            .toList(growable: false);
+        expect(requestIds.toSet(), hasLength(3));
+        expect(requestIds.every((id) => id.isNotEmpty), isTrue);
+      },
+    );
+
+    test(
+      'refuses a non-advancing incomplete cursor instead of looping',
+      () async {
+        final server = _ReadPagingFunctions(
+          const <bool>[false, false],
+          sequences: const <int>[100, 100],
+        );
+        final service = MessageService(
+          firestore: db,
+          auth: authFor(recipientId),
+          functions: server,
+        );
+
+        await expectLater(
+          service.markConversationRead(conversationId),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('did not advance'),
+            ),
+          ),
+        );
+        expect(server.payloads, hasLength(2));
+      },
+    );
+
+    test('lost page response retries the same id before advancing', () async {
+      final server = _LostReadPageFunctions();
+      final service = MessageService(
+        firestore: db,
+        auth: authFor(recipientId),
+        functions: server,
+      );
+
+      await service.markConversationRead(conversationId);
+
+      expect(server.payloads, hasLength(3));
+      final requestIds = server.payloads
+          .map((payload) => payload['requestId'] as String)
+          .toList(growable: false);
+      expect(requestIds[0], requestIds[1]);
+      expect(requestIds[2], isNot(requestIds[1]));
+    });
+
+    test('production mark-read fails closed when callable is absent', () async {
+      final service = MessageService(
+        firestore: db,
+        auth: authFor(recipientId),
+        functions: _UnimplementedFunctions(),
+      );
+
+      await expectLater(
+        service.markConversationRead(conversationId),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('cannot update read receipts safely'),
+          ),
+        ),
+      );
+    });
+  });
 }
 
 /// Stands in for the DEPLOYED `sendDirectMessage` callable by doing what
@@ -1114,6 +1247,101 @@ class _SilentSuccessFunctions implements FirebaseFunctions {
   @override
   HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
       _CallableStub((_) async => <String, Object?>{'ok': true});
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _ReadPagingFunctions implements FirebaseFunctions {
+  _ReadPagingFunctions(this.completedPages, {this.sequences});
+
+  final List<bool> completedPages;
+  final List<int>? sequences;
+  final List<Map<String, dynamic>> payloads = <Map<String, dynamic>>[];
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((parameters) async {
+        if (name != 'markDirectConversationRead') {
+          throw FirebaseFunctionsException(
+            code: 'not-found',
+            message: 'Unexpected callable $name.',
+          );
+        }
+        final payload = Map<String, dynamic>.from(parameters as Map);
+        payloads.add(payload);
+        final index = payloads.length - 1;
+        return <String, Object?>{
+          'conversationId': payload['conversationId'],
+          'completed': completedPages[index],
+          'markedCount': completedPages[index] ? 0 : 100,
+          'nextReadSequence': sequences?[index] ?? (index + 1) * 100,
+          'unreadCount': completedPages[index] ? 0 : 200 - index * 100,
+        };
+      });
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _LostReadPageFunctions implements FirebaseFunctions {
+  final List<Map<String, dynamic>> payloads = <Map<String, dynamic>>[];
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((parameters) async {
+        final payload = Map<String, dynamic>.from(parameters as Map);
+        payloads.add(payload);
+        if (payloads.length == 1) {
+          throw FirebaseFunctionsException(
+            code: 'unavailable',
+            message: 'The committed page response was lost.',
+          );
+        }
+        return <String, Object?>{
+          'completed': payloads.length == 3,
+          'nextReadSequence': payloads.length == 3 ? 200 : 100,
+        };
+      });
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _UnimplementedFunctions implements FirebaseFunctions {
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((_) async {
+        throw FirebaseFunctionsException(
+          code: 'unimplemented',
+          message: 'Callable is not deployed.',
+        );
+      });
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _OneChatUnavailableFunctions implements FirebaseFunctions {
+  _OneChatUnavailableFunctions(this.unavailableConversationId);
+
+  final String unavailableConversationId;
+  final List<String> conversationIds = <String>[];
+
+  @override
+  HttpsCallable httpsCallable(String name, {HttpsCallableOptions? options}) =>
+      _CallableStub((parameters) async {
+        final payload = Map<String, dynamic>.from(parameters as Map);
+        final conversationId = payload['conversationId'] as String;
+        conversationIds.add(conversationId);
+        if (conversationId == unavailableConversationId) {
+          throw FirebaseFunctionsException(
+            code: 'unavailable',
+            message: 'This chat is temporarily offline.',
+          );
+        }
+        return <String, Object?>{'conversationId': conversationId};
+      });
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -1274,6 +1502,34 @@ class _FirstAttemptUnavailableFunctions implements FirebaseFunctions {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// The cold-restart case above is a text-only integration test. It still
+/// exercises the real attachment-outbox resume path, but without asking the
+/// host unit-test process for an application-support directory.
+class _EmptyAttachmentPayloadStore implements DirectAttachmentPayloadStore {
+  @override
+  Future<void> write(String namespace, String id, Uint8List bytes) async {}
+
+  @override
+  Future<bool> exists(String namespace, String id) async => false;
+
+  @override
+  Future<Set<String>> keys(String namespace) async => <String>{};
+
+  @override
+  Future<String> upload(
+    String namespace,
+    String id,
+    Reference reference,
+    SettableMetadata metadata,
+  ) => throw StateError('Text-only test cannot upload an attachment.');
+
+  @override
+  Future<void> delete(String namespace, String id) async {}
+
+  @override
+  Future<void> clear(String namespace) async {}
 }
 
 class _CallableStub implements HttpsCallable {

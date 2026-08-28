@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
@@ -140,6 +142,15 @@ abstract class RecordedAudio {
   /// not upload the recording.
   Source get playbackSource => throw UnsupportedError(
     '${runtimeType.toString()} does not expose a local playback source.',
+  );
+
+  /// Materializes the local recording for a durable upload outbox.
+  ///
+  /// Moment publishing keeps using the platform-native [uploadTo] path. Direct
+  /// messages call this once before reserving anything so an app termination
+  /// cannot destroy the only copy of an unfinalized voice message.
+  Future<Uint8List> readBytes() => throw UnsupportedError(
+    '${runtimeType.toString()} cannot be copied into a durable outbox.',
   );
 
   /// Uploads this recording to [reference] with [metadata] and returns the

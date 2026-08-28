@@ -1,5 +1,6 @@
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
+import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -216,6 +217,15 @@ class BlobRecordedAudio extends RecordedAudio {
     }
     final url = _playbackUrl ??= web.URL.createObjectURL(blob);
     return UrlSource(url, mimeType: contentType);
+  }
+
+  @override
+  Future<Uint8List> readBytes() async {
+    if (_discarded) {
+      throw StateError('This Voice Moment recording has been discarded.');
+    }
+    final buffer = await blob.arrayBuffer().toDart;
+    return buffer.toDart.asUint8List();
   }
 
   @override

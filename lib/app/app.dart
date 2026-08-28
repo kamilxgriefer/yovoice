@@ -12,6 +12,7 @@ import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/auth/presentation/screens/auth_gate.dart';
 import 'package:yovoice/features/calls/presentation/widgets/direct_call_coordinator.dart';
+import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
@@ -441,6 +442,16 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
     required String? actorId,
     String? notificationId,
   }) {
+    // Treat a deliberately suppressed event as consumed so the Firestore
+    // source does not replay a stale message banner after the chat closes.
+    // Background/terminated delivery never passes through this app surface.
+    if (shouldSuppressForegroundNotification(
+      type: type,
+      targetId: targetId,
+      activeConversations: ActiveConversationRegistry.instance,
+    )) {
+      return true;
+    }
     final messenger = _messengerKey.currentState;
     if (messenger == null) {
       _scheduleForegroundBannerRetry();

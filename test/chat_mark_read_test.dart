@@ -6,14 +6,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
 /// Read receipts follow the conversation snapshot, not the build cycle:
-/// mark-read fires once per newest-message advance (never per rebuild),
-/// and a rejected mark-read surfaces exactly one friendly notice per
-/// visit — the same contract the typing-presence failure already keeps.
+/// mark-read fires once per newest incoming-unread advance (never per rebuild
+/// or outgoing message). A rejected background receipt stays out of the
+/// conversation UI and is retried on the next relevant snapshot.
 void main() {
   const currentUserId = 'me-uid';
   const otherUserId = 'them-uid';
@@ -22,6 +23,7 @@ void main() {
   late PublicIdentityRepository originalIdentityRepository;
 
   setUp(() {
+    ActiveConversationRegistry.instance.clear();
     // ChatScreen's header resolves identity badges through the shared
     // singleton; point it at a scripted fetcher so no Firebase app is
     // needed and the header settles deterministically.
@@ -32,8 +34,7 @@ void main() {
         mockUser: MockUser(uid: currentUserId),
       ),
       fetchOverride: (uids) async => <String, dynamic>{
-        for (final uid in uids)
-          uid: {'role': 'user', 'vip': false, 'uid': uid},
+        for (final uid in uids) uid: {'role': 'user', 'vip': false, 'uid': uid},
       },
       flushDelay: const Duration(milliseconds: 1),
     );
@@ -41,17 +42,23 @@ void main() {
 
   tearDown(() {
     PublicIdentityRepository.instance = originalIdentityRepository;
+    ActiveConversationRegistry.instance.clear();
   });
 
-  Message messageWith({required String id, required String content}) {
+  Message messageWith({
+    required String id,
+    required String content,
+    String senderId = otherUserId,
+    List<String> readBy = const <String>[],
+  }) {
     return Message(
       id: id,
       conversationId: conversationId,
-      senderId: otherUserId,
+      senderId: senderId,
       type: MessageType.text,
       content: content,
       sentAt: DateTime.utc(2026, 3, 1, 12),
-      readBy: const [currentUserId],
+      readBy: readBy,
       reactions: const <String, String>{},
     );
   }
@@ -103,6 +110,28 @@ void main() {
     expect(service.markReadCalls, 1);
   });
 
+  testWidgets('chat route registers and releases its active conversation', (
+    tester,
+  ) async {
+    final service = _StubMessageService();
+    await tester.pumpWidget(host(service));
+    await tester.pump();
+    service.emit(const <Message>[]);
+    await tester.pumpAndSettle();
+
+    expect(
+      ActiveConversationRegistry.instance.contains(conversationId),
+      isTrue,
+    );
+
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    await tester.pump();
+    expect(
+      ActiveConversationRegistry.instance.contains(conversationId),
+      isFalse,
+    );
+  });
+
   testWidgets('a newer message triggers exactly one more mark-read', (
     tester,
   ) async {
@@ -136,8 +165,33 @@ void main() {
     expect(service.markReadCalls, 0);
   });
 
-  testWidgets('a failing mark-read surfaces one friendly notice per visit '
-      'and keeps retrying silently', (tester) async {
+  testWidgets('already-read history and outgoing messages never mark', (
+    tester,
+  ) async {
+    final service = _StubMessageService();
+    await tester.pumpWidget(host(service));
+    await tester.pump();
+
+    service.emit([
+      messageWith(
+        id: 'read',
+        content: 'already handled',
+        readBy: const <String>[currentUserId],
+      ),
+      messageWith(
+        id: 'mine',
+        content: 'outgoing',
+        senderId: currentUserId,
+        readBy: const <String>[currentUserId],
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(service.markReadCalls, 0);
+  });
+
+  testWidgets('a failing background mark-read never interrupts the chat '
+      'and keeps retrying', (tester) async {
     final service = _StubMessageService(
       markReadFailure: Exception('boxed interop noise'),
     );
@@ -148,21 +202,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(service.markReadCalls, 1);
-    expect(find.byType(SnackBar), findsOneWidget);
-    expect(find.text('Unread counts may not update right now.'), findsOneWidget);
+    expect(find.byType(SnackBar), findsNothing);
     expect(
       find.textContaining('boxed interop noise'),
       findsNothing,
       reason: 'raw exception text must never reach the UI',
     );
-
-    // Retire the notice the way a user would, then let the next snapshot
-    // retry: the retry happens, the nag does not.
-    ScaffoldMessenger.of(
-      tester.element(find.byType(TextField)),
-    ).hideCurrentSnackBar();
-    await tester.pumpAndSettle();
-    expect(find.byType(SnackBar), findsNothing);
 
     service.emit([messageWith(id: 'm1', content: 'unseen')]);
     await tester.pumpAndSettle();
@@ -170,13 +215,34 @@ void main() {
     expect(
       service.markReadCalls,
       2,
-      reason: 'a failed mark is retried on the next conversation change',
+      reason: 'a failed mark is retried on the next relevant snapshot',
     );
-    expect(
-      find.byType(SnackBar),
-      findsNothing,
-      reason: 'reported once per visit, not once per snapshot',
-    );
+    expect(find.byType(SnackBar), findsNothing);
+  });
+
+  testWidgets('snapshot bursts coalesce behind one in-flight mark-read', (
+    tester,
+  ) async {
+    final service = _StubMessageService(blockFirstMark: true);
+    await tester.pumpWidget(host(service));
+    await tester.pump();
+
+    service.emit([messageWith(id: 'm1', content: 'first')]);
+    await service.firstMarkStarted.future;
+
+    // Both snapshots arrive while page one is blocked. Only the newest state
+    // needs one follow-up pass; neither may start a concurrent cursor update.
+    service.emit([messageWith(id: 'm2', content: 'second')]);
+    service.emit([messageWith(id: 'm3', content: 'third')]);
+    await tester.pump();
+    expect(service.markReadCalls, 1);
+    expect(service.maxConcurrentMarks, 1);
+
+    service.releaseFirstMark.complete();
+    await tester.pumpAndSettle();
+
+    expect(service.markReadCalls, 2);
+    expect(service.maxConcurrentMarks, 1);
   });
 }
 
@@ -185,7 +251,7 @@ void main() {
 /// (over a fake Firestore nothing here reads) so ChatScreen keeps its real
 /// types — same pattern as messages_silent_failure_test.dart.
 class _StubMessageService extends MessageService {
-  _StubMessageService({this.markReadFailure})
+  _StubMessageService({this.markReadFailure, this.blockFirstMark = false})
     : super(
         firestore: FakeFirebaseFirestore(),
         auth: MockFirebaseAuth(
@@ -195,10 +261,15 @@ class _StubMessageService extends MessageService {
       );
 
   final Object? markReadFailure;
+  final bool blockFirstMark;
   final StreamController<List<Message>> _messages =
       StreamController<List<Message>>.broadcast();
+  final Completer<void> firstMarkStarted = Completer<void>();
+  final Completer<void> releaseFirstMark = Completer<void>();
 
   int markReadCalls = 0;
+  int concurrentMarks = 0;
+  int maxConcurrentMarks = 0;
 
   void emit(List<Message> messages) => _messages.add(messages);
 
@@ -221,7 +292,19 @@ class _StubMessageService extends MessageService {
   @override
   Future<void> markConversationRead(String conversationId) async {
     markReadCalls++;
-    if (markReadFailure != null) throw markReadFailure!;
+    concurrentMarks++;
+    if (concurrentMarks > maxConcurrentMarks) {
+      maxConcurrentMarks = concurrentMarks;
+    }
+    try {
+      if (blockFirstMark && markReadCalls == 1) {
+        firstMarkStarted.complete();
+        await releaseFirstMark.future;
+      }
+      if (markReadFailure != null) throw markReadFailure!;
+    } finally {
+      concurrentMarks--;
+    }
   }
 
   @override

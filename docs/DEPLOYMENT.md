@@ -2516,3 +2516,83 @@ Rollback the clients first if their call UI is unhealthy, then restore Rules
 and Functions from the pinned pre-release revision. Keep the scheduled expiry
 and control worker running until no `ringing`/`active` call or pending control
 outbox remains; removing cleanup first can strand locks or LiveKit rooms.
+
+## Direct chat reliability rollout (ADR-121)
+
+This release changes notification replay, durable media/direct-call
+idempotency and the conversation/message write boundary. Use the exact reviewed
+commit and keep the order below. Rules are intentionally last: old clients that
+still depend on fallback writes can break if the server-only boundary lands
+before build 11 is available to their permanent tester group.
+
+1. Run the complete Flutter, Functions, Firestore Rules and Storage Rules gates
+   from [TESTING.md](TESTING.md). In addition, run the focused lost-response,
+   notification replay, active-conversation and media suites. Record failures
+   from shared-emulator pollution separately and prove each isolated suite on a
+   fresh emulator before accepting it as unrelated.
+2. Compare production `firebase firestore:indexes` with the complete pinned
+   `firestore.indexes.json`. The only expected addition is the managed TTL for
+   `notificationDeliveryEvents.expiresAt`; existing 27 composites and five
+   field overrides must remain byte-for-byte equivalent after normalizing
+   generated `__name__`, `density` and `ttl:false` fields. Deploy without
+   `--force`, then read it back:
+
+   ```bash
+   firebase deploy --only firestore:indexes --project yovoice-ec54a
+   firebase firestore:indexes --project yovoice-ec54a --json
+   ```
+
+   The read-back must contain `notificationDeliveryEvents / expiresAt /
+   ttl:true / indexes:[]` before any new producer writes ledger rows. Managed
+   TTL activation/deletion is asynchronous; absence from read-back blocks the
+   notification rollout.
+3. Deploy notification producers and direct-call callables before the push
+   consumer:
+
+   ```bash
+   firebase deploy --only \
+     functions:onDirectMessageCreated,functions:onRoomLiveChanged,\
+     functions:sendClubInvite,functions:onClubInviteCreated,\
+     functions:onClubMemberCreated,functions:startDirectCall,\
+     functions:acceptDirectCall,functions:declineDirectCall,\
+     functions:cancelDirectCall,functions:endDirectCall \
+     --project yovoice-ec54a
+   firebase functions:list --project yovoice-ec54a
+   ```
+
+   Confirm new ACTIVE revisions and retain the prior revision names. Then deploy
+   `functions:onNotificationCreated` alone as the final backend cutover. Send a
+   disposable message and replay its trigger in a non-production/emulator
+   fixture: the inbox row must keep its original read state, source removal must
+   end as `skipped:invalid-source`, and an ambiguous FCM result must remain one
+   terminal `dispatching` claim. Start/accept/cancel with a repeated request and
+   verify one canonical call and desired terminal state.
+4. Release Hosting and native build 11 from the same commit. Confirm build 11
+   is actually **Testing** in both permanent TestFlight groups with tester
+   notification enabled, and **Available to internal testers** on the existing
+   Google Play list. Upload completion alone is not release evidence. On two authorized
+   accounts and two physical devices verify:
+   - rapid text A/B order, recipient visibility and no duplicate after a
+     temporary network loss;
+   - active same-chat: no local banner, shell overlay or notification sound;
+     different screen/background/terminated: exactly one alert and correct DM
+     routing;
+   - photo near the size limit and a voice recording preview then send on Wi-Fi
+     and throttled cellular;
+   - call start, lost-response replay, ringing, accept, mute, end and busy
+     refusal, with exactly one foreground ring.
+5. After build 11 is available and the intended tester cohort is no longer
+   pinned to build 3/10, deploy Firestore Rules, fetch the released ruleset
+   through the Rules API and compare it with the pinned source. A participant
+   read must still succeed; direct updates to conversation roots and message
+   edit/delete/reaction/read fields must fail. If adoption cannot be confirmed,
+   hold this step rather than breaking an installed client.
+6. Observe callable latency, `unavailable`/`deadline-exceeded`, notification
+   replay/claim counts and call-lock cleanup for at least one tester cycle.
+   `minInstances=1` for `sendDirectMessage` or `startDirectCall` is a separate
+   recurring-cost decision and is not part of this deployment by default.
+
+Rollback clients first, then restore Rules only after the previous compatible
+Functions are restored. Do not delete notification ledgers, call documents or
+locks manually. Keep call expiry/control cleanup running until no active call
+or pending control row remains.

@@ -5,7 +5,12 @@ function buildPushMessage({
   actorId,
   notificationId,
   title,
+  collapseId,
 }) {
+  if (typeof collapseId !== "string" || collapseId.length === 0 ||
+      collapseId.length > 64) {
+    throw new TypeError("A valid platform collapse identifier is required.");
+  }
   const isCall = type === "directCall";
   return {
     tokens,
@@ -18,7 +23,9 @@ function buildPushMessage({
     },
     android: {
       priority: "high",
+      collapseKey: collapseId,
       notification: {
+        tag: collapseId,
         channelId: isCall ? "yovoice_calls_v1" : "yovoice_activity_v3",
         sound: "yovoice_notification",
         defaultVibrateTimings: true,
@@ -26,6 +33,7 @@ function buildPushMessage({
       },
     },
     apns: {
+      headers: { "apns-collapse-id": collapseId },
       payload: {
         aps: {
           sound: "yovoice_notification.wav",
@@ -36,6 +44,7 @@ function buildPushMessage({
     },
     webpush: {
       notification: {
+        tag: collapseId,
         icon: "/icons/Icon-192.png",
         badge: "/icons/Icon-192.png",
         requireInteraction: isCall,

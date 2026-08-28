@@ -9,16 +9,23 @@ import 'package:yovoice/features/calls/data/models/direct_call.dart';
 import 'package:yovoice/features/calls/data/models/voice_connection_info.dart';
 import 'package:yovoice/features/calls/data/services/direct_call_service.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
+import 'package:yovoice/features/calls/presentation/direct_call_route_registry.dart';
+import 'package:yovoice/features/calls/presentation/widgets/direct_call_coordinator.dart';
+import 'package:yovoice/core/audio/ui_sound_service.dart';
 import 'package:yovoice/features/calls/presentation/screens/direct_call_screen.dart';
 import 'package:yovoice/features/messages/data/models/message.dart';
+import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
+import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/notifications/data/services/push_notification_service.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
 void main() {
   late PublicIdentityRepository originalIdentityRepository;
 
   setUp(() {
+    ActiveConversationRegistry.instance.clear();
     originalIdentityRepository = PublicIdentityRepository.instance;
     PublicIdentityRepository.instance = PublicIdentityRepository(
       auth: MockFirebaseAuth(
@@ -33,6 +40,7 @@ void main() {
   });
 
   tearDown(() {
+    ActiveConversationRegistry.instance.clear();
     PublicIdentityRepository.instance = originalIdentityRepository;
   });
 
@@ -183,6 +191,244 @@ void main() {
     expect(find.text('Calling…'), findsOneWidget);
     expect(find.text('Cancel'), findsOneWidget);
   });
+
+  testWidgets('a fullscreen direct call makes the covered chat notification '
+      'eligible, then restores suppression after return', (tester) async {
+    final calls = _FakeDirectCallGateway(
+      _call(status: DirectCallStatus.ringing),
+    );
+    final messages = _StubMessageService();
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: 'caller', displayName: 'Caller'),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          conversationId: 'conversation-1',
+          otherUserId: 'callee',
+          otherDisplayName: 'Callee',
+          otherEmail: '',
+          otherPhotoUrl: '',
+          messageService: messages,
+          directCallService: calls,
+          auth: auth,
+        ),
+      ),
+    );
+    messages.emit(const []);
+    await tester.pumpAndSettle();
+    expect(
+      ActiveConversationRegistry.instance.contains('conversation-1'),
+      true,
+    );
+
+    await tester.tap(find.byTooltip('Start voice call'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('Calling…'), findsOneWidget);
+    expect(
+      shouldSuppressForegroundNotification(
+        type: NotificationType.directMessage,
+        targetId: 'conversation-1',
+        activeConversations: ActiveConversationRegistry.instance,
+      ),
+      false,
+      reason: 'the call route covers the chat, so its DM must still alert',
+    );
+
+    await tester.tap(find.byTooltip('Cancel'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Calling…'), findsNothing);
+    expect(
+      ActiveConversationRegistry.instance.contains('conversation-1'),
+      true,
+    );
+  });
+
+  testWidgets('incoming-call listener resubscribes after a stream failure', (
+    tester,
+  ) async {
+    final gateway = _RetryingIncomingGateway();
+    addTearDown(gateway.dispose);
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: 'callee', displayName: 'Callee'),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DirectCallCoordinator(
+          callService: gateway,
+          auth: auth,
+          voiceService: _FakeVoiceCallService(),
+          incomingRetryDelay: (_) => Duration.zero,
+          child: const Scaffold(body: Text('home')),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(gateway.watchCount, 1);
+
+    gateway.emitError(StateError('listener interrupted'));
+    await tester.pump();
+    await tester.pump(Duration.zero);
+
+    expect(gateway.watchCount, 2);
+    expect(find.text('home'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('an old-account signal cannot navigate after auth changes', (
+    tester,
+  ) async {
+    final gateway = _RetryingIncomingGateway();
+    addTearDown(gateway.dispose);
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: 'old-callee', displayName: 'Old account'),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DirectCallCoordinator(
+          callService: gateway,
+          auth: auth,
+          voiceService: _FakeVoiceCallService(),
+          child: const Scaffold(body: Text('home')),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    gateway.emitSignal(
+      IncomingDirectCallSignal(
+        callId: 'old-account-call',
+        callerId: 'caller',
+        callerName: 'Caller',
+        callerPhotoUrl: null,
+        status: DirectCallStatus.ringing,
+        expiresAt: DateTime.now().add(const Duration(minutes: 1)),
+      ),
+    );
+    await auth.signOut();
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('home'), findsOneWidget);
+    expect(find.text('Incoming voice call'), findsNothing);
+    expect(DirectCallRouteRegistry.claim('old-account-call'), isTrue);
+    DirectCallRouteRegistry.release('old-account-call');
+  });
+
+  testWidgets('an active alert claim expires without another claim', (
+    tester,
+  ) async {
+    DirectCallAlertRegistry.configureForTesting(
+      clock: DateTime.now,
+      activeClaimTimeout: const Duration(seconds: 30),
+    );
+    addTearDown(DirectCallAlertRegistry.resetTestingConfiguration);
+    final owner = DirectCallAlertRegistry.claim(
+      'hung-alert',
+      DirectCallAlertOwner.coordinator,
+    );
+    final waiter = DirectCallAlertRegistry.claim(
+      'hung-alert',
+      DirectCallAlertOwner.push,
+    );
+    expect(owner.ownsAlert, isTrue);
+    expect(waiter.ownsAlert, isFalse);
+    bool? result;
+    unawaited(waiter.result.then((value) => result = value));
+
+    await tester.pump(const Duration(seconds: 29));
+    expect(result, isNull);
+    await tester.pump(const Duration(seconds: 1));
+    expect(result, isFalse);
+    expect(DirectCallAlertRegistry.debugEntryCount, 0);
+
+    final fallback = DirectCallAlertRegistry.claim(
+      'hung-alert',
+      DirectCallAlertOwner.push,
+    );
+    expect(fallback.ownsAlert, isTrue);
+    DirectCallAlertRegistry.complete(fallback, presented: true);
+  });
+
+  testWidgets('an old alert timer cannot evict a replacement token', (
+    tester,
+  ) async {
+    DirectCallAlertRegistry.configureForTesting(
+      clock: DateTime.now,
+      activeClaimTimeout: const Duration(seconds: 5),
+    );
+    addTearDown(DirectCallAlertRegistry.resetTestingConfiguration);
+    final oldOwner = DirectCallAlertRegistry.claim(
+      'reused-alert',
+      DirectCallAlertOwner.coordinator,
+    );
+    await tester.pump(const Duration(seconds: 4));
+    DirectCallAlertRegistry.release('reused-alert');
+    expect(await oldOwner.result, isFalse);
+
+    final replacement = DirectCallAlertRegistry.claim(
+      'reused-alert',
+      DirectCallAlertOwner.push,
+    );
+    bool? replacementResult;
+    unawaited(replacement.result.then((value) => replacementResult = value));
+    await tester.pump(const Duration(seconds: 1));
+    expect(replacementResult, isNull);
+    expect(DirectCallAlertRegistry.debugEntryCount, 1);
+
+    await tester.pump(const Duration(seconds: 4));
+    expect(replacementResult, isFalse);
+    expect(DirectCallAlertRegistry.debugEntryCount, 0);
+  });
+
+  testWidgets('silent coordinator releases call alert for FCM fallback', (
+    tester,
+  ) async {
+    final gateway = _RetryingIncomingGateway();
+    addTearDown(gateway.dispose);
+    final auth = MockFirebaseAuth(
+      signedIn: true,
+      mockUser: MockUser(uid: 'callee', displayName: 'Callee'),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DirectCallCoordinator(
+          callService: gateway,
+          auth: auth,
+          voiceService: _FakeVoiceCallService(),
+          soundService: UiSoundService(enabled: () => false),
+          child: const Scaffold(body: Text('home')),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    gateway.emitSignal(
+      IncomingDirectCallSignal(
+        callId: 'silent-call',
+        callerId: 'caller',
+        callerName: 'Caller',
+        callerPhotoUrl: null,
+        status: DirectCallStatus.ringing,
+        expiresAt: DateTime.now().add(const Duration(minutes: 1)),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final fallback = DirectCallAlertRegistry.claim(
+      'silent-call',
+      DirectCallAlertOwner.push,
+    );
+    expect(fallback.ownsAlert, isTrue);
+    DirectCallAlertRegistry.complete(fallback, presented: true);
+  });
 }
 
 DirectCall _call({required DirectCallStatus status}) {
@@ -276,6 +522,55 @@ class _FakeDirectCallGateway implements DirectCallGateway {
     endCalls++;
     _emit(DirectCallStatus.ended);
   }
+
+  @override
+  Future<VoiceConnectionInfo> createJoinToken(String callId) {
+    throw UnimplementedError();
+  }
+}
+
+class _RetryingIncomingGateway implements DirectCallGateway {
+  final StreamController<List<IncomingDirectCallSignal>> _incoming =
+      StreamController<List<IncomingDirectCallSignal>>.broadcast();
+  int watchCount = 0;
+
+  void emitError(Object error) => _incoming.addError(error);
+
+  void emitSignal(IncomingDirectCallSignal signal) => _incoming.add([signal]);
+
+  Future<void> dispose() => _incoming.close();
+
+  @override
+  Stream<List<IncomingDirectCallSignal>> watchIncomingCalls() {
+    watchCount++;
+    return _incoming.stream;
+  }
+
+  @override
+  Future<DirectCall?> getCall(String callId) async => null;
+
+  @override
+  Stream<DirectCall> watchCall(String callId) => const Stream.empty();
+
+  @override
+  Future<String> startCall({
+    required String calleeId,
+    required String conversationId,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> accept(String callId) async {}
+
+  @override
+  Future<void> decline(String callId) async {}
+
+  @override
+  Future<void> cancel(String callId) async {}
+
+  @override
+  Future<void> end(String callId) async {}
 
   @override
   Future<VoiceConnectionInfo> createJoinToken(String callId) {

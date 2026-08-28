@@ -2171,6 +2171,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Rolling caller/callee/pair anti-abuse state for direct-call starts.
+    // It is consumed atomically with call creation and is operationally
+    // sensitive; neither its counters nor its subjects are client-visible.
+    match /directCallStartLimits/{limitId} {
+      allow read, write: if false;
+    }
+
     match /directCallControlOutbox/{callId} {
       allow read, write: if false;
     }
@@ -2225,9 +2232,13 @@ service cloud.firestore {
       // ADR-062.
       allow create: if false;
 
-      allow update: if isSignedIn() &&
-          request.auth.uid in resource.data.participantIds &&
-          request.resource.data.participantIds == resource.data.participantIds;
+      // Server-only for the same reason as create. An update is no less
+      // authoritative than bootstrap: it can move either member's unread/read
+      // cursor, forge the last-message summary, publish typing on behalf of the
+      // peer, or rewrite archive/mute preferences. Every supported mutation is
+      // owned by the direct-message callables above; Admin SDK writes bypass
+      // Rules, while no participant client may mutate the root.
+      allow update: if false;
 
       allow delete: if false;
 
@@ -2272,41 +2283,15 @@ service cloud.firestore {
         // is written here.
         allow create: if false;
 
-        // message_service.dart's editMessage/deleteMessage/toggleReaction/
-        // markConversationRead all call update() on this path — this was
-        // `if false` before, meaning all four were silently broken in
-        // production despite the Dart implementation being correct. Three
-        // distinct, narrowly-scoped update shapes, matching exactly what
-        // those four methods actually write:
-        allow update: if isConversationParticipant(conversationId) &&
-            (
-              // sender edits or soft-deletes (deleteMessage clears content/
-              // mediaUrl/reactions and sets isDeleted, rather than an
-              // actual delete, hence this being an update not a delete).
-              (
-                resource.data.senderId == request.auth.uid &&
-                request.resource.data.diff(resource.data).affectedKeys()
-                    .hasOnly(['content', 'editedAt', 'mediaUrl', 'isDeleted', 'reactions'])
-              ) ||
-              // any participant toggles only their OWN reaction key.
-              (
-                request.resource.data.diff(resource.data).affectedKeys()
-                    .hasOnly(['reactions']) &&
-                request.resource.data.reactions.diff(resource.data.reactions)
-                    .affectedKeys().hasOnly([request.auth.uid])
-              ) ||
-              // any participant marks the message read by adding only
-              // themselves to readBy — never removing entries, never
-              // adding on someone else's behalf.
-              (
-                request.resource.data.diff(resource.data).affectedKeys()
-                    .hasOnly(['readBy']) &&
-                request.resource.data.readBy.hasAll(resource.data.readBy) &&
-                request.resource.data.readBy.hasOnly(
-                  resource.data.readBy.concat([request.auth.uid])
-                )
-              )
-            );
+        // Server-only, permanently. The edit/delete/reaction/read callables
+        // validate active-account state, sanctions, blocks, canonical media
+        // references, reaction ownership and the conversation root in the same
+        // transaction. A client update predicate cannot preserve those
+        // invariants: the former sender branch let a modified client replace a
+        // private attachment with an arbitrary HTTPS URL, revive a soft-deleted
+        // message and rewrite the whole reactions map. Admin SDK writes bypass
+        // Rules, so the authoritative callables remain the only mutation path.
+        allow update: if false;
 
         allow delete: if false;
       }

@@ -433,8 +433,12 @@ class MessageOutbox {
       queuedAt: _clock(),
     );
     _entries.add(entry);
-    await _persist();
+    // The chat can paint the optimistic bubble in the same frame as the tap.
+    // Persistence still completes before enqueue() returns (and therefore
+    // before the composer considers the local save finished), but a platform
+    // preference write must not sit in front of perceived send latency.
     _notify();
+    await _persist();
     return entry;
   });
 

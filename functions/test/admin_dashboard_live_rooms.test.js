@@ -10,10 +10,10 @@
 // `resource.data.get('status', 'active')` reads it.
 //
 // The counts here are aggregates over collections shared with every other
-// test file in the suite, so no single total is this file's to assert.
-// What IS this file's is the DIFFERENCE one room makes: the legacy room is
-// made inactive between two calls, and the number has to move. Under the
-// old query it did not move at all, because the room was never counted.
+// test file in the suite, so no global before/after total is this file's to
+// assert. The integration seam pins that the dashboard publishes the exact
+// status-shape-safe reader length; live_rooms_status_shape.test.js pins the
+// real legacy-active versus explicitly suspended reader behavior.
 //
 //   firebase emulators:exec --only auth,firestore --project demo-yovoice \
 //     'npm --prefix functions test'
@@ -30,7 +30,10 @@ const { getFirestore } = require("firebase-admin/firestore");
 
 if (getApps().length === 0) initializeApp();
 
-const { getAdminDashboard } = require("../admin/dashboard");
+const {
+  getAdminDashboard,
+  loadAdminDashboardStats,
+} = require("../admin/dashboard");
 const { setProtectedOwnerUidForTests } = require("../utils/roles");
 
 const db = getFirestore();
@@ -84,19 +87,19 @@ beforeEach(async () => {
 afterEach(wipe);
 
 describe("getAdminDashboard", () => {
-  test("a live room with no status field is counted in liveRooms", async () => {
-    const withLegacyLive = await asOwner();
-
-    // The ONLY change between the two calls, and an EXPLICIT status is the
-    // one thing that does make a room inactive.
-    await legacyRoomRef().set({ status: "suspended" }, { merge: true });
-    const withLegacySuspended = await asOwner();
-
-    assert.ok(
-      withLegacyLive.liveRooms > withLegacySuspended.liveRooms,
-      "suspending the legacy room must lower `liveRooms`; if the number " +
-        "does not move, the room was never being counted",
-    );
+  test("the dashboard derives liveRooms from the status-shape-safe reader", async () => {
+    // Other files create and retire rooms concurrently in the shared emulator,
+    // so a before/after global-count delta is inherently racy. Inject the
+    // reader result at the seam and prove the dashboard publishes its exact
+    // length; live_rooms_status_shape.test.js independently proves that the
+    // real reader includes a live legacy room and excludes it once suspended.
+    const result = await loadAdminDashboardStats({
+      listLiveRooms: async ({ surface }) => {
+        assert.equal(surface, "getAdminDashboard");
+        return { docs: [{ id: LEGACY_ROOM }] };
+      },
+    });
+    assert.equal(result.liveRooms, 1);
   });
 
   test("the other totals are still real aggregates", async () => {

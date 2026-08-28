@@ -35,6 +35,7 @@ import 'package:yovoice/features/premium/premium_gates.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
+import 'package:yovoice/features/messages/data/services/active_conversation_registry.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
 import 'package:yovoice/features/moderation/data/services/moderation_service.dart';
@@ -52,6 +53,13 @@ import 'package:yovoice/features/rooms/presentation/screens/room_type_selector_s
 import 'package:yovoice/features/rooms/presentation/widgets/room_mini_bar.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+
+@visibleForTesting
+bool shouldPresentIncomingMessageOverlay({
+  required int selectedIndex,
+  required String conversationId,
+  required ActiveConversationRegistry activeConversations,
+}) => selectedIndex != 1 && !activeConversations.contains(conversationId);
 
 /// Serializes presentation of the More menu without blocking the destination
 /// subsequently opened from it.
@@ -528,7 +536,11 @@ class _MainShellState extends State<MainShell>
 
     if (_hasInitialConversationSnapshot &&
         newestIncomingConversation != null &&
-        _selectedIndex != 1) {
+        shouldPresentIncomingMessageOverlay(
+          selectedIndex: _selectedIndex,
+          conversationId: newestIncomingConversation.id,
+          activeConversations: ActiveConversationRegistry.instance,
+        )) {
       _showIncomingMessageOverlay(newestIncomingConversation, currentUserId);
     }
 
