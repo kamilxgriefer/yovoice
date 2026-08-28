@@ -754,8 +754,9 @@ permission flags).
   77dp tall against Android's 66dp adaptive safe area. The Android-only inset
   is now 16%, matching the generator default and keeping the symbol within the
   safe area on circle, squircle and rounded-square masks. The canonical PNG,
-  legacy Android icon and every iOS/App Store asset are unchanged. Delivery is
-  Android build 7; a Play-installed launcher check remains release evidence.
+  legacy Android icon and every iOS/App Store asset are unchanged. Android
+  build 7 is available to the existing 10 internal testers; an update and
+  fresh-install launcher check remain release evidence.
 - **FIXED — native launcher/store icons still contained the retired black
   square.** Web favicons had already moved to the transparent canonical mark,
   but `flutter_launcher_icons` continued reading the old opaque `logo.png`.
@@ -2425,8 +2426,9 @@ permission flags).
   and iOS declares `GIDClientID`. Automated tests/config checks are not a real
   provider login: new-account and returning-account smokes on production web
   and store-installed builds remain release evidence. The signed iOS build 6
-  artifact passed entitlement/configuration inspection but is not on TestFlight
-  because this Mac has no App Store Connect upload authorization.
+  artifact passed entitlement/configuration inspection and App Store Connect
+  accepted it for TestFlight processing; tester availability and a
+  real-account smoke remain pending.
 - **Fixed in source and provider configuration — Sign in with Apple was a
   placeholder.** Apple App ID `app.yovoice` now has the capability, Service ID
   `app.yovoice.web` owns the three verified web domains and Firebase callback,

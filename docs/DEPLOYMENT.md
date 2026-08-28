@@ -15,6 +15,38 @@ deployables described in
 | Storage rules | `firebase deploy --only storage` | Manual |
 | `yovoice-website` | Vercel | Automatic, on push to `main` (separate repo) |
 
+### Released 2026-08-28: Android adaptive launcher safe area and build 7
+
+**ANDROID INTERNAL DEPLOYED from
+`ca15697ab3fec8e291b755b44f1d0518c74ea653`.** Android 8+ now applies a
+16% adaptive-foreground inset instead of 8%, keeping the complete YO mark
+inside Android's 66dp safe area across circle, squircle and rounded-square OEM
+masks. The iOS/App Store artwork, canonical transparent mark, legacy Android
+rasters and backend are unchanged; no web-facing code or assets changed.
+
+Google Play internal testing reports `7 (1.0.0)` as available to the existing
+10-tester list, published on 28 August at 06:23 CEST. Play's release preview
+showed zero newly unsupported devices and retained all 12,294 supported
+phones. The signed 104,037,451-byte AAB SHA-256 is
+`795785e569410398c5fced1dc68dc9475484fb01ffa393f55c25e50a3dbaadad`;
+its package is `app.yovoice`, version code 7, and upload-certificate SHA-1 is
+`AF:E0:BF:45:DC:13:36:C2:CC:1D:72:EE:55:4B:D9:AE:C7:09:44:85`.
+Bundle inspection confirmed that the packaged adaptive XML contains the 16%
+inset.
+
+Release verification passed 1,382 Flutter tests, the 9 focused launcher/icon
+tests, `flutter analyze`, artifact signature/version/hash inspection, circle
+and squircle safe-area previews, CodeQL, browser smoke, and independent QA,
+DevOps and principal reviews. The exact-SHA
+[Hosting workflow](https://github.com/kamilxgriefer/yovoice/actions/runs/33141379949),
+[browser smoke](https://github.com/kamilxgriefer/yovoice/actions/runs/33141380054)
+and [CodeQL](https://github.com/kamilxgriefer/yovoice/actions/runs/33141379922)
+all passed. The Hosting workflow performed its automatic verification/build
+gates only; no manual Hosting, Firebase backend or iOS deployment belongs to
+this Android-only release. A Play-installed launcher check on update and fresh
+install remains tester acceptance because this workstation has no Android
+device or emulator.
+
 ### Released 2026-08-28: Google/Apple authentication recovery and build 6
 
 **DEPLOYED from `91353d71ae10d0de13926894a3d65c70fc7425ca`.** Build 6
@@ -41,9 +73,11 @@ Google Play internal testing reports `6 (1.0.0)` available to the existing
 The signed iOS `1.0.0 (6)` IPA is retained at SHA-256
 `15ea8f770d333e8862084b39e09a0589f5a66c6bcee7717a62fe44839bdbe7d8`;
 its distribution signature, production profile, Apple Sign-In entitlement and
-Google client configuration passed artifact inspection. It is **not** on
-TestFlight: App Store export/upload failed with `Failed to Use Accounts`, and
-this Mac has neither App Store Connect upload authorization nor Transporter.
+Google client configuration passed artifact inspection. The export completed
+with `EXPORT SUCCEEDED`, and App Store Connect accepted build 6 for TestFlight
+processing. External-tester availability and real-account acceptance remain
+separate checks; the earlier `Failed to Use Accounts` note no longer describes
+the final upload attempt.
 
 Release verification passed 1,382 Flutter tests, the 46 focused auth/profile
 tests, `flutter analyze`, the full CI rules/Functions suite, browser smoke,
@@ -83,11 +117,10 @@ Firestore Rules tests, `flutter analyze`, the full Hosting workflow and the
 Google Play artifact validation. A signed iOS build 5 IPA was also produced at
 SHA-256
 `356cb411148d368e838425abf6532e07b5ea9b2331f543725350bf40d6fb85ad`;
-it is not an App Store release because no App Store Connect upload
-authorization is configured in this workspace. A production two-account
-ringing/answer/end smoke was not fabricated without controlled disposable
-accounts; build 5 exposes that final real-device acceptance path to the tester
-cohort.
+it was not uploaded during that release because App Store Connect upload
+authorization was then unavailable. A production two-account ringing/answer/end
+smoke was not fabricated without controlled disposable accounts; build 5
+exposes that final real-device acceptance path to the tester cohort.
 
 ### Released 2026-08-27: Voice Moment local review, custom availability and authoritative capacity
 
@@ -250,9 +283,11 @@ resolves only to the SPA fallback. Android builds 4 and 5 carry the v3 native
 assets/channel; build 5 is available to 10 internal testers. Production
 `onNotificationCreated` targets `yovoice_activity_v3`, while incoming calls use
 the separate maximum-priority `yovoice_calls_v1` channel. The signed iOS build
-5 artifact contains the matching WAV but awaits App Store Connect upload
-authorization. Physical speaker/headphone/DND listening remains an acceptance
-check for the tester cohort, not a claim supplied by automated waveform tests.
+5 artifact contains the matching WAV but was retained without upload because
+App Store Connect authorization was unavailable during that release; build 6
+later established the upload path. Physical speaker/headphone/DND listening
+remains an acceptance check for the tester cohort, not a claim supplied by
+automated waveform tests.
 
 1. Run the full Flutter/Functions gates plus:
 

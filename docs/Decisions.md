@@ -7185,8 +7185,8 @@ in-app pack; Android builds 4 and 5 create `yovoice_activity_v3`, build 5 is
 available on the internal track, and production `onNotificationCreated` now
 targets the v3 activity channel plus the dedicated `yovoice_calls_v1` incoming
 call channel. The signed iOS build 5 artifact contains the matching APNs WAV,
-but was not uploaded because this workspace has no App Store Connect upload
-authorization.
+but was not uploaded because App Store Connect authorization was unavailable
+during that release; build 6 later established the upload path.
 Web Hosting receives the in-app pack under the cache-safe `audio/ui/v3/` path;
 iOS and Android require clean native builds. Acceptance includes phone
 speaker, headphones, silent/DND, active LiveKit, Bluetooth and foreground /

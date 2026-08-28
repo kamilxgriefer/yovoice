@@ -17,18 +17,20 @@ someone decide what to pick up next.
 ## Done
 
 - **Android adaptive launcher icon respects the platform safe area**
-  (2026-08-28, **ANDROID BUILD 7 PENDING INTERNAL DELIVERY**): the Android 8+
-  foreground inset moves from 8% to 16%, bringing the full YO mark inside the
-  66dp adaptive safe area used by circle, squircle and OEM masks. iOS/App
-  Store artwork, the canonical transparent mark and legacy Android rasters are
-  byte-unchanged. A regression test pins both generator configuration and the
-  source adaptive-icon XML consumed by the Android build.
+  (2026-08-28, **ANDROID BUILD 7 INTERNAL — AVAILABLE TO 10 TESTERS**): the
+  Android 8+ foreground inset moves from 8% to 16%, bringing the full YO mark
+  inside the 66dp adaptive safe area used by circle, squircle and OEM masks.
+  iOS/App Store artwork, the canonical transparent mark and legacy Android
+  rasters are byte-unchanged. A regression test pins both generator
+  configuration and the source adaptive-icon XML consumed by the Android
+  build.
 
 - **P0 Google/Apple sign-in and registration recovery** (2026-08-28,
-  **DEPLOYED TO WEB; ANDROID BUILD 6 INTERNAL; SIGNED iOS BUILD 6 RETAINED**;
-  TestFlight authorization and real-account smoke pending): Login and Registration now
-  expose the same federated actions. Valid provider sessions are no longer
-  rolled back by a concurrent or transient Firestore profile failure;
+  **DEPLOYED TO WEB; ANDROID BUILD 6 INTERNAL; iOS BUILD 6 UPLOADED TO APP
+  STORE CONNECT**; TestFlight availability and real-account smoke pending):
+  Login and Registration now expose the same federated actions. Valid provider
+  sessions are no longer rolled back by a concurrent or transient Firestore
+  profile failure;
   authenticated entry waits for a bounded, retried, rules-safe profile
   bootstrap. Provider names are normalized to the canonical 2–120 UTF-16-unit
   contract without splitting graphemes, an in-flight account switch cannot
