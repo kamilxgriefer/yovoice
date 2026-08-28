@@ -253,21 +253,30 @@ The Studio now includes two working tools:
   published Voice Moment likes/comments/audio duration. It does not claim
   historical reach, listens, growth or attendance because no such event
   model exists yet.
-- **Pinned post** lets an eligible Premium Creator select exactly one of
-  their canonical published Voice Moments. The server-owned pointer is shown
-  on both the Creator's own and public profile and is removed when the Moment,
-  Creator identity or Premium entitlement stops being eligible.
+- **Pinned post** lets an eligible Creator select exactly one of their
+  canonical published Voice Moments. Eligibility can come from a live paid
+  Creator entitlement or the derived moderator preview. The server-owned
+  pointer is shown on both the Creator's own and public profile and is removed
+  when the Moment or effective Creator access stops being eligible.
 
 Monetization remains unbuilt and is intentionally absent from the Studio UI.
 
 ## Premium entitlements
 
-`entitlements/{uid}` is the only paid-access source. A capability requires an
-active/trialing/grace subscription whose period has not ended, the common
-`premiumIdentityEnabled` flag and its feature flag (`creatorEnabled` or
+`entitlements/{uid}` is the only **paid-access** source. A paid capability
+requires an active/trialing/grace entitlement whose period has not ended, the
+common `premiumIdentityEnabled` flag and its feature flag (`creatorEnabled` or
 `canCreateClubs`). `users/{uid}.premiumIdentity` and the visible VIP badge are
 public presentation data only; neither authorizes Creator, Creator Studio or
 Clubs. Client gates fail closed and Firestore Rules enforce protected writes.
+
+Active `moderator` and `superModerator` accounts also receive a derived,
+revocable Premium-preview overlay so those roles can test identity, Creator
+and Clubs. It is kept in a separate client/model flag and server access
+resolver: it does not fabricate `isPremium`, plan, period, renewal or provider
+state. Acting backend operations require the signed role claim and
+client-immutable mirror to match; demotion or an inactive account removes the
+overlay while leaving any real paid entitlement untouched.
 
 The subscription plumbing is ready for verified grants, but real App
 Store/Google Play purchase adapters and an IAP client are not configured.

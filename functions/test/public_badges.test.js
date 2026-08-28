@@ -32,13 +32,13 @@ if (getApps().length === 0) initializeApp();
 const {
   deriveBadge,
   derivePublicRole,
-  syncPublicBadgeForUser,
+  syncPublicBadgeForUser: syncPublicBadgeForUserRaw,
   getPublicBadges,
   MAX_BATCH_UIDS,
 } = require("../badges/public_badges");
 
 const {
-  backfill,
+  backfill: backfillRaw,
   assertOwnerGuard,
   emptyReport,
   EXPECTED_PROJECT,
@@ -69,10 +69,32 @@ const FIXTURES = [
   `${P}staff-vip`,
   `${P}invalid`,
   `${P}orphan`,
+  `${P}auth-orphan`,
+  `${P}auth-disabled`,
   `${P}forged`,
   OWNER_UID,
   ...NON_OWNER_VOCAB.map((role) => `${P}${role}`),
 ];
+
+const activeAuthUser = (uid) => ({ uid, disabled: false });
+const fetchActiveAuthUser = async (uid) => activeAuthUser(uid);
+
+function syncPublicBadgeForUser(
+  uid,
+  { authUser = activeAuthUser(uid), fetchAuthUser = null } = {},
+) {
+  return syncPublicBadgeForUserRaw(uid, {
+    database: db,
+    fetchAuthUser: fetchAuthUser ?? (async () => authUser),
+  });
+}
+
+function backfill(options) {
+  return backfillRaw({
+    ...options,
+    fetchAuthUser: options.fetchAuthUser ?? fetchActiveAuthUser,
+  });
+}
 
 async function wipeOwn() {
   await Promise.all(
@@ -103,7 +125,10 @@ describe("derivation", () => {
         "staffRole",
       ]);
       assert.equal(badge.staffRole, role);
-      assert.equal(badge.isVip, false);
+      assert.equal(
+        badge.isVip,
+        role === "moderator" || role === "superModerator",
+      );
     }
   });
 
@@ -181,8 +206,36 @@ describe("derivation", () => {
     assert.equal(withVip.staffRole, "user");
   });
 
+  test("role publication is byte-exact and never trims into staff", () => {
+    assert.equal(deriveBadge({ user: { role: " moderator " } }), null);
+    const paid = deriveBadge({
+      user: { role: " moderator ", premiumIdentity: true },
+    });
+    assert.equal(paid.staffRole, "user");
+    assert.equal(paid.isVip, true, "independent paid identity stays truthful");
+    assert.equal(
+      derivePublicRole(`${P}spaced`, { role: " superAdmin " })
+        .unconfirmedSuperAdmin,
+      false,
+    );
+  });
+
   test("a deleted user derives nothing even with a lingering grant", () => {
     assert.equal(deriveBadge({ user: null, grant: { expiresAt: null } }), null);
+  });
+
+  test("an inactive moderator derives no public badge or VIP identity", () => {
+    for (const state of [
+      { banned: true },
+      { disabled: true },
+      { deleted: true },
+      { status: "deleted" },
+    ]) {
+      assert.equal(
+        deriveBadge({ user: { role: "moderator", ...state } }),
+        null,
+      );
+    }
   });
 });
 
@@ -208,6 +261,7 @@ describe("sync", () => {
     await syncPublicBadgeForUser(uid);
     doc = await db.collection("publicBadges").doc(uid).get();
     assert.equal(doc.data().staffRole, "moderator");
+    assert.equal(doc.data().isVip, true);
 
     // Revocation: the role returns to user, the badge disappears —
     // however many stale trigger deliveries replay afterwards.
@@ -227,6 +281,76 @@ describe("sync", () => {
 
     await db.collection("users").doc(uid).delete();
     await syncPublicBadgeForUser(uid);
+    assert.equal(
+      (await db.collection("publicBadges").doc(uid).get()).exists,
+      false,
+    );
+  });
+
+  test("suspending a moderator removes the public badge", async () => {
+    const uid = `${P}moderator`;
+    await db.collection("users").doc(uid).set({
+      role: "moderator",
+      banned: false,
+    });
+    await syncPublicBadgeForUser(uid);
+    assert.equal(
+      (await db.collection("publicBadges").doc(uid).get()).data().isVip,
+      true,
+    );
+
+    await db.collection("users").doc(uid).update({ banned: true });
+    await syncPublicBadgeForUser(uid);
+    assert.equal(
+      (await db.collection("publicBadges").doc(uid).get()).exists,
+      false,
+    );
+  });
+
+  test("an Auth-orphan profile cannot retain or recreate a public badge", async () => {
+    const uid = `${P}auth-orphan`;
+    await db.collection("users").doc(uid).set({ role: "moderator" });
+    await db.collection("publicBadges").doc(uid).set({
+      staffRole: "moderator",
+      isVip: true,
+      schemaVersion: 1,
+    });
+
+    const result = await syncPublicBadgeForUser(uid, { authUser: null });
+    assert.equal(result.outcome, "removed");
+    assert.equal(
+      (await db.collection("publicBadges").doc(uid).get()).exists,
+      false,
+    );
+
+    // A later user/grant trigger replay still cannot recreate the identity.
+    await syncPublicBadgeForUser(uid, { authUser: null });
+    assert.equal(
+      (await db.collection("publicBadges").doc(uid).get()).exists,
+      false,
+    );
+  });
+
+  test("a disabled Auth identity cannot retain or recreate a public badge", async () => {
+    const uid = `${P}auth-disabled`;
+    await db.collection("users").doc(uid).set({ role: "superModerator" });
+    await db.collection("publicBadges").doc(uid).set({
+      staffRole: "superModerator",
+      isVip: true,
+      schemaVersion: 1,
+    });
+
+    await syncPublicBadgeForUser(uid, {
+      authUser: { uid, disabled: true },
+    });
+    assert.equal(
+      (await db.collection("publicBadges").doc(uid).get()).exists,
+      false,
+    );
+
+    await syncPublicBadgeForUser(uid, {
+      authUser: { uid, disabled: true },
+    });
     assert.equal(
       (await db.collection("publicBadges").doc(uid).get()).exists,
       false,
@@ -322,6 +446,7 @@ describe("getPublicBadges", () => {
       ]);
     }
     assert.equal(result.badges[staffUid].staffRole, "superModerator");
+    assert.equal(result.badges[staffUid].isVip, true);
     assert.equal(result.badges[vipUid].isVip, true);
   });
 
@@ -402,6 +527,7 @@ describe("backfill", () => {
     await Promise.all([
       db.collection("users").doc(`${P}plain`).set({ role: "user" }),
       db.collection("users").doc(`${P}moderator`).set({ role: "moderator" }),
+      db.collection("users").doc(`${P}support`).set({ role: "support" }),
       db
         .collection("users")
         .doc(`${P}vip-sub`)
@@ -464,11 +590,11 @@ describe("backfill", () => {
     assert.ok(first.appliedWrites >= 4);
     assert.ok(first.appliedDeletes >= 1);
 
-    assert.equal(
-      (await db.collection("publicBadges").doc(`${P}moderator`).get()).data()
-        .staffRole,
-      "moderator",
-    );
+    const moderatorBadge = (
+      await db.collection("publicBadges").doc(`${P}moderator`).get()
+    ).data();
+    assert.equal(moderatorBadge.staffRole, "moderator");
+    assert.equal(moderatorBadge.isVip, true);
     // The owner's badge survives as superAdmin; the forged one is
     // written as the tier it actually holds.
     assert.equal(
@@ -500,9 +626,76 @@ describe("backfill", () => {
     assert.ok(second.upToDate >= 4);
   });
 
+  test("backfill removes Auth-orphan/disabled badges and never republishes them", async () => {
+    const orphanUid = `${P}auth-orphan`;
+    const disabledUid = `${P}auth-disabled`;
+    await Promise.all([
+      db.collection("users").doc(orphanUid).set({ role: "moderator" }),
+      db.collection("users").doc(disabledUid).set({
+        role: "superModerator",
+      }),
+      db.collection("publicBadges").doc(orphanUid).set({
+        staffRole: "moderator",
+        isVip: true,
+        schemaVersion: 1,
+      }),
+      db.collection("publicBadges").doc(disabledUid).set({
+        staffRole: "superModerator",
+        isVip: true,
+        schemaVersion: 1,
+      }),
+    ]);
+    const fetchAuthUser = async (uid) => {
+      if (uid === orphanUid) return null;
+      if (uid === disabledUid) return { uid, disabled: true };
+      return activeAuthUser(uid);
+    };
+
+    const dryRun = await backfill({
+      db,
+      args,
+      uidPrefix: P,
+      fetchAuthUser,
+    });
+    assert.equal(dryRun.authOrphans, 1);
+    assert.equal(dryRun.disabledAuthAccounts, 1);
+    assert.equal(dryRun.toDelete, 2);
+    assert.equal(dryRun.appliedDeletes, 0);
+    assert.equal(JSON.stringify(dryRun).includes(orphanUid), false);
+    assert.equal(JSON.stringify(dryRun).includes(disabledUid), false);
+
+    const applied = await backfill({
+      db,
+      args: { ...args, apply: true },
+      uidPrefix: P,
+      fetchAuthUser,
+    });
+    assert.equal(applied.appliedDeletes, 2);
+    assert.equal(
+      (await db.collection("publicBadges").doc(orphanUid).get()).exists,
+      false,
+    );
+    assert.equal(
+      (await db.collection("publicBadges").doc(disabledUid).get()).exists,
+      false,
+    );
+
+    const converged = await backfill({
+      db,
+      args: { ...args, apply: true },
+      uidPrefix: P,
+      fetchAuthUser,
+    });
+    assert.equal(converged.appliedWrites, 0);
+    assert.equal(converged.appliedDeletes, 0);
+  });
+
   test("apply refuses when the scan finds an invalid role", async () => {
     await seedWorld();
     await db.collection("users").doc(`${P}invalid`).set({ role: "wizard" });
+    await db.collection("users").doc(`${P}spaced`).set({
+      role: " moderator ",
+    });
 
     await assert.rejects(
       () => backfill({ db, args: { ...args, apply: true }, uidPrefix: P }),
@@ -516,7 +709,7 @@ describe("backfill", () => {
 
     // The dry run still reports the anomaly rather than refusing.
     const report = await backfill({ db, args, uidPrefix: P });
-    assert.ok(report.invalidRoles >= 1);
+    assert.ok(report.invalidRoles >= 2);
   });
 
   test("the backfill refuses to run without the owner guard", async () => {

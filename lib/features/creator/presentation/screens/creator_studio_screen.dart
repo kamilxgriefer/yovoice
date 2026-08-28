@@ -278,7 +278,7 @@ class _CreatorStudioContent extends StatelessWidget {
             builder: (context, snapshot) {
               final entitlements =
                   snapshot.data ?? SubscriptionEntitlements.free;
-              if (!snapshot.hasData || entitlements.creatorEnabled) {
+              if (!snapshot.hasData || entitlements.canUseCreator) {
                 return const SizedBox.shrink();
               }
               return const Padding(

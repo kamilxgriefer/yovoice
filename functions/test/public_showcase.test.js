@@ -227,6 +227,13 @@ describe("public showcase people projection", () => {
       person("support", {
         user: { ...person("support").user, role: "support" },
       }),
+      person("role-transition", {
+        user: {
+          ...person("role-transition").user,
+          role: "user",
+          roleTransitionInProgress: true,
+        },
+      }),
       person("unknown-role", {
         user: { ...person("unknown-role").user, role: "futureStaffRole" },
       }),

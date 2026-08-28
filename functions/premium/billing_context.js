@@ -136,6 +136,7 @@ function billingManager(source) {
 function entitlementIsActiveAt(entitlements, nowMs) {
   const periodEndMs = entitlements.currentPeriodEnd?.toMillis?.();
   return (
+    entitlements.isPremium === true &&
     ["active", "trialing", "grace"].includes(entitlements.status) &&
     Number.isFinite(periodEndMs) &&
     periodEndMs > nowMs
@@ -160,12 +161,17 @@ function buildBillingContext(
 ) {
   const manager = billingManager(state.entitlements.source);
   const active = entitlementIsActiveAt(state.entitlements, nowMs);
+  const canonicalStripeSubscription = hasCanonicalStripeSubscription(state);
   return {
     ...buildPlanCatalog(countryCode),
     billingManagedBy: manager,
+    // A terminal subscription id is deliberately retained for audit and
+    // Provider Portal recovery, so its mere presence cannot suppress a new
+    // purchase forever. The Checkout handler performs the authoritative,
+    // paginated provider scan before creating any Session.
     checkoutAvailable: checkoutEnabled && !active,
     portalAvailable:
-      checkoutEnabled && active && hasCanonicalStripeSubscription(state),
+      checkoutEnabled && canonicalStripeSubscription,
     currentPlan:
       active &&
       (state.entitlements.plan === "monthly" ||

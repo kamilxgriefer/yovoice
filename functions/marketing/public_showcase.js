@@ -129,6 +129,7 @@ function derivePublicPerson({ uid, consent, profile, user, authUser }, nowMillis
   if (!authUser || authUser.uid !== uid || authUser.disabled === true ||
       !user || user.banned === true || user.disabled === true ||
       user.deleted === true || user.status === "deleted" ||
+      user.roleTransitionInProgress === true ||
       normalizeProfileVisibility(user.profileVisibility) !== "public" ||
       user.role !== "user") {
     return null;

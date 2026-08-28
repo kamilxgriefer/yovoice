@@ -301,15 +301,21 @@ Missing values preserve the legacy Everyone behavior; malformed values return
 
 - `setCreatorPinnedPost` — authenticated, verified Creator callable that
   accepts only `{momentId}` (or `null` to unpin), rechecks active account,
-  canonical Premium Creator entitlement, ownership and published schema-v2
-  Moment state, then writes one server-owned pointer.
+  canonical effective Creator access, ownership and published schema-v2
+  Moment state, then writes one server-owned pointer. Paid access comes from
+  `entitlements`; moderator-preview access requires an exact signed
+  claim/server-mirror match and never rewrites billing truth.
 - `onPinnedMomentEligibilityChanged` — removes a pointer when its Moment is
   deleted, unpublished, moved out of the canonical published state or changes
   author.
 - `onPinnedCreatorEntitlementChanged` / `onPinnedCreatorProfileChanged` —
   remove pins after Premium/Creator/account eligibility changes. The profile
   trigger filters harmless presence/counter writes before doing Firestore
-  work.
+  work. A server-only role-transition marker defers destructive pin/account
+  mode cleanup during the neutral claim/mirror interlock; the final role write
+  retriggers convergence. Billing revocation still updates the entitlement,
+  and missing/deleted profiles still remove orphaned pins without recreating a
+  `users/{uid}` document.
 
 Creator Analytics has no backend endpoint: it is a clearly labelled snapshot
 computed from the already loaded canonical profile/room/Club/Moment streams.
@@ -364,10 +370,10 @@ endpoints undeployed until something actually needs them is the safer
 default. Deploy them together with whatever admin surface is built
 first.
 
-Every admin function requires a `role` custom claim via `requireRole()` —
-roles come from Auth custom claims, never from a Firestore field, which
-closes off the most common privilege-escalation path (a user editing their
-own `users/{uid}` document can't grant themselves admin).
+Every admin function requires a `role` custom claim via the shared authority
+helpers and exact agreement with the server-written, client-immutable
+`users/{uid}.role` mirror. A profile write cannot forge the signed claim, and
+a stale signed claim cannot survive a synchronous mirror revocation.
 
 - **Bootstrap/roles**: `bootstrapSuperAdmin`, `assignUserRole`,
   `getUserRole`, `listAdminUsers`, `setUserBan`.

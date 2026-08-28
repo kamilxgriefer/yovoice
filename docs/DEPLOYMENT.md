@@ -2250,6 +2250,157 @@ implementation is not a valid rollback target. Never delete
 `billingAccounts`, entitlements or webhook receipts. Archive Prices only after
 no active Subscription or paid prepaid term depends on them.
 
+## ADR-119 moderator Premium-preview rollout (source complete; release pending)
+
+This runbook releases the derived product preview for active exact
+`moderator` and `superModerator` roles. It does **not** create a subscription,
+rewrite `entitlements/{uid}` or enable Stripe. Source readiness, a successful
+local test and a CLI deploy response are not production evidence; do not mark
+ADR-119 deployed until every readback below is complete.
+
+### Prerequisites and evidence capture
+
+1. Pin the reviewed commit and run the complete release gates in
+   [TESTING.md](TESTING.md#current-counts) against fresh emulators. Update the
+   recorded counts only from those completed runs. Keep
+   `STRIPE_BILLING_EXPORTS` in its already-approved state; ADR-119 must not be
+   used to turn payment mutation handlers on.
+2. Configure Application Default Credentials for `yovoice-ec54a`. Inject
+   `YOVOICE_PROTECTED_OWNER_UID` into the operator shell through the approved
+   secret path without printing it; the badges and directory backfills refuse
+   to derive the protected owner without this guard.
+3. Fetch and retain the currently released Firestore rules source using
+   [the Rules API procedure](#reading-the-deployed-ruleset-the-verification-standard).
+   Record the current Functions revisions as the rollback boundary.
+4. Select authorized test accounts for exact `moderator` and
+   `superModerator` roles plus a disposable account for the demotion smoke.
+   Before changing anything, capture their `users`, `entitlements`,
+   `publicBadges`, `publicProfiles`, `userDirectory` and
+   `creatorPinnedPosts` state. The entitlement snapshots are the proof that
+   preview rollout never rewrites billing truth.
+
+### Release order
+
+1. **Deploy Functions first.** The shared claim/mirror and effective-access
+   resolvers are bundled into each deployed Function, so a partial deploy can
+   leave old triggers overwriting new projections. Deploy the exact reviewed
+   Functions manifest while Stripe export configuration remains unchanged:
+
+   ```bash
+   firebase deploy --only functions --project yovoice-ec54a
+   firebase functions:list --project yovoice-ec54a
+   ```
+
+   Confirm the affected revisions are ACTIVE, including Club creation and
+   ownership transfer, Creator pins and cleanup, Premium entitlement expiry,
+   profile search/projection, public-badge and directory triggers, and report
+   moderation/audit. Do not continue if deployment discovery unexpectedly
+   adds Stripe mutation exports.
+2. **Deploy Firestore Rules second.** This is the acting-client boundary for
+   Creator mode and known-id Creator pins. Run the fresh emulator suite before
+   this command, then fetch the released ruleset through the Rules API and
+   compare its source byte-for-byte with the pinned `firestore.rules`:
+
+   ```bash
+   firebase deploy --only firestore:rules --project yovoice-ec54a
+   ```
+
+   A CLI success message without the API readback is not completion evidence.
+3. **Converge all existing projections.** New triggers do not replay old user
+   documents, so each of the following migrations is mandatory. Review every
+   dry-run aggregate before applying; do not apply over an invalid role or
+   schema conflict.
+
+   **Public badges:** the first and third commands are read-only. The final
+   report must plan zero creates, updates and deletes.
+
+   ```bash
+   node functions/scripts/backfill_badges.js --project yovoice-ec54a
+   node functions/scripts/backfill_badges.js --project yovoice-ec54a --apply
+   node functions/scripts/backfill_badges.js --project yovoice-ec54a
+   ```
+
+   **Public profiles and presence:** this script is bounded. For each of the
+   three phases below, begin without `--start-after`, record the aggregate
+   output, and repeat with the exact returned `nextCursor` until
+   `reachedEnd=true`. Start the apply phase and the post-apply no-op phase from
+   the beginning again; never reuse a cursor from the preceding phase. Every
+   page of the final phase must plan zero profile/presence creates, updates or
+   deletes.
+
+   ```bash
+   # Dry-run phase; repeat with --start-after '<nextCursor>' until reachedEnd.
+   node functions/scripts/backfill_public_profiles.js --project yovoice-ec54a --max-users 500
+
+   # Apply phase; start again from the beginning, then page its own cursor.
+   node functions/scripts/backfill_public_profiles.js --project yovoice-ec54a --max-users 500 --apply
+
+   # Post-apply no-op; start from the beginning and page to reachedEnd again.
+   node functions/scripts/backfill_public_profiles.js --project yovoice-ec54a --max-users 500
+   ```
+
+   **Staff directory:** the first and third commands are read-only. The final
+   report must plan zero creates, updates and deletes.
+
+   ```bash
+   node functions/scripts/backfill_directory.js --project yovoice-ec54a
+   node functions/scripts/backfill_directory.js --project yovoice-ec54a --apply
+   node functions/scripts/backfill_directory.js --project yovoice-ec54a
+   ```
+
+4. **Perform production readback before releasing a client.** For one active
+   exact moderator and one active exact super moderator, verify:
+
+   - `users/{uid}.role` has the expected exact value and the Auth custom claim
+     matches after a token refresh, and
+     `users/{uid}.roleTransitionInProgress=false`;
+   - `publicBadges/{uid}` has that staff role and `isVip=true`;
+   - `publicProfiles/{uid}.premiumIdentity=true` and
+     `userDirectory/{uid}.isVip=true`;
+   - the before/after `entitlements/{uid}` documents are field-for-field
+     unchanged; no preview-only account acquired `isPremium`, a plan, period,
+     renewal or billing provider;
+   - a refreshed/restarted client can enter Creator and Clubs, create no more
+     than the effective three-Club limit, and receives no owner or super-admin
+     capability from the preview.
+
+5. **Prove demotion convergence.** On the authorized disposable account,
+   change `moderator` or `superModerator` to `user` through the audited role
+   callable, refresh its token and wait for all three projection triggers.
+   With no independent paid entitlement, verify the VIP presentation and
+   Creator/Clubs access disappear, `publicProfiles.premiumIdentity` and
+   `userDirectory.isVip` are false, and an otherwise-empty `publicBadges`
+   document is removed. A pin and Creator account mode must be cleaned up.
+   Repeat the readback on a paid-plus-preview fixture if one is authorized:
+   demotion must remove only the preview while valid paid access, plan and
+   period survive unchanged.
+
+   Also exercise one privileged-to-privileged change (for example,
+   `superModerator` to `moderator`). A failed/retried test must never expose
+   authority while claim and mirror differ, and the completed retry must leave
+   `roleTransitionInProgress=false`. If the marker remains true, retry the same
+   audited assignment; do not edit the claim or mirror independently.
+6. Only after steps 1–5 pass, release Hosting and the regenerated native build
+   8. Verify the IPA/AAB themselves carry build/version code 8; for iOS also
+   verify `ITSAppUsesNonExemptEncryption=false` in the packaged Runner plist
+   and confirm TestFlight does not enter Missing Compliance.
+
+### Rollback
+
+Stop client rollout first. Restore the captured pre-release Firestore rules so
+new preview-only acting requests fail closed, then restore the pinned previous
+Functions revisions. Do not delete or edit `entitlements`, billing accounts,
+provider records or receipts: ADR-119 did not create them and rollback must not
+touch paid access.
+
+After the previous projection derivation is live, run its matching badges,
+public-profile and directory backfills through the same dry-run → apply →
+post-apply no-op sequence to remove preview-only public state. If the defect is
+limited to one projection, keep the secure Rules/Functions boundary and repair
+only that projection rather than widening authorization. Record the restored
+ruleset, Function revisions and aggregate backfill reports before declaring
+rollback complete.
+
 ## Direct 1:1 call rollout
 
 Direct calls add server-only signaling, a scheduled expiry query, LiveKit

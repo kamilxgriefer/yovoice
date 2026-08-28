@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -78,16 +80,49 @@ Future<void> _seedEntitlements(
   bool creatorEnabled = true,
   bool canCreateClubs = true,
   bool premiumIdentityEnabled = true,
+  bool isPremium = true,
 }) {
   return db.collection('entitlements').doc(_uid).set({
     'plan': plan,
     'status': status,
     'currentPeriodEnd': Timestamp.fromDate(periodEnd),
+    'isPremium': isPremium,
     'creatorEnabled': creatorEnabled,
     'canCreateClubs': canCreateClubs,
     'premiumIdentityEnabled': premiumIdentityEnabled,
     'maxOwnedClubs': 3,
   });
+}
+
+Future<void> _seedProfile(
+  FakeFirebaseFirestore db, {
+  String role = 'user',
+  bool banned = false,
+  bool disabled = false,
+  bool deleted = false,
+  String status = 'active',
+}) {
+  return db.collection('users').doc(_uid).set({
+    'role': role,
+    'banned': banned,
+    'disabled': disabled,
+    'deleted': deleted,
+    'status': status,
+  });
+}
+
+class _SelectiveThrowingFirestore extends FakeFirebaseFirestore {
+  _SelectiveThrowingFirestore(this.failingCollection);
+
+  final String failingCollection;
+
+  @override
+  CollectionReference<Map<String, dynamic>> collection(String path) {
+    if (path == failingCollection) {
+      throw StateError('$path is unavailable');
+    }
+    return super.collection(path);
+  }
 }
 
 UserProfile _profile(AccountType accountType) => UserProfile(
@@ -169,6 +204,37 @@ void main() {
     });
 
     test(
+      'missing or false canonical isPremium fails paid access closed',
+      () async {
+        for (final value in <bool?>[null, false]) {
+          final db = FakeFirebaseFirestore();
+          await db.collection('entitlements').doc(_uid).set({
+            'plan': 'monthly',
+            'status': 'active',
+            'currentPeriodEnd': Timestamp.fromDate(
+              DateTime.now().add(const Duration(days: 20)),
+            ),
+            'isPremium': ?value,
+            'creatorEnabled': true,
+            'canCreateClubs': true,
+            'premiumIdentityEnabled': true,
+            'maxOwnedClubs': 3,
+          });
+
+          final entitlements = await EntitlementService(
+            firestore: db,
+            auth: _auth(),
+          ).currentEntitlements();
+
+          expect(entitlements.isPremium, isFalse, reason: 'isPremium=$value');
+          expect(entitlements.hasPremiumIdentity, isFalse);
+          expect(entitlements.canUseCreator, isFalse);
+          expect(entitlements.canUseClubs, isFalse);
+        }
+      },
+    );
+
+    test(
       'active status without the Premium identity grants no paid tools',
       () async {
         final db = FakeFirebaseFirestore();
@@ -198,6 +264,7 @@ void main() {
         await db.collection('entitlements').doc(_uid).set({
           'plan': 'monthly',
           'status': 'active',
+          'isPremium': true,
           'currentPeriodEnd': Timestamp.fromDate(
             DateTime.now().add(const Duration(days: 20)),
           ),
@@ -265,6 +332,207 @@ void main() {
         identical(a.watchCurrentEntitlements(), b.watchCurrentEntitlements()),
         isTrue,
       );
+    });
+
+    for (final role in const ['moderator', 'superModerator']) {
+      test('$role gets feature preview without a fake subscription', () async {
+        final db = FakeFirebaseFirestore();
+        await _seedProfile(db, role: role);
+
+        final entitlements = await EntitlementService(
+          firestore: db,
+          auth: _auth(),
+        ).currentEntitlements();
+
+        expect(entitlements.hasModeratorBenefits, isTrue);
+        expect(entitlements.hasPremiumIdentity, isTrue);
+        expect(entitlements.canUseCreator, isTrue);
+        expect(entitlements.canUseClubs, isTrue);
+
+        // Billing truth stays untouched: no plan, renewal or paid flags are
+        // fabricated by the complimentary role benefit.
+        expect(entitlements.isPremium, isFalse);
+        expect(entitlements.plan, PremiumPlan.none);
+        expect(entitlements.currentPeriodEnd, isNull);
+        expect(entitlements.creatorEnabled, isFalse);
+        expect(entitlements.canCreateClubs, isFalse);
+        expect(entitlements.premiumIdentityEnabled, isFalse);
+        expect(entitlements.maxOwnedClubs, 0);
+      });
+    }
+
+    for (final role in const [
+      'user',
+      'guideMaster',
+      'support',
+      'auditor',
+      'superAdmin',
+      'admin',
+      'unknown',
+    ]) {
+      test('$role does not inherit moderator Premium benefits', () async {
+        final db = FakeFirebaseFirestore();
+        await _seedProfile(db, role: role);
+
+        final entitlements = await EntitlementService(
+          firestore: db,
+          auth: _auth(),
+        ).currentEntitlements();
+
+        expect(entitlements.hasModeratorBenefits, isFalse);
+        expect(entitlements.hasPremiumIdentity, isFalse);
+        expect(entitlements.canUseCreator, isFalse);
+        expect(entitlements.canUseClubs, isFalse);
+      });
+    }
+
+    for (final inactive in <String, Map<String, Object>>{
+      'banned': {'banned': true},
+      'disabled': {'disabled': true},
+      'deleted flag': {'deleted': true},
+      'deleted status': {'status': 'deleted'},
+    }.entries) {
+      test('a ${inactive.key} moderator gets no role benefit', () async {
+        final db = FakeFirebaseFirestore();
+        await _seedProfile(
+          db,
+          role: 'moderator',
+          banned: inactive.value['banned'] == true,
+          disabled: inactive.value['disabled'] == true,
+          deleted: inactive.value['deleted'] == true,
+          status: inactive.value['status'] as String? ?? 'active',
+        );
+
+        final entitlements = await EntitlementService(
+          firestore: db,
+          auth: _auth(),
+        ).currentEntitlements();
+
+        expect(entitlements.hasModeratorBenefits, isFalse);
+        expect(entitlements.canUseCreator, isFalse);
+        expect(entitlements.canUseClubs, isFalse);
+      });
+    }
+
+    test('role demotion removes the preview reactively', () async {
+      final db = FakeFirebaseFirestore();
+      await _seedProfile(db, role: 'moderator');
+      final iterator = StreamIterator(
+        EntitlementService(
+          firestore: db,
+          auth: _auth(),
+        ).watchCurrentEntitlements(),
+      );
+
+      expect(await iterator.moveNext(), isTrue);
+      expect(iterator.current.hasModeratorBenefits, isTrue);
+
+      await db.collection('users').doc(_uid).update({'role': 'user'});
+      expect(await iterator.moveNext(), isTrue);
+      expect(iterator.current.hasModeratorBenefits, isFalse);
+      expect(iterator.current.canUseCreator, isFalse);
+      expect(iterator.current.canUseClubs, isFalse);
+      await iterator.cancel();
+    });
+
+    test(
+      'role demotion removes only the overlay and preserves paid access',
+      () async {
+        final db = FakeFirebaseFirestore();
+        await _seedProfile(db, role: 'moderator');
+        await _seedEntitlements(
+          db,
+          status: 'active',
+          periodEnd: DateTime.now().add(const Duration(days: 20)),
+        );
+        final iterator = StreamIterator(
+          EntitlementService(
+            firestore: db,
+            auth: _auth(),
+          ).watchCurrentEntitlements(),
+        );
+
+        expect(await iterator.moveNext(), isTrue);
+        expect(iterator.current.hasModeratorBenefits, isTrue);
+        expect(iterator.current.isPremium, isTrue);
+
+        await db.collection('users').doc(_uid).update({'role': 'user'});
+        expect(await iterator.moveNext(), isTrue);
+        expect(iterator.current.hasModeratorBenefits, isFalse);
+        expect(iterator.current.isPremium, isTrue);
+        expect(iterator.current.canUseCreator, isTrue);
+        expect(iterator.current.canUseClubs, isTrue);
+        await iterator.cancel();
+      },
+    );
+
+    test(
+      'an unreadable role source preserves independently valid paid access',
+      () async {
+        final db = _SelectiveThrowingFirestore('users');
+        await _seedEntitlements(
+          db,
+          status: 'active',
+          periodEnd: DateTime.now().add(const Duration(days: 20)),
+        );
+
+        final entitlements = await EntitlementService(
+          firestore: db,
+          auth: _auth(),
+        ).currentEntitlements();
+
+        expect(entitlements.isPremium, isTrue);
+        expect(entitlements.hasModeratorBenefits, isFalse);
+        expect(entitlements.canUseCreator, isTrue);
+        expect(entitlements.canUseClubs, isTrue);
+      },
+    );
+
+    test(
+      'an unreadable billing source preserves verified moderator access',
+      () async {
+        final db = _SelectiveThrowingFirestore('entitlements');
+        await _seedProfile(db, role: 'superModerator');
+
+        final entitlements = await EntitlementService(
+          firestore: db,
+          auth: _auth(),
+        ).currentEntitlements();
+
+        expect(entitlements.isPremium, isFalse);
+        expect(entitlements.plan, PremiumPlan.none);
+        expect(entitlements.hasModeratorBenefits, isTrue);
+        expect(entitlements.canUseCreator, isTrue);
+        expect(entitlements.canUseClubs, isTrue);
+      },
+    );
+
+    test('the live stream separates billing and role read failures', () async {
+      final roleFailure = _SelectiveThrowingFirestore('users');
+      await _seedEntitlements(
+        roleFailure,
+        status: 'active',
+        periodEnd: DateTime.now().add(const Duration(days: 20)),
+      );
+      final paid = await EntitlementService(
+        firestore: roleFailure,
+        auth: _auth(),
+      ).watchCurrentEntitlements().first;
+      expect(paid.isPremium, isTrue);
+      expect(paid.hasModeratorBenefits, isFalse);
+      expect(paid.canUseCreator, isTrue);
+
+      EntitlementService.resetCache();
+      final billingFailure = _SelectiveThrowingFirestore('entitlements');
+      await _seedProfile(billingFailure, role: 'superModerator');
+      final moderator = await EntitlementService(
+        firestore: billingFailure,
+        auth: _auth(),
+      ).watchCurrentEntitlements().first;
+      expect(moderator.isPremium, isFalse);
+      expect(moderator.hasModeratorBenefits, isTrue);
+      expect(moderator.canUseCreator, isTrue);
+      expect(moderator.canUseClubs, isTrue);
     });
   });
 
@@ -524,6 +792,37 @@ void main() {
 
       expect(find.text('Protected destination content'), findsNothing);
       expect(find.text('Clubs requires Premium'), findsOneWidget);
+    });
+
+    testWidgets('paid expiry does not evict an active moderator, but demotion '
+        'does', (tester) async {
+      final db = FakeFirebaseFirestore();
+      final periodEnd = DateTime.now().add(const Duration(days: 20));
+      var clock = periodEnd.subtract(const Duration(seconds: 1));
+      await _seedEntitlements(db, status: 'active', periodEnd: periodEnd);
+      await _seedProfile(db, role: 'moderator');
+      await tester.pumpWidget(
+        guarded(
+          db: db,
+          feature: PremiumFeature.creatorStudio,
+          now: () => clock,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('Protected destination content'), findsOneWidget);
+
+      clock = periodEnd.add(const Duration(milliseconds: 1));
+      await tester.pump(const Duration(seconds: 2));
+
+      expect(find.text('Protected destination content'), findsOneWidget);
+      expect(find.text('Creator Studio requires Premium'), findsNothing);
+
+      await db.collection('users').doc(_uid).update({'role': 'user'});
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(find.text('Protected destination content'), findsNothing);
+      expect(find.text('Creator Studio requires Premium'), findsOneWidget);
     });
   });
 }

@@ -147,6 +147,55 @@ test("a Premium Creator pins only an owned published canonical Moment", async ()
   assert.equal(snapshot.data().schemaVersion, 1);
 });
 
+for (const role of ["moderator", "superModerator"]) {
+  test(`${role} pins through matching claim + mirror without billing`, async () => {
+    await db.doc(`entitlements/${CREATOR}`).delete();
+    await seedCreator({ profile: { role }, entitlement: null });
+    await service().setCreatorPinnedPost(
+      request(CREATOR, MOMENT, { role }),
+    );
+    assert.equal(
+      (await db.doc(`creatorPinnedPosts/${CREATOR}`).get()).data().momentId,
+      MOMENT,
+    );
+    assert.equal(
+      (await db.doc(`entitlements/${CREATOR}`).get()).exists,
+      false,
+    );
+  });
+}
+
+test("stale or mismatched role claims cannot invoke the moderator overlay", async () => {
+  await db.doc(`entitlements/${CREATOR}`).delete();
+  await seedCreator({
+    profile: { role: "moderator" },
+    entitlement: null,
+  });
+  for (const role of [undefined, "user", "superModerator", "superAdmin"]) {
+    await assert.rejects(
+      service().setCreatorPinnedPost(
+        request(
+          CREATOR,
+          MOMENT,
+          role === undefined ? {} : { role },
+        ),
+      ),
+      (error) => error.code === "failed-precondition",
+    );
+  }
+});
+
+test("non-preview staff roles do not receive Creator access", async () => {
+  await db.doc(`entitlements/${CREATOR}`).delete();
+  for (const role of ["support", "auditor", "guideMaster", "superAdmin"]) {
+    await seedCreator({ profile: { role }, entitlement: null });
+    await assert.rejects(
+      service().setCreatorPinnedPost(request(CREATOR, MOMENT, { role })),
+      (error) => error.code === "failed-precondition",
+    );
+  }
+});
+
 test("same pin is idempotent and unpin deletes the server projection", async () => {
   const api = service();
   await api.setCreatorPinnedPost(request(CREATOR, MOMENT));
@@ -317,6 +366,76 @@ test("admin revoke atomically removes the pin and paid Creator mode", async () =
   assert.equal(profile.data().accountType, "personal");
 });
 
+test("paid expiry preserves an active moderator pin and Creator mode", async () => {
+  await seedCreator({ profile: { role: "moderator" } });
+  await service().setCreatorPinnedPost(
+    request(CREATOR, MOMENT, { role: "moderator" }),
+  );
+  await applyEntitlements(CREATOR, {
+    plan: "none",
+    status: "expired",
+    currentPeriodEnd: Timestamp.fromMillis(0),
+    source: "test",
+  });
+  const [pin, entitlement, profile] = await db.getAll(
+    db.doc(`creatorPinnedPosts/${CREATOR}`),
+    db.doc(`entitlements/${CREATOR}`),
+    db.doc(`users/${CREATOR}`),
+  );
+  assert.equal(pin.exists, true);
+  assert.equal(entitlement.data().isPremium, false);
+  assert.equal(profile.data().premiumIdentity, false);
+  assert.equal(profile.data().accountType, "creator");
+});
+
+test("admin revoke defers destructive cleanup during a preview role transition",
+  async () => {
+    const api = service();
+    await seedCreator({ profile: { role: "superModerator" } });
+    await api.setCreatorPinnedPost(
+      request(CREATOR, MOMENT, { role: "superModerator" }),
+    );
+    await db.doc(`users/${CREATOR}`).update({
+      role: "user",
+      roleTransitionInProgress: true,
+    });
+
+    await applyEntitlements(CREATOR, {
+      plan: "none",
+      status: "expired",
+      currentPeriodEnd: Timestamp.fromMillis(0),
+      source: "test",
+    });
+
+    let [pin, entitlement, profile] = await db.getAll(
+      db.doc(`creatorPinnedPosts/${CREATOR}`),
+      db.doc(`entitlements/${CREATOR}`),
+      db.doc(`users/${CREATOR}`),
+    );
+    assert.equal(entitlement.data().isPremium, false);
+    assert.equal(profile.data().premiumIdentity, false);
+    assert.equal(pin.exists, true);
+    assert.equal(profile.data().accountType, "creator");
+    assert.deepEqual(await api.clearPinForIneligibleCreator(CREATOR), {
+      cleared: false,
+      deferred: true,
+    });
+
+    await db.doc(`users/${CREATOR}`).update({
+      role: "moderator",
+      roleTransitionInProgress: false,
+    });
+    assert.deepEqual(await api.clearPinForIneligibleCreator(CREATOR), {
+      cleared: false,
+    });
+    [pin, profile] = await db.getAll(
+      db.doc(`creatorPinnedPosts/${CREATOR}`),
+      db.doc(`users/${CREATOR}`),
+    );
+    assert.equal(pin.exists, true);
+    assert.equal(profile.data().accountType, "creator");
+  });
+
 test("scheduled expiry atomically removes an existing Creator pin", async () => {
   await service().setCreatorPinnedPost(request(CREATOR, MOMENT));
   const entitlementRef = db.doc(`entitlements/${CREATOR}`);
@@ -336,6 +455,95 @@ test("scheduled expiry atomically removes an existing Creator pin", async () => 
   assert.equal(pin.exists, false);
   assert.equal(entitlement.data().isPremium, false);
   assert.equal(profile.data().accountType, "personal");
+});
+
+test("scheduled expiry defers cleanup until a preview transition resolves",
+  async () => {
+    const api = service();
+    await service().setCreatorPinnedPost(request(CREATOR, MOMENT));
+    const entitlementRef = db.doc(`entitlements/${CREATOR}`);
+    await entitlementRef.update({
+      currentPeriodEnd: Timestamp.fromMillis(nowMs - 1),
+    });
+    await db.doc(`users/${CREATOR}`).update({
+      role: "user",
+      roleTransitionInProgress: true,
+    });
+
+    const expired = await commitExpiredPremiumPage(
+      [await entitlementRef.get()],
+      { now: Timestamp.fromMillis(nowMs) },
+    );
+    let [pin, profile] = await db.getAll(
+      db.doc(`creatorPinnedPosts/${CREATOR}`),
+      db.doc(`users/${CREATOR}`),
+    );
+    assert.equal(expired, 1);
+    assert.equal(pin.exists, true);
+    assert.equal(profile.data().accountType, "creator");
+
+    // A final non-preview role is a real revocation; clearing the marker
+    // retriggers convergence and removes both stale Creator projections.
+    await db.doc(`users/${CREATOR}`).update({
+      role: "support",
+      roleTransitionInProgress: false,
+    });
+    assert.deepEqual(await api.clearPinForIneligibleCreator(CREATOR), {
+      cleared: true,
+      creatorId: CREATOR,
+    });
+    [pin, profile] = await db.getAll(
+      db.doc(`creatorPinnedPosts/${CREATOR}`),
+      db.doc(`users/${CREATOR}`),
+    );
+    assert.equal(pin.exists, false);
+    assert.equal(profile.data().accountType, "personal");
+  });
+
+test("scheduled expiry never recreates a missing user profile", async () => {
+  await service().setCreatorPinnedPost(request(CREATOR, MOMENT));
+  const entitlementRef = db.doc(`entitlements/${CREATOR}`);
+  await entitlementRef.update({
+    currentPeriodEnd: Timestamp.fromMillis(nowMs - 1),
+  });
+  await db.doc(`users/${CREATOR}`).delete();
+
+  const expired = await commitExpiredPremiumPage(
+    [await entitlementRef.get()],
+    { now: Timestamp.fromMillis(nowMs) },
+  );
+  const [pin, entitlement, profile] = await db.getAll(
+    db.doc(`creatorPinnedPosts/${CREATOR}`),
+    entitlementRef,
+    db.doc(`users/${CREATOR}`),
+  );
+
+  assert.equal(expired, 1);
+  assert.equal(pin.exists, false, "the orphaned pin must still be removed");
+  assert.equal(entitlement.data().isPremium, false);
+  assert.equal(entitlement.data().creatorEnabled, false);
+  assert.equal(profile.exists, false, "expiry must not recreate the profile");
+});
+
+test("provider revoke never recreates a missing user profile", async () => {
+  await service().setCreatorPinnedPost(request(CREATOR, MOMENT));
+  await db.doc(`users/${CREATOR}`).delete();
+
+  await applyEntitlements(CREATOR, {
+    plan: "none",
+    status: "expired",
+    currentPeriodEnd: Timestamp.fromMillis(0),
+    source: "test",
+  });
+  const [pin, entitlement, profile] = await db.getAll(
+    db.doc(`creatorPinnedPosts/${CREATOR}`),
+    db.doc(`entitlements/${CREATOR}`),
+    db.doc(`users/${CREATOR}`),
+  );
+
+  assert.equal(pin.exists, false, "the orphaned pin must still be removed");
+  assert.equal(entitlement.data().isPremium, false);
+  assert.equal(profile.exists, false, "provider writes must not recreate users");
 });
 
 test("pin is automatically removed when its Moment becomes ineligible", async () => {
@@ -387,6 +595,67 @@ test("entitlement/profile cleanup removes stale pins and preserves active ones",
     cleared: true,
     creatorId: CREATOR,
   });
+});
+
+test("a deleted profile cannot use the transition marker to retain a pin",
+  async () => {
+    const api = service();
+    await api.setCreatorPinnedPost(request(CREATOR, MOMENT));
+    await db.doc(`users/${CREATOR}`).update({
+      deleted: true,
+      roleTransitionInProgress: true,
+    });
+    assert.deepEqual(await api.clearPinForIneligibleCreator(CREATOR), {
+      cleared: true,
+      creatorId: CREATOR,
+    });
+    assert.equal(
+      (await db.doc(`creatorPinnedPosts/${CREATOR}`).get()).exists,
+      false,
+    );
+  });
+
+test("role demotion removes preview pin/mode unless paid access remains", async () => {
+  const api = service();
+  await db.doc(`entitlements/${CREATOR}`).delete();
+  await seedCreator({
+    profile: { role: "moderator" },
+    entitlement: null,
+  });
+  await api.setCreatorPinnedPost(
+    request(CREATOR, MOMENT, { role: "moderator" }),
+  );
+  await db.doc(`users/${CREATOR}`).update({ role: "user" });
+  assert.deepEqual(await api.clearPinForIneligibleCreator(CREATOR), {
+    cleared: true,
+    creatorId: CREATOR,
+  });
+  const [pin, profile] = await db.getAll(
+    db.doc(`creatorPinnedPosts/${CREATOR}`),
+    db.doc(`users/${CREATOR}`),
+  );
+  assert.equal(pin.exists, false);
+  assert.equal(profile.data().accountType, "personal");
+
+  await seedCreator({
+    profile: { role: "moderator" },
+    entitlement: activeEntitlement(),
+  });
+  await api.setCreatorPinnedPost(
+    request(CREATOR, MOMENT, { role: "moderator" }),
+  );
+  await db.doc(`users/${CREATOR}`).update({ role: "user" });
+  assert.deepEqual(await api.clearPinForIneligibleCreator(CREATOR), {
+    cleared: false,
+  });
+  assert.equal(
+    (await db.doc(`creatorPinnedPosts/${CREATOR}`).get()).exists,
+    true,
+  );
+  assert.equal(
+    (await db.doc(`users/${CREATOR}`).get()).data().accountType,
+    "creator",
+  );
 });
 
 test("cleanup preserves an opaque Creator UID byte-for-byte", async () => {
@@ -463,6 +732,57 @@ test("eligibility profile changes invoke cleanup exactly once", async () => {
     },
   );
   assert.equal(calls, 1);
+});
+
+test("role changes are Creator eligibility changes", async () => {
+  let calls = 0;
+  const snapshot = (data) => ({ exists: true, data: () => data });
+  await handlePinnedCreatorProfileChanged(
+    {
+      params: { creatorId: CREATOR },
+      data: {
+        before: snapshot({ accountType: "creator", role: "moderator" }),
+        after: snapshot({ accountType: "creator", role: "user" }),
+      },
+    },
+    {
+      clearPinForIneligibleCreator: async () => {
+        calls += 1;
+        return { cleared: true };
+      },
+    },
+  );
+  assert.equal(calls, 1);
+});
+
+test("the neutral role interlock defers profile-trigger cleanup", async () => {
+  let calls = 0;
+  const snapshot = (data) => ({ exists: true, data: () => data });
+  const outcome = await handlePinnedCreatorProfileChanged(
+    {
+      params: { creatorId: CREATOR },
+      data: {
+        before: snapshot({
+          accountType: "creator",
+          role: "superModerator",
+          roleTransitionInProgress: false,
+        }),
+        after: snapshot({
+          accountType: "creator",
+          role: "user",
+          roleTransitionInProgress: true,
+        }),
+      },
+    },
+    {
+      clearPinForIneligibleCreator: async () => {
+        calls += 1;
+        return { cleared: true };
+      },
+    },
+  );
+  assert.deepEqual(outcome, { cleared: false, deferred: true });
+  assert.equal(calls, 0);
 });
 
 test("authorId change asks cleanup for the old author only", async () => {

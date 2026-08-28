@@ -87,6 +87,16 @@ const PERMANENT_DELETE_ROLES = new Set([
   USER_ROLES.SUPER_ADMIN,
 ]);
 
+// Product-preview access is deliberately narrower than either STAFF_ROLES or
+// ADMIN_CENTER_ROLES. It lets the two hands-on moderation tiers exercise the
+// member product without fabricating a paid subscription. The protected owner,
+// support, audit and guide roles remain outside this benefit unless they hold
+// a real entitlement of their own.
+const STAFF_PREVIEW_ROLES = new Set([
+  USER_ROLES.MODERATOR,
+  USER_ROLES.SUPER_MODERATOR,
+]);
+
 function normalizeRole(value) {
   return String(value ?? "").trim();
 }
@@ -113,6 +123,7 @@ module.exports = {
   USER_MANAGEMENT_ROLES,
   ROOM_MANAGEMENT_ROLES,
   PERMANENT_DELETE_ROLES,
+  STAFF_PREVIEW_ROLES,
   normalizeRole,
   normalizeEmail,
   isAllowedRole,

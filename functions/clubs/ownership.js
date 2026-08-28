@@ -4,6 +4,7 @@ const { FieldValue } = require("firebase-admin/firestore");
 const { requireAuthentication } = require("../utils/auth");
 const { db, normalizeText } = require("../utils/firestore");
 const { writeClubAuditLog } = require("../utils/audit");
+const { isActiveAccountProfile } = require("../utils/premium_access");
 const {
   LIVEKIT_SECRETS,
   getProductionLiveKitControl,
@@ -220,8 +221,7 @@ const transferClubOwnershipSelf = onCall(
       }
       if (
         !currentOwnerProfile.exists ||
-        currentOwnerProfile.data()?.banned === true ||
-        currentOwnerProfile.data()?.disabled === true
+        !isActiveAccountProfile(currentOwnerProfile.data() ?? {})
       ) {
         throw new HttpsError(
           "permission-denied",

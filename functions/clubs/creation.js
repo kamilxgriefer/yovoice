@@ -158,6 +158,10 @@ const createCommunityClub = onCall(
       const capacity = await requireCommunityClubCapacity(
         transaction,
         auth.uid,
+        {
+          tokenRole: auth.token?.role,
+          requireTokenRole: true,
+        },
       );
       const ownerName = profileName(profile, auth);
       const ownerPhotoUrl =

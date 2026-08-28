@@ -269,6 +269,15 @@ describe("derivation", () => {
       user: { role: "moderator" },
     });
     assert.equal(matching.staffRole, "moderator");
+
+    const spaced = deriveDirectoryEntry({
+      uid: "x",
+      authUser: authUser({ customClaims: { role: " moderator " } }),
+      user: { role: " moderator " },
+    });
+    assert.equal(spaced.staffRole, "user");
+    assert.equal(spaced.isStaff, false);
+    assert.equal(spaced.isVip, false);
   });
 
   test("profile email is never used when Auth has no email", () => {
@@ -302,6 +311,35 @@ describe("derivation", () => {
       },
     });
     assert.equal(lapsed.restricted, false);
+  });
+
+  test("disabled Auth removes only moderator-preview VIP", () => {
+    const disabledModerator = authUser({
+      disabled: true,
+      customClaims: { role: "moderator" },
+    });
+    const previewOnly = deriveDirectoryEntry({
+      uid: "x",
+      authUser: disabledModerator,
+      user: { role: "moderator", premiumIdentity: false },
+    });
+    assert.equal(previewOnly.banned, true);
+    assert.equal(previewOnly.isVip, false);
+
+    const independentlyPaid = deriveDirectoryEntry({
+      uid: "x",
+      authUser: disabledModerator,
+      user: { role: "moderator", premiumIdentity: true },
+    });
+    assert.equal(independentlyPaid.isVip, true);
+
+    const independentlyGranted = deriveDirectoryEntry({
+      uid: "x",
+      authUser: disabledModerator,
+      user: { role: "moderator", premiumIdentity: false },
+      grant: { active: true, expiresAt: null },
+    });
+    assert.equal(independentlyGranted.isVip, true);
   });
 });
 
@@ -560,6 +598,10 @@ describe("backfill", () => {
       role: "user",
     });
     await db.collection("users").doc(OWNER_UID).set({ role: "superAdmin" });
+    await db.collection("users").doc(`${P}mod`).set({
+      displayName: "Mod",
+      role: "moderator",
+    });
     // An orphan: directory entry whose Auth account is gone.
     await db.collection("userDirectory").doc(`${P}orphan`).set({
       displayName: "Ghost",
@@ -622,6 +664,11 @@ describe("backfill", () => {
       await db.collection("userDirectory").doc(`${P}sieeema`).get()
     ).data();
     assert.equal(entry.usernameLower, "sieeema");
+    const moderator = (
+      await db.collection("userDirectory").doc(`${P}mod`).get()
+    ).data();
+    assert.equal(moderator.staffRole, "moderator");
+    assert.equal(moderator.isVip, true);
     assert.equal(
       (await db.collection("userDirectory").doc(`${P}orphan`).get()).exists,
       false,

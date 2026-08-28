@@ -176,6 +176,8 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
                 return _BillingLoadError(onRetry: _retryBilling);
               }
               final billing = billingSnapshot.requireData;
+              final billingRecoveryAvailable =
+                  !entitlements.isPremium && billing.portalAvailable;
               return Center(
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 720),
@@ -187,6 +189,8 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
                       Text(
                         entitlements.isPremium
                             ? 'Manage your plan'
+                            : billingRecoveryAvailable
+                            ? 'Review your billing'
                             : 'Choose your plan',
                         textAlign: TextAlign.center,
                         style: TextStyle(
@@ -200,6 +204,8 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
                       Text(
                         entitlements.isPremium
                             ? 'See your current plan, compare options or manage billing.'
+                            : billingRecoveryAvailable
+                            ? 'A web billing profile is linked to this account. Check its status securely in Stripe.'
                             : 'Unlock the full YO Voice experience',
                         textAlign: TextAlign.center,
                         style: TextStyle(
@@ -212,6 +218,12 @@ class _PremiumPlansScreenState extends State<PremiumPlansScreen> {
                         _CurrentPlanCard(
                           entitlements: entitlements,
                           billing: billing,
+                          busy: _busy,
+                          onManage: () => _openManagement(billing),
+                        ),
+                        const SizedBox(height: 20),
+                      ] else if (billingRecoveryAvailable) ...[
+                        _BillingRecoveryCard(
                           busy: _busy,
                           onManage: () => _openManagement(billing),
                         ),
@@ -356,6 +368,83 @@ class _BillingLoadError extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Cancellation and invoice recovery when the provider binding exists but the
+/// local access projection is missing, inactive or still reconciling.
+///
+/// This surface deliberately makes no statement about an active plan, renewal
+/// or period end. Stripe remains the authority for those billing details while
+/// the entitlement projection remains the authority for product access.
+class _BillingRecoveryCard extends StatelessWidget {
+  const _BillingRecoveryCard({required this.busy, required this.onManage});
+
+  final bool busy;
+  final VoidCallback onManage;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      label: 'Stripe billing management',
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E1233),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: AppColors.secondary.withValues(alpha: .5)),
+        ),
+        child: Wrap(
+          spacing: 18,
+          runSpacing: 16,
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 410),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Billing management',
+                    style: TextStyle(
+                      color: Color(0xFFD3A5FF),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    'Stripe billing portal',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  SizedBox(height: 5),
+                  Text(
+                    'Review billing status, invoices and cancellation options. Premium access may still be syncing.',
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            FilledButton.icon(
+              onPressed: busy ? null : onManage,
+              icon: const Icon(Icons.open_in_new_rounded, size: 18),
+              label: const Text('Open billing portal'),
+            ),
+          ],
         ),
       ),
     );

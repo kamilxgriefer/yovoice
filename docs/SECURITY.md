@@ -35,15 +35,13 @@ for why this architecture was chosen anyway.
   requires recent primary authentication when Firebase requests it. Project
   MFA stays disabled until both compatible sign-in clients can be rolled out
   together.
-- **Roles live in Auth custom claims, never in a Firestore document.**
-  This is the single most load-bearing security decision in the project:
-  a user can always write their own `users/{uid}` document (that's how
-  profile editing works), but a user can never write their own auth
-  token. If role checks ever read from Firestore instead of custom
-  claims, self-granting `role: 'superAdmin'` would be a one-line write
-  away from any client. Every admin Cloud Function calls a shared
-  `requireRole()` helper that reads the claim, not the document — see
-  [Backend.md](Backend.md#admin).
+- **Staff authority starts in Auth custom claims and is revoked through a
+  server-written mirror.** A user can never write their own signed token, and
+  `users/{uid}.role` is absent from every client-write allowlist. Privileged
+  Rules and Cloud Functions require the claim and mirror to agree exactly, so
+  neither a client document nor an hour-stale token grants authority alone.
+  Public/background derivations may use the mirror only when they grant no
+  staff action. See [Backend.md](Backend.md#admin).
 - **An established display name is server authority.** Clients may seed an
   initial name, but Firestore Rules deny every later direct change and deny all
   client writes to `displayNameChangedAt`. `updateMyDisplayName` requires
@@ -266,6 +264,14 @@ target's active state, so a stale projection is denied during the trigger's
 short consistency window. UIDs are treated as opaque, case-sensitive values
 and are never normalized into an alias.
 
+`publicBadges/{uid}` follows the same existence boundary: every sync and each
+backfill apply re-read require a present, enabled Auth account in addition to
+an active private profile. A lingering `users/{uid}` role therefore cannot
+recreate a public staff/VIP badge after Auth deletion or disablement. The
+owner-only `userDirectory` retains independently valid paid/admin-grant VIP
+truth for support, but explicitly removes the derived moderator preview while
+Auth is disabled.
+
 Ordinary discovery goes through `searchPublicProfiles`: verified-account-only,
 bounded name/username prefixes, blocks filtered in both directions, active
 candidates rechecked, and a five-field response allowlist. Email search exists
@@ -455,17 +461,35 @@ The Moderation Center reads `reports` and mutates them through one
 callable. Full reasoning:
 [ADR-039](Decisions.md#adr-039-the-moderation-center-is-a-staff-gated-more-destination-triage-is-a-callable-and-staff-authority-is-claim--server-record).
 
-- **Who is staff**: `isActiveStaff()` requires ALL THREE — the signed
-  `role` custom claim in `['moderator','admin','superAdmin']`, the same
-  value in the server-written `users/{uid}.role` mirror, and
-  `banned != true`. `assignUserRole` writes both the claim and the
-  mirror; `role` is absent from the self-write allowlist, so no account
-  can promote itself.
+- **Who is staff**: `isActiveStaff()` requires ALL THREE — a signed `role`
+  custom claim in `['moderator','superModerator','superAdmin']`, the same value
+  in the server-written `users/{uid}.role` mirror, and an active account.
+  `assignUserRole` writes both the claim and the mirror; `role` is absent from
+  the self-write allowlist, so no account can promote itself. Because Auth and
+  Firestore cannot commit atomically, demotions write the mirror first while
+  promotions write the claim first. Either partial failure leaves the old
+  authority in place or creates a claim–mirror mismatch; it never grants the
+  requested higher authority, and the same audited request can converge on
+  retry. Lateral privileged changes (and privileged demotions to another
+  privileged role) first write a neutral `user` mirror with the server-only
+  `roleTransitionInProgress=true` marker. That closes both historical-token
+  ABA directions. The marker grants nothing and is absent from the client
+  self-write allowlist; Creator cleanup and website publication defer until
+  the final mirror clears it. Inactive/deleted accounts still clean up, and
+  entitlement expiry still revokes canonical paid truth while cleanup waits.
 - **Why both**: the claim cannot be forged but can be an hour stale, so
   a revoked moderator would keep access until their token expired. The
   document is written synchronously on revocation, so the next request
   fails. Requiring both also means a freshly promoted moderator fails
   CLOSED until their claim refreshes.
+- **Moderator Premium preview is product access, not staff authority or paid
+  truth.** Only active `moderator` and `superModerator` accounts derive the
+  preview. Acting Creator/Club operations require exact claim–mirror equality;
+  public projections use the client-immutable mirror only. The overlay never
+  mutates `entitlements`, billing lifecycle fields or provider records, never
+  grants owner/super-admin actions, and disappears on demotion, ban,
+  disablement or deletion. A separate paid entitlement remains valid through
+  demotion. See [ADR-119](Decisions.md#adr-119-moderator-premium-preview-is-a-derived-product-benefit-not-a-paid-entitlement).
 - **Reads**: `reports` is readable only by active staff. Ordinary users —
   including a reporter reading their own report — are denied.
 - **Writes**: `allow update, delete: if false` on `reports` for
@@ -775,12 +799,15 @@ public grant.
 `creatorPinnedPosts/{creatorId}` is a server-owned, known-id projection, not a
 public activity directory. Firestore denies collection queries and every
 client write. An exact get requires an active reader, active non-deleted
-Creator target, canonical Premium Creator entitlement and an exact document
-shape bound to the path id. The callable accepts no caption, author, billing
-field or URL from the client; it points only to an already-published canonical
-Voice Moment owned by the caller. Entitlement, profile and Moment triggers
-remove stale pointers, while rules independently fail closed during trigger
-delay.
+Creator target, canonical effective Creator access (paid entitlement or
+moderator preview) and an exact document shape bound to the path id. The
+acting callable requires exact signed-role/server-mirror agreement for the
+preview; the known-target read and cleanup paths use the client-immutable
+target mirror because they cannot inspect another account's token and grant no
+staff action. The callable accepts no caption, author, billing field or URL
+from the client; it points only to an already-published canonical Voice Moment
+owned by the caller. Entitlement, role/profile and Moment triggers remove
+stale pointers, while rules independently fail closed during trigger delay.
 
 ## If you find a security issue
 

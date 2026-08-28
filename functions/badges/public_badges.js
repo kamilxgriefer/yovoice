@@ -23,11 +23,13 @@
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
+const { getAuth } = require("firebase-admin/auth");
 const { FieldValue } = require("firebase-admin/firestore");
 
 const { STAFF_ROLES, USER_ROLES } = require("../utils/roles");
 const { isConfirmedOwner } = require("../utils/capabilities");
 const { effectiveVip } = require("../utils/entitlements");
+const { isActiveAccountProfile } = require("../utils/premium_access");
 const { requireAuthentication } = require("../utils/auth");
 const { writeAuditLog } = require("../utils/audit");
 const { db, normalizeText } = require("../utils/firestore");
@@ -44,7 +46,7 @@ const MAX_BATCH_UIDS = 50;
 /// secret is unavailable: with no way to confirm the owner, nobody is
 /// published as the owner.
 function derivePublicRole(uid, user) {
-  const rawRole = String(user.role ?? USER_ROLES.USER).trim();
+  const rawRole = String(user.role ?? USER_ROLES.USER);
   // The mirror must never publish a value outside the vocabulary. An
   // unknown role is treated as `user` FOR THE BADGE ONLY — the backfill
   // reports it as invalid so it gets fixed at the source, but the public
@@ -70,9 +72,10 @@ function derivePublicRole(uid, user) {
 ///
 /// Returns null when no document should exist.
 function deriveBadge({ uid = null, user = null, grant = null, now = new Date() } = {}) {
-  // No user document — a deleted account — means no badge, whatever
-  // grant documents might linger.
-  if (user === null || user === undefined) return null;
+  // The caller passes null when either the private profile or the Auth
+  // identity is absent/inactive. In every one of those cases no public badge
+  // may survive, whatever grant documents might linger.
+  if (!isActiveAccountProfile(user)) return null;
 
   const { staffRole } = derivePublicRole(uid, user);
 
@@ -87,6 +90,19 @@ function deriveBadge({ uid = null, user = null, grant = null, now = new Date() }
   };
 }
 
+/// Firebase Auth is authoritative for whether the identity still exists and
+/// is enabled. A lingering users/{uid} document after Auth deletion must never
+/// recreate a public role/VIP projection. Injectable because the Functions
+/// unit suite intentionally runs against the Firestore emulator alone.
+async function fetchAuthUserOrNull(uid) {
+  try {
+    return await getAuth().getUser(uid);
+  } catch (error) {
+    if (error?.code === "auth/user-not-found") return null;
+    throw error;
+  }
+}
+
 /// Synchronises publicBadges/{uid} with the authoritative state.
 ///
 /// Idempotent and CONVERGENT: it derives from the CURRENT user and grant
@@ -94,16 +110,26 @@ function deriveBadge({ uid = null, user = null, grant = null, now = new Date() }
 /// trigger deliveries all land on the same final document. A failure is
 /// retried by the trigger machinery, and the next successful run reads
 /// fresh state — a stale badge cannot survive a later write.
-async function syncPublicBadgeForUser(uid) {
+async function syncPublicBadgeForUser(
+  uid,
+  {
+    database = db,
+    fetchAuthUser = fetchAuthUserOrNull,
+  } = {},
+) {
   const cleanUid = String(uid ?? "").trim();
   if (!cleanUid || cleanUid.includes("/")) return { outcome: "invalidUid" };
 
-  const [userSnapshot, grantSnapshot] = await db.getAll(
-    db.collection("users").doc(cleanUid),
-    db.collection("vipGrants").doc(cleanUid),
-  );
+  const [[userSnapshot, grantSnapshot], authUser] = await Promise.all([
+    database.getAll(
+      database.collection("users").doc(cleanUid),
+      database.collection("vipGrants").doc(cleanUid),
+    ),
+    fetchAuthUser(cleanUid),
+  ]);
 
-  const user = userSnapshot.exists ? userSnapshot.data() : null;
+  const authActive = authUser !== null && authUser?.disabled !== true;
+  const user = authActive && userSnapshot.exists ? userSnapshot.data() : null;
 
   // A superAdmin role on a uid that is not the protected owner is a
   // security event, not a display nuance — same alert the capability
@@ -125,7 +151,7 @@ async function syncPublicBadgeForUser(uid) {
     grant: grantSnapshot.exists ? grantSnapshot.data() : null,
   });
 
-  const ref = db.collection("publicBadges").doc(cleanUid);
+  const ref = database.collection("publicBadges").doc(cleanUid);
 
   if (badge === null) {
     // Delete is idempotent: removing an absent document is a no-op, so a
@@ -265,6 +291,7 @@ module.exports = {
   MAX_BATCH_UIDS,
   deriveBadge,
   derivePublicRole,
+  fetchAuthUserOrNull,
   syncPublicBadgeForUser,
   onUserBadgeSourceChanged,
   onVipGrantChanged,

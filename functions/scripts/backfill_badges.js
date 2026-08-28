@@ -26,7 +26,7 @@
 // Output is aggregate only. No uid, email or display name is printed.
 
 const { getApps, initializeApp, applicationDefault } = require("firebase-admin/app");
-const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { getFirestore } = require("firebase-admin/firestore");
 
 // The badge module reaches utils/firestore, which resolves getFirestore()
 // AT LOAD — so the app must exist before that require. Tests initialize
@@ -47,6 +47,8 @@ const {
   deriveBadge,
   derivePublicRole,
   BADGE_SCHEMA_VERSION,
+  fetchAuthUserOrNull,
+  syncPublicBadgeForUser,
 } = require("../badges/public_badges");
 
 const EXPECTED_PROJECT = "yovoice-ec54a";
@@ -100,6 +102,8 @@ function emptyReport() {
   return {
     scannedUsers: 0,
     scannedBadges: 0,
+    authOrphans: 0,
+    disabledAuthAccounts: 0,
     staffBadges: 0,
     vipOnlyBadges: 0,
     staffVipBadges: 0,
@@ -136,7 +140,13 @@ function badgeMatches(existing, derived) {
 /// producing the plan. `uidPrefix` is a TEST SEAM: the emulator runs
 /// suites in parallel over one database, so tests bound the scan to
 /// their own fixtures. Production runs pass nothing and scan everything.
-async function scan({ db, args, uidPrefix = null, report = emptyReport() }) {
+async function scan({
+  db,
+  args,
+  uidPrefix = null,
+  report = emptyReport(),
+  fetchAuthUser = fetchAuthUserOrNull,
+}) {
   const plans = [];
 
   let query = db.collection("users").orderBy("__name__");
@@ -154,15 +164,24 @@ async function scan({ db, args, uidPrefix = null, report = emptyReport() }) {
     for (const document of snapshot.docs) {
       report.scannedUsers += 1;
       const uid = document.id;
-      const user = document.data() ?? {};
+      const authUser = await fetchAuthUser(uid);
+      const authActive = authUser !== null && authUser?.disabled !== true;
+      if (authUser === null) report.authOrphans += 1;
+      if (authUser?.disabled === true) report.disabledAuthAccounts += 1;
+      // Auth owns identity existence. A historical users/{uid} record may
+      // remain after deletion, but it must never be sufficient to plan a new
+      // public role/VIP projection.
+      const user = authActive ? (document.data() ?? {}) : null;
 
-      const rawRole = String(user.role ?? USER_ROLES.USER).trim();
-      if (!STAFF_ROLES.has(rawRole)) report.invalidRoles += 1;
-      // Counted, not blocking: the fail-safe (superModerator) badge is
-      // exactly what should be written for a forged superAdmin — refusing
-      // to apply would preserve whatever badge the anomaly already has.
-      if (derivePublicRole(uid, user).unconfirmedSuperAdmin) {
-        report.unconfirmedSuperAdmins += 1;
+      if (user !== null) {
+        const rawRole = String(user.role ?? USER_ROLES.USER);
+        if (!STAFF_ROLES.has(rawRole)) report.invalidRoles += 1;
+        // Counted, not blocking: the fail-safe (superModerator) badge is
+        // exactly what should be written for a forged superAdmin — refusing
+        // to apply would preserve whatever badge the anomaly already has.
+        if (derivePublicRole(uid, user).unconfirmedSuperAdmin) {
+          report.unconfirmedSuperAdmins += 1;
+        }
       }
 
       const grantSnapshot = await db.collection("vipGrants").doc(uid).get();
@@ -227,9 +246,19 @@ async function scan({ db, args, uidPrefix = null, report = emptyReport() }) {
   return { report, plans };
 }
 
-async function backfill({ db, args, uidPrefix = null }) {
+async function backfill({
+  db,
+  args,
+  uidPrefix = null,
+  fetchAuthUser = fetchAuthUserOrNull,
+}) {
   assertOwnerGuard();
-  const { report, plans } = await scan({ db, args, uidPrefix });
+  const { report, plans } = await scan({
+    db,
+    args,
+    uidPrefix,
+    fetchAuthUser,
+  });
 
   if (!args.apply) return report;
 
@@ -242,14 +271,15 @@ async function backfill({ db, args, uidPrefix = null }) {
   }
 
   for (const plan of plans) {
-    const ref = db.collection("publicBadges").doc(plan.uid);
-    if (plan.action === "delete") {
-      await ref.delete();
-      report.appliedDeletes += 1;
-    } else {
-      await ref.set({ ...plan.badge, updatedAt: FieldValue.serverTimestamp() });
-      report.appliedWrites += 1;
-    }
+    // Re-read both Auth and Firestore at apply time. A deletion/disablement or
+    // role change between planning and apply must converge to CURRENT state,
+    // never recreate a badge from the stale dry-run page.
+    const outcome = await syncPublicBadgeForUser(plan.uid, {
+      database: db,
+      fetchAuthUser,
+    });
+    if (outcome.outcome === "written") report.appliedWrites += 1;
+    if (outcome.outcome === "removed") report.appliedDeletes += 1;
   }
 
   return report;

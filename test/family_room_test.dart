@@ -143,6 +143,7 @@ void main() {
       await db.collection('entitlements').doc('me').set({
         'plan': 'monthly',
         'status': 'active',
+        'isPremium': true,
         'currentPeriodEnd': Timestamp.fromDate(
           DateTime.now().add(const Duration(days: 30)),
         ),

@@ -36,6 +36,10 @@ const ADMIN = "admin-uid";
 const PLAIN = "plain-uid";
 const BANNED_MOD = "banned-mod-uid";
 const REVOKED_MOD = "revoked-mod-uid";
+const DISABLED_MOD = "disabled-mod-uid";
+const DELETED_FLAG_MOD = "deleted-flag-mod-uid";
+const DELETED_STATUS_MOD = "deleted-status-mod-uid";
+const CROSS_ROLE_MOD = "cross-role-mod-uid";
 const AUTHOR = "author-uid";
 const REPORTER = "reporter-uid";
 
@@ -64,6 +68,29 @@ async function seedAccounts() {
       uid: REVOKED_MOD,
       displayName: "Revoked mod",
       role: "user",
+    }),
+    db.doc(`users/${DISABLED_MOD}`).set({
+      uid: DISABLED_MOD,
+      displayName: "Disabled mod",
+      role: "moderator",
+      disabled: true,
+    }),
+    db.doc(`users/${DELETED_FLAG_MOD}`).set({
+      uid: DELETED_FLAG_MOD,
+      displayName: "Deleted mod",
+      role: "moderator",
+      deleted: true,
+    }),
+    db.doc(`users/${DELETED_STATUS_MOD}`).set({
+      uid: DELETED_STATUS_MOD,
+      displayName: "Deleted mod",
+      role: "moderator",
+      status: "deleted",
+    }),
+    db.doc(`users/${CROSS_ROLE_MOD}`).set({
+      uid: CROSS_ROLE_MOD,
+      displayName: "Cross-role mod",
+      role: "superModerator",
     }),
     db.doc(`users/${AUTHOR}`).set({ uid: AUTHOR, displayName: "Author" }),
   ]);
@@ -184,6 +211,24 @@ describe("moderateReport", () => {
         })),
         "permission-denied",
       );
+    });
+
+    test("disabled, deleted and cross-role moderators are denied", async () => {
+      for (const [uid, role] of [
+        [DISABLED_MOD, "moderator"],
+        [DELETED_FLAG_MOD, "moderator"],
+        [DELETED_STATUS_MOD, "moderator"],
+        [CROSS_ROLE_MOD, "moderator"],
+      ]) {
+        await expectRejection(
+          run(request(uid, role, {
+            reportId: REPORT_ID,
+            action: "claim",
+            requestId: `req-${uid}`,
+          })),
+          "permission-denied",
+        );
+      }
     });
 
     test("a moderator is accepted", async () => {

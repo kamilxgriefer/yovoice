@@ -4,21 +4,19 @@ const { Timestamp } = require("firebase-admin/firestore");
 
 const { requireAuthentication } = require("../utils/auth");
 const { db } = require("../utils/firestore");
+const {
+  ACTIVE_PREMIUM_STATUSES,
+  deriveEffectivePremiumAccess,
+  paidPremiumIsActive,
+} = require("../utils/premium_access");
 
 const REGION = "europe-west1";
-const ACTIVE_PREMIUM_STATUSES = new Set(["active", "trialing", "grace"]);
 const CREATOR_ACCOUNT_TYPES = new Set(["creator", "official"]);
 const SAFE_DOCUMENT_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 
 function canonicalCreatorId(value) {
   return typeof value === "string" && value.length >= 1 &&
     value.length <= 128 && !value.includes("/");
-}
-
-function millis(value) {
-  if (value && typeof value.toMillis === "function") return value.toMillis();
-  if (value instanceof Date) return value.getTime();
-  return null;
 }
 
 function requireExactInput(data) {
@@ -41,12 +39,9 @@ function requireExactInput(data) {
 }
 
 function activeCreatorEntitlement(data, nowMs) {
-  const periodEndMs = millis(data?.currentPeriodEnd);
-  return data?.isPremium === true &&
+  return paidPremiumIsActive(data, nowMs) &&
     data?.creatorEnabled === true &&
-    data?.premiumIdentityEnabled === true &&
-    ACTIVE_PREMIUM_STATUSES.has(data?.status) &&
-    periodEndMs !== null && periodEndMs > nowMs;
+    data?.premiumIdentityEnabled === true;
 }
 
 function eligibleMoment(data, uid) {
@@ -68,6 +63,8 @@ const CREATOR_ELIGIBILITY_FIELDS = Object.freeze([
   "banned",
   "deleted",
   "disabled",
+  "role",
+  "roleTransitionInProgress",
   "status",
 ]);
 
@@ -111,6 +108,14 @@ function isActiveCreatorProfile(snapshot) {
   return profile.banned !== true && profile.disabled !== true &&
     profile.deleted !== true && profile.status !== "deleted" &&
     CREATOR_ACCOUNT_TYPES.has(profile.accountType);
+}
+
+function activeRoleTransition(profile) {
+  return profile?.role === "user" &&
+    profile.roleTransitionInProgress === true &&
+    profile.banned !== true && profile.disabled !== true &&
+    profile.deleted !== true && profile.status !== "deleted" &&
+    !profile.authDeletedAt;
 }
 
 /**
@@ -165,14 +170,21 @@ function createPinnedPostsService({
         return { pinned: false, momentId: null };
       }
 
-      activeCreatorProfile(profileSnapshot);
+      const profile = activeCreatorProfile(profileSnapshot);
       const entitlement = entitlementSnapshot.exists
         ? (entitlementSnapshot.data() ?? {})
         : null;
-      if (!activeCreatorEntitlement(entitlement, nowMs)) {
+      const access = deriveEffectivePremiumAccess({
+        user: profile,
+        tokenRole: auth.token?.role,
+        entitlement,
+        now: nowMs,
+        requireTokenRole: true,
+      });
+      if (!access.creatorEnabled) {
         throw new HttpsError(
           "failed-precondition",
-          "An active Premium Creator entitlement is required.",
+          "Active Premium Creator access is required.",
         );
       }
 
@@ -270,16 +282,46 @@ function createPinnedPostsService({
           : await Promise.all(
             references.map((reference) => transaction.get(reference)),
           );
-      if (!pinSnapshot.exists) return { cleared: false };
       const entitlement = entitlementSnapshot.exists
         ? (entitlementSnapshot.data() ?? {})
         : null;
-      if (isActiveCreatorProfile(profileSnapshot) &&
-          activeCreatorEntitlement(entitlement, clock())) {
+      const profile = profileSnapshot.exists
+        ? (profileSnapshot.data() ?? {})
+        : null;
+      // A privileged-to-privileged role change temporarily uses `role=user`
+      // as a fail-closed Auth/mirror interlock. Do not treat that short-lived
+      // state as a real demotion and irreversibly delete Creator data. Missing
+      // and inactive/deleted profiles deliberately bypass this deferral so
+      // their orphaned pins are still removed.
+      if (profileSnapshot.exists && activeRoleTransition(profile)) {
+        return { cleared: false, deferred: true };
+      }
+      const access = deriveEffectivePremiumAccess({
+        user: profile,
+        entitlement,
+        now: clock(),
+      });
+      if (isActiveCreatorProfile(profileSnapshot) && access.creatorEnabled) {
         return { cleared: false };
       }
-      transaction.delete(pinRef);
-      return { cleared: true, creatorId };
+      let cleared = false;
+      if (pinSnapshot.exists) {
+        transaction.delete(pinRef);
+        cleared = true;
+      }
+      let creatorModeReset = false;
+      if (profileSnapshot.exists &&
+          profile?.accountType === "creator" &&
+          !access.creatorEnabled) {
+        transaction.set(
+          firestore.doc(`users/${creatorId}`),
+          { accountType: "personal" },
+          { merge: true },
+        );
+        creatorModeReset = true;
+      }
+      if (!cleared && !creatorModeReset) return { cleared: false };
+      return { cleared, creatorId };
     });
   }
 
@@ -354,14 +396,17 @@ const onPinnedCreatorEntitlementChanged = onDocumentWritten(
 );
 
 function handlePinnedCreatorProfileChanged(event, pinnedService = service) {
-    const before = event.data?.before;
-    const after = event.data?.after;
-    const beforeData = before?.exists ? (before.data() ?? {}) : null;
-    const afterData = after?.exists ? (after.data() ?? {}) : null;
-    if (!creatorEligibilityChanged(beforeData, afterData)) {
-      return { cleared: false, skipped: true };
-    }
-    return pinnedService.clearPinForIneligibleCreator(event.params.creatorId);
+  const before = event.data?.before;
+  const after = event.data?.after;
+  const beforeData = before?.exists ? (before.data() ?? {}) : null;
+  const afterData = after?.exists ? (after.data() ?? {}) : null;
+  if (after?.exists && activeRoleTransition(afterData)) {
+    return { cleared: false, deferred: true };
+  }
+  if (!creatorEligibilityChanged(beforeData, afterData)) {
+    return { cleared: false, skipped: true };
+  }
+  return pinnedService.clearPinForIneligibleCreator(event.params.creatorId);
 }
 
 const onPinnedCreatorProfileChanged = onDocumentWritten(

@@ -38,6 +38,7 @@ class SubscriptionEntitlements {
     required this.canCreateClubs,
     required this.premiumIdentityEnabled,
     required this.maxOwnedClubs,
+    this.hasModeratorBenefits = false,
   });
 
   /// What every account has before any purchase: the full free product.
@@ -50,6 +51,7 @@ class SubscriptionEntitlements {
     canCreateClubs: false,
     premiumIdentityEnabled: false,
     maxOwnedClubs: 0,
+    hasModeratorBenefits: false,
   );
 
   final PremiumPlan plan;
@@ -61,19 +63,47 @@ class SubscriptionEntitlements {
   final bool premiumIdentityEnabled;
   final int maxOwnedClubs;
 
-  /// The paid identity is the common prerequisite for every Premium
-  /// destination. Feature-specific flags remain separate so future plans can
-  /// vary, but no capability is exposed before the same trusted entitlement
-  /// that grants the public Premium badge is active.
-  bool get hasPremiumIdentity => isPremium && premiumIdentityEnabled;
+  /// Complimentary product-preview access for an active `moderator` or
+  /// `superModerator` account.
+  ///
+  /// This is deliberately separate from [isPremium], [plan],
+  /// [currentPeriodEnd] and every billing field. A moderator can exercise the
+  /// Premium feature set for verification without the client claiming that a
+  /// subscription exists, renews or was paid for.
+  final bool hasModeratorBenefits;
 
-  bool get canUseCreator => hasPremiumIdentity && creatorEnabled;
+  /// Paid access still requires the paid identity flag before any purchased
+  /// capability is exposed. The independent moderator overlay is the only
+  /// non-billing path through these effective-access getters.
+  bool get hasPremiumIdentity =>
+      hasModeratorBenefits || (isPremium && premiumIdentityEnabled);
 
-  bool get canUseClubs => hasPremiumIdentity && canCreateClubs;
+  bool get canUseCreator =>
+      hasModeratorBenefits ||
+      (isPremium && premiumIdentityEnabled && creatorEnabled);
+
+  bool get canUseClubs =>
+      hasModeratorBenefits ||
+      (isPremium && premiumIdentityEnabled && canCreateClubs);
 
   /// True while the subscription is in a billing-retry window — premium
   /// stays on, but Settings can surface "check your payment method".
   bool get inGracePeriod => status == 'grace';
+
+  /// Applies the role-derived preview overlay without rewriting paid state.
+  SubscriptionEntitlements withModeratorBenefits(bool enabled) {
+    return SubscriptionEntitlements(
+      plan: plan,
+      status: status,
+      currentPeriodEnd: currentPeriodEnd,
+      isPremium: isPremium,
+      creatorEnabled: creatorEnabled,
+      canCreateClubs: canCreateClubs,
+      premiumIdentityEnabled: premiumIdentityEnabled,
+      maxOwnedClubs: maxOwnedClubs,
+      hasModeratorBenefits: enabled,
+    );
+  }
 
   factory SubscriptionEntitlements.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> snapshot,
@@ -84,10 +114,12 @@ class SubscriptionEntitlements {
     final periodEnd = (data['currentPeriodEnd'] as Timestamp?)?.toDate();
     final status = data['status'] as String? ?? 'none';
 
-    // Validity is recomputed locally rather than trusting the stored
-    // isPremium flag alone: a lapsed subscription goes dark the moment
-    // currentPeriodEnd passes, even before the daily server sweep runs.
+    // Paid validity requires the canonical server flag AND the local time
+    // boundary. A lapsed subscription therefore goes dark before the daily
+    // sweep, while a malformed/partially written document cannot fabricate
+    // paid access in the client when Rules and Functions would deny it.
     final active =
+        data['isPremium'] == true &&
         const {'active', 'trialing', 'grace'}.contains(status) &&
         periodEnd != null &&
         periodEnd.isAfter(DateTime.now());
@@ -102,6 +134,7 @@ class SubscriptionEntitlements {
       premiumIdentityEnabled:
           active && (data['premiumIdentityEnabled'] as bool? ?? false),
       maxOwnedClubs: active ? (data['maxOwnedClubs'] as int? ?? 3) : 0,
+      hasModeratorBenefits: false,
     );
   }
 }

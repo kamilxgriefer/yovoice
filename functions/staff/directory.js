@@ -40,7 +40,7 @@ const { getAuth } = require("firebase-admin/auth");
 
 const { STAFF_ROLES, USER_ROLES } = require("../utils/roles");
 const { derivePublicRole } = require("../badges/public_badges");
-const { effectiveVip } = require("../utils/entitlements");
+const { effectiveVip, VIP_SOURCES } = require("../utils/entitlements");
 const { requireProtectedOwner } = require("../utils/auth");
 const { db, normalizeText, positiveInteger, timestampToIso } = require("../utils/firestore");
 
@@ -118,10 +118,10 @@ function deriveDirectoryEntry({
   // rather than publishing either stale/spoofed side as a staff identity.
   const claimedRoleRaw = String(
     authUser.customClaims?.role ?? USER_ROLES.USER,
-  ).trim();
+  );
   const mirroredRoleRaw = String(
     profile.role ?? USER_ROLES.USER,
-  ).trim();
+  );
   const claimedRole = STAFF_ROLES.has(claimedRoleRaw)
     ? claimedRoleRaw
     : USER_ROLES.USER;
@@ -132,7 +132,15 @@ function deriveDirectoryEntry({
   const { staffRole } = derivePublicRole(uid, {
     role: rolesConsistent ? claimedRole : USER_ROLES.USER,
   });
-  const { vip } = effectiveVip({ user: profile, grant, now });
+  const { sources: vipSources } = effectiveVip({ user: profile, grant, now });
+  // A disabled Auth identity is not an active moderator and therefore loses
+  // only the derived staff preview. Keep independently valid paid/admin-grant
+  // sources in this private owner-only directory so billing/support truth is
+  // not erased by an account suspension.
+  const vip = vipSources.some(
+    (source) =>
+      source !== VIP_SOURCES.STAFF_PREVIEW || authUser.disabled !== true,
+  );
 
   const createdAtMillis = authUser.metadata?.creationTime
     ? Date.parse(authUser.metadata.creationTime)

@@ -35,8 +35,9 @@ docs drift, code doesn't.
   this with the app's two parallel color systems.
 - **Cloud Functions (Node)**: no linter currently configured in
   `functions/` — match the existing style (region/secret declarations at
-  the top of each file, `requireRole()`/`requireAuthentication()` guards
-  first thing inside a handler).
+  the top of each file, `requireVerifiedStaff()`/`requireProtectedOwner()`
+  or `requireAuthentication()` guards first thing inside a handler). Privileged
+  handlers must never authorize from a custom claim alone.
 - **Comments**: explain *why*, not *what* — the code already says what it
   does. A comment earns its place by capturing a non-obvious constraint, a
   workaround for a specific bug, or a decision that would otherwise look

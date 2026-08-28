@@ -80,6 +80,7 @@ given a false-precision date.
 | [115](#adr-115-voice-moment-review-stays-local-availability-is-user-sized-the-root-lifecycle-is-server-authoritative) | Voice Moment review stays local; availability is user-sized; the root lifecycle is server-authoritative | Deployed | 2026-08-27 |
 | [116](#adr-116-product-sound-is-a-material-feedback-system-not-a-set-of-jingles) | Product sound is a material feedback system, not a set of jingles | Hosting deployed; native/FCM held | 2026-08-27 |
 | [118](#adr-118-premium-pairs-recurring-eur-with-non-renewing-prepaid-blik) | Premium pairs recurring EUR with non-renewing prepaid BLIK | Catalog deployed; provider rollout disabled | 2026-08-28 |
+| [119](#adr-119-moderator-premium-preview-is-a-derived-product-benefit-not-a-paid-entitlement) | Moderator Premium preview is a derived product benefit, not a paid entitlement | Implemented; production release pending | 2026-08-28 |
 
 > **The index is incomplete and has been for a while**: rows for ADR-020
 > through ADR-052 were never added, and neither were ADR-062–065,
@@ -7360,3 +7361,59 @@ access from sandbox money.
 - App Store and Google Play purchases remain separate future adapters.
   `verifyPurchase` continues to fail closed until signed store verification is
   implemented.
+
+## ADR-119: Moderator Premium preview is a derived product benefit, not a paid entitlement
+
+**Status**: Implemented; production release pending
+**Date**: 2026-08-28
+
+### Context
+
+Moderators and super moderators need to exercise Premium identity, Creator and
+Clubs while verifying the member experience. Writing a synthetic subscription
+or treating a staff role as billing truth would corrupt renewal, support,
+refund and reconciliation state. Treating every staff tier alike would also
+couple owner authority to a consumer benefit with no product reason.
+
+### Decision
+
+Only active exact roles `moderator` and `superModerator` derive a
+`staffPreview` product overlay. The signed Auth claim and client-immutable
+`users/{uid}.role` mirror must match exactly for any acting Rule or callable.
+Background cleanup and public projections, which cannot inspect another
+account's token, use the server-written mirror only and grant no staff action.
+
+The overlay enables Premium identity, Creator and Clubs with the default
+three-Club limit. It is separate from `isPremium`, plan, period, renewal,
+provider source and every receipt. It never writes `entitlements/{uid}` and
+never grants moderation, ownership or `superAdmin` capability. Paid and preview
+sources can coexist. Demotion, ban, disablement or deletion removes the preview;
+paid access survives when independently valid. Creator pins/mode are cleaned
+on demotion only when no paid Creator authority remains.
+
+Public badge synchronization and backfill additionally require a present,
+enabled Firebase Auth identity. A stale private role document cannot republish
+an Auth-deleted or disabled account. In the private owner directory,
+disablement removes only the derived staff-preview source; independent paid or
+admin-grant billing/support truth remains distinguishable.
+
+### Reasoning
+
+One shared resolver in Functions, matching Rules helpers and a separate
+Flutter model flag keep effective product access consistent without making a
+badge or role a payment authority. Exact claim–mirror equality closes both
+self-write and stale-token paths. Keeping raw billing fields unchanged means
+support and reconciliation can still answer whether access was purchased.
+
+### Consequences
+
+- `superAdmin`, support, auditor and guide roles receive no automatic Premium
+  benefit.
+- Existing moderator projections require a bounded badges/profile/directory
+  backfill after deployment because deploying new trigger code does not replay
+  old user writes.
+- A newly promoted moderator may see client presentation from the server
+  mirror before their refreshed token can perform an acting operation; that
+  operation fails closed until the claim matches.
+- Tests must cover claim/mirror mismatch, inactive states, paid-plus-preview,
+  expiry/refund, demotion cleanup and billing-field immutability.

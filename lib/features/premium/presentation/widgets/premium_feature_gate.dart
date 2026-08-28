@@ -61,6 +61,16 @@ class _PremiumFeatureGateState extends State<PremiumFeatureGate> {
   }
 
   void _scheduleExpiry(SubscriptionEntitlements entitlements) {
+    if (entitlements.hasModeratorBenefits) {
+      // Paid expiry is not the expiry of an independently proven moderator
+      // preview. Clear any prior local billing timer so it cannot evict an
+      // active moderator from an already-open destination.
+      _expiryTimer?.cancel();
+      _expiryTimer = null;
+      _scheduledPeriodEnd = null;
+      _locallyExpiredPeriodEnd = null;
+      return;
+    }
     final periodEnd = entitlements.currentPeriodEnd;
     if (!entitlements.isPremium || periodEnd == null) {
       _expiryTimer?.cancel();

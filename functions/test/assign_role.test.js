@@ -23,8 +23,15 @@ const { getAuth } = require("firebase-admin/auth");
 
 if (getApps().length === 0) initializeApp();
 
-const { assignUserRole } = require("../admin/users");
+const {
+  assignUserRole,
+  setRoleAuthorityWriterForTests,
+} = require("../admin/users");
 const { setProtectedOwnerUidForTests } = require("../utils/roles");
+const { hasStaffPreviewAccess } = require("../utils/premium_access");
+const {
+  persistRoleAuthoritySafely,
+} = require("../utils/role_authority");
 
 const db = getFirestore();
 const adminAuth = getAuth();
@@ -85,7 +92,10 @@ beforeEach(async () => {
     .set({ role: "user", premiumIdentity: true, displayName: "Target" });
 });
 
-afterEach(() => setProtectedOwnerUidForTests(null));
+afterEach(() => {
+  setProtectedOwnerUidForTests(null);
+  setRoleAuthorityWriterForTests(null);
+});
 
 const assignArgs = (role, extra = {}) => ({
   uid: TARGET,
@@ -116,6 +126,7 @@ describe("allowed: the confirmed owner", () => {
       // The authoritative mirror followed, and VIP was untouched.
       const profile = (await db.collection("users").doc(TARGET).get()).data();
       assert.equal(profile.role, role);
+      assert.equal(profile.roleTransitionInProgress, false);
       assert.equal(profile.premiumIdentity, true, "VIP must never be removed");
 
       // Audit: actor, target, previous, new, reason.
@@ -146,6 +157,175 @@ describe("allowed: the confirmed owner", () => {
     const record = await adminAuth.getUser(TARGET);
     assert.equal(record.customClaims.role, "user");
   });
+
+  test("an Auth-write failure leaves demotion fail-closed and the exact "
+      + "expectedRole retry converges", async () => {
+    await run(request(OWNER, "superAdmin", assignArgs("moderator")));
+
+    setRoleAuthorityWriterForTests((operation) =>
+      persistRoleAuthoritySafely({
+        ...operation,
+        writeClaims: async () => {
+          throw new Error("injected setCustomUserClaims failure");
+        },
+      }));
+
+    await assert.rejects(
+      run(request(
+        OWNER,
+        "superAdmin",
+        assignArgs("user", { expectedRole: "moderator" }),
+      )),
+      /injected setCustomUserClaims failure/,
+    );
+
+    const partialProfile = (
+      await db.collection("users").doc(TARGET).get()
+    ).data();
+    const partialAuth = await adminAuth.getUser(TARGET);
+    assert.equal(partialProfile.role, "user");
+    assert.equal(partialProfile.roleTransitionInProgress, false);
+    assert.equal(partialAuth.customClaims.role, "moderator");
+    assert.equal(
+      hasStaffPreviewAccess({
+        user: partialProfile,
+        tokenRole: partialAuth.customClaims.role,
+        requireTokenRole: true,
+      }),
+      false,
+      "the stale moderator claim must not survive a partial demotion",
+    );
+
+    // The Auth claim is still the role the operator originally saw, so the
+    // same expectedRole request is a safe, idempotent resume.
+    setRoleAuthorityWriterForTests(null);
+    const retry = await run(request(
+      OWNER,
+      "superAdmin",
+      assignArgs("user", { expectedRole: "moderator" }),
+    ));
+    assert.equal(retry.success, true);
+    assert.equal(
+      (await db.collection("users").doc(TARGET).get()).data().role,
+      "user",
+    );
+    assert.equal(
+      (await adminAuth.getUser(TARGET)).customClaims.role,
+      "user",
+    );
+  });
+
+  test("a failed re-promotion cannot reactivate a historical moderator token",
+    async () => {
+      const historicalTokenRole = "moderator";
+      setRoleAuthorityWriterForTests((operation) =>
+        persistRoleAuthoritySafely({
+          ...operation,
+          writeClaims: async () => {
+            throw new Error("injected promotion Auth failure");
+          },
+        }));
+
+      await assert.rejects(
+        run(request(
+          OWNER,
+          "superAdmin",
+          assignArgs("moderator", { expectedRole: "user" }),
+        )),
+        /injected promotion Auth failure/,
+      );
+
+      const profile = (
+        await db.collection("users").doc(TARGET).get()
+      ).data();
+      const currentAuth = await adminAuth.getUser(TARGET);
+      assert.equal(profile.role, "user");
+      assert.notEqual(profile.roleTransitionInProgress, true);
+      assert.equal(currentAuth.customClaims?.role, undefined);
+      assert.equal(
+        hasStaffPreviewAccess({
+          user: profile,
+          tokenRole: historicalTokenRole,
+          requireTokenRole: true,
+        }),
+        false,
+      );
+
+      setRoleAuthorityWriterForTests(null);
+      const retry = await run(request(
+        OWNER,
+        "superAdmin",
+        assignArgs("moderator", { expectedRole: "user" }),
+      ));
+      assert.equal(retry.success, true);
+      assert.equal(
+        (await db.collection("users").doc(TARGET).get()).data().role,
+        "moderator",
+      );
+      assert.equal(
+        (await adminAuth.getUser(TARGET)).customClaims.role,
+        "moderator",
+      );
+    });
+
+  test("a lateral role failure uses a neutral mirror and retry converges",
+    async () => {
+      await run(request(OWNER, "superAdmin", assignArgs("support")));
+      let mirrorWrites = 0;
+      setRoleAuthorityWriterForTests((operation) =>
+        persistRoleAuthoritySafely({
+          ...operation,
+          writeMirror: async (write) => {
+            mirrorWrites += 1;
+            if (mirrorWrites === 2) {
+              throw new Error("injected final role mirror failure");
+            }
+            return operation.writeMirror(write);
+          },
+        }));
+
+      await assert.rejects(
+        run(request(
+          OWNER,
+          "superAdmin",
+          assignArgs("auditor", { expectedRole: "support" }),
+        )),
+        /injected final role mirror failure/,
+      );
+
+      const partialProfile = (
+        await db.collection("users").doc(TARGET).get()
+      ).data();
+      const partialAuth = await adminAuth.getUser(TARGET);
+      assert.equal(partialProfile.role, "user");
+      assert.equal(partialProfile.roleTransitionInProgress, true);
+      assert.equal(partialAuth.customClaims.role, "auditor");
+      assert.notEqual(partialProfile.role, "support");
+      assert.notEqual(partialProfile.role, "auditor");
+
+      // Auth already reached the requested role, so the same stale
+      // expectedRole is accepted only as an idempotent convergence retry.
+      setRoleAuthorityWriterForTests(null);
+      const retry = await run(request(
+        OWNER,
+        "superAdmin",
+        assignArgs("auditor", { expectedRole: "support" }),
+      ));
+      assert.equal(retry.success, true);
+      assert.equal(
+        (await db.collection("users").doc(TARGET).get()).data().role,
+        "auditor",
+      );
+      assert.equal(
+        (await db.collection("users").doc(TARGET).get()).data()
+          .roleTransitionInProgress,
+        false,
+      );
+      assert.equal(
+        (await adminAuth.getUser(TARGET)).customClaims.role,
+        "auditor",
+      );
+    });
 
   test("the stale-result guard refuses an outdated expectedRole", async () => {
     await run(request(OWNER, "superAdmin", assignArgs("moderator")));

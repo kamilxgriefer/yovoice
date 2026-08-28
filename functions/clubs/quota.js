@@ -2,9 +2,13 @@ const { HttpsError } = require("firebase-functions/v2/https");
 const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 
 const { db } = require("../utils/firestore");
-
-const ACTIVE_PREMIUM_STATUSES = new Set(["active", "trialing", "grace"]);
-const DEFAULT_MAX_OWNED_CLUBS = 3;
+const {
+  DEFAULT_MAX_OWNED_CLUBS,
+  boundedClubLimit,
+  deriveEffectivePremiumAccess,
+  isActiveAccountProfile,
+  paidPremiumIsActive,
+} = require("../utils/premium_access");
 
 function ownershipGuardReference(uid) {
   return db.collection("clubOwnershipGuards").doc(uid);
@@ -38,21 +42,15 @@ function touchOwnershipGuards(transaction, references) {
 }
 
 function activeClubEntitlement(data, now = Timestamp.now()) {
-  if (!data || !ACTIVE_PREMIUM_STATUSES.has(data.status)) return false;
+  if (!paidPremiumIsActive(data, now)) return false;
   if (data.premiumIdentityEnabled !== true || data.canCreateClubs !== true) {
     return false;
   }
-  const periodEnd = data.currentPeriodEnd;
-  return (
-    periodEnd instanceof Timestamp && periodEnd.toMillis() > now.toMillis()
-  );
+  return true;
 }
 
 function maxOwnedClubs(data) {
-  const value = Number(data?.maxOwnedClubs);
-  return Number.isSafeInteger(value) && value > 0
-    ? Math.min(value, 100)
-    : DEFAULT_MAX_OWNED_CLUBS;
+  return boundedClubLimit(data?.maxOwnedClubs);
 }
 
 /**
@@ -61,7 +59,11 @@ function maxOwnedClubs(data) {
  * backwards compatibility, matching the Flutter model and Firestore rules.
  * Callers must acquire this uid's ownership guard before invoking it.
  */
-async function requireCommunityClubCapacity(transaction, uid) {
+async function requireCommunityClubCapacity(
+  transaction,
+  uid,
+  { tokenRole = null, requireTokenRole = false, now = Timestamp.now() } = {},
+) {
   const entitlementReference = db.collection("entitlements").doc(uid);
   const profileReference = db.collection("users").doc(uid);
   const [entitlementSnapshot, profileSnapshot] = await transaction.getAll(
@@ -73,21 +75,24 @@ async function requireCommunityClubCapacity(transaction, uid) {
     : null;
 
   const profile = profileSnapshot.exists ? (profileSnapshot.data() ?? {}) : {};
-  if (
-    !profileSnapshot.exists ||
-    profile.banned === true ||
-    profile.disabled === true
-  ) {
+  if (!profileSnapshot.exists || !isActiveAccountProfile(profile)) {
     throw new HttpsError(
       "permission-denied",
       "An active account profile is required to own a community Club.",
     );
   }
 
-  if (!activeClubEntitlement(entitlement)) {
+  const access = deriveEffectivePremiumAccess({
+    user: profile,
+    tokenRole,
+    entitlement,
+    now,
+    requireTokenRole,
+  });
+  if (!access.canCreateClubs) {
     throw new HttpsError(
       "failed-precondition",
-      "An active Premium Clubs entitlement is required.",
+      "Active Premium Clubs access is required.",
     );
   }
 
@@ -97,7 +102,7 @@ async function requireCommunityClubCapacity(transaction, uid) {
   const ownedCommunityClubs = ownedSnapshot.docs.filter(
     (document) => document.data().type !== "family",
   ).length;
-  const limit = maxOwnedClubs(entitlement);
+  const limit = access.maxOwnedClubs;
 
   if (ownedCommunityClubs >= limit) {
     throw new HttpsError(

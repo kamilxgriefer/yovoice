@@ -429,6 +429,11 @@ tree described it as before 2026-08-16.
   Prepaid BLIK uses `source=stripe_prepaid` and `renewalBehavior=none`; the
   active plan plus `currentPeriodEnd` still expose its exact paid window without
   implying a future provider charge.
+- Moderator preview is not stored in this collection. Active exact
+  `moderator`/`superModerator` roles derive an independent product overlay;
+  acting operations require claim–mirror equality and public/background
+  projections use only the client-immutable role mirror. Demotion removes the
+  overlay without changing any paid plan, period, receipt or provider source.
 - `billingAccounts/{uid}` is the canonical Firebase uid ↔ Stripe Customer
   binding. It stores either the recurring Subscription lifecycle or the
   verified one-time Checkout/Payment references needed to reconcile a 30-day

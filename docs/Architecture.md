@@ -169,12 +169,12 @@ required, because there was only ever one account.
            (e.g. bootstrapSuperAdmin — see ADR-003)
 ```
 
-Role/permission state (`superAdmin`, moderator roles used by the admin
-Cloud Functions) rides on **Firebase Auth custom claims**, never on a
-Firestore field — see [SECURITY.md](SECURITY.md#identity-and-roles)
-for why that specific choice closes off the most common privilege-
-escalation path in a Firebase app (a user can always write their own
-`users/{uid}` document; a user can never write their own auth token).
+Role/permission state (`superAdmin` and the staff roles used by privileged
+Cloud Functions) requires a signed **Firebase Auth custom claim**. Privileged
+requests also compare that claim with the server-written, client-immutable
+`users/{uid}.role` mirror so a revocation takes effect before a stale token
+expires. The mirror alone is never staff authority. See
+[SECURITY.md](SECURITY.md#identity-and-roles).
 
 ## Data flow: a concrete example (joining a Broadcast Room)
 
@@ -319,6 +319,25 @@ The deployed catalog remains renderable while
 `STRIPE_BILLING_EXPORTS!=enabled`; that operator flag withholds Checkout,
 Portal, webhook and Auth-deletion billing exports and reports checkout as
 unavailable.
+
+Moderator product verification is deliberately independent of billing.
+Active accounts whose exact role is `moderator` or `superModerator` receive a
+derived Premium-preview overlay for identity, Creator and Clubs. Acting Rules
+and callables require the signed claim to exactly match the server role mirror;
+background/public projections use the client-immutable mirror because they
+cannot inspect another account's token. The overlay never writes or changes
+`entitlements/{uid}`, a plan, period, renewal state or provider source, and it
+does not confer any additional moderation or ownership capability. Demotion,
+ban, disablement or deletion removes it independently of paid access. See
+[ADR-119](Decisions.md#adr-119-moderator-premium-preview-is-a-derived-product-benefit-not-a-paid-entitlement).
+
+Auth claims and Firestore cannot change atomically. A privileged-to-privileged
+role change therefore passes through a fail-closed `role=user` mirror with the
+server-only `roleTransitionInProgress=true` marker. Authority is unavailable
+while the claim and mirror differ. Destructive Creator cleanup and the website
+showcase defer while an active profile carries the marker; paid billing truth
+still expires normally, and missing/deleted accounts are never deferred. The
+final role mirror clears the marker and retriggers convergence.
 
 ## LiveKit interaction
 

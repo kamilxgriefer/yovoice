@@ -92,6 +92,29 @@ class _FakeBilling implements PremiumBillingGateway {
       Uri.parse('https://billing.stripe.com/test');
 }
 
+class _RecordingPortalBilling implements PremiumBillingGateway {
+  _RecordingPortalBilling({required this.context});
+
+  final PremiumBillingContext context;
+  int portalCalls = 0;
+
+  @override
+  Future<PremiumBillingContext> getContext({String? countryCode}) async =>
+      context;
+
+  @override
+  Future<Uri> createCheckout(PremiumPlan plan) async =>
+      Uri.parse('https://checkout.stripe.com/test');
+
+  @override
+  Future<Uri> createPortal() async {
+    portalCalls += 1;
+    // Stop before url_launcher: this test verifies the trusted Portal request,
+    // not an operating-system browser integration.
+    throw StateError('portal invocation recorded');
+  }
+}
+
 Widget _scaledApp(Widget home) => MaterialApp(
   builder: (context, child) => MediaQuery(
     data: MediaQuery.of(
@@ -353,6 +376,52 @@ void main() {
     expect(find.textContaining('Ends '), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'canonical Stripe billing stays manageable without claiming active Premium',
+    (tester) async {
+      final recovery = PremiumBillingContext(
+        countryCode: 'PL',
+        currency: 'PLN',
+        taxDisplay: 'included',
+        taxNotice: _billingContext.taxNotice,
+        priceDisplaySource: 'base',
+        localizedAtCheckout: true,
+        billingManagedBy: PremiumBillingManager.stripe,
+        checkoutAvailable: true,
+        portalAvailable: true,
+        currentPlan: PremiumPlan.none,
+        renewalBehavior: 'none',
+        currentPeriodEnd: null,
+        plans: _billingContext.plans,
+      );
+      final billing = _RecordingPortalBilling(context: recovery);
+
+      await tester.pumpWidget(
+        _app(
+          PremiumPlansScreen(
+            entitlementService: EntitlementService(
+              firestore: FakeFirebaseFirestore(),
+              auth: _auth(),
+            ),
+            billingService: billing,
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Review your billing'), findsOneWidget);
+      expect(find.text('Open billing portal'), findsOneWidget);
+      expect(find.text('Current plan'), findsNothing);
+      expect(find.textContaining('Renews '), findsNothing);
+      expect(find.textContaining('Ends '), findsNothing);
+
+      await tester.tap(find.text('Open billing portal'));
+      await tester.pump();
+      expect(billing.portalCalls, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('billing load failure is friendly and retryable', (tester) async {
     await tester.pumpWidget(

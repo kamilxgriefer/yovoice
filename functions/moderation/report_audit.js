@@ -8,8 +8,8 @@ const REGION = "europe-west1";
 // WHY THIS EXISTS INSTEAD OF REUSING listAdminAuditLogs.
 //
 // functions/admin/audit.js's listAdminAuditLogs is a whole-collection
-// browser: it is gated on requireAdminCenterAccess (which already
-// includes moderators), lists `adminAuditLogs` unfiltered by default,
+// browser: it is gated on the protected-owner capability, lists
+// `adminAuditLogs` unfiltered by default,
 // supports free-text search across every field, and returns
 // `actor.email` and `target.email`. Pointing the Moderation Center at
 // it would let a moderator reviewing one report page through every ban,

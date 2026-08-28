@@ -6329,16 +6329,26 @@ async function main() {
     "accountType: creator requires premium; personal is free; official never client-settable",
     async () => {
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
-        await setDoc(
-          doc(ctx.firestore(), "users/host-uid"),
-          { accountType: "personal" },
-          { merge: true },
-        );
-        await setDoc(
-          doc(ctx.firestore(), "users/attacker-uid"),
-          { accountType: "personal" },
-          { merge: true },
-        );
+        const db = ctx.firestore();
+        await Promise.all([
+          setDoc(
+            doc(db, "users/host-uid"),
+            { accountType: "personal" },
+            { merge: true },
+          ),
+          setDoc(
+            doc(db, "users/attacker-uid"),
+            { accountType: "personal" },
+            { merge: true },
+          ),
+          setDoc(doc(db, "entitlements/host-uid"), {
+            status: "active",
+            isPremium: true,
+            creatorEnabled: true,
+            premiumIdentityEnabled: true,
+            currentPeriodEnd: new Date(Date.now() + 86400000),
+          }),
+        ]);
       });
       // Premium host can become creator.
       await assertSucceeds(
@@ -6364,6 +6374,148 @@ async function main() {
           accountType: "personal",
         }),
       );
+    },
+  );
+
+  // Moderator and superModerator receive a non-billing Premium preview so
+  // they can exercise Creator and Clubs. The signed role claim must match the
+  // server-owned users/{uid}.role mirror; superAdmin and every other role stay
+  // outside this product benefit.
+  const moderatorPreviewCases = [
+    {
+      uid: "premium-preview-mod-uid",
+      claimRole: "moderator",
+      mirrorRole: "moderator",
+      allowed: true,
+    },
+    {
+      uid: "premium-preview-super-mod-uid",
+      claimRole: "superModerator",
+      mirrorRole: "superModerator",
+      allowed: true,
+    },
+    {
+      uid: "premium-preview-owner-uid",
+      claimRole: "superAdmin",
+      mirrorRole: "superAdmin",
+      allowed: false,
+    },
+    {
+      uid: "premium-preview-stale-uid",
+      claimRole: "moderator",
+      mirrorRole: "user",
+      allowed: false,
+    },
+    {
+      uid: "premium-preview-mismatched-staff-uid",
+      claimRole: "moderator",
+      mirrorRole: "superModerator",
+      allowed: false,
+    },
+    {
+      uid: "premium-preview-disabled-uid",
+      claimRole: "moderator",
+      mirrorRole: "moderator",
+      disabled: true,
+      allowed: false,
+    },
+    {
+      uid: "premium-preview-deleted-uid",
+      claimRole: "superModerator",
+      mirrorRole: "superModerator",
+      deleted: true,
+      allowed: false,
+    },
+  ];
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await Promise.all(
+      moderatorPreviewCases.map((entry) =>
+        setDoc(doc(db, `users/${entry.uid}`), {
+          uid: entry.uid,
+          displayName: entry.uid,
+          accountType: "personal",
+          role: entry.mirrorRole,
+          banned: false,
+          disabled: entry.disabled === true,
+          deleted: entry.deleted === true,
+          status: entry.deleted === true ? "deleted" : "active",
+        }),
+      ),
+    );
+  });
+
+  for (const entry of moderatorPreviewCases) {
+    await check(
+      `moderator Premium preview ${entry.allowed ? "allows" : "denies"} `
+        + `${entry.claimRole}/${entry.mirrorRole} for Creator`,
+      async () => {
+        const context = testEnv.authenticatedContext(entry.uid, {
+          email_verified: true,
+          role: entry.claimRole,
+        });
+        const operation = updateDoc(doc(context.firestore(), `users/${entry.uid}`), {
+          accountType: "creator",
+        });
+        if (entry.allowed) {
+          await assertSucceeds(operation);
+        } else {
+          await assertFails(operation);
+        }
+      },
+    );
+  }
+
+  await check(
+    "moderator public Creator pin works without a billing entitlement and stops after demotion",
+    async () => {
+      const creatorId = "premium-preview-pinned-mod-uid";
+      const readerId = "premium-preview-reader-uid";
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        const db = ctx.firestore();
+        await Promise.all([
+          setDoc(doc(db, `users/${creatorId}`), {
+            uid: creatorId,
+            displayName: "Preview moderator",
+            accountType: "creator",
+            role: "moderator",
+            banned: false,
+            disabled: false,
+            deleted: false,
+            status: "active",
+          }),
+          setDoc(doc(db, `users/${readerId}`), {
+            uid: readerId,
+            displayName: "Preview reader",
+            role: "user",
+            banned: false,
+            disabled: false,
+            deleted: false,
+            status: "active",
+          }),
+          setDoc(doc(db, `creatorPinnedPosts/${creatorId}`), {
+            schemaVersion: 1,
+            creatorId,
+            momentId: "preview-moment",
+            pinnedAt: new Date(),
+            updatedAt: new Date(),
+          }),
+        ]);
+      });
+
+      const reader = testEnv.authenticatedContext(readerId, {
+        email_verified: true,
+      });
+      const pin = doc(reader.firestore(), `creatorPinnedPosts/${creatorId}`);
+      await assertSucceeds(getDoc(pin));
+
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), `users/${creatorId}`), {
+          role: "user",
+        });
+      });
+      await assertFails(getDoc(pin));
     },
   );
 
@@ -6465,6 +6617,26 @@ async function main() {
         }),
       );
 
+      // Feature flags cannot manufacture paid authority when the canonical
+      // billing writer did not mark the entitlement itself Premium.
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), "entitlements/limited-premium-uid"),
+          {
+            status: "active",
+            currentPeriodEnd: new Date(Date.now() + 86400000),
+            creatorEnabled: true,
+            canCreateClubs: true,
+            premiumIdentityEnabled: true,
+          },
+        );
+      });
+      await assertFails(
+        updateDoc(doc(limited.firestore(), "users/limited-premium-uid"), {
+          accountType: "creator",
+        }),
+      );
+
       // Legacy/malformed entitlement documents must fail closed too. The
       // rules default absent capability flags to false, matching Flutter.
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
@@ -6498,6 +6670,28 @@ async function main() {
       }),
     );
   });
+
+  await check(
+    "SECURITY: role transition marker is server-only and client-immutable",
+    async () => {
+      const ref = doc(host.firestore(), "users/host-uid");
+      await assertFails(updateDoc(ref, { roleTransitionInProgress: true }));
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users/host-uid"), {
+          roleTransitionInProgress: true,
+        });
+      });
+      await assertFails(updateDoc(ref, { roleTransitionInProgress: false }));
+      await assertFails(
+        updateDoc(ref, { roleTransitionInProgress: deleteField() }),
+      );
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "users/host-uid"), {
+          roleTransitionInProgress: false,
+        });
+      });
+    },
+  );
 
   // ── Conversation bootstrap (first-chat transaction.get) ──────────
 
@@ -6793,6 +6987,29 @@ async function main() {
       // isActiveStaff() requires BOTH the signed claim and this
       // server-written mirror, which is what assignUserRole maintains.
       role: "moderator",
+    });
+    await setDoc(doc(db, "users/mod-disabled-uid"), {
+      uid: "mod-disabled-uid",
+      displayName: "Disabled mod",
+      role: "moderator",
+      disabled: true,
+    });
+    await setDoc(doc(db, "users/mod-deleted-flag-uid"), {
+      uid: "mod-deleted-flag-uid",
+      displayName: "Deleted mod",
+      role: "moderator",
+      deleted: true,
+    });
+    await setDoc(doc(db, "users/mod-deleted-status-uid"), {
+      uid: "mod-deleted-status-uid",
+      displayName: "Deleted mod",
+      role: "moderator",
+      status: "deleted",
+    });
+    await setDoc(doc(db, "users/mod-cross-role-uid"), {
+      uid: "mod-cross-role-uid",
+      displayName: "Crossed mod",
+      role: "superModerator",
     });
     // Historical record retained for Admin SDK moderation/export. Rules must
     // keep it invisible and immutable to every client, including staff.
@@ -7492,6 +7709,26 @@ async function main() {
       await assertFails(
         updateDoc(doc(moderator.firestore(), filed), { status: "resolved" }),
       );
+    },
+  );
+
+  await check(
+    "SECURITY REPORTS: disabled, deleted and cross-role staff tokens cannot read the queue",
+    async () => {
+      const filed = `reports/${reportId("attacker-uid", "globalMessage", "g-ok-1")}`;
+      const denied = [
+        ["mod-disabled-uid", "moderator"],
+        ["mod-deleted-flag-uid", "moderator"],
+        ["mod-deleted-status-uid", "moderator"],
+        ["mod-cross-role-uid", "moderator"],
+      ];
+      for (const [uid, role] of denied) {
+        const context = testEnv.authenticatedContext(uid, {
+          email_verified: true,
+          role,
+        });
+        await assertFails(getDoc(doc(context.firestore(), filed)));
+      }
     },
   );
 

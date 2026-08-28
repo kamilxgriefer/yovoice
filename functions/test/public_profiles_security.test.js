@@ -58,6 +58,8 @@ async function wipe() {
     `${P}inactive`,
     `${P}creator`,
     `${P}official`,
+    `${P}moderator-creator`,
+    `${P}superadmin-creator`,
   ];
   const backfillUsers = [`${P}backfill-a`, `${P}backfill-b`];
   const unrelatedBlocked = Array.from(
@@ -187,6 +189,65 @@ describe("public profile derivation", () => {
     assert.equal(derivePublicProfile(VISIBLE, null), null);
     assert.equal(derivePublicProfile(VISIBLE, { banned: true }), null);
     assert.equal(derivePublicProfile(VISIBLE, { disabled: true }), null);
+    assert.equal(derivePublicProfile(VISIBLE, { deleted: true }), null);
+    assert.equal(derivePublicProfile(VISIBLE, { status: "deleted" }), null);
+  });
+
+  test("moderator roles derive public VIP without rewriting paid identity", () => {
+    for (const role of ["moderator", "superModerator"]) {
+      const source = {
+        role,
+        displayName: "Staff creator",
+        accountType: "creator",
+        premiumIdentity: false,
+      };
+      const profile = derivePublicProfile(VISIBLE, source);
+      assert.equal(profile.premiumIdentity, true, role);
+      assert.equal(profile.accountType, "creator", role);
+      assert.equal(source.premiumIdentity, false, role);
+    }
+    for (const role of ["support", "auditor", "guideMaster", "superAdmin"]) {
+      const profile = derivePublicProfile(VISIBLE, {
+        role,
+        displayName: "Other staff",
+        accountType: "creator",
+        premiumIdentity: false,
+      });
+      assert.equal(profile.premiumIdentity, false, role);
+      assert.equal(profile.accountType, "personal", role);
+    }
+  });
+
+  test("role transition never publishes an unbacked Creator identity", () => {
+    const transition = derivePublicProfile(VISIBLE, {
+      displayName: "Transitioning creator",
+      role: "user",
+      roleTransitionInProgress: true,
+      accountType: "creator",
+      premiumIdentity: false,
+    });
+    assert.equal(transition.accountType, "personal");
+    assert.equal(transition.premiumIdentity, false);
+
+    const completedDemotion = derivePublicProfile(VISIBLE, {
+      displayName: "Former preview creator",
+      role: "support",
+      roleTransitionInProgress: false,
+      accountType: "creator",
+      premiumIdentity: false,
+    });
+    assert.equal(completedDemotion.accountType, "personal");
+    assert.equal(completedDemotion.premiumIdentity, false);
+
+    const paidTransition = derivePublicProfile(VISIBLE, {
+      displayName: "Paid creator",
+      role: "user",
+      roleTransitionInProgress: true,
+      accountType: "creator",
+      premiumIdentity: true,
+    });
+    assert.equal(paidTransition.accountType, "creator");
+    assert.equal(paidTransition.premiumIdentity, true);
   });
 });
 
@@ -258,6 +319,47 @@ describe("privacy projection trigger", () => {
     assert.equal(first.presence, "removed");
     assert.equal(replay.profile, "absent");
     assert.equal(replay.presence, "absent");
+  });
+
+  test("role transition projection converges without exposing preview Creator", async () => {
+    await db.collection("users").doc(VISIBLE).set({
+      displayName: "Preview creator",
+      role: "moderator",
+      roleTransitionInProgress: false,
+      accountType: "creator",
+      premiumIdentity: false,
+    });
+    await syncExistingAuthUser(VISIBLE);
+    let profile = (
+      await db.collection("publicProfiles").doc(VISIBLE).get()
+    ).data();
+    assert.equal(profile.accountType, "creator");
+    assert.equal(profile.premiumIdentity, true);
+
+    await db.collection("users").doc(VISIBLE).update({
+      role: "user",
+      roleTransitionInProgress: true,
+    });
+    const transition = await syncExistingAuthUser(VISIBLE);
+    assert.equal(transition.profile, "updated");
+    profile = (
+      await db.collection("publicProfiles").doc(VISIBLE).get()
+    ).data();
+    assert.equal(profile.accountType, "personal");
+    assert.equal(profile.premiumIdentity, false);
+
+    await db.collection("users").doc(VISIBLE).update({
+      role: "support",
+      roleTransitionInProgress: false,
+    });
+    const finalRole = await syncExistingAuthUser(VISIBLE);
+    assert.equal(finalRole.profile, "unchanged");
+
+    await db.collection("users").doc(VISIBLE).update({
+      accountType: "personal",
+    });
+    const cleanup = await syncExistingAuthUser(VISIBLE);
+    assert.equal(cleanup.profile, "unchanged");
   });
 
   test("an Auth-disabled account cannot retain or recreate projections", async () => {
@@ -537,6 +639,7 @@ describe("public profile search", () => {
           displayName: "Voice Creator",
           username: "voice.creator",
           accountType: "creator",
+          premiumIdentity: true,
           bio: "Makes rooms about design.",
           followerCount: 12,
         }),
@@ -579,6 +682,64 @@ describe("public profile search", () => {
         data: { query: "voice", accountTypes: ["creator", "staff"] },
       }),
       (error) => error.code === "invalid-argument",
+    );
+  });
+
+  test("creator directory derives moderator access but excludes superAdmin", async () => {
+    await seedSearchWorld();
+    const moderator = `${P}moderator-creator`;
+    const superAdmin = `${P}superadmin-creator`;
+    await Promise.all([
+      db.collection("users").doc(moderator).set({
+        displayName: "Voice Moderator Creator",
+        username: "voice.moderator.creator",
+        accountType: "creator",
+        role: "moderator",
+        premiumIdentity: false,
+        banned: false,
+      }),
+      db.collection("users").doc(superAdmin).set({
+        displayName: "Voice Super Admin Creator",
+        username: "voice.superadmin.creator",
+        accountType: "creator",
+        role: "superAdmin",
+        premiumIdentity: false,
+        banned: false,
+      }),
+    ]);
+    await Promise.all([
+      db.collection("publicProfiles").doc(moderator).set(
+        derivePublicProfile(moderator, {
+          displayName: "Voice Moderator Creator",
+          username: "voice.moderator.creator",
+          accountType: "creator",
+          role: "moderator",
+        }),
+      ),
+      db.collection("publicProfiles").doc(superAdmin).set(
+        derivePublicProfile(superAdmin, {
+          displayName: "Voice Super Admin Creator",
+          username: "voice.superadmin.creator",
+          accountType: "creator",
+          role: "superAdmin",
+        }),
+      ),
+    ]);
+
+    const response = await runSearch({
+      auth: { uid: CALLER, token: { email_verified: true } },
+      data: { query: "voice", accountTypes: ["creator"] },
+    });
+    assert.equal(
+      response.profiles.some((profile) =>
+        profile.uid === moderator &&
+        profile.accountType === "creator" &&
+        profile.premiumIdentity === true),
+      true,
+    );
+    assert.equal(
+      response.profiles.some((profile) => profile.uid === superAdmin),
+      false,
     );
   });
 
@@ -769,6 +930,8 @@ describe("bounded public-profile backfill", () => {
         .doc(`${P}backfill-${suffix}`)
         .set({
           displayName: `Backfill ${suffix.toUpperCase()}`,
+          role: suffix === "a" ? "moderator" : "user",
+          premiumIdentity: false,
         });
     }
     const args = {
@@ -797,6 +960,19 @@ describe("bounded public-profile backfill", () => {
     });
     assert.equal(first.appliedWrites, 2);
     assert.ok(first.peakPlannedOperations <= 400);
+    assert.equal(
+      (await db.collection("publicProfiles").doc(`${P}backfill-a`).get())
+        .data().premiumIdentity,
+      true,
+    );
+    const converged = await backfill({
+      db,
+      args: { ...args, apply: true },
+      fetchAuthUser,
+    });
+    assert.equal(converged.appliedWrites, 0);
+    assert.equal(converged.profileUnchanged, 1);
+    assert.equal(converged.presenceUnchanged, 1);
     const second = await backfill({
       db,
       args: { ...args, apply: true, startAfter: first.nextCursor },

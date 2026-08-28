@@ -17,6 +17,11 @@ const { createHash } = require("node:crypto");
 
 const { requireAuthentication } = require("../utils/auth");
 const { db } = require("../utils/firestore");
+const {
+  deriveEffectivePremiumAccess,
+  hasStaffPreviewAccess,
+  isActiveAccountProfile,
+} = require("../utils/premium_access");
 const { normalizeProfileVisibility } = require("./profile_visibility");
 
 const REGION = "europe-west1";
@@ -120,18 +125,28 @@ function normalizeSearchText(value) {
 }
 
 function derivePublicProfile(uid, source) {
-  if (!source || source.banned === true || source.disabled === true)
-    return null;
+  if (!isActiveAccountProfile(source)) return null;
 
   const username = safeString(source.username, 80);
   const displayName =
     safeString(source.displayName, 120) || username || "YO Voice user";
   const rawAccountType = safeString(source.accountType, 24);
-  const accountType = ["personal", "creator", "official"].includes(
-    rawAccountType,
-  )
-    ? rawAccountType
-    : "personal";
+  // Creator is a capability-backed public identity, not merely a private
+  // profile string. During the neutral role interlock (and after a completed
+  // demotion while destructive cleanup converges), the private Creator mode
+  // may deliberately remain intact. Publish it only while an independent
+  // paid identity or an active moderator preview still backs it. Official is
+  // server-owned and independent of either Premium source.
+  const paidPremiumIdentity = source.premiumIdentity === true;
+  const staffPreviewIdentity =
+    source.roleTransitionInProgress !== true &&
+    hasStaffPreviewAccess({ user: source });
+  const accountType = rawAccountType === "official"
+    ? "official"
+    : rawAccountType === "creator" &&
+        (paidPremiumIdentity || staffPreviewIdentity)
+      ? "creator"
+      : "personal";
 
   return {
     uid,
@@ -149,7 +164,7 @@ function derivePublicProfile(uid, source) {
     website: safeNullableUrl(source.website),
     statusMessage: safeString(source.statusMessage, 120),
     accountType,
-    premiumIdentity: source.premiumIdentity === true,
+    premiumIdentity: paidPremiumIdentity || staffPreviewIdentity,
     friendCount: safeCount(source.friendCount),
     followerCount: safeCount(source.followerCount),
     followingCount: safeCount(source.followingCount),
@@ -158,8 +173,7 @@ function derivePublicProfile(uid, source) {
 }
 
 function deriveSocialPresence(uid, source) {
-  if (!source || source.banned === true || source.disabled === true)
-    return null;
+  if (!isActiveAccountProfile(source)) return null;
   const lastSeen = source.lastSeen;
   return {
     uid,
@@ -401,7 +415,7 @@ function sourceProfileVisibleToCaller({
 async function requireActiveCaller(uid) {
   const snapshot = await db.collection("users").doc(uid).get();
   const data = snapshot.exists ? (snapshot.data() ?? {}) : null;
-  if (!data || data.banned === true || data.disabled === true) {
+  if (!isActiveAccountProfile(data)) {
     throw new HttpsError("permission-denied", "The account is not active.");
   }
 }
@@ -645,7 +659,7 @@ const searchPublicProfiles = onCall(
     for (let index = 0; index < sourceProfiles.length; index += 1) {
       const snapshot = sourceProfiles[index];
       const source = snapshot.exists ? (snapshot.data() ?? {}) : null;
-      if (!source || source.banned === true || source.disabled === true) {
+      if (!isActiveAccountProfile(source)) {
         hidden.add(snapshot.id);
         continue;
       }
@@ -659,18 +673,15 @@ const searchPublicProfiles = onCall(
         hidden.add(snapshot.id);
         continue;
       }
-      const entitlement = entitlements[index]?.data() ?? {};
-      const periodEndMillis = entitlement.currentPeriodEnd?.toMillis?.();
-      const premiumActive =
-        ["active", "trialing", "grace"].includes(entitlement.status) &&
-        entitlement.isPremium === true &&
-        entitlement.premiumIdentityEnabled === true &&
-        Number.isFinite(periodEndMillis) &&
-        periodEndMillis > nowMillis;
+      const entitlement = entitlements[index]?.data() ?? null;
+      const access = deriveEffectivePremiumAccess({
+        user: source,
+        entitlement,
+        now: nowMillis,
+      });
       const creatorActive =
         source.accountType === "creator" &&
-        premiumActive &&
-        entitlement.creatorEnabled === true;
+        access.creatorEnabled;
       const canonicalAccountType =
         source.accountType === "official"
           ? "official"
@@ -686,7 +697,7 @@ const searchPublicProfiles = onCall(
       }
       authorityByUid.set(snapshot.id, {
         accountType: canonicalAccountType,
-        premiumIdentity: premiumActive,
+        premiumIdentity: access.premiumIdentityEnabled,
       });
     }
 

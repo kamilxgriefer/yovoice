@@ -133,12 +133,6 @@ service cloud.firestore {
     //    surviving up to an hour inside an already-issued ID token.
     // A freshly promoted moderator whose token has not refreshed yet
     // fails closed (no access) rather than open.
-    function isStaffClaim() {
-      return isSignedIn() &&
-          request.auth.token.get('role', 'user') in
-              ['moderator', 'superModerator', 'superAdmin'];
-    }
-
     function staffRoleOf(userId) {
       return exists(/databases/$(database)/documents/users/$(userId))
           ? get(/databases/$(database)/documents/users/$(userId))
@@ -147,10 +141,55 @@ service cloud.firestore {
     }
 
     function isActiveStaff() {
-      return isStaffClaim() &&
-          !isRestrictedAccount(request.auth.uid) &&
+      return isSignedIn() &&
+          request.auth.token.get('role', 'user') in
+              ['moderator', 'superModerator', 'superAdmin'] &&
+          request.auth.token.get('role', 'user') ==
+              staffRoleOf(request.auth.uid) &&
+          accountIsActive(request.auth.uid) &&
           staffRoleOf(request.auth.uid) in
-              ['moderator', 'superModerator', 'superAdmin'];
+              ['moderator', 'superModerator', 'superAdmin'] &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid))
+            .data.get('deleted', false) != true &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid))
+            .data.get('status', '') != 'deleted';
+    }
+
+    // MODERATOR PREMIUM PREVIEW — product access, never billing authority.
+    //
+    // Exactly moderator and superModerator receive the same product preview
+    // bundle as Premium so they can exercise Creator and Clubs while testing
+    // and moderating the app. This deliberately excludes superAdmin and every
+    // other staff role: owner/staff authority and product benefits remain
+    // independent. As with isActiveStaff(), the signed claim and the
+    // server-owned role mirror must agree, so promotion fails closed until a
+    // token refresh and demotion takes effect immediately through the mirror.
+    function hasModeratorPreviewBenefit() {
+      return isSignedIn() &&
+          request.auth.token.get('role', 'user') in
+              ['moderator', 'superModerator'] &&
+          request.auth.token.get('role', 'user') ==
+              staffRoleOf(request.auth.uid) &&
+          accountIsActive(request.auth.uid) &&
+          staffRoleOf(request.auth.uid) in
+              ['moderator', 'superModerator'] &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid))
+            .data.get('deleted', false) != true &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid))
+            .data.get('status', '') != 'deleted';
+    }
+
+    // Background/public projections cannot inspect another user's Auth token.
+    // The target's server-written role mirror is authoritative here; account
+    // restrictions still fail closed. This helper grants product display/read
+    // access only and is never used for staff or owner actions.
+    function userHasModeratorPreviewBenefit(userId) {
+      return accountIsActive(userId) &&
+          staffRoleOf(userId) in ['moderator', 'superModerator'] &&
+          get(/databases/$(database)/documents/users/$(userId))
+            .data.get('deleted', false) != true &&
+          get(/databases/$(database)/documents/users/$(userId))
+            .data.get('status', '') != 'deleted';
     }
 
     function isBlockedPair(userA, userB) {
@@ -266,6 +305,8 @@ service cloud.firestore {
           exists(/databases/$(database)/documents/entitlements/$(request.auth.uid)) &&
           get(/databases/$(database)/documents/entitlements/$(request.auth.uid))
             .data.status in ['active', 'trialing', 'grace'] &&
+          get(/databases/$(database)/documents/entitlements/$(request.auth.uid))
+            .data.get('isPremium', false) == true &&
           request.time < get(/databases/$(database)/documents/entitlements/$(request.auth.uid))
             .data.currentPeriodEnd;
     }
@@ -274,27 +315,34 @@ service cloud.firestore {
     // Yearly plans grant the same bundle. This keeps rules aligned with the
     // client model when future tiers vary: an active status alone never
     // bypasses a disabled feature, and the same entitlement must grant the
-    // public Premium identity before Creator/Clubs unlock.
+    // public Premium identity before Creator/Clubs unlock. The separate
+    // moderator preview is an additive, non-billing product benefit.
     function hasCreatorPremium() {
-      return hasActivePremium() &&
-          get(/databases/$(database)/documents/entitlements/$(request.auth.uid))
-            .data.get('premiumIdentityEnabled', false) == true &&
-          get(/databases/$(database)/documents/entitlements/$(request.auth.uid))
-            .data.get('creatorEnabled', false) == true;
+      return hasModeratorPreviewBenefit() ||
+          (
+            hasActivePremium() &&
+            get(/databases/$(database)/documents/entitlements/$(request.auth.uid))
+              .data.get('premiumIdentityEnabled', false) == true &&
+            get(/databases/$(database)/documents/entitlements/$(request.auth.uid))
+              .data.get('creatorEnabled', false) == true
+          );
     }
 
     function userHasCreatorPremium(userId) {
-      return exists(/databases/$(database)/documents/entitlements/$(userId)) &&
-          get(/databases/$(database)/documents/entitlements/$(userId))
-            .data.status in ['active', 'trialing', 'grace'] &&
-          get(/databases/$(database)/documents/entitlements/$(userId))
-            .data.get('isPremium', false) == true &&
-          get(/databases/$(database)/documents/entitlements/$(userId))
-            .data.get('premiumIdentityEnabled', false) == true &&
-          get(/databases/$(database)/documents/entitlements/$(userId))
-            .data.get('creatorEnabled', false) == true &&
-          request.time < get(/databases/$(database)/documents/entitlements/$(userId))
-            .data.currentPeriodEnd;
+      return userHasModeratorPreviewBenefit(userId) ||
+          (
+            exists(/databases/$(database)/documents/entitlements/$(userId)) &&
+            get(/databases/$(database)/documents/entitlements/$(userId))
+              .data.status in ['active', 'trialing', 'grace'] &&
+            get(/databases/$(database)/documents/entitlements/$(userId))
+              .data.get('isPremium', false) == true &&
+            get(/databases/$(database)/documents/entitlements/$(userId))
+              .data.get('premiumIdentityEnabled', false) == true &&
+            get(/databases/$(database)/documents/entitlements/$(userId))
+              .data.get('creatorEnabled', false) == true &&
+            request.time < get(/databases/$(database)/documents/entitlements/$(userId))
+              .data.currentPeriodEnd
+          );
     }
 
     // accountType is client-writable ONLY within these transitions:

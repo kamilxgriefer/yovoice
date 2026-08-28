@@ -1221,6 +1221,29 @@ someone decide what to pick up next.
 
 ## In Progress
 
+### Moderator and super-moderator Premium preview (ADR-119)
+
+- **Status**: Implemented and reviewed in source; **production release
+  pending**. No Functions, Rules, projection backfill, Hosting or native-store
+  deployment is claimed by this entry.
+- **Description**: Active exact `moderator` and `superModerator` roles derive a
+  revocable product-preview overlay for Premium identity, Creator and Clubs
+  without fabricating `isPremium`, a plan, billing period, renewal or provider
+  record. Acting operations require the signed claim and server role mirror to
+  agree; public/background projections use the client-immutable mirror only.
+  Demotion or an inactive account removes the preview while an independently
+  valid paid entitlement survives.
+- **Release work**: Complete the measured release gates, deploy Functions
+  before Rules, read the deployed rules back byte-for-byte, and run the
+  `publicBadges`, `publicProfiles` and `userDirectory` backfills through
+  dry-run, apply and post-apply no-op. Read back moderator, super-moderator and
+  demotion fixtures before releasing Hosting or native build 8. The exact
+  procedure and rollback boundary are in
+  [DEPLOYMENT.md](DEPLOYMENT.md#adr-119-moderator-premium-preview-rollout-source-complete-release-pending).
+- **Priority**: High — existing moderators do not receive converged public
+  identity projections merely because new trigger code exists, and a client
+  must not be released ahead of its backend authority.
+
 ### ~~Server-only Direct Message Firestore rules~~ DEPLOYED 2026-08-23
 
 - **Status**: **DEPLOYED 2026-08-23T18:53:33Z** (ruleset `9257845f-…`, commit `57ac1e8`, live source byte-verified against the commit). Rules only — no Hosting, Functions, indexes or Storage. The rules

@@ -58,6 +58,7 @@ function callableRequest(uid, role, data) {
 function activeEntitlement() {
   return {
     status: "active",
+    isPremium: true,
     currentPeriodEnd: Timestamp.fromMillis(Date.now() + 86_400_000),
     premiumIdentityEnabled: true,
     canCreateClubs: true,
@@ -460,6 +461,39 @@ describe("transferClubOwnershipSelf", () => {
       (error) => error?.code === "permission-denied",
     );
   });
+
+  test("soft-deleted owners and recipients cannot transfer ownership", async () => {
+    for (const [label, state] of [
+      ["deleted-flag-recipient", { deleted: true }],
+      ["deleted-status-recipient", { status: "deleted" }],
+    ]) {
+      const clubId = `${P}${label}`;
+      await seedTransfer(clubId);
+      await db.collection("users").doc(IDS.next).update(state);
+      await assert.rejects(
+        () => runTransfer(callableRequest(IDS.owner, "user", {
+          clubId,
+          newOwnerId: IDS.next,
+        })),
+        (error) => error?.code === "permission-denied",
+      );
+      assert.equal(
+        (await db.collection("clubs").doc(clubId).get()).data().ownerId,
+        IDS.owner,
+      );
+    }
+
+    const ownerClubId = `${P}deleted-status-owner`;
+    await seedTransfer(ownerClubId);
+    await db.collection("users").doc(IDS.owner).update({ status: "deleted" });
+    await assert.rejects(
+      () => runTransfer(callableRequest(IDS.owner, "user", {
+        clubId: ownerClubId,
+        newOwnerId: IDS.next,
+      })),
+      (error) => error?.code === "permission-denied",
+    );
+  });
 });
 
 describe("admin Club mutation authorization", () => {
@@ -570,6 +604,45 @@ describe("admin Club mutation authorization", () => {
       (await db.collection("clubMarketingConsents").doc(clubId).get()).exists,
       false,
     );
+  });
+
+  test("admin transfer cannot assign a soft-deleted recipient", async () => {
+    for (const [label, state] of [
+      ["deleted-flag", { deleted: true }],
+      ["deleted-status", { status: "deleted" }],
+    ]) {
+      const clubId = `${P}admin-${label}-recipient`;
+      await Promise.all([
+        db.collection("clubs").doc(clubId).set({
+          ownerId: IDS.owner,
+          ownerName: "Old owner",
+          name: "Admin Deleted Recipient",
+          avatarUrl: null,
+          type: "community",
+          status: "active",
+          memberCount: 2,
+        }),
+        db.collection("entitlements").doc(IDS.next).set(activeEntitlement()),
+      ]);
+      await seedMember(clubId, IDS.owner, "owner");
+      await seedMember(clubId, IDS.next, "member");
+      await db.collection("users").doc(IDS.next).update(state);
+
+      await assert.rejects(
+        () => runAdminTransfer(
+          callableRequest(IDS.activeAdmin, "superAdmin", {
+            clubId,
+            newOwnerId: IDS.next,
+            reason: "security regression",
+          }),
+        ),
+        (error) => error?.code === "permission-denied",
+      );
+      assert.equal(
+        (await db.collection("clubs").doc(clubId).get()).data().ownerId,
+        IDS.owner,
+      );
+    }
   });
 
   test("active staff removal cleans membership, projection and voice", async () => {

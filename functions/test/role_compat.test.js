@@ -18,6 +18,7 @@ const {
   USER_MANAGEMENT_ROLES,
   ROOM_MANAGEMENT_ROLES,
   PERMANENT_DELETE_ROLES,
+  STAFF_PREVIEW_ROLES,
   isProtectedOwnerUid,
   protectedOwnerConfigured,
   setProtectedOwnerUidForTests,
@@ -94,6 +95,13 @@ describe("staff vocabulary", () => {
     );
     assert.equal(STAFF_ROLES.has("vip"), false);
     assert.equal(STAFF_ROLES.has("admin"), false);
+  });
+
+  test("the Premium preview vocabulary is exactly the two moderation roles", () => {
+    assert.deepEqual(
+      [...STAFF_PREVIEW_ROLES].sort(),
+      ["moderator", "superModerator"],
+    );
   });
 
   test("legacy values are NO LONGER accepted", () => {
@@ -252,9 +260,25 @@ describe("effective VIP", () => {
     }
   });
 
-  test("a staff role alone never confers VIP", () => {
-    for (const role of STAFF_ROLES) {
+  test("only active moderator roles derive the staff-preview VIP source", () => {
+    for (const role of [USER_ROLES.MODERATOR, USER_ROLES.SUPER_MODERATOR]) {
+      const result = effectiveVip({ user: { role } });
+      assert.equal(result.vip, true, role);
+      assert.deepEqual(result.sources, [VIP_SOURCES.STAFF_PREVIEW], role);
+      assert.equal(result.primarySource, VIP_SOURCES.STAFF_PREVIEW, role);
+    }
+    for (const role of [
+      USER_ROLES.USER,
+      USER_ROLES.GUIDE_MASTER,
+      USER_ROLES.SUPPORT,
+      USER_ROLES.AUDITOR,
+      USER_ROLES.SUPER_ADMIN,
+    ]) {
       assert.equal(effectiveVip({ user: { role } }).vip, false, role);
     }
+    assert.equal(
+      effectiveVip({ user: { role: "moderator", banned: true } }).vip,
+      false,
+    );
   });
 });

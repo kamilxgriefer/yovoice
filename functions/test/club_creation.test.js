@@ -28,9 +28,13 @@ const OWNERS = [
   `${P}banned`,
   `${P}media-owner`,
   `${P}media-attacker`,
+  `${P}moderator`,
+  `${P}super-moderator`,
+  `${P}role-mismatch`,
+  `${P}excluded-role`,
 ];
 
-function request(uid, clubId, overrides = {}) {
+function request(uid, clubId, overrides = {}, tokenOverrides = {}) {
   return {
     auth: {
       uid,
@@ -38,6 +42,7 @@ function request(uid, clubId, overrides = {}) {
         email_verified: true,
         email: `${uid}@example.invalid`,
         name: "Club Owner",
+        ...tokenOverrides,
       },
     },
     data: {
@@ -56,6 +61,7 @@ function request(uid, clubId, overrides = {}) {
 function entitlement(overrides = {}) {
   return {
     status: "active",
+    isPremium: true,
     currentPeriodEnd: Timestamp.fromMillis(Date.now() + 86_400_000),
     premiumIdentityEnabled: true,
     canCreateClubs: true,
@@ -281,11 +287,68 @@ describe("createCommunityClub", () => {
     );
   });
 
-  test("a disabled or missing profile is denied with active entitlement", async () => {
+  for (const [role, uid] of [
+    ["moderator", `${P}moderator`],
+    ["superModerator", `${P}super-moderator`],
+  ]) {
+    test(`${role} creates a Club through matching claim + mirror without billing`, async () => {
+      await seedOwner(uid, null, { role });
+      const result = await run(
+        request(uid, `${P}${role}-club`, {}, { role }),
+      );
+      assert.equal(result.ownedCommunityClubs, 1);
+      assert.equal(result.maxOwnedClubs, 3);
+      assert.equal(
+        (await db.collection("entitlements").doc(uid).get()).exists,
+        false,
+      );
+    });
+  }
+
+  test("a stale or mismatched role claim cannot use the moderator overlay", async () => {
+    const uid = `${P}role-mismatch`;
+    await seedOwner(uid, null, { role: "moderator" });
+    for (const role of [undefined, "user", "superModerator", "superAdmin"]) {
+      await assert.rejects(
+        () => run(request(
+          uid,
+          `${P}mismatch-${role ?? "missing"}`,
+          {},
+          role === undefined ? {} : { role },
+        )),
+        (error) => error?.code === "failed-precondition",
+      );
+    }
+  });
+
+  test("support, auditor, guide and superAdmin roles receive no automatic Club access", async () => {
+    const uid = `${P}excluded-role`;
+    for (const role of ["support", "auditor", "guideMaster", "superAdmin"]) {
+      await seedOwner(uid, null, { role });
+      await assert.rejects(
+        () => run(request(uid, `${P}excluded-${role}`, {}, { role })),
+        (error) => error?.code === "failed-precondition",
+      );
+    }
+  });
+
+  test("an inactive, deleted or missing profile is denied with active entitlement", async () => {
     const uid = `${P}banned`;
     await seedOwner(uid, entitlement(), { disabled: true });
     await assert.rejects(
       () => run(request(uid, `${P}disabled-club`)),
+      (error) => error?.code === "permission-denied",
+    );
+
+    await seedOwner(uid, entitlement(), { deleted: true });
+    await assert.rejects(
+      () => run(request(uid, `${P}deleted-flag-club`)),
+      (error) => error?.code === "permission-denied",
+    );
+
+    await seedOwner(uid, entitlement(), { status: "deleted" });
+    await assert.rejects(
+      () => run(request(uid, `${P}deleted-status-club`)),
       (error) => error?.code === "permission-denied",
     );
 

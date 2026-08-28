@@ -5,6 +5,7 @@ const { logger } = require("firebase-functions/v2");
 
 const { db } = require("../utils/firestore");
 const { requireProtectedOwner } = require("../utils/auth");
+const { hasStaffPreviewAccess } = require("../utils/premium_access");
 
 const REGION = "europe-west1";
 
@@ -25,6 +26,14 @@ const DEFAULT_MAX_OWNED_CLUBS = 3;
 // Firestore's 500-write ceiling while still amortising query overhead.
 const PREMIUM_EXPIRY_PAGE_SIZE = 150;
 const MAX_PREMIUM_EXPIRY_PAGES = 50;
+
+function activeRoleTransition(user) {
+  return user?.role === "user" &&
+    user.roleTransitionInProgress === true &&
+    user.banned !== true && user.disabled !== true &&
+    user.deleted !== true && user.status !== "deleted" &&
+    !user.authDeletedAt;
+}
 
 /**
  * The single writer for `entitlements/{uid}` — the trusted subscription
@@ -59,6 +68,7 @@ async function applyEntitlements(
     const userSnapshot = await transaction.get(userRef);
     applyEntitlementsInTransaction(transaction, uid, entitlementData, {
       user: userSnapshot.data() ?? {},
+      writeUserProjection: userSnapshot.exists,
     });
   });
 
@@ -112,6 +122,8 @@ function applyEntitlementsInTransaction(
   { user = {}, firestore = db, writeUserProjection = true } = {},
 ) {
   const premiumActive = entitlements.isPremium === true;
+  const staffPreviewActive = hasStaffPreviewAccess({ user });
+  const deferCreatorCleanup = activeRoleTransition(user);
   const entitlementRef = firestore.collection("entitlements").doc(uid);
   const userRef = firestore.collection("users").doc(uid);
   const pinnedPostRef = firestore.collection("creatorPinnedPosts").doc(uid);
@@ -127,14 +139,21 @@ function applyEntitlementsInTransaction(
         // Creator is a paid account mode. Revocation/refund must remove it
         // in the same commit as the entitlement, while server-owned Official
         // accounts remain Official.
-        ...(premiumActive !== true && user.accountType === "creator"
+        ...(premiumActive !== true &&
+          !staffPreviewActive &&
+          !deferCreatorCleanup &&
+          user.accountType === "creator"
           ? { accountType: "personal" }
           : {}),
       },
       { merge: true },
     );
   }
-  if (!premiumActive) transaction.delete(pinnedPostRef);
+  // Paid expiry/refund must not erase the independent moderator preview.
+  // Role demotion has its own profile trigger and removes the preview state.
+  if (!premiumActive && !staffPreviewActive && !deferCreatorCleanup) {
+    transaction.delete(pinnedPostRef);
+  }
 }
 
 /**
@@ -272,20 +291,32 @@ async function commitExpiredPremiumPage(documents, { now }) {
         },
         { merge: true },
       );
-      transaction.delete(
-        db.collection("creatorPinnedPosts").doc(document.id),
-      );
-      const user = currentUsers[index]?.data() ?? {};
-      transaction.set(
-        db.collection("users").doc(document.id),
-        {
-          premiumIdentity: false,
-          ...(user.accountType === "creator"
-            ? { accountType: "personal" }
-            : {}),
-        },
-        { merge: true },
-      );
+      const userSnapshot = currentUsers[index];
+      const user = userSnapshot?.data() ?? {};
+      const staffPreviewActive = hasStaffPreviewAccess({ user });
+      const deferCreatorCleanup = activeRoleTransition(user);
+      if (!staffPreviewActive && !deferCreatorCleanup) {
+        transaction.delete(
+          db.collection("creatorPinnedPosts").doc(document.id),
+        );
+      }
+      // An orphaned entitlement may outlive Auth/profile deletion. Never
+      // recreate users/{uid}: a deleted account can retain a cryptographically
+      // valid ID token for up to one hour, and a minimal recreated profile
+      // would make accountIsActive() pass during that window.
+      if (userSnapshot?.exists) {
+        transaction.set(
+          db.collection("users").doc(document.id),
+          {
+            premiumIdentity: false,
+            ...(user.accountType === "creator" && !staffPreviewActive &&
+                !deferCreatorCleanup
+              ? { accountType: "personal" }
+              : {}),
+          },
+          { merge: true },
+        );
+      }
       expired += 1;
     }
     return expired;

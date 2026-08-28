@@ -717,6 +717,34 @@ test("expired entitlement has no current plan and can resubscribe", async () => 
   assert.equal(result.checkoutAvailable, true);
 });
 
+test("billing context rejects active-looking state without canonical isPremium", async () => {
+  for (const value of [undefined, false]) {
+    const firestore = new FakeFirestore({
+      "entitlements/user": {
+        source: "stripe",
+        plan: "monthly",
+        status: "active",
+        ...(value === undefined ? {} : { isPremium: value }),
+        currentPeriodEnd: Timestamp.fromMillis(NOW_MS + 86400000),
+        renewalBehavior: "renews",
+      },
+      "billingAccounts/user": {
+        stripeCustomerId: "cus_current",
+        stripeSubscriptionId: "sub_current",
+      },
+    });
+    const result = await handlers({ firestore, stripe: stripeFake() })
+      .getPremiumBillingContextHandler({ auth: { uid: "user" }, data: {} });
+    assert.equal(result.currentPlan, "none", String(value));
+    assert.equal(result.currentPeriodEndMs, null, String(value));
+    assert.equal(result.renewalBehavior, "none", String(value));
+    // A malformed access projection must not trap a still-canonical Stripe
+    // subscription outside its cancellation/management surface.
+    assert.equal(result.portalAvailable, true, String(value));
+    assert.equal(result.checkoutAvailable, true, String(value));
+  }
+});
+
 test("suspended or unverified payer can still open their canonical Stripe portal", async () => {
   const firestore = new FakeFirestore({
     "entitlements/suspended": { source: "stripe", status: "active" },

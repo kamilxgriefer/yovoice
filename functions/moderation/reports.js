@@ -1,7 +1,10 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { FieldValue } = require("firebase-admin/firestore");
 
-const { requireAuthentication } = require("../utils/auth");
+const {
+  requireAuthentication,
+  requireVerifiedStaff,
+} = require("../utils/auth");
 const { db, normalizeText } = require("../utils/firestore");
 const { writeAuditLog } = require("../utils/audit");
 const { USER_ROLES } = require("../utils/roles");
@@ -70,52 +73,26 @@ const TRANSITIONS = {
 };
 
 const MAX_MODERATOR_NOTE = 500;
+const REPORT_STAFF_ROLES = new Set([
+  USER_ROLES.MODERATOR,
+  USER_ROLES.SUPER_MODERATOR,
+  USER_ROLES.SUPER_ADMIN,
+]);
 
 /// Both halves of staff authority, checked server-side.
 ///
 /// The custom claim is signed and cannot be forged; the `users/{uid}.role`
 /// mirror is written by assignUserRole through the Admin SDK and is what
 /// makes a REVOCATION effective immediately, rather than whenever the
-/// removed moderator's ID token happens to expire. `banned` is the same
-/// account-status field firestore.rules reads.
+/// removed moderator's ID token happens to expire. Exact equality plus the
+/// full active-account check rejects crossed staff tiers, bans, disablement
+/// and both soft-deletion representations.
 async function requireActiveStaff(request) {
-  const auth = requireAuthentication(request);
-  const claimRole = String(auth.token.role ?? USER_ROLES.USER);
-
-  const staffRoles = new Set([
-    USER_ROLES.MODERATOR,
-    USER_ROLES.SUPER_MODERATOR,
-    USER_ROLES.SUPER_ADMIN,
-  ]);
-
-  if (!staffRoles.has(claimRole)) {
-    throw new HttpsError(
-      "permission-denied",
-      "You do not have permission to moderate reports.",
-    );
-  }
-
-  const profile = await db.collection("users").doc(auth.uid).get();
-  const data = profile.data() ?? {};
-
-  if (data.banned === true) {
-    throw new HttpsError(
-      "permission-denied",
-      "This account is restricted.",
-    );
-  }
-
-  const documentRole = String(data.role ?? USER_ROLES.USER);
-  if (!staffRoles.has(documentRole)) {
-    // The claim says staff but the server record no longer does: the
-    // role was revoked and this token is stale.
-    throw new HttpsError(
-      "permission-denied",
-      "Your moderator access has been removed.",
-    );
-  }
-
-  return { uid: auth.uid, token: auth.token, role: documentRole };
+  return requireVerifiedStaff(
+    request,
+    REPORT_STAFF_ROLES,
+    "You do not have permission to moderate reports.",
+  );
 }
 
 const moderateReport = onCall(

@@ -1,7 +1,7 @@
 // Effective VIP, decided in ONE place.
 //
-// VIP is an entitlement, not a staff role: it coexists with every role in
-// the staff vocabulary. It has exactly two sources, and the source must
+// VIP is an identity benefit, not an authorization role: it coexists with
+// every role in the staff vocabulary. It has three sources, and the source must
 // stay distinguishable — a complimentary grant is not a paid
 // subscription, and billing, support and the badge all need to tell them
 // apart.
@@ -9,10 +9,11 @@
 //   subscription  active premiumIdentity (the server-written mirror of a
 //                 real paid entitlement)
 //   adminGrant    a server-managed complimentary grant in vipGrants/{uid}
+//   staffPreview  active moderator/superModerator server-role mirror
 //
-// The transitional third source — `role == "vip"` — was retired after the
-// 2026-08 production dry run found zero accounts still carrying it. A
-// role value now confers no VIP under any circumstances.
+// The retired source — `role == "vip"` — was removed after the
+// 2026-08 production dry run found zero accounts still carrying it. Only the
+// two explicit preview roles above confer the new derived identity benefit.
 //
 // Absence of a grant is safe: no document means no entitlement from that
 // source, never an error and never a default-true.
@@ -20,7 +21,10 @@
 const VIP_SOURCES = Object.freeze({
   SUBSCRIPTION: "subscription",
   ADMIN_GRANT: "adminGrant",
+  STAFF_PREVIEW: "staffPreview",
 });
+
+const { hasStaffPreviewAccess } = require("./premium_access");
 
 /// A complimentary grant is active when it exists, is not revoked, and
 /// either never expires or has not expired yet.
@@ -57,17 +61,22 @@ function effectiveVip({ user = {}, grant = null, now = new Date() } = {}) {
   if (grantIsActive(grant, now)) {
     sources.push(VIP_SOURCES.ADMIN_GRANT);
   }
+  if (hasStaffPreviewAccess({ user })) {
+    sources.push(VIP_SOURCES.STAFF_PREVIEW);
+  }
 
   return {
     vip: sources.length > 0,
     sources,
-    // A paid subscription outranks a complimentary grant when one label
-    // has to be chosen.
+    // A paid subscription outranks derived/complimentary access when one
+    // private support label has to be chosen.
     primarySource: sources.includes(VIP_SOURCES.SUBSCRIPTION)
       ? VIP_SOURCES.SUBSCRIPTION
-      : sources.includes(VIP_SOURCES.ADMIN_GRANT)
-        ? VIP_SOURCES.ADMIN_GRANT
-        : null,
+      : sources.includes(VIP_SOURCES.STAFF_PREVIEW)
+        ? VIP_SOURCES.STAFF_PREVIEW
+        : sources.includes(VIP_SOURCES.ADMIN_GRANT)
+          ? VIP_SOURCES.ADMIN_GRANT
+          : null,
   };
 }
 

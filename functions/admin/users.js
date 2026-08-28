@@ -28,13 +28,27 @@ const {
 
 const { writeUserAuditLog } = require("../utils/audit");
 const {
+  persistRoleAuthoritySafely,
+} = require("../utils/role_authority");
+const {
   EVENT_TYPES,
   enqueueVoiceEnforcement,
 } = require("../staff/voice_enforcement");
 
 const auth = getAuth();
+let roleAuthorityWriterForTests = null;
 
-async function saveRoleProfile({ uid, email, role, assignedBy }) {
+function setRoleAuthorityWriterForTests(writer) {
+  roleAuthorityWriterForTests = writer ?? null;
+}
+
+async function saveRoleProfile({
+  uid,
+  email,
+  role,
+  assignedBy,
+  roleTransitionInProgress = false,
+}) {
   await db
     .collection("users")
     .doc(uid)
@@ -42,6 +56,7 @@ async function saveRoleProfile({ uid, email, role, assignedBy }) {
       {
         email: email || null,
         role,
+        roleTransitionInProgress: roleTransitionInProgress === true,
         roleAssignedBy: assignedBy,
         roleAssignedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
@@ -246,7 +261,14 @@ exports.assignUserRole = onCall(
 
     const previousRole = targetUser.customClaims?.role ?? USER_ROLES.USER;
 
-    if (expectedRole && expectedRole !== previousRole) {
+    // A claims-first promotion can have completed its Auth half before a
+    // mirror-write failure. Retrying the SAME requested role is convergence,
+    // not a stale overwrite; a request for any different role still fails the
+    // stale-result guard.
+    const convergingRequestedRole = previousRole === requestedRole;
+    if (expectedRole &&
+        expectedRole !== previousRole &&
+        !convergingRequestedRole) {
       throw new HttpsError(
         "failed-precondition",
         "This user's role changed since you looked it up. Search again "
@@ -264,52 +286,25 @@ exports.assignUserRole = onCall(
       );
     }
 
-    // ...and the last super administrator may not be demoted by anyone.
-    //
-    // Counted inside a TRANSACTION over the sentinel document rather than
-    // with a bare query: two concurrent demotions each reading "there are
-    // two of us" would both proceed and leave zero. The transaction
-    // serialises them, so the second sees the first's effect and fails.
-    if (previousRole === USER_ROLES.SUPER_ADMIN) {
-      const sentinel = db.collection("adminGuards").doc("superAdminCount");
-      await db.runTransaction(async (transaction) => {
-        // Read inside the transaction so the count is part of its
-        // snapshot and a concurrent demotion invalidates it.
-        await transaction.get(sentinel);
-        const supers = await db
-          .collection("users")
-          .where("role", "==", USER_ROLES.SUPER_ADMIN)
-          .count()
-          .get();
-        const remaining = (supers.data().count ?? 0) - 1;
-        if (remaining < 1) {
-          throw new HttpsError(
-            "failed-precondition",
-            "The final super administrator cannot be demoted.",
-          );
-        }
-        // Touching the sentinel is what gives the transaction something
-        // to conflict on; the value itself is incidental.
-        transaction.set(
-          sentinel,
-          { updatedAt: FieldValue.serverTimestamp() },
-          { merge: true },
-        );
-      });
-    }
-
-    const existingClaims = targetUser.customClaims ?? {};
-
-    await auth.setCustomUserClaims(targetUser.uid, {
-      ...existingClaims,
-      role: requestedRole,
-    });
-
-    await saveRoleProfile({
+    // Cross-service writes are not atomic. Demotions to `user` are mirror-first
+    // so stale privileged tokens stop immediately; promotions are claim-first
+    // so a historical privileged token cannot match a promoted mirror when
+    // Auth fails. Lateral changes and privileged demotions pass through a
+    // neutral `user` mirror, closing both ABA directions. A server-only
+    // transition marker makes destructive/public projection consumers defer
+    // until the final mirror write. Every partial authority state remains
+    // fail-closed and the same request is retryable.
+    const writeRoleAuthority =
+      roleAuthorityWriterForTests ?? persistRoleAuthoritySafely;
+    await writeRoleAuthority({
       uid: targetUser.uid,
       email: targetUser.email,
       role: requestedRole,
+      previousRole,
       assignedBy: caller.uid,
+      existingClaims: targetUser.customClaims ?? {},
+      writeMirror: saveRoleProfile,
+      writeClaims: (uid, claims) => auth.setCustomUserClaims(uid, claims),
     });
 
     await writeUserAuditLog({
@@ -639,4 +634,5 @@ module.exports = {
   getUserRole: exports.getUserRole,
   listAdminUsers: exports.listAdminUsers,
   setUserBan: exports.setUserBan,
+  setRoleAuthorityWriterForTests,
 };

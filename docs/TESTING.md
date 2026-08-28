@@ -14,24 +14,23 @@ correction silently broke all three anchors.)*
 
 | Suite | Command | Count |
 |---|---|---|
-| Firestore rules | `npm --prefix firestore-tests test` | **499** checks |
+| Firestore rules | `npm --prefix firestore-tests test` | **509** checks |
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
-| Cloud Functions | `npm --prefix functions test` | **841** tests (65 `*.test.js` files) |
-| Flutter VM | `flutter test` | **1361** tests (120 VM-compatible files) |
+| Cloud Functions | `npm --prefix functions test` | **892** tests (67 `*.test.js` files) |
+| Flutter VM | `flutter test` | **1404** tests (124 VM-compatible files) |
 | Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart` | **1** test (1 browser-only file) |
 
-**Where these numbers came from.** Functions 841 and Rules 499 were re-measured
-on 2026-08-28 against the exact current source revision and fresh isolated
-emulators; the other four rows retain their 2026-08-27 verified runs (Voice
-Moment local review/custom availability, the More transition fix and Velvet
-Prism product sound). Flutter VM 1361 passed in one invocation, the real Chrome
-Blob lifecycle passed 1/1, and `flutter analyze` was clean on those bytes.
-Storage 60 and family media 11 also ran against fresh isolated emulators rather
-than the occupied local 8080 endpoint. Both web release compilation and the
-dedicated browser preview harness compiled successfully. The 65 Functions files
-and 121 total Flutter test files (120 VM-compatible plus one browser-only) are
-current `find` results rather than carried-forward estimates. The earlier
+**Where these numbers came from.** Functions 892 and Rules 509 were re-measured
+on 2026-08-28 against the exact current source and fresh isolated emulators;
+the final role-transition pass also repeated its focused Auth/Firestore matrix
+at 76/76. Flutter VM 1404 passed in one invocation, the real Chrome Blob
+lifecycle passed 1/1, and `flutter analyze` was clean on those bytes. Storage
+60 and family media 11 also ran against fresh isolated emulators rather than an
+occupied local 8080 endpoint. Both web release compilation and the dedicated
+browser preview harness compiled successfully. The 67 Functions files and 125
+total Flutter test files (124 VM-compatible plus one browser-only) are current
+`find` results rather than carried-forward estimates. The earlier
 figures this row used to carry (Rules 485, Functions 783/62, Flutter 1198/114)
 are kept in the movement log below as history.
 
@@ -126,6 +125,16 @@ suite, so isolated ports are real isolation rather than documentation only.
 > cue after room creation. The generator's `--check` command and the focused
 > Functions payload suite pass, while the full Functions count remains
 > **793/64**. File counts and browser coverage are unchanged.
+
+> **Movement, 2026-08-28 (ADR-119 moderator Premium preview and billing
+> recovery).** The immediately preceding measured table was Functions
+> **841/65**, Rules **499** and Flutter VM **1361/120**. The exact final source
+> now passes Functions **892/67**, Rules **509** and Flutter VM **1404/124**;
+> Storage **60**, family media **11** and real-Chrome **1/1** remain green.
+> Coverage includes exact claim/mirror authority, fail-closed role-transition
+> retries, server-only marker immutability, paid-plus-preview coexistence,
+> Creator/Club cleanup and quotas, Auth deletion, projection backfills, public
+> Creator privacy during transitions, and the client billing-recovery path.
 
 > **Movement, 2026-08-17.** Rules 301 → **318** (`c75720a`, the
 > account-status gating; the suite ran 310 passed / 8 failed against the
@@ -352,6 +361,16 @@ production deploy." That deploy has now happened — twice on 2026-08-16, at
 20:40 and 21:06, per Console → Firestore → Rules version history. Passing
 locally still does not deploy a rule.)*
 
+ADR-119 extends that matrix with a non-billing moderator preview. Rules tests
+prove exact `moderator` and `superModerator` claim–mirror pairs can use
+Creator, while a crossed staff pair, stale claim, `superAdmin`, ban,
+disablement and deletion fail closed. Backend tests repeat the same boundary
+for Club creation and Creator pins, keep subscription/refund truth independent,
+and prove demotion removes preview state without destroying separately valid
+paid access. Flutter tests prove the role stream is reactive, source failures
+stay isolated, raw billing fields are never fabricated and a paid-expiry timer
+cannot evict an active moderator.
+
 ### What the 2026-08-16 hardening pass added (`56e7ea7` → `2fc05e5` → `952d8e4`)
 
 Each of these was a case that failed before its fix, on rules that were
@@ -462,7 +481,7 @@ bounded local outbox instead — see the Flutter section below.
 
 ## Cloud Functions — real coverage, unevenly distributed
 
-`functions/test/` — **793 tests across 64 `*.test.js` files**, run with
+`functions/test/` — **892 tests across 67 `*.test.js` files**, run with
 `node --test test/*.test.js` against the Auth + Firestore emulators, and
 gating the Hosting release in CI like the rules suites do. A separate
 `npm --prefix functions run test:smoke` drives two trigger smokes and one
@@ -593,7 +612,8 @@ pattern throughout: fake the Firebase backends
   overflow and a bounded, width-independent height.
 - **`premium_entitlements_test.dart`**, **`mobile_staff_parity_test.dart`**,
   **`desktop_shell_test.dart`** and **`family_room_test.dart`** — capability
-  flags, complimentary-VIP non-access, locked More entries on mobile/desktop,
+  paid capability flags, complimentary-VIP non-access, the separate
+  moderator-preview overlay and demotion lifecycle, locked More entries on mobile/desktop,
   navigation/direct-destination guards, save-time Creator expiry, Premium Club
   creation and the free Family Room exception. `family_room_lifecycle_test.dart`
   additionally drives the complete create/reopen/invite accept/decline flow and
