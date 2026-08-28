@@ -182,7 +182,7 @@ void main() {
   group('native launcher icons', () {
     final config = File('pubspec.yaml').readAsStringSync();
 
-    test('uses the favicon mark instead of the retired squared artwork', () {
+    test('uses the favicon mark inside the Android adaptive safe area', () {
       expect(config, contains('image_path: assets/images/app-store-icon.png'));
       expect(
         config,
@@ -196,7 +196,18 @@ void main() {
         isNot(contains('adaptive_icon_foreground: assets/images/logo.png')),
       );
       expect(config, contains('adaptive_icon_background: "#0B1026"'));
-      expect(config, contains('adaptive_icon_foreground_inset: 8'));
+      expect(config, contains('adaptive_icon_foreground_inset: 16'));
+
+      final adaptiveIcon = File(
+        'android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml',
+      ).readAsStringSync();
+      expect(
+        adaptiveIcon,
+        contains('android:inset="16%"'),
+        reason:
+            'The generated Android resource must match pubspec.yaml so the '
+            'mark remains inside the 66dp adaptive-icon safe area.',
+      );
     });
 
     test('all generated store and desktop masters exist', () {

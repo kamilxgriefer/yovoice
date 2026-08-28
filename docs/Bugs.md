@@ -748,6 +748,14 @@ permission flags).
 
 ## Branding
 
+- **FIXED IN SOURCE 2026-08-28 — Android adaptive launcher icon overfilled
+  OEM masks.** The transparent foreground occupied about 84.5% of its source
+  layer and was inset by only 8%, leaving the rendered mark up to roughly
+  77dp tall against Android's 66dp adaptive safe area. The Android-only inset
+  is now 16%, matching the generator default and keeping the symbol within the
+  safe area on circle, squircle and rounded-square masks. The canonical PNG,
+  legacy Android icon and every iOS/App Store asset are unchanged. Delivery is
+  Android build 7; a Play-installed launcher check remains release evidence.
 - **FIXED — native launcher/store icons still contained the retired black
   square.** Web favicons had already moved to the transparent canonical mark,
   but `flutter_launcher_icons` continued reading the old opaque `logo.png`.

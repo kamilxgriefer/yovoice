@@ -3255,8 +3255,10 @@ for the Android adaptive foreground and in-app compact logo. Build the opaque
 `assets/images/app-store-icon.png` from that exact mark, enlarged slightly for
 launcher legibility, on a full-bleed `#0B1026` navy canvas, then derive iOS,
 legacy Android, macOS and Windows launchers from it. Keep the web favicon set
-transparent. Android uses a reduced adaptive-icon inset so the OS does not
-shrink the mark twice.
+transparent. Android uses the generator's standard 16% adaptive-icon inset.
+The transparent master already occupies most of its source canvas, so this
+keeps the visible mark inside Android's 66dp safe area across OEM masks
+without changing the larger iOS/store composition.
 
 ### Reasoning
 
@@ -3267,8 +3269,9 @@ identity without reintroducing an inner square.
 
 ### Consequences
 
-- App Store and Google Play use the same symbol and proportions as the
-  favicon, at a deliberately larger launcher scale.
+- App Store and Google Play use the same symbol as the favicon, with
+  platform-specific safe-area spacing: the larger full-bleed iOS/store
+  composition is preserved, while Android adaptive launchers add 16% inset.
 - Opaque launcher formats show the product background at their outer edge,
   not a black rectangle around the artwork.
 - Future logo changes start from the favicon master and regenerate launchers;

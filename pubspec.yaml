@@ -2,7 +2,7 @@ name: yovoice
 description: "A new Flutter project."
 publish_to: "none"
 
-version: 1.0.0+6
+version: 1.0.0+7
 
 environment:
   sdk: ^3.9.0
@@ -96,4 +96,4 @@ flutter_launcher_icons:
   remove_alpha_ios: true
   adaptive_icon_background: "#0B1026"
   adaptive_icon_foreground: assets/images/yo-voice-favicon-512.png
-  adaptive_icon_foreground_inset: 8
+  adaptive_icon_foreground_inset: 16
