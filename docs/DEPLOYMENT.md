@@ -34,9 +34,12 @@ Hosting workflow
 deployed the pinned 6,348,593-byte `main.dart.js`; both live origins match the
 workflow artifact at SHA-256
 `973ad8d8dfdd5870afcbbc4be0bf3cabd62e3b6af13a278ff33058a9b485345c`.
-A follow-up pinned Hosting deployment from build-9 revision `e2fd878` is
-workflow
-[33192629289](https://github.com/kamilxgriefer/yovoice/actions/runs/33192629289).
+A follow-up pinned Hosting deployment from build-9 revision `e2fd878`, workflow
+[33192629289](https://github.com/kamilxgriefer/yovoice/actions/runs/33192629289),
+completed successfully. Both origins serve its exact `main.dart.js` at the
+same SHA-256 above. Their byte-identical `version.json` reports
+`1.0.0 (9)` and has SHA-256
+`ea6c149682a1728980b1956fd3a2d582a90a7dff617adc4b20d2683f2aec1fc8`.
 
 App Store Connect accepted the signed `1.0.0 (9)` package at 18:49 CEST,
 finished processing it, and shows it as **Testing** in the permanent
