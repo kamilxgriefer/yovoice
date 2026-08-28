@@ -81,6 +81,7 @@ enum ShowFormat {
 abstract final class RoomMetadataLimits {
   static const int maxTopicTags = 3;
   static const int maxTopicTagLength = 24;
+  static const int maxPodcastTopicLength = 120;
   static const int maxGuidelinesLength = 280;
 
   /// Normalises a tag list to what rules will accept: trimmed, non-empty,

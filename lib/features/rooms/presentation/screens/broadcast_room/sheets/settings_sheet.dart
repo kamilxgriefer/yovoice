@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
@@ -21,13 +22,17 @@ class BroadcastSettingsSheet extends StatefulWidget {
 
 class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
   late final TextEditingController _name;
+  late final TextEditingController _topic;
   late final TextEditingController _description;
+  late final TextEditingController _guidelines;
   late final TextEditingController _category;
   late final TextEditingController _language;
   late final TextEditingController _capacity;
   late final TextEditingController _slowMode;
 
   late String _visibility;
+  late ShowFormat _showFormat;
+  late bool _handRaisingEnabled;
   late bool _approvalRequired;
   late bool _autoMuteNewUsers;
   late bool _membersCanStartVoice;
@@ -39,7 +44,9 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
     super.initState();
     final room = widget.room;
     _name = TextEditingController(text: room.name);
+    _topic = TextEditingController(text: room.topic);
     _description = TextEditingController(text: room.description);
+    _guidelines = TextEditingController(text: room.roomGuidelines);
     _category = TextEditingController(text: room.category);
     _language = TextEditingController(text: room.language);
     _capacity = TextEditingController(
@@ -47,6 +54,8 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
     );
     _slowMode = TextEditingController(text: room.slowModeSeconds.toString());
     _visibility = room.visibility;
+    _showFormat = room.showFormat ?? ShowFormat.solo;
+    _handRaisingEnabled = room.handRaisingEnabled;
     _approvalRequired = room.approvalRequired;
     _autoMuteNewUsers = room.autoMuteNewUsers;
     _membersCanStartVoice = room.membersCanStartVoice;
@@ -55,7 +64,9 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
   @override
   void dispose() {
     _name.dispose();
+    _topic.dispose();
     _description.dispose();
+    _guidelines.dispose();
     _category.dispose();
     _language.dispose();
     _capacity.dispose();
@@ -99,6 +110,10 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
         slowModeSeconds: slowMode,
         autoMuteNewUsers: _autoMuteNewUsers,
         membersCanStartVoice: _membersCanStartVoice,
+        topic: _topic.text,
+        showFormat: _showFormat,
+        roomGuidelines: _guidelines.text,
+        handRaisingEnabled: _handRaisingEnabled,
       );
 
       if (!mounted) return;
@@ -129,7 +144,7 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
         mainAxisSize: MainAxisSize.min,
         children: [
           const YoModalSheetChrome(
-            sheetLabel: 'room settings',
+            sheetLabel: 'podcast settings',
             surfaceColor: BroadcastRoomColors.surface,
           ),
           Flexible(
@@ -139,7 +154,7 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Room settings',
+                    'Podcast settings',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 23,
@@ -148,61 +163,73 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                   ),
                   const SizedBox(height: 5),
                   const Text(
-                    'Changes are saved directly to this podcast.',
+                    'Shape the episode, the stage and the listener experience.',
                     style: TextStyle(color: BroadcastRoomColors.muted),
                   ),
                   const SizedBox(height: 20),
                   SettingsField(
                     controller: _name,
-                    label: 'Room name',
+                    label: 'Show name',
                     maxLength: 80,
                   ),
                   const SizedBox(height: 12),
                   SettingsField(
+                    controller: _topic,
+                    label: 'Episode topic',
+                    maxLength: RoomMetadataLimits.maxPodcastTopicLength,
+                  ),
+                  const SizedBox(height: 12),
+                  SettingsField(
                     controller: _description,
-                    label: 'Description',
+                    label: 'Episode description',
                     maxLines: 3,
                     maxLength: 300,
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: SettingsField(
-                          controller: _category,
-                          label: 'Category',
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: SettingsField(
-                          controller: _language,
-                          label: 'Language',
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: SettingsField(
-                          controller: _capacity,
-                          label: 'Capacity',
-                          keyboardType: TextInputType.number,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: SettingsField(
-                          controller: _slowMode,
-                          label: 'Slow mode (sec)',
-                          keyboardType: TextInputType.number,
-                        ),
-                      ),
-                    ],
-                  ),
                   const SizedBox(height: 14),
+                  DropdownButtonFormField<ShowFormat>(
+                    initialValue: _showFormat,
+                    dropdownColor: BroadcastRoomColors.surfaceSoft,
+                    decoration: settingsDecoration('Show format'),
+                    style: const TextStyle(color: Colors.white),
+                    items: [
+                      for (final format in ShowFormat.values)
+                        DropdownMenuItem(
+                          value: format,
+                          child: Text(format.label),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) setState(() => _showFormat = value);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  SettingsField(
+                    controller: _guidelines,
+                    label: 'Guest guidelines',
+                    maxLines: 3,
+                    maxLength: RoomMetadataLimits.maxGuidelinesLength,
+                  ),
+                  const SizedBox(height: 4),
+                  SettingsSwitch(
+                    title: 'Listener stage requests',
+                    subtitle: _handRaisingEnabled
+                        ? 'Listeners can ask to join the live conversation.'
+                        : 'The audience stays in listening mode for this episode.',
+                    value: _handRaisingEnabled,
+                    onChanged: (value) =>
+                        setState(() => _handRaisingEnabled = value),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'DISTRIBUTION',
+                    style: TextStyle(
+                      color: BroadcastRoomColors.accentSoft,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.25,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
                     initialValue: _visibility,
                     dropdownColor: BroadcastRoomColors.surfaceSoft,
@@ -219,30 +246,95 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                       if (value != null) setState(() => _visibility = value);
                     },
                   ),
-                  const SizedBox(height: 14),
-                  SettingsSwitch(
-                    title: 'Auto-mute new listeners',
-                    subtitle:
-                        'New participants enter without an active microphone.',
-                    value: _autoMuteNewUsers,
-                    onChanged: (value) =>
-                        setState(() => _autoMuteNewUsers = value),
-                  ),
-                  SettingsSwitch(
-                    title: 'Approval required',
-                    subtitle:
-                        'Keep this option ready for invite approval workflows.',
-                    value: _approvalRequired,
-                    onChanged: (value) =>
-                        setState(() => _approvalRequired = value),
-                  ),
-                  SettingsSwitch(
-                    title: 'Members can start voice',
-                    subtitle:
-                        'Stored for compatibility with the shared room model.',
-                    value: _membersCanStartVoice,
-                    onChanged: (value) =>
-                        setState(() => _membersCanStartVoice = value),
+                  const SizedBox(height: 10),
+                  Theme(
+                    data: Theme.of(context).copyWith(
+                      dividerColor: Colors.transparent,
+                      splashColor: BroadcastRoomColors.wash,
+                    ),
+                    child: ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      childrenPadding: const EdgeInsets.only(bottom: 4),
+                      iconColor: BroadcastRoomColors.accentSoft,
+                      collapsedIconColor: BroadcastRoomColors.muted,
+                      title: const Text(
+                        'Advanced controls',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      subtitle: const Text(
+                        'Capacity, chat pacing and compatibility settings.',
+                        style: TextStyle(
+                          color: BroadcastRoomColors.muted,
+                          fontSize: 12,
+                        ),
+                      ),
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: SettingsField(
+                                controller: _category,
+                                label: 'Category',
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: SettingsField(
+                                controller: _language,
+                                label: 'Language',
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: SettingsField(
+                                controller: _capacity,
+                                label: 'Capacity',
+                                keyboardType: TextInputType.number,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: SettingsField(
+                                controller: _slowMode,
+                                label: 'Chat slow mode (sec)',
+                                keyboardType: TextInputType.number,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        SettingsSwitch(
+                          title: 'Auto-mute new listeners',
+                          subtitle:
+                              'Everyone enters without a live microphone.',
+                          value: _autoMuteNewUsers,
+                          onChanged: (value) =>
+                              setState(() => _autoMuteNewUsers = value),
+                        ),
+                        SettingsSwitch(
+                          title: 'Approval required',
+                          subtitle: 'Reserved for invite approval workflows.',
+                          value: _approvalRequired,
+                          onChanged: (value) =>
+                              setState(() => _approvalRequired = value),
+                        ),
+                        SettingsSwitch(
+                          title: 'Members can start voice',
+                          subtitle:
+                              'Compatibility control for persistent rooms.',
+                          value: _membersCanStartVoice,
+                          onChanged: (value) =>
+                              setState(() => _membersCanStartVoice = value),
+                        ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 18),
                   FilledButton.icon(
@@ -264,7 +356,7 @@ class _BroadcastSettingsSheetState extends State<BroadcastSettingsSheet> {
                             ),
                           )
                         : const Icon(Icons.save_rounded),
-                    label: Text(_saving ? 'Saving…' : 'Save settings'),
+                    label: Text(_saving ? 'Saving…' : 'Update podcast'),
                   ),
                 ],
               ),

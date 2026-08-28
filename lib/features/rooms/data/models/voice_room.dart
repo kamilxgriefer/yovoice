@@ -64,6 +64,10 @@ class VoiceRoom {
     this.conversationStyle,
     this.newcomerFriendly = false,
     this.showFormat,
+    this.topic = '',
+    this.audienceCanSpeak = true,
+    this.handRaisingEnabled = true,
+    this.stageLimit = 8,
     this.deletionInProgress = false,
   });
 
@@ -105,6 +109,13 @@ class VoiceRoom {
 
   /// Podcast only; null on a community room.
   final ShowFormat? showFormat;
+
+  /// Podcast session contract. These fields predate the typed model, so
+  /// legacy documents keep safe, permissive presentation defaults.
+  final String topic;
+  final bool audienceCanSpeak;
+  final bool handRaisingEnabled;
+  final int stageLimit;
 
   /// Server-written marker: a host deletion committed its closing
   /// transaction but the full teardown has not finished (or failed and
@@ -189,6 +200,10 @@ class VoiceRoom {
       conversationStyle: conversationStyle,
       newcomerFriendly: newcomerFriendly,
       showFormat: showFormat,
+      topic: topic,
+      audienceCanSpeak: audienceCanSpeak,
+      handRaisingEnabled: handRaisingEnabled,
+      stageLimit: stageLimit,
       deletionInProgress: deletionInProgress,
     );
   }
@@ -235,11 +250,15 @@ class VoiceRoom {
             .whereType<String>(),
       ),
       roomGuidelines: (data['roomGuidelines'] as String?)?.trim() ?? '',
-      conversationStyle: ConversationStyle.fromValue(
-        data['conversationStyle'],
-      ),
+      conversationStyle: ConversationStyle.fromValue(data['conversationStyle']),
       newcomerFriendly: data['newcomerFriendly'] as bool? ?? false,
       showFormat: ShowFormat.fromValue(data['showFormat']),
+      topic: (data['topic'] as String?)?.trim() ?? '',
+      audienceCanSpeak: data['audienceCanSpeak'] as bool? ?? true,
+      handRaisingEnabled: data['handRaisingEnabled'] as bool? ?? true,
+      stageLimit: ((data['stageLimit'] as num?)?.toInt() ?? 8)
+          .clamp(1, 8)
+          .toInt(),
       deletionInProgress: data['deletionInProgress'] as bool? ?? false,
       // The forgiving value, for identity and routing.
       clubId:
@@ -282,6 +301,18 @@ class VoiceRoom {
           ? FieldValue.serverTimestamp()
           : Timestamp.fromDate(updatedAt!),
       'experience': experience,
+      'targetAudience': targetAudience.value,
+      'topicTags': topicTags,
+      'roomGuidelines': roomGuidelines,
+      if (conversationStyle != null)
+        'conversationStyle': conversationStyle!.value,
+      if (newcomerFriendly) 'newcomerFriendly': true,
+      if (showFormat != null) 'showFormat': showFormat!.value,
+      'topic': topic,
+      'audienceCanSpeak': audienceCanSpeak,
+      'handRaisingEnabled': handRaisingEnabled,
+      'stageLimit': stageLimit,
+      'deletionInProgress': deletionInProgress,
     };
   }
 }

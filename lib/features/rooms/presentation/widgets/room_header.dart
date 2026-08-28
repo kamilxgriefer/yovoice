@@ -24,6 +24,8 @@ class RoomHeader extends StatelessWidget {
     required this.onListenersTap,
     this.people,
     this.onPeopleTap,
+    this.speakingLabel = 'Speaking',
+    this.listenersLabel = 'Listeners',
     this.avatarUrl,
     this.avatarName,
     this.actions = const <Widget>[],
@@ -44,6 +46,8 @@ class RoomHeader extends StatelessWidget {
   final VoidCallback onSpeakingTap;
   final VoidCallback onListenersTap;
   final VoidCallback? onPeopleTap;
+  final String speakingLabel;
+  final String listenersLabel;
 
   /// A real image identity (a club's avatar). Falls back to the room-type
   /// icon — never to an empty box.
@@ -142,7 +146,7 @@ class RoomHeader extends StatelessWidget {
                 constraints: const BoxConstraints(maxWidth: 180),
                 child: RoomCounterPill(
                   icon: Icons.graphic_eq_rounded,
-                  label: 'Speaking',
+                  label: speakingLabel,
                   value: speaking,
                   identity: identity,
                   onTap: onSpeakingTap,
@@ -153,7 +157,7 @@ class RoomHeader extends StatelessWidget {
                 constraints: const BoxConstraints(maxWidth: 180),
                 child: RoomCounterPill(
                   icon: Icons.headphones_rounded,
-                  label: 'Listeners',
+                  label: listenersLabel,
                   value: listeners,
                   identity: identity,
                   onTap: onListenersTap,
@@ -189,7 +193,7 @@ class RoomHeader extends StatelessWidget {
                           Expanded(
                             child: RoomCounterPill(
                               icon: Icons.graphic_eq_rounded,
-                              label: 'Speaking',
+                              label: speakingLabel,
                               value: speaking,
                               identity: identity,
                               onTap: onSpeakingTap,
@@ -199,7 +203,7 @@ class RoomHeader extends StatelessWidget {
                           Expanded(
                             child: RoomCounterPill(
                               icon: Icons.headphones_rounded,
-                              label: 'Listeners',
+                              label: listenersLabel,
                               value: listeners,
                               identity: identity,
                               onTap: onListenersTap,

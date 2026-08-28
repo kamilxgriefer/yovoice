@@ -373,7 +373,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
               identity: identity,
               label: 'Episode topic',
               hint: 'What are you discussing today?',
-              maxLength: 100,
+              maxLength: RoomMetadataLimits.maxPodcastTopicLength,
               validator: (value) =>
                   (value?.trim().length ?? 0) < 3 ? 'Add a short topic' : null,
             ),

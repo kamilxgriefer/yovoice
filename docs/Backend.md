@@ -183,10 +183,12 @@ profiles remain `not-found`/`permission-denied`, and the private fixed-window
 budget returns `resource-exhausted`.
 
 Client-authored room attribution never falls back to the Firebase Auth mirror.
-Broadcast `handRequests` and Family `checkIns` must copy the exact current
-`users/{uid}.displayName`; Rules read that canonical private document and deny
-stale or forged snapshots. The Flutter write path reads the same document
-before creating either row.
+Current Podcast stage requests are a boolean on the caller's canonical
+participant row and carry no duplicated identity snapshot. The deprecated
+`handRequests` collection remains only for already-installed clients; those
+legacy rows and Family `checkIns` must copy the exact current
+`users/{uid}.displayName`, and Rules deny stale or forged snapshots. Current
+Flutter source does not create a `handRequests` row.
 
 ## Direct messaging, Moments and achievements
 

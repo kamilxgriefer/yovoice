@@ -28,6 +28,7 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
+import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -176,6 +177,9 @@ void main() {
     String name = 'Sunday Morning Talk',
     String description = 'A calm place to talk about anything.',
     String experience = 'community',
+    String topic = '',
+    ShowFormat? showFormat,
+    bool handRaisingEnabled = true,
   }) => VoiceRoom(
     id: id,
     hostId: 'host',
@@ -201,6 +205,9 @@ void main() {
     updatedAt: null,
     experience: experience,
     clubId: clubId,
+    topic: topic,
+    showFormat: showFormat,
+    handRaisingEnabled: handRaisingEnabled,
   );
 
   Future<void> seed(VoiceRoom model, {int participantCount = 0}) async {
@@ -217,6 +224,10 @@ void main() {
       'isLive': model.isLive,
       'status': 'active',
       'experience': model.experience,
+      'topic': model.topic,
+      if (model.showFormat != null) 'showFormat': model.showFormat!.value,
+      'handRaisingEnabled': model.handRaisingEnabled,
+      'stageLimit': model.stageLimit,
       if (model.clubId != null) 'clubId': model.clubId,
     });
   }
@@ -359,6 +370,7 @@ void main() {
     MicState micState = MicState.unavailable,
     bool connected = false,
     String uid = 'relative',
+    bool openRequests = false,
   }) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = viewport;
@@ -375,6 +387,10 @@ void main() {
       ),
     );
     await _settle(tester);
+    if (openRequests) {
+      await tester.tap(find.text('Requests 1').first);
+      await _settle(tester);
+    }
     expect(tester.takeException(), isNull);
     await _shoot(tester, name);
   }
@@ -601,6 +617,8 @@ void main() {
         isLive: false,
         experience: 'broadcast',
         name: 'The Sunday Broadcast',
+        topic: 'Why independent voices still matter',
+        showFormat: ShowFormat.interview,
       );
       await seed(model);
       await shootBroadcast(
@@ -622,6 +640,8 @@ void main() {
         isLive: false,
         experience: 'broadcast',
         name: 'The Sunday Broadcast',
+        topic: 'Why independent voices still matter',
+        showFormat: ShowFormat.interview,
       );
       await seed(model);
       await shootBroadcast(
@@ -644,8 +664,17 @@ void main() {
         isLive: true,
         experience: 'broadcast',
         name: 'The Sunday Broadcast',
+        topic: 'Why independent voices still matter',
+        showFormat: ShowFormat.interview,
       );
-      await seed(model, participantCount: 1);
+      await seed(model, participantCount: 6);
+      await seedCast('room-1', speakers: 1, listeners: 4);
+      await db
+          .collection('rooms')
+          .doc('room-1')
+          .collection('participants')
+          .doc('lst0')
+          .update({'isHandRaised': true});
       await db
           .collection('rooms')
           .doc('room-1')
@@ -760,6 +789,56 @@ void main() {
         authority: RoomVoiceStartAuthority.host,
       ),
     );
+  });
+
+  testWidgets('broadcast producer request queue, 1440', (tester) async {
+    final model = room(
+      id: 'room-pod-queue',
+      isLive: true,
+      experience: 'broadcast',
+      name: 'Signal & Story',
+      description: 'A clear, moderated conversation with the audience.',
+      topic: 'Can independent podcasts stay independent?',
+      showFormat: ShowFormat.panel,
+    );
+    await seed(model, participantCount: 2);
+    await seedCast(model.id, listeners: 1);
+    await db
+        .collection('rooms')
+        .doc(model.id)
+        .collection('participants')
+        .doc('lst0')
+        .update({'isHandRaised': true});
+    await db
+        .collection('rooms')
+        .doc(model.id)
+        .collection('participants')
+        .doc('host')
+        .set({
+          'userId': 'host',
+          'displayName': 'Host',
+          'role': 'host',
+          'isMuted': false,
+          'isSpeaker': true,
+          'isHandRaised': false,
+        });
+
+    await shootBroadcast(
+      tester,
+      name: 'voice-broadcast-producer-queue-1440',
+      model: model,
+      viewport: const Size(1440, 900),
+      micState: MicState.on,
+      connected: true,
+      uid: 'host',
+      openRequests: true,
+      entry: RoomVoiceEntry(
+        outcome: RoomVoiceEntryOutcome.live,
+        room: model,
+        authority: RoomVoiceStartAuthority.host,
+      ),
+    );
+    expect(find.text('Stage requests'), findsOneWidget);
   });
 
   testWidgets('long content: dormant lounge, 320px, 200% text', (tester) async {

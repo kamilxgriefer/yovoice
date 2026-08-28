@@ -16,6 +16,7 @@ import 'package:yovoice/features/rooms/data/services/room_voice_entry_coordinato
 import 'package:yovoice/features/rooms/presentation/room_mic_affordance.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_background.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/broadcast_colors.dart';
+import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/podcast_studio.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/owner_menu_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/participants_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheets/settings_sheet.dart';
@@ -23,17 +24,11 @@ import 'package:yovoice/features/rooms/presentation/screens/broadcast_room/sheet
 import 'package:yovoice/features/rooms/presentation/widgets/room_chat_sheet.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_control_dock.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_ended_state.dart';
-import 'package:yovoice/features/rooms/presentation/widgets/room_energy_wave.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_header.dart';
-import 'package:yovoice/features/rooms/presentation/widgets/room_hero_banner.dart';
-import 'package:yovoice/features/rooms/presentation/widgets/room_quick_actions.dart';
 import 'package:yovoice/features/rooms/presentation/widgets/room_stage.dart';
-import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
-import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
-import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
 class BroadcastRoomScreen extends StatefulWidget {
   const BroadcastRoomScreen({
@@ -102,6 +97,8 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
 
   bool _ending = false;
   bool _showCompactChat = false;
+  bool _showDesktopQueue = false;
+  final Set<String> _participantActions = <String>{};
 
   /// Guards the server removal-confirmation against re-entry while an
   /// in-flight check is pending (the roster stream keeps emitting).
@@ -109,7 +106,8 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   bool _roomOver = false;
 
   String get _uid => _rooms.currentUserId;
-  bool get _isHost => widget.room.hostId == _uid;
+  VoiceRoom get _room => _entry.room;
+  bool get _isHost => _room.hostId == _uid;
   String get _shareLink => 'https://yovoice.app/rooms/${widget.room.id}';
 
   @override
@@ -145,6 +143,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
 
   @override
   void dispose() {
+    _rolePermissionRecovery?.cancel();
     _muteCoordinator.removeListener(_refreshVoice);
     _voice.removeListener(_refreshVoice);
     unawaited(_roomWatch?.cancel());
@@ -160,10 +159,33 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   }
 
   bool _roleReconnectInFlight = false;
+  Timer? _rolePermissionRecovery;
 
   Future<void> _reconnectForRole() async {
     await _voice.disconnect(playSound: false);
     await _connectVoice(playSound: false);
+  }
+
+  /// The moderation callable updates LiveKit permissions directly. Firestore
+  /// can still deliver the role row a fraction earlier, so wait for LiveKit
+  /// before using a reconnect as recovery. This keeps promotion gapless in
+  /// the normal path while retaining a safe fallback if the live update is
+  /// lost.
+  void _recoverRolePermissionIfNeeded(bool shouldPublish) {
+    _rolePermissionRecovery?.cancel();
+    _rolePermissionRecovery = Timer(const Duration(milliseconds: 900), () {
+      if (!mounted ||
+          !_voice.isConnected ||
+          _voice.roomId != widget.room.id ||
+          shouldPublish == _voice.canPublish ||
+          _roleReconnectInFlight) {
+        return;
+      }
+      _roleReconnectInFlight = true;
+      unawaited(
+        _reconnectForRole().whenComplete(() => _roleReconnectInFlight = false),
+      );
+    });
   }
 
   /// Whether an AUTOMATIC audio action from this screen is legitimate.
@@ -255,7 +277,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
       if (_voice.roomId != widget.room.id || !_voice.isConnected) {
         await _voice.join(
           roomId: widget.room.id,
-          roomName: widget.room.name,
+          roomName: _room.name,
           participantName: name,
           playSound: playSound,
         );
@@ -361,24 +383,16 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
         unawaited(_voice.setMuted(true));
       }
 
-      // Role changed (accepted onto the stage, or moved back to the
-      // audience): LiveKit permissions live in the TOKEN, which was
-      // minted for the old role — without a fresh one an accepted
-      // speaker still can't publish, and a demoted speaker still can.
-      // Rejoin mints a token for the real current role. Brief gap;
-      // a server-side live permission update (LiveKit server API via a
-      // Cloud Function) is the gapless follow-up, tracked in Roadmap.
+      // The moderation callable updates LiveKit permissions in place. If the
+      // participant row arrives first, give that server update time to land;
+      // only a still-mismatched transport uses the reconnect fallback below.
       final shouldPublish = me.isSpeaker || me.isHost;
       if (_voice.isConnected &&
           _voice.roomId == widget.room.id &&
-          shouldPublish != _voice.canPublish &&
-          !_roleReconnectInFlight) {
-        _roleReconnectInFlight = true;
-        unawaited(
-          _reconnectForRole().whenComplete(
-            () => _roleReconnectInFlight = false,
-          ),
-        );
+          shouldPublish != _voice.canPublish) {
+        _recoverRolePermissionIfNeeded(shouldPublish);
+      } else {
+        _rolePermissionRecovery?.cancel();
       }
       return;
     }
@@ -414,6 +428,11 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   Future<void> _toggleHand(RoomParticipant? me) async {
     if (me == null || me.isSpeaker || me.isHost) return;
 
+    if (!_room.handRaisingEnabled && !me.isHandRaised) {
+      _showMessage('The host has closed stage requests for this episode.');
+      return;
+    }
+
     try {
       await _rooms.setHandRaised(
         roomId: widget.room.id,
@@ -422,6 +441,34 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     } catch (error) {
       if (!mounted) return;
       _showMessage(_readableError(error), isError: true);
+    }
+  }
+
+  Future<void> _handleStageRequest(
+    RoomParticipant participant, {
+    required bool accept,
+  }) async {
+    if (!_isHost || _participantActions.contains(participant.userId)) return;
+    setState(() => _participantActions.add(participant.userId));
+    try {
+      if (accept) {
+        await _rooms.setParticipantSpeakerStatus(
+          roomId: widget.room.id,
+          participantId: participant.userId,
+          isSpeaker: true,
+        );
+      } else {
+        await _rooms.moderateHandLowered(
+          roomId: widget.room.id,
+          participantId: participant.userId,
+        );
+      }
+    } catch (error) {
+      if (mounted) _showMessage(_readableError(error), isError: true);
+    } finally {
+      if (mounted) {
+        setState(() => _participantActions.remove(participant.userId));
+      }
     }
   }
 
@@ -474,7 +521,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
       backgroundColor: BroadcastRoomColors.surface,
       showDragHandle: false,
       builder: (_) => ShareRoomSheet(
-        roomName: widget.room.name,
+        roomName: _room.name,
         roomId: widget.room.id,
         shareLink: _shareLink,
         onCopyLink: _copyShareLink,
@@ -496,8 +543,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
       ),
       backgroundColor: BroadcastRoomColors.surface,
       showDragHandle: false,
-      builder: (_) =>
-          BroadcastSettingsSheet(room: widget.room, service: _rooms),
+      builder: (_) => BroadcastSettingsSheet(room: _room, service: _rooms),
     );
 
     if (!mounted || saved != true) return;
@@ -761,79 +807,6 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
       );
   }
 
-  /// The podcast hero's identity footer: the REAL host (roster row first,
-  /// the room document as fallback) and, while the show is live, a subtle
-  /// waveform bound to the real room audio meter. No live-duration timer —
-  /// the schema stores no started-at timestamp, so none is invented.
-  Widget _heroFooter(RoomParticipant? host) {
-    final name = host?.displayName ?? widget.room.hostName;
-    final photoUrl = host?.photoUrl ?? widget.room.hostPhotoUrl;
-    final uid = host?.userId ?? widget.room.hostId;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          children: [
-            UserAvatar(
-              radius: 13,
-              photoUrl: photoUrl,
-              displayName: name,
-              // Takes the podcast coral like every other letter fallback in
-              // the room, so the hero credit does not read purple.
-              backgroundColor: Color.lerp(
-                SpaceIdentity.podcast.primary,
-                const Color(0xFF120C1B),
-                .45,
-              )!,
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                'Hosted by $name',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: .85),
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            const SizedBox(width: 7),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-              decoration: BoxDecoration(
-                color: SpaceIdentity.podcast.wash,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Text(
-                'HOST',
-                style: TextStyle(
-                  color: BroadcastRoomColors.accentSoft,
-                  fontSize: 9,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: .8,
-                ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            UserIdentityBadges(uid: uid, variant: IdentityBadgeVariant.icon),
-          ],
-        ),
-        if (_live) ...[
-          const SizedBox(height: 12),
-          RoomEnergyWave(
-            // The meter belongs to THIS room's session only; another
-            // room's audio must never animate this hero.
-            energy: _ownsAudioSession ? _voice.roomEnergy : 0,
-            color: BroadcastRoomColors.accentSoft,
-          ),
-        ],
-      ],
-    );
-  }
-
   /// The floating control dock. The primary slot is decided by the
   /// affordance first: a show that has not started has neither a mic to
   /// mute nor a stage to raise a hand for, so neither control is offered
@@ -842,6 +815,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     required RoomMicAffordance affordance,
     required RoomParticipant? me,
     required List<RoomParticipant> participants,
+    required List<RoomParticipant> raised,
     required bool desktop,
   }) {
     const accent = BroadcastRoomColors.accent;
@@ -853,7 +827,11 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
     final micMuted = _voice.isMuted;
     final canSpeak = me != null && (me.isSpeaker || me.isHost);
     final handRaised = me?.isHandRaised ?? false;
-    final canRaiseHand = me != null && !me.isSpeaker && !me.isHost;
+    final canRaiseHand =
+        me != null &&
+        !me.isSpeaker &&
+        !me.isHost &&
+        (_room.handRaisingEnabled || handRaised);
 
     final Widget primary;
     if (affordance == RoomMicAffordance.startVoice) {
@@ -913,43 +891,72 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
       primary = RoomDockButton(
         icon: handRaised
             ? Icons.pan_tool_alt_rounded
-            : Icons.back_hand_outlined,
-        label: handRaised ? 'Lower hand' : 'Raise hand',
+            : _room.handRaisingEnabled
+            ? Icons.back_hand_outlined
+            : Icons.headphones_rounded,
+        label: handRaised
+            ? 'Lower hand'
+            : _room.handRaisingEnabled
+            ? 'Raise hand'
+            : 'Listening',
         style: handRaised ? RoomDockStyle.accent : RoomDockStyle.neutral,
         accentColor: accent,
-        onTap: _ending || !canRaiseHand
+        onTap: _ending
             ? null
-            : () => unawaited(_toggleHand(me)),
+            : canRaiseHand
+            ? () => unawaited(_toggleHand(me))
+            : _room.handRaisingEnabled
+            ? null
+            : () => _showMessage(
+                'The host has closed stage requests for this episode.',
+              ),
       );
     }
 
     return RoomControlDock(
       children: [
         primary,
-        if (!desktop)
+        RoomDockButton(
+          icon: Icons.forum_rounded,
+          label: 'Chat',
+          style: RoomDockStyle.neutral,
+          accentColor: accent,
+          onTap: _ending
+              ? null
+              : () => setState(() {
+                  if (desktop) {
+                    _showDesktopQueue = false;
+                  } else {
+                    _showCompactChat = true;
+                  }
+                }),
+        ),
+        if (_isHost)
           RoomDockButton(
-            icon: Icons.forum_rounded,
-            label: 'Chat',
-            style: RoomDockStyle.neutral,
+            icon: Icons.back_hand_rounded,
+            label: raised.isEmpty ? 'Requests' : 'Requests ${raised.length}',
+            style: raised.isEmpty
+                ? RoomDockStyle.neutral
+                : RoomDockStyle.accent,
             accentColor: accent,
             onTap: _ending
                 ? null
-                : () => setState(() => _showCompactChat = true),
+                : () {
+                    if (desktop) {
+                      setState(() => _showDesktopQueue = true);
+                    } else {
+                      _openParticipants(participants, initialFilter: 'hands');
+                    }
+                  },
+          )
+        else
+          RoomDockButton(
+            icon: Icons.groups_rounded,
+            label: 'People',
+            style: RoomDockStyle.neutral,
+            accentColor: accent,
+            onTap: _ending ? null : () => _openParticipants(participants),
           ),
-        RoomDockButton(
-          icon: Icons.groups_rounded,
-          label: 'People',
-          style: RoomDockStyle.neutral,
-          accentColor: accent,
-          onTap: _ending ? null : () => _openParticipants(participants),
-        ),
-        RoomDockButton(
-          icon: Icons.ios_share_rounded,
-          label: 'Share',
-          style: RoomDockStyle.neutral,
-          accentColor: accent,
-          onTap: _ending ? null : _openShareSheet,
-        ),
         // A host looking at a dormant room has nothing to End — the red
         // control appeared beside "Start voice" and read as a threat to a
         // session that did not exist. A non-host can always Leave.
@@ -974,6 +981,9 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
   @override
   Widget build(BuildContext context) {
     final desktop = RoomWorkspace.usesDesktopLayout(context);
+    final fillPodcastStage =
+        MediaQuery.sizeOf(context).width >= 700 &&
+        MediaQuery.sizeOf(context).height >= (_isHost ? 1020 : 940);
     return Scaffold(
       backgroundColor: BroadcastRoomColors.background,
       body: SafeArea(
@@ -999,10 +1009,9 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
             final hostParticipant = host;
             final stageSpeakers = <StageSpeaker>[
               StageSpeaker(
-                userId: hostParticipant?.userId ?? widget.room.hostId,
-                displayName:
-                    hostParticipant?.displayName ?? widget.room.hostName,
-                photoUrl: hostParticipant?.photoUrl ?? widget.room.hostPhotoUrl,
+                userId: hostParticipant?.userId ?? _room.hostId,
+                displayName: hostParticipant?.displayName ?? _room.hostName,
+                photoUrl: hostParticipant?.photoUrl ?? _room.hostPhotoUrl,
                 isHost: true,
                 // Before the session runs there is no live mic anywhere,
                 // so a missing participant row defaults MUTED while dormant
@@ -1010,13 +1019,11 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                 // next to "NOT LIVE YET".
                 isMuted: hostParticipant?.isMuted ?? !_live,
                 isSpeaking:
-                    voiceByIdentity[hostParticipant?.userId ??
-                            widget.room.hostId]
+                    voiceByIdentity[hostParticipant?.userId ?? _room.hostId]
                         ?.isSpeaking ??
                     false,
                 audioLevel:
-                    voiceByIdentity[hostParticipant?.userId ??
-                            widget.room.hostId]
+                    voiceByIdentity[hostParticipant?.userId ?? _room.hostId]
                         ?.audioLevel ??
                     0,
               ),
@@ -1039,6 +1046,28 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
               canStartVoice: _entry.canStartVoice,
               micState: _voice.micState,
             );
+            final speakingNow = stageSpeakers
+                .where((speaker) => speaker.isSpeaking)
+                .length;
+            final canSpeak = me != null && (me.isSpeaker || me.isHost);
+            final chatPanel = RoomChatPanel(
+              roomId: widget.room.id,
+              isHost: _isHost,
+              accent: BroadcastRoomColors.accent,
+              service: _rooms,
+              currentUserId: _uid,
+              onClose: desktop
+                  ? null
+                  : () => setState(() => _showCompactChat = false),
+            );
+            final requestQueue = PodcastRequestQueue(
+              requests: raised,
+              busyUserIds: _participantActions,
+              onAccept: (participant) =>
+                  unawaited(_handleStageRequest(participant, accept: true)),
+              onDecline: (participant) =>
+                  unawaited(_handleStageRequest(participant, accept: false)),
+            );
 
             return Stack(
               children: [
@@ -1050,15 +1079,14 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                         constraints: const BoxConstraints(maxWidth: 1120),
                         child: RoomHeader(
                           identity: SpaceIdentity.podcast,
-                          title: widget.room.name,
+                          title: _room.name,
                           subtitle: _live
-                              ? 'PODCAST ROOM'
-                              : 'PODCAST ROOM · NOT LIVE YET',
-                          // Zero while dormant: "1 Speaking" beside
-                          // NOT LIVE YET was three contradictory signals on
-                          // one screen.
+                              ? 'LIVE · ${(_room.showFormat?.label ?? 'PODCAST').toUpperCase()}'
+                              : 'PODCAST STUDIO · NOT LIVE',
                           speaking: _live ? stageSpeakers.length : 0,
                           listeners: listeners.length,
+                          speakingLabel: 'On stage',
+                          listenersLabel: 'Audience',
                           onBack: () => Navigator.of(context).pop(),
                           onSpeakingTap: () => _openParticipants(
                             participants,
@@ -1092,85 +1120,56 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                     Expanded(
                       child: RoomWorkspace(
                         showCompactChat: _showCompactChat,
-                        // The podcast column fills the same way the
-                        // community one does (see
-                        // community_voice_room_screen): with a bounded
-                        // height the stage takes what the hero, the quick
-                        // actions and the audience strip do not, instead of
-                        // stranding the cast above a dead band. A short or
-                        // narrow viewport keeps scrolling, because there is
-                        // no spare height to hand out.
                         stage: _PodcastColumn(
-                          // The HOST column carries more fixed content than
-                          // the community one (taller hero with the
-                          // hosted-by credit and waveform, plus the quick
-                          // actions row) — at 720-850px of height the
-                          // filled Column overflowed and painted under the
-                          // audience strip. The gate buys the stage room to
-                          // actually exist; below it, scrolling returns.
-                          fillStage:
-                              MediaQuery.sizeOf(context).width >= 700 &&
-                              MediaQuery.sizeOf(context).height >=
-                                  (_isHost ? 880 : 780),
+                          fillStage: fillPodcastStage,
                           children: [
-                            RoomHeroBanner(
-                              identity: SpaceIdentity.podcast,
-                              title: widget.room.name,
-                              topic: widget.room.description.trim().isNotEmpty
-                                  ? widget.room.description
-                                  : widget.room.category,
-                              imageUrl: widget.room.imageUrl,
-                              // The live pill follows the room document,
-                              // not the possibly-stale document this screen
-                              // was pushed with.
-                              statusPill: RoomHeroStatusPill(
-                                label: _live ? 'LIVE PODCAST' : 'NOT LIVE YET',
-                                live: _live,
-                                identity: SpaceIdentity.podcast,
-                              ),
-                              footer: _heroFooter(host),
+                            PodcastEpisodeHero(
+                              room: _room,
+                              live: _live,
+                              hostName: host?.displayName ?? _room.hostName,
+                              hostPhotoUrl:
+                                  host?.photoUrl ?? _room.hostPhotoUrl,
+                              hostId: host?.userId ?? _room.hostId,
+                              onStage: _live ? stageSpeakers.length : 0,
+                              speakingNow: _live ? speakingNow : 0,
+                              listeners: listeners.length,
+                              energy: _ownsAudioSession ? _voice.roomEnergy : 0,
                             ),
                             if (_isHost) ...[
                               const SizedBox(height: 14),
-                              // Share is deliberately absent here: the
-                              // host's dock and the header already carry
-                              // it, and a third copy is noise.
-                              RoomQuickActions(
-                                identity: SpaceIdentity.podcast,
-                                items: [
-                                  RoomQuickActionItem(
-                                    icon: Icons.groups_rounded,
-                                    label: 'Guests',
-                                    onTap: () =>
-                                        _openParticipants(participants),
-                                  ),
-                                  RoomQuickActionItem(
-                                    icon: Icons.back_hand_rounded,
-                                    label: raised.isNotEmpty
-                                        ? 'Hands ${raised.length}'
-                                        : 'Hands',
-                                    highlighted: raised.isNotEmpty,
-                                    onTap: () => _openParticipants(
+                              PodcastProducerDesk(
+                                requests: raised.length,
+                                onStage: stageSpeakers.length,
+                                stageLimit: _room.stageLimit,
+                                onRequests: () {
+                                  if (desktop) {
+                                    setState(() => _showDesktopQueue = true);
+                                  } else {
+                                    _openParticipants(
                                       participants,
                                       initialFilter: 'hands',
-                                    ),
-                                  ),
-                                  RoomQuickActionItem(
-                                    icon: Icons.tune_rounded,
-                                    label: 'Manage',
-                                    onTap: () => _openOwnerMenu(participants),
-                                  ),
-                                ],
+                                    );
+                                  }
+                                },
+                                onGuests: () => _openParticipants(participants),
+                                onSettings: _openSettings,
+                              ),
+                            ] else ...[
+                              const SizedBox(height: 12),
+                              PodcastListenerStatus(
+                                onStage: canSpeak,
+                                handRaised: me?.isHandRaised ?? false,
+                                requestsEnabled: _room.handRaisingEnabled,
                               ),
                             ],
                             const SizedBox(height: 14),
                             RoomStagePanel(
                               speakers: stageSpeakers,
                               identity: SpaceIdentity.podcast,
-                              fill:
-                                  MediaQuery.sizeOf(context).width >= 700 &&
-                                  MediaQuery.sizeOf(context).height >=
-                                      (_isHost ? 880 : 780),
+                              fill: fillPodcastStage,
+                              title: 'Live stage',
+                              emptyMessage:
+                                  'The microphones are ready for this episode.',
                               onOverflowTap: () => _openParticipants(
                                 participants,
                                 initialFilter: 'speakers',
@@ -1201,22 +1200,26 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                             ),
                           ],
                         ),
-                        chat: RoomChatPanel(
-                          roomId: widget.room.id,
-                          isHost: _isHost,
-                          accent: BroadcastRoomColors.accent,
-                          service: _rooms,
-                          currentUserId: _uid,
-                          onClose: desktop
-                              ? null
-                              : () => setState(() => _showCompactChat = false),
-                        ),
+                        chat: desktop
+                            ? PodcastStudioRail(
+                                chat: chatPanel,
+                                queue: requestQueue,
+                                showQueue: _showDesktopQueue,
+                                requests: raised.length,
+                                onChat: () =>
+                                    setState(() => _showDesktopQueue = false),
+                                onQueue: () =>
+                                    setState(() => _showDesktopQueue = true),
+                                queueAvailable: _isHost,
+                              )
+                            : chatPanel,
                       ),
                     ),
                     _buildDock(
                       affordance: affordance,
                       me: me,
                       participants: participants,
+                      raised: raised,
                       desktop: desktop,
                     ),
                   ],
@@ -1236,7 +1239,7 @@ class _BroadcastRoomScreenState extends State<BroadcastRoomScreen> {
                     _entry.outcome == RoomVoiceEntryOutcome.unavailable)
                   Positioned.fill(
                     child: RoomEndedState(
-                      roomName: widget.room.name,
+                      roomName: _room.name,
                       accent: BroadcastRoomColors.accent,
                     ),
                   ),
@@ -1253,13 +1256,11 @@ extension _FirstOrNullExtension<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
 }
 
-/// The podcast main column.
+/// The podcast studio's responsive main column.
 ///
-/// Scrolls when the viewport is narrow or short, and otherwise lays the same
-/// children out as a Column whose STAGE — the one child built to fill — takes
-/// the leftover height. Keeping both shapes in one widget means the podcast
-/// and community screens stay describable as the same layout rule rather than
-/// drifting into two.
+/// Compact and short viewports scroll the full production surface. Roomier
+/// canvases pin the episode and producer controls while the live stage takes
+/// the remaining height. This is intentionally independent of Community Room.
 class _PodcastColumn extends StatelessWidget {
   const _PodcastColumn({required this.fillStage, required this.children});
 

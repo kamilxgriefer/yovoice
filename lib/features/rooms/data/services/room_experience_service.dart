@@ -5,6 +5,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/rooms/data/models/room_experience.dart';
 
+/// Compatibility view for code written before stage requests moved onto the
+/// canonical participant row. New UI uses [RoomService] and `isHandRaised`.
+@Deprecated('Use RoomParticipant.isHandRaised through RoomService instead.')
 class BroadcastHandRequest {
   const BroadcastHandRequest({
     required this.userId,
@@ -18,11 +21,11 @@ class BroadcastHandRequest {
   final String? photoUrl;
   final DateTime? createdAt;
 
-  factory BroadcastHandRequest.fromFirestore(
+  factory BroadcastHandRequest.fromParticipant(
     DocumentSnapshot<Map<String, dynamic>> document,
   ) {
     final data = document.data() ?? const <String, dynamic>{};
-    final timestamp = data['createdAt'];
+    final timestamp = data['updatedAt'] ?? data['joinedAt'];
     return BroadcastHandRequest(
       userId: document.id,
       displayName: data['displayName'] as String? ?? 'YO Voice user',
@@ -60,18 +63,6 @@ class RoomExperienceService {
     return user;
   }
 
-  Future<String> _canonicalDisplayName(User user) async {
-    final snapshot = await _firestore.collection('users').doc(user.uid).get();
-    final displayName = snapshot.data()?['displayName'];
-    if (displayName is String && displayName.trim().isNotEmpty) {
-      // Return the exact stored bytes. Rules compare this presentation
-      // snapshot byte-for-byte with users/{uid}; trimming here would make a
-      // legacy canonical name fail closed until the user normalizes it.
-      return displayName;
-    }
-    throw StateError('Your profile does not have a display name.');
-  }
-
   Future<void> configureRoom({
     required String roomId,
     required RoomExperience experience,
@@ -100,76 +91,58 @@ class RoomExperienceService {
     return RoomExperience.fromValue(snapshot.data()?['experience']);
   }
 
+  /// Compatibility adapter over the canonical participant roster. This no
+  /// longer creates or watches a second `handRequests` collection.
+  @Deprecated('Watch RoomService.watchParticipants and isHandRaised instead.')
   Stream<List<BroadcastHandRequest>> watchRaisedHands(String roomId) {
-    return _room(roomId)
-        .collection('handRequests')
-        .orderBy('createdAt')
-        .snapshots()
-        .map(
-          (snapshot) => snapshot.docs
-              .map(BroadcastHandRequest.fromFirestore)
-              .toList(growable: false),
-        );
+    return _room(roomId).collection('participants').snapshots().map((snapshot) {
+      final requests = snapshot.docs
+          .where((document) => document.data()['isHandRaised'] == true)
+          .map(BroadcastHandRequest.fromParticipant)
+          .toList(growable: false);
+      requests.sort((a, b) {
+        final left = a.createdAt;
+        final right = b.createdAt;
+        if (left == null && right == null) return 0;
+        if (left == null) return 1;
+        if (right == null) return -1;
+        return left.compareTo(right);
+      });
+      return requests;
+    });
   }
 
+  @Deprecated('Watch your RoomParticipant.isHandRaised instead.')
   Stream<bool> watchMyHandRaised(String roomId) {
-    final uid = _user.uid;
     return _room(roomId)
-        .collection('handRequests')
-        .doc(uid)
+        .collection('participants')
+        .doc(_user.uid)
         .snapshots()
-        .map((snapshot) => snapshot.exists);
+        .map((snapshot) => snapshot.data()?['isHandRaised'] == true);
   }
 
+  @Deprecated('Use RoomService.setHandRaised instead.')
   Future<void> setHandRaised({
     required String roomId,
     required bool raised,
   }) async {
-    final user = _user;
-    final request = _room(roomId).collection('handRequests').doc(user.uid);
-
-    if (!raised) {
-      await request.delete();
-      return;
-    }
-
-    final room = await _room(roomId).get();
-    final data = room.data();
-    if (data == null) throw StateError('Room not found.');
-    if (!RoomExperience.fromValue(data['experience']).isBroadcast) {
-      throw StateError('Raise hand is available only in Podcast Rooms.');
-    }
-    if (data['handRaisingEnabled'] == false) {
-      throw StateError('The host disabled hand raising.');
-    }
-    final displayName = await _canonicalDisplayName(user);
-
-    await request.set({
-      'displayName': displayName,
-      'photoUrl': user.photoURL,
-      'createdAt': FieldValue.serverTimestamp(),
+    await _room(roomId).collection('participants').doc(_user.uid).update({
+      'isHandRaised': raised,
+      'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
+  @Deprecated('Use RoomService.setParticipantSpeakerStatus instead.')
   Future<void> inviteToStage({
     required String roomId,
     required BroadcastHandRequest request,
   }) async {
-    final roomRef = _room(roomId);
-    final room = await roomRef.get();
-    final data = room.data();
-    if (data == null) throw StateError('Room not found.');
-    if (data['hostId'] != _user.uid) {
-      throw StateError('Only the host can invite people to the stage.');
-    }
-
     final callable = _functions.httpsCallable('moderateRoomParticipantSelf');
     await callable.call<Map<Object?, Object?>>({
       'roomId': roomId,
       'participantId': request.userId,
       'isSpeaker': true,
     });
-    await roomRef.collection('handRequests').doc(request.userId).delete();
   }
 
   Future<void> moveToAudience({

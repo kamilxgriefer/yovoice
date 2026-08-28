@@ -81,6 +81,7 @@ given a false-precision date.
 | [116](#adr-116-product-sound-is-a-material-feedback-system-not-a-set-of-jingles) | Product sound is a material feedback system, not a set of jingles | Hosting deployed; native/FCM held | 2026-08-27 |
 | [118](#adr-118-premium-pairs-recurring-eur-with-non-renewing-prepaid-blik) | Premium pairs recurring EUR with non-renewing prepaid BLIK | Catalog deployed; provider rollout disabled | 2026-08-28 |
 | [119](#adr-119-moderator-premium-preview-is-a-derived-product-benefit-not-a-paid-entitlement) | Moderator Premium preview is a derived product benefit, not a paid entitlement | Implemented; production release pending | 2026-08-28 |
+| [120](#adr-120-podcast-studio-uses-the-participant-roster-as-its-production-state) | Podcast Studio uses the participant roster as its production state | Accepted in source | 2026-08-28 |
 
 > **The index is incomplete and has been for a while**: rows for ADR-020
 > through ADR-052 were never added, and neither were ADR-062–065,
@@ -7417,3 +7418,82 @@ support and reconciliation can still answer whether access was purchased.
   operation fails closed until the claim matches.
 - Tests must cover claim/mirror mismatch, inactive states, paid-plus-preview,
   expiry/refund, demotion cleanup and billing-field immutability.
+
+## ADR-120: Podcast Studio uses the participant roster as its production state
+
+**Status**: Accepted in source
+**Date**: 2026-08-28
+
+### Context
+
+Podcast Room had the correct listen-only audio authority but presented almost
+the same composition as Community Room. Its stored episode topic, show format,
+guest guidelines and `handRaisingEnabled` decision were not represented in the
+live production surface. “Speaking” counted everyone assigned to the stage,
+not LiveKit's current speakers. Hosts could answer a request only through a
+generic participant sheet. Promotion also disconnected and rejoined as soon
+as Firestore delivered the new role, racing the callable's already-supported
+in-place LiveKit permission update.
+
+Two raise-hand APIs made that inconsistency easier: the reachable room screen
+used `participants/{uid}.isHandRaised`, while an older service wrote a separate
+`handRequests/{uid}` collection. Fixing one could leave the other unchanged.
+Removing the legacy Rules path immediately, however, would break an installed
+older client without a minimum-version migration.
+
+### Decision
+
+Podcast Room becomes a dedicated Podcast Studio composition. The episode topic
+is the headline and the persistent show name is context. The hero exposes show
+format, live status, host identity, stage size, real LiveKit speaking count and
+audience size. Hosts get a producer desk and a request queue beside live chat;
+listeners see whether they are listening, waiting for approval or on stage.
+Podcast settings own topic, format, guidelines and the request switch while
+retaining the shared advanced room controls.
+
+The participant roster is the current client's single production state for
+requests. `RoomService.setHandRaised`, producer accept/decline, the Participants
+sheet and deprecated `RoomExperienceService` adapters all use
+`participants/{uid}.isHandRaised`. Rules allow a listener to raise only in an
+active live Podcast whose host has requests enabled; lowering remains allowed
+after the host closes the queue. Community speakers cannot forge this state.
+The bounded legacy `handRequests` Rules contract remains temporarily for
+already-installed clients, but current Flutter source neither writes nor
+watches it.
+
+The moderation callable's direct LiveKit permission update is the normal
+promotion path. The client waits 900 ms after a role-row mismatch and reconnects
+only if transport permission is still stale. Responsive Podcast Studio scrolls
+on compact or short canvases; only sufficiently tall canvases give the stage
+the remaining fixed-column height.
+
+### Reasoning
+
+A podcast is organized around an episode and a producer-controlled guest flow,
+not a generic room roster. Putting those decisions in the first viewport makes
+the product legible to both host and audience. One current request field keeps
+the queue, listener control and moderation action causally aligned. Keeping a
+narrow legacy Rules allowance avoids turning schema consolidation into a
+silent outage for an older binary; marking that allowance explicitly prevents
+new code from treating it as the canonical path.
+
+Waiting for the server-side permission update removes the ordinary promotion
+audio gap. A delayed reconnect still gives a deterministic recovery path when
+the LiveKit event is lost. The higher fill threshold follows measured widget
+geometry: visual inspection at 1440×900 found stage cards extending into the
+audience strip, while a scrollable studio remained correct.
+
+### Consequences
+
+- An older installed client can still create a legacy `handRequests` row, but
+  current Podcast Studio does not surface that retired queue. Fully deleting
+  the legacy contract requires an enforced minimum app version or a server
+  bridge/migration.
+- `VoiceRoom` now carries the typed podcast production fields through live
+  document updates, so settings changes replace stale launch-time copy without
+  reopening the room.
+- Hosts can close new requests without trapping a listener's existing raised
+  state; that listener may always lower it.
+- Real multi-device LiveKit promotion and audio-quality checks remain manual;
+  widget tests prove the state composition and the emulator proves the write
+  boundary, not the external media transport.

@@ -73,8 +73,8 @@ class OwnerMenuSheet extends StatelessWidget {
                   ),
                   OwnerMenuItem(
                     icon: Icons.settings_rounded,
-                    title: 'Room settings',
-                    subtitle: 'Edit details, capacity and moderation options',
+                    title: 'Podcast settings',
+                    subtitle: 'Edit the episode, format and stage requests',
                     onTap: onSettings,
                   ),
                   OwnerMenuItem(

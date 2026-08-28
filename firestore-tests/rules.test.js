@@ -339,13 +339,52 @@ async function main() {
     );
   });
 
-  await check("regression: participant can raise their own hand", async () => {
+  await check("SECURITY: a Community speaker cannot forge a stage request", async () => {
     const db = attacker.firestore();
     const ref = doc(db, "rooms/room1/participants/attacker-uid");
+    await assertFails(
+      updateDoc(ref, { isHandRaised: true, updatedAt: serverTimestamp() }),
+    );
+  });
+
+  await check("regression: a podcast listener can request the stage", async () => {
+    const db = attacker.firestore();
+    const ref = doc(
+      db,
+      "rooms/broadcast-join/participants/attacker-uid",
+    );
     await assertSucceeds(
       updateDoc(ref, { isHandRaised: true, updatedAt: serverTimestamp() }),
     );
   });
+
+  await check(
+    "PODCAST SECURITY: a listener can lower a request after the host closes the queue",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await updateDoc(doc(ctx.firestore(), "rooms/broadcast-join"), {
+          handRaisingEnabled: false,
+        });
+      });
+      const db = attacker.firestore();
+      const ref = doc(
+        db,
+        "rooms/broadcast-join/participants/attacker-uid",
+      );
+      await assertSucceeds(
+        updateDoc(ref, {
+          isHandRaised: false,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(
+        updateDoc(ref, {
+          isHandRaised: true,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
 
   await check("SECURITY: host moderation bypasses direct writes and uses callable", async () => {
     const db = host.firestore();
@@ -1243,7 +1282,7 @@ async function main() {
     },
   );
 
-  // --- handRequests (#10) ---
+  // --- legacy handRequests compatibility (#10) ---
   await testEnv.withSecurityRulesDisabled(async (ctx) => {
     await setDoc(doc(ctx.firestore(), "rooms/broadcastRoom"), {
       hostId: "host-uid",
@@ -1271,7 +1310,7 @@ async function main() {
     });
   });
 
-  await check("regression: raising a hand in a broadcast room works", async () => {
+  await check("compatibility: a legacy broadcast hand request still works", async () => {
     const db = attacker.firestore();
     const ref = doc(db, "rooms/broadcastRoom/handRequests/attacker-uid");
     await assertSucceeds(
@@ -1284,7 +1323,7 @@ async function main() {
   });
 
   await check(
-    "SECURITY: a hand request display name is bound to the canonical profile",
+    "SECURITY: a legacy hand request name is bound to the canonical profile",
     async () => {
       const db = attacker.firestore();
       await testEnv.withSecurityRulesDisabled(async (ctx) => {
@@ -1321,14 +1360,14 @@ async function main() {
     },
   );
 
-  await check("regression: raising a hand in a non-broadcast room is rejected", async () => {
+  await check("SECURITY: legacy hand request is podcast-only", async () => {
     const db = attacker.firestore();
     const ref = doc(db, "rooms/communityRoom/handRequests/attacker-uid");
     await assertFails(setDoc(ref, { displayName: "Attacker", createdAt: null }));
   });
 
   await check(
-    "SECURITY: outsider cannot read or write a private room hand queue",
+    "SECURITY: outsider cannot reach a private legacy hand queue",
     async () => {
       const db = attacker.firestore();
       await assertFails(
@@ -1345,9 +1384,7 @@ async function main() {
         ),
       );
       await assertFails(
-        getDocs(
-          collection(db, "rooms/privateBroadcastRoom/handRequests"),
-        ),
+        getDocs(collection(db, "rooms/privateBroadcastRoom/handRequests")),
       );
     },
   );
@@ -9325,6 +9362,30 @@ async function main() {
   );
 
   await check(
+    "ROOM META regression: a legacy podcast value can use Podcast settings",
+    async () => {
+      await testEnv.withSecurityRulesDisabled(async (ctx) => {
+        await setDoc(
+          doc(ctx.firestore(), "rooms/meta-legacy-podcast"),
+          roomDoc({
+            experience: "podcast",
+            topic: "Legacy episode",
+            showFormat: "solo",
+          }),
+        );
+      });
+      await assertSucceeds(
+        updateDoc(doc(host.firestore(), "rooms/meta-legacy-podcast"), {
+          topic: "Edited legacy episode",
+          showFormat: "interview",
+          handRaisingEnabled: false,
+          updatedAt: serverTimestamp(),
+        }),
+      );
+    },
+  );
+
+  await check(
     "ROOM META SECURITY: a community room cannot forge podcast-only fields",
     async () => {
       await assertFails(
@@ -9364,6 +9425,15 @@ async function main() {
         createMetadataRoom("bad-3", {
           experience: "broadcast",
           showFormat: "livestream",
+        }),
+      );
+      await assertFails(
+        createMetadataRoom("bad-podcast-contract", {
+          experience: "broadcast",
+          topic: "x".repeat(121),
+          audienceCanSpeak: "yes",
+          handRaisingEnabled: 1,
+          stageLimit: 99,
         }),
       );
     },

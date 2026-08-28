@@ -6,7 +6,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/features/clubs/data/models/family_check_in.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
-import 'package:yovoice/features/rooms/data/services/room_experience_service.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 
 void main() {
@@ -100,27 +99,6 @@ void main() {
   );
 
   test(
-    'raise-hand snapshot uses users displayName, never stale Auth',
-    () async {
-      await firestore.collection('rooms').doc('broadcast-room').set({
-        'experience': 'broadcast',
-        'handRaisingEnabled': true,
-      });
-      final service = RoomExperienceService(firestore: firestore, auth: auth);
-
-      await service.setHandRaised(roomId: 'broadcast-room', raised: true);
-
-      final snapshot = await firestore
-          .collection('rooms')
-          .doc('broadcast-room')
-          .collection('handRequests')
-          .doc(uid)
-          .get();
-      expect(snapshot.data()?['displayName'], 'Canonical Profile Name');
-    },
-  );
-
-  test(
     'Family check-in snapshot uses users displayName, never stale Auth',
     () async {
       final service = ClubService(
@@ -144,27 +122,15 @@ void main() {
   );
 
   test(
-    'missing canonical displayName fails before either snapshot write',
+    'missing canonical displayName fails before Family snapshot writes',
     () async {
       await firestore.collection('users').doc(uid).set({'uid': uid});
-      await firestore.collection('rooms').doc('broadcast-room').set({
-        'experience': 'broadcast',
-        'handRaisingEnabled': true,
-      });
-      final roomService = RoomExperienceService(
-        firestore: firestore,
-        auth: auth,
-      );
       final clubService = ClubService(
         firestore: firestore,
         auth: auth,
         storage: MockFirebaseStorage(),
       );
 
-      await expectLater(
-        roomService.setHandRaised(roomId: 'broadcast-room', raised: true),
-        throwsStateError,
-      );
       await expectLater(
         clubService.postCheckIn(
           clubId: 'family_snapshot-user',
@@ -180,15 +146,6 @@ void main() {
         throwsStateError,
       );
 
-      expect(
-        (await firestore
-                .collection('rooms')
-                .doc('broadcast-room')
-                .collection('handRequests')
-                .get())
-            .docs,
-        isEmpty,
-      );
       expect((await firestore.collection('clubs').get()).docs, isEmpty);
       expect(
         (await firestore

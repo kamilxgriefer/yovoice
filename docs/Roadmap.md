@@ -16,6 +16,22 @@ someone decide what to pick up next.
 
 ## Done
 
+- **Podcast Studio is a producer-led show surface, not a recolored Community
+  Room** (2026-08-28, ADR-120, **SOURCE COMPLETE; RELEASE PENDING**): the
+  episode topic, show format, host credit and live stage/audience/speaking
+  metrics now form the editorial hero. Hosts get an in-room producer desk and
+  a real-time request queue with one-tap accept/decline; listeners get explicit
+  audience, request-sent and listening-only states. Podcast settings now edit
+  the episode, format, guest guidelines and whether listener stage requests
+  are open. The current client uses only
+  `participants/{uid}.isHandRaised`; the old service API is a deprecated
+  adapter onto that field, while the legacy `handRequests` Rules contract is
+  retained solely for already-installed clients. Promotion waits for the
+  callable's gapless LiveKit permission update and reconnects only as a
+  delayed recovery. Responsive visual evidence covers 320–1440 px plus the
+  desktop producer queue; short canvases scroll instead of overlapping stage
+  cards.
+
 - **iOS build 7 accepted by App Store Connect** (2026-08-28,
   **UPLOADED — PROCESSING / TESTER ASSIGNMENT PENDING**): signed
   `1.0.0 (7)` was uploaded from `9a92072`, passed App Store package analysis
@@ -1902,21 +1918,6 @@ regression test pinning the contract.
   robust option but adds write amplification; a periodic reconciliation
   job is cheaper but only catches drift, not prevents it. Worth deciding
   which failure mode is more acceptable before building either.
-
-### 12. Consolidate the two parallel hand-raise implementations
-
-- **Status**: Not started.
-- **Description**: Two separate hand-raise implementations exist in the
-  rooms feature, unconsolidated — see [Bugs.md](Bugs.md#code-quality--consolidation).
-- **Dependencies**: Precisely identifying both implementations and
-  confirming behavioral parity before merging them — this needs
-  investigation before it needs code.
-- **Priority**: Medium — not actively broken, but a real maintenance risk:
-  a fix applied to one implementation can be silently missed in the other.
-- **Future considerations**: Once identified, prefer keeping whichever
-  implementation is used by the more actively developed room type
-  (Broadcast Room, per [Features.md](Features.md)) as the canonical one,
-  rather than a from-scratch third implementation.
 
 ### 13. App-store distribution
 

@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/calls/data/services/voice_call_service.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
+import 'package:yovoice/features/rooms/data/models/room_metadata.dart';
 import 'package:yovoice/features/rooms/data/models/room_voice_access.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
@@ -113,7 +114,13 @@ void main() {
     );
   }
 
-  Future<void> seedRoom({required bool isLive, String? clubId}) async {
+  Future<void> seedRoom({
+    required bool isLive,
+    String? clubId,
+    String experience = 'community',
+    String topic = '',
+    bool handRaisingEnabled = true,
+  }) async {
     await db.collection('rooms').doc(clubId ?? roomId).set({
       'hostId': 'host',
       'hostName': 'Host',
@@ -126,6 +133,10 @@ void main() {
       'memberCount': 0,
       'isLive': isLive,
       'status': 'active',
+      'experience': experience,
+      'topic': topic,
+      'showFormat': experience == 'broadcast' ? 'interview' : null,
+      'handRaisingEnabled': handRaisingEnabled,
     });
   }
 
@@ -133,6 +144,9 @@ void main() {
     required bool isLive,
     String id = roomId,
     String? clubId,
+    String experience = 'community',
+    String topic = '',
+    bool handRaisingEnabled = true,
   }) => VoiceRoom(
     id: id,
     hostId: 'host',
@@ -157,6 +171,10 @@ void main() {
     createdAt: null,
     updatedAt: null,
     clubId: clubId,
+    experience: experience,
+    topic: topic,
+    showFormat: experience == 'broadcast' ? ShowFormat.interview : null,
+    handRaisingEnabled: handRaisingEnabled,
   );
 
   Future<void> pumpCommunity(
@@ -755,6 +773,7 @@ void main() {
       required RoomVoiceEntry entry,
       required _RecordingVoice voice,
       Size size = const Size(420, 900),
+      String uid = 'relative',
     }) async {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = size;
@@ -765,7 +784,7 @@ void main() {
           home: BroadcastRoomScreen(
             room: entry.room,
             voiceEntry: entry,
-            roomService: serviceFor('relative'),
+            roomService: serviceFor(uid),
             voiceService: voice,
           ),
         ),
@@ -777,7 +796,7 @@ void main() {
       'a dormant broadcast offers neither a mic nor a raise-hand into a show '
       'that has not started',
       (tester) async {
-        await seedRoom(isLive: false);
+        await seedRoom(isLive: false, experience: 'broadcast');
         final voice = _RecordingVoice();
 
         await pumpBroadcast(
@@ -785,7 +804,7 @@ void main() {
           voice: voice,
           entry: RoomVoiceEntry(
             outcome: RoomVoiceEntryOutcome.dormant,
-            room: roomModel(isLive: false),
+            room: roomModel(isLive: false, experience: 'broadcast'),
             authority: RoomVoiceStartAuthority.none,
           ),
         );
@@ -801,14 +820,14 @@ void main() {
     testWidgets('a dormant broadcast its host may start says so', (
       tester,
     ) async {
-      await seedRoom(isLive: false);
+      await seedRoom(isLive: false, experience: 'broadcast');
 
       await pumpBroadcast(
         tester,
         voice: _RecordingVoice(),
         entry: RoomVoiceEntry(
           outcome: RoomVoiceEntryOutcome.dormant,
-          room: roomModel(isLive: false),
+          room: roomModel(isLive: false, experience: 'broadcast'),
           authority: RoomVoiceStartAuthority.host,
         ),
       );
@@ -818,7 +837,11 @@ void main() {
     });
 
     testWidgets('a live broadcast connects', (tester) async {
-      await seedRoom(isLive: true);
+      await seedRoom(
+        isLive: true,
+        experience: 'broadcast',
+        topic: 'The future of independent audio',
+      );
       final voice = _RecordingVoice();
 
       await pumpBroadcast(
@@ -826,7 +849,11 @@ void main() {
         voice: voice,
         entry: RoomVoiceEntry(
           outcome: RoomVoiceEntryOutcome.live,
-          room: roomModel(isLive: true),
+          room: roomModel(
+            isLive: true,
+            experience: 'broadcast',
+            topic: 'The future of independent audio',
+          ),
           authority: RoomVoiceStartAuthority.none,
         ),
       );
@@ -834,6 +861,93 @@ void main() {
 
       expect(voice.joins, [roomId]);
       expect(find.text('Not live'), findsNothing);
+      expect(find.text('The future of independent audio'), findsOneWidget);
+      expect(find.textContaining('On stage', findRichText: true), findsWidgets);
+      expect(find.textContaining('Audience', findRichText: true), findsWidgets);
+    });
+
+    testWidgets('a host can close listener stage requests for an episode', (
+      tester,
+    ) async {
+      await seedRoom(
+        isLive: true,
+        experience: 'broadcast',
+        topic: 'A focused solo episode',
+        handRaisingEnabled: false,
+      );
+      await db
+          .collection('rooms')
+          .doc(roomId)
+          .collection('participants')
+          .doc('relative')
+          .set({
+            'userId': 'relative',
+            'displayName': 'relative',
+            'role': 'listener',
+            'isMuted': true,
+            'isSpeaker': false,
+            'isHandRaised': false,
+          });
+      final model = roomModel(
+        isLive: true,
+        experience: 'broadcast',
+        topic: 'A focused solo episode',
+        handRaisingEnabled: false,
+      );
+
+      await pumpBroadcast(
+        tester,
+        voice: _RecordingVoice(),
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.live,
+          room: model,
+          authority: RoomVoiceStartAuthority.none,
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Listening mode'), findsOneWidget);
+      expect(find.text('Listening'), findsOneWidget);
+      expect(find.text('Raise hand'), findsNothing);
+    });
+
+    testWidgets('the producer can edit episode and audience controls', (
+      tester,
+    ) async {
+      await db.collection('users').doc('host').set({
+        'displayName': 'Host',
+        'photoUrl': null,
+      });
+      await seedRoom(
+        isLive: true,
+        experience: 'broadcast',
+        topic: 'Original episode topic',
+      );
+      final model = roomModel(
+        isLive: true,
+        experience: 'broadcast',
+        topic: 'Original episode topic',
+      );
+
+      await pumpBroadcast(
+        tester,
+        uid: 'host',
+        voice: _RecordingVoice(),
+        entry: RoomVoiceEntry(
+          outcome: RoomVoiceEntryOutcome.live,
+          room: model,
+          authority: RoomVoiceStartAuthority.host,
+        ),
+      );
+      await tester.tap(find.byTooltip('Manage podcast'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Podcast settings'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Episode topic'), findsOneWidget);
+      expect(find.text('Show format'), findsOneWidget);
+      expect(find.text('Listener stage requests'), findsOneWidget);
+      expect(find.text('Update podcast'), findsOneWidget);
     });
   });
 }

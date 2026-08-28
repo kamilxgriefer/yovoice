@@ -3070,6 +3070,17 @@ service cloud.firestore {
         !('showFormat' in data) ||
         data.showFormat in
             ['solo', 'interview', 'panel', 'qAndA', 'openDiscussion']
+      ) && (
+        !('topic' in data) ||
+        (data.topic is string && data.topic.size() <= 120)
+      ) && (
+        !('audienceCanSpeak' in data) || data.audienceCanSpeak is bool
+      ) && (
+        !('handRaisingEnabled' in data) || data.handRaisingEnabled is bool
+      ) && (
+        !('stageLimit' in data) ||
+        data.stageLimit == null ||
+        (data.stageLimit is int && data.stageLimit >= 1 && data.stageLimit <= 8)
       );
     }
 
@@ -3079,9 +3090,44 @@ service cloud.firestore {
     // reverse. The experience field decides, and it is the same one the
     // stage screens branch on.
     function roomTypeFieldsScoped(data) {
-      return data.get('experience', 'community') == 'broadcast'
+      return data.get('experience', 'community') in ['broadcast', 'podcast']
           ? (!('conversationStyle' in data) && !('newcomerFriendly' in data))
           : !('showFormat' in data);
+    }
+
+    // Self-service participant updates keep personal mute available while
+    // making a stage request obey the podcast's live producer controls. A
+    // listener may always LOWER an existing request, even if the host has
+    // since closed the queue. Community speakers never gain a second,
+    // competing hand-raise workflow through this document.
+    function roomParticipantSelfUpdateAllowed(roomId, participantId) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      let room = get(
+        /databases/$(database)/documents/rooms/$(roomId)
+      ).data;
+      let raisingHand = changed.hasAny(['isHandRaised']) &&
+          resource.data.get('isHandRaised', false) != true &&
+          request.resource.data.get('isHandRaised', false) == true;
+      return isActiveAccount() &&
+          canAccessRoom(roomId) &&
+          request.auth.uid == participantId &&
+          changed.hasOnly(['isMuted', 'isHandRaised', 'updatedAt']) &&
+          request.resource.data.get('serverMuted', false) ==
+            resource.data.get('serverMuted', false) &&
+          request.resource.data.get('hostMuted', false) ==
+            resource.data.get('hostMuted', false) &&
+          request.resource.data.updatedAt == request.time &&
+          (
+            !raisingHand ||
+            (
+              resource.data.get('role', 'listener') == 'listener' &&
+              resource.data.get('isSpeaker', false) == false &&
+              room.get('experience', 'community') in ['broadcast', 'podcast'] &&
+              room.get('status', 'active') == 'active' &&
+              room.get('isLive', false) == true &&
+              room.get('handRaisingEnabled', true) == true
+            )
+          );
     }
 
     // Issued-token discovery is server authority. Clients cannot forge,
@@ -3233,15 +3279,9 @@ service cloud.firestore {
         // A participant may only mute themselves or raise/lower their own
         // hand. Promotion to speaker, moderator mute-of-others, and role
         // changes are host-only.
-        allow update: if isSignedIn() &&
-            request.auth.uid == participantId &&
-            request.resource.data.diff(resource.data).affectedKeys()
-                .hasOnly(['isMuted', 'isHandRaised', 'updatedAt']) &&
-            request.resource.data.get('serverMuted', false) ==
-              resource.data.get('serverMuted', false) &&
-            request.resource.data.get('hostMuted', false) ==
-              resource.data.get('hostMuted', false) &&
-            request.resource.data.updatedAt == request.time;
+        allow update: if roomParticipantSelfUpdateAllowed(
+          roomId, participantId
+        );
 
         // Leaving also revokes the already-issued LiveKit identity and clears
         // the server-only session mirror, so every delete goes through the
@@ -3479,9 +3519,10 @@ service cloud.firestore {
         allow delete: if isRoomHost(roomId);
       }
 
-      // Broadcast Room raise-hand queue (room_experience_service.dart,
-      // used by podcast_room_screen.dart) — had no rules at all, so every
-      // hand-raise request was silently rejected.
+      // Legacy compatibility for already-installed clients that predate the
+      // canonical participant-row request state. Current clients never write
+      // or watch this collection; keep the exact bounded contract until the
+      // minimum supported app version can retire it safely.
       match /handRequests/{requesterId} {
         allow read: if isSignedIn() &&
             (
@@ -3523,6 +3564,7 @@ service cloud.firestore {
         allow delete: if isSignedIn() &&
             (request.auth.uid == requesterId || isRoomHost(roomId));
       }
+
     }
     match /voiceMoments/{momentId} {
       function momentPath() {

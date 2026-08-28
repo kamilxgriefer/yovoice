@@ -14,22 +14,22 @@ correction silently broke all three anchors.)*
 
 | Suite | Command | Count |
 |---|---|---|
-| Firestore rules | `npm --prefix firestore-tests test` | **509** checks |
+| Firestore rules | `npm --prefix firestore-tests test` | **512** checks |
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
 | Cloud Functions | `npm --prefix functions test` | **892** tests (67 `*.test.js` files) |
-| Flutter VM | `flutter test` | **1404** tests (124 VM-compatible files) |
+| Flutter VM | `flutter test` | **1407** tests (125 VM-compatible files) |
 | Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart` | **1** test (1 browser-only file) |
 
-**Where these numbers came from.** Functions 892 and Rules 509 were re-measured
+**Where these numbers came from.** Functions 892 and Rules 512 were re-measured
 on 2026-08-28 against the exact current source and fresh isolated emulators;
 the final role-transition pass also repeated its focused Auth/Firestore matrix
-at 76/76. Flutter VM 1404 passed in one invocation, the real Chrome Blob
+at 76/76. Flutter VM 1407 passed in one invocation, the real Chrome Blob
 lifecycle passed 1/1, and `flutter analyze` was clean on those bytes. Storage
 60 and family media 11 also ran against fresh isolated emulators rather than an
 occupied local 8080 endpoint. Both web release compilation and the dedicated
-browser preview harness compiled successfully. The 67 Functions files and 125
-total Flutter test files (124 VM-compatible plus one browser-only) are current
+browser preview harness compiled successfully. The 67 Functions files and 126
+total Flutter test files (125 VM-compatible plus one browser-only) are current
 `find` results rather than carried-forward estimates. The earlier
 figures this row used to carry (Rules 485, Functions 783/62, Flutter 1198/114)
 are kept in the movement log below as history.
@@ -135,6 +135,19 @@ suite, so isolated ports are real isolation rather than documentation only.
 > retries, server-only marker immutability, paid-plus-preview coexistence,
 > Creator/Club cleanup and quotas, Auth deletion, projection backfills, public
 > Creator privacy during transitions, and the client billing-recovery path.
+
+> **Movement, 2026-08-28 (ADR-120 Podcast Studio).** Flutter VM
+> **1404/124 → 1407/125** adds persisted Podcast production metadata, legacy
+> defaults and host controls for episode topic, format, guest guidelines and
+> the listener-request queue. Firestore Rules **509 → 512** proves that only a
+> Podcast/Broadcast listener may raise a stage request while the queue is open,
+> that lowering remains available after the host closes it, and that Community
+> speakers cannot forge the same state; a production-shaped legacy
+> `experience=podcast` room can also use the new settings. The responsive visual harness now
+> covers **55** Podcast/room frames, including the populated 1440 px producer
+> queue; phone, tablet and desktop layouts were inspected at 320, 390, 768,
+> 1100 and 1440 px. Functions, Storage, family media and browser-only coverage
+> are unchanged.
 
 > **Movement, 2026-08-17.** Rules 301 → **318** (`c75720a`, the
 > account-status gating; the suite ran 310 passed / 8 failed against the

@@ -66,7 +66,7 @@ Top-level collections (from `firestore.rules`):
 | `privateRateLimits/{id}` (Admin-only search budgets) | — |
 | `conversations/{id}` | `messages` |
 | `clubs/{clubId}` | `members`, `invites`, `channels` → `messages` |
-| `rooms/{roomId}` | `participants`, `roomMembers`, `messages`, `handRequests` |
+| `rooms/{roomId}` | `participants`, `roomMembers`, `messages`, `handRequests` (legacy-client compatibility only) |
 | `voiceMoments/{momentId}` | `likes`, `comments` |
 | `momentCapacityLedgers/{userId}` (server-only revision/mutex; deployed 2026-08-27) | — |
 | `creatorPinnedPosts/{creatorId}` (server-owned exact pointer) | — |
@@ -106,9 +106,10 @@ Notable fields:
   valid requests per fixed server minute before profile/Auth reads; clients can
   neither read nor reset it.
 
-- **User-authored identity snapshots** — Broadcast
-  `rooms/{roomId}/handRequests/{uid}.displayName` and Family
-  `clubs/{clubId}/checkIns/{id}.displayName` must exactly equal the current
+- **User-authored identity snapshots** — legacy Broadcast clients may still
+  write `rooms/{roomId}/handRequests/{uid}.displayName`, while current Podcast
+  stage requests use `participants/{uid}.isHandRaised`. The legacy name and
+  Family `clubs/{clubId}/checkIns/{id}.displayName` must exactly equal the current
   canonical `users/{uid}.displayName`. Rules resolve the private owner record
   directly, so a stale Firebase Auth token/profile or a modified client cannot
   publish a forged name. Both creates also use an exact field allowlist and a

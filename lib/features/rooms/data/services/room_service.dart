@@ -399,6 +399,10 @@ class RoomService {
     required int slowModeSeconds,
     required bool autoMuteNewUsers,
     required bool membersCanStartVoice,
+    String? topic,
+    ShowFormat? showFormat,
+    String? roomGuidelines,
+    bool? handRaisingEnabled,
   }) async {
     await _requireHost(roomId);
     final normalizedName = name.trim();
@@ -416,6 +420,16 @@ class RoomService {
       'slowModeSeconds': slowModeSeconds,
       'autoMuteNewUsers': autoMuteNewUsers,
       'membersCanStartVoice': membersCanStartVoice,
+      if (topic != null) 'topic': topic.trim(),
+      if (showFormat != null) 'showFormat': showFormat.value,
+      if (roomGuidelines != null)
+        'roomGuidelines': roomGuidelines.trim().substring(
+          0,
+          roomGuidelines.trim().length > RoomMetadataLimits.maxGuidelinesLength
+              ? RoomMetadataLimits.maxGuidelinesLength
+              : roomGuidelines.trim().length,
+        ),
+      'handRaisingEnabled': ?handRaisingEnabled,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }

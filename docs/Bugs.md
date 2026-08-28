@@ -1173,6 +1173,23 @@ permission flags).
 
 ## UI
 
+- **FIXED IN SOURCE 2026-08-28 — Podcast Room behaved like a recolored
+  Community Room and ignored parts of its own creation contract.** The screen
+  showed description/category where the episode topic belonged, counted every
+  stage member as “Speaking,” did not expose show format, guidelines or the
+  host's `handRaisingEnabled` choice, and required producers to manage requests
+  through the generic People sheet. A role-row event also disconnected audio
+  immediately even though the moderation callable already updates LiveKit
+  permissions in place. Podcast Studio now has an editorial episode hero,
+  accurate On stage / speaking now / Audience metrics, producer desk, desktop
+  request queue, listener state, and podcast-specific settings. The current
+  request path is the participant row only; Rules refuse a new request when
+  the producer closes the queue but always permit the listener to lower an
+  existing one. Reconnect is a delayed permission-recovery fallback rather
+  than the normal promotion path. Responsive frames were rendered at
+  320/390/768/1100/1440 px; inspection caught and fixed a short-desktop stage
+  overlap before release. See ADR-120.
+
 - **FIXED IN SOURCE 2026-08-27 — a rapid double tap on More could stack
   sheets or pop two different routes.** The shell previously started a new
   modal for every callback, while a More destination's persistent dock
@@ -2089,10 +2106,14 @@ permission flags).
   (`friends_screen.dart`, `friend_profile_screen.dart`, an invite sheet in
   `club_overview_screen.dart`) — lower severity since they don't sit
   behind a frequently-rebuilding `build()`, but worth a future pass.
-- **Two parallel hand-raise implementations exist**, unconsolidated. Not
-  actively broken, but a maintenance risk — a fix applied to one may be
-  missed in the other. See
-  [Roadmap.md](Roadmap.md#12-consolidate-the-two-parallel-hand-raise-implementations).
+- **RESOLVED IN CURRENT SOURCE 2026-08-28 — two parallel hand-raise APIs no
+  longer write two schemas.** Podcast Studio, Participants and the deprecated
+  `RoomExperienceService` compatibility methods all read/write
+  `rooms/{roomId}/participants/{uid}.isHandRaised`. The separate
+  `handRequests` Rules contract remains temporarily readable/writable only so
+  an already-installed older client is not broken without a minimum-version
+  migration; current source neither creates nor watches those documents. See
+  ADR-120.
 - **Most screens don't use the shared theme system** (`lib/core/theme/`,
   `lib/shared/widgets/`) yet — they use a consistent-but-inline hex-color
   convention instead. Not a bug, but tracked as a migration in progress —
