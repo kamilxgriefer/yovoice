@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -17,8 +18,26 @@ class _PickedImageService implements RoomImageService {
   @override
   Future<XFile?> pickRoomCoverSource() async {
     pickCalls++;
-    return XFile.fromData(bytes, name: 'source.png', mimeType: 'image/png');
+    return _BytesXFile(bytes);
   }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// `XFile.fromData` delegates some operations differently in a browser test
+/// than a real `image_picker_for_web` result. Keep this fake at the exact
+/// platform-independent contract RoomCoverEditor consumes.
+class _BytesXFile implements XFile {
+  _BytesXFile(this.bytes);
+
+  final Uint8List bytes;
+
+  @override
+  Future<int> length() async => bytes.lengthInBytes;
+
+  @override
+  Future<Uint8List> readAsBytes() async => bytes;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -52,6 +71,21 @@ class _LengthGuardImageService implements RoomImageService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+Future<void> _pumpUntil(
+  WidgetTester tester,
+  bool Function() condition, {
+  String? reason,
+}) async {
+  for (var attempt = 0; attempt < 150; attempt++) {
+    if (condition()) return;
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  throw TestFailure(reason ?? 'Timed out waiting for asynchronous image work.');
+}
+
 void main() {
   testWidgets('oversized source is rejected before reading it into memory', (
     tester,
@@ -83,7 +117,7 @@ void main() {
     expect(file.readCalled, isFalse);
   });
 
-  testWidgets('real picker → crop editor → confirm returns final room JPEG', (
+  testWidgets('picked bytes → crop editor → confirm returns final room JPEG', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -120,8 +154,10 @@ void main() {
     );
     await tester.tap(find.text('Choose room cover'));
     await tester.pump();
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 400)),
+    await _pumpUntil(
+      tester,
+      () => failure != null || find.text('Adjust cover').evaluate().isNotEmpty,
+      reason: 'Crop editor did not open after decoding a valid PNG.',
     );
     await tester.pumpAndSettle();
 
@@ -129,8 +165,10 @@ void main() {
     expect(find.text('Adjust cover'), findsOneWidget);
     await tester.tap(find.text('Use cover'));
     await tester.pump();
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 800)),
+    await _pumpUntil(
+      tester,
+      () => result != null || failure != null,
+      reason: 'Room-cover JPEG export did not finish.',
     );
     await tester.pumpAndSettle();
 
@@ -140,6 +178,68 @@ void main() {
     expect(output.width, 1600);
     expect(output.height, 686);
   });
+
+  testWidgets(
+    'forced root reset completes the crop flow without an image race',
+    (tester) async {
+      final source = img.Image(width: 1200, height: 900);
+      img.fill(source, color: img.ColorRgb8(122, 47, 247));
+      final imageService = _PickedImageService(
+        Uint8List.fromList(img.encodePng(source)),
+      );
+      final navigatorKey = GlobalKey<NavigatorState>();
+      var completed = false;
+      Object? failure;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigatorKey,
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => FilledButton(
+                onPressed: () async {
+                  try {
+                    await RoomCoverEditor.pickAndCrop(context, imageService);
+                    completed = true;
+                  } catch (error) {
+                    failure = error;
+                  }
+                },
+                child: const Text('Choose room cover'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Choose room cover'));
+      await _pumpUntil(
+        tester,
+        () =>
+            failure != null || find.text('Adjust cover').evaluate().isNotEmpty,
+        reason: 'Crop editor did not open before the route reset.',
+      );
+
+      unawaited(
+        navigatorKey.currentState!.pushAndRemoveUntil<void>(
+          MaterialPageRoute(
+            builder: (_) => const Scaffold(body: Text('Login')),
+          ),
+          (_) => false,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _pumpUntil(
+        tester,
+        () => completed || failure != null,
+        reason: 'Removed crop route did not release its awaiting caller.',
+      );
+
+      expect(failure, isNull);
+      expect(completed, isTrue);
+      expect(find.text('Login'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('invalid source never opens the cropper', (tester) async {
     final service = _PickedImageService(Uint8List.fromList([1, 2, 3, 4]));

@@ -36,6 +36,13 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
+      - name: Run Flutter browser media regressions
+        run: >-
+          flutter test --platform chrome
+          test/web_audio_capture_browser_test.dart
+          test/image_crop_test.dart
+          test/room_cover_editor_test.dart
+
       - name: Build the release web artifact
         run: >-
           flutter build web --release

@@ -308,12 +308,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         decoded.dispose();
         return;
       }
-      final cropped = await Navigator.of(context).push<Uint8List>(
-        MaterialPageRoute<Uint8List>(
-          builder: (_) => ImageCropScreen(image: decoded, kind: kind),
-        ),
+      final route = MaterialPageRoute<Uint8List>(
+        builder: (_) => ImageCropScreen(image: decoded, kind: kind),
       );
-      decoded.dispose();
+      Uint8List? cropped;
+      try {
+        cropped = await Navigator.of(context).push<Uint8List>(route);
+        // Navigator.push completes when pop begins. Web still paints the
+        // reverse transition, so retain the native image until its overlay is
+        // fully removed. The caller remains the owner even if push/reset fails.
+        await route.completed;
+      } finally {
+        decoded.dispose();
+      }
       // Null means the user backed out of the editor — not an error.
       if (!mounted || cropped == null) return;
 

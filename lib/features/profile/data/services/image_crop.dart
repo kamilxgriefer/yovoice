@@ -28,14 +28,27 @@ class ImageCrop {
   /// product's own "couldn't process" error on undecodable data instead
   /// of leaking codec exceptions.
   static Future<ui.Image> decode(Uint8List bytes) async {
-    ui.ImmutableBuffer? buffer;
-    ui.ImageDescriptor? descriptor;
     ui.Codec? codec;
     try {
-      buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
-      descriptor = await ui.ImageDescriptor.encoded(buffer);
-      final width = descriptor.width;
-      final height = descriptor.height;
+      // ImageDescriptor.encoded works on the native engine but currently
+      // rejects otherwise valid JPEG/PNG/WebP bytes on Flutter Web. Read only
+      // the encoded header with package:image so the hostile-dimension guard
+      // remains pre-decode, then use the cross-platform codec entry point.
+      final format = ProfileImageRules.detectFormat(bytes);
+      final info = switch (format) {
+        ProfileImageFormat.jpeg => img.JpegDecoder().startDecode(bytes),
+        ProfileImageFormat.png => img.PngDecoder().startDecode(bytes),
+        ProfileImageFormat.webp => img.WebPDecoder().startDecode(bytes),
+        null => null,
+      };
+      if (info == null) {
+        throw const ProfileImageException(
+          "We couldn't process this image. Try another one.",
+        );
+      }
+
+      final width = info.width;
+      final height = info.height;
       if (width <= 0 ||
           height <= 0 ||
           width > maxEncodedEdge ||
@@ -46,12 +59,30 @@ class ImageCrop {
         );
       }
 
-      final scale = width > height
-          ? (width > maxDecodedEdge ? maxDecodedEdge / width : 1.0)
-          : (height > maxDecodedEdge ? maxDecodedEdge / height : 1.0);
-      codec = await descriptor.instantiateCodec(
-        targetWidth: (width * scale).round(),
-        targetHeight: (height * scale).round(),
+      // JPEG SOF dimensions are stored before EXIF orientation. Parse only
+      // the APP1 metadata so orientations 5–8 swap the axes before selecting
+      // the one-axis target. This stays header-only: Flutter Web's
+      // instantiateImageCodecWithSize first decodes a full frame to discover
+      // its size, defeating the pre-allocation memory bound on large photos.
+      final orientation = format == ProfileImageFormat.jpeg
+          ? img.decodeJpgExif(bytes)?.imageIfd.orientation ?? 1
+          : 1;
+      final swapsAxes = orientation >= 5 && orientation <= 8;
+      final orientedWidth = swapsAxes ? height : width;
+      final orientedHeight = swapsAxes ? width : height;
+      final targetWidth =
+          orientedWidth >= orientedHeight && orientedWidth > maxDecodedEdge
+          ? maxDecodedEdge
+          : null;
+      final targetHeight =
+          orientedHeight > orientedWidth && orientedHeight > maxDecodedEdge
+          ? maxDecodedEdge
+          : null;
+      codec = await ui.instantiateImageCodec(
+        bytes,
+        targetWidth: targetWidth,
+        targetHeight: targetHeight,
+        allowUpscaling: false,
       );
       final frame = await codec.getNextFrame();
       return frame.image;
@@ -63,8 +94,6 @@ class ImageCrop {
       );
     } finally {
       codec?.dispose();
-      descriptor?.dispose();
-      buffer?.dispose();
     }
   }
 

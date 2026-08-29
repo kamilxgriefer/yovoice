@@ -7597,7 +7597,7 @@ read their conversations but cannot forge another participant's state.
 
 ## ADR-122: Room covers publish one host-confirmed 21:9 artifact
 
-**Status**: Implemented in source; native store build pending
+**Status**: Implemented in source and Chrome-verified; hosting/native build pending
 **Date**: 2026-08-29
 
 ### Context
@@ -7651,6 +7651,19 @@ The picker checks `XFile.length()` before allocation; the decoder rejects
 hostile encoded dimensions and downsamples accepted sources to a 3200 px edge
 before materializing a frame.
 
+Corrective amendment (same date): encoded `ImageDescriptor` dimensions cannot
+be queried on Flutter Web. Source headers are therefore inspected with the
+format-specific package:image decoder only for the pre-allocation limits. JPEG
+APP1 orientation is also parsed without materializing a frame, axes 5–8 are
+swapped, and the longer displayed edge alone is passed to
+`instantiateImageCodec` with upscaling disabled. This deliberately avoids
+`instantiateImageCodecWithSize`, whose Web implementation decodes one full
+frame before choosing its target. The route launcher, not its lazily mounted
+child widget, owns the decoded frame and disposes it only after
+`TransitionRoute.completed`. This
+covers ordinary Back, the reverse animation and a zero-duration auth-epoch
+`pushAndRemoveUntil` without repaint-after-dispose or an unmounted-route leak.
+
 ### Reasoning
 
 One canonical artifact preserves every existing consumer and keeps the direct
@@ -7671,7 +7684,8 @@ instead of weakening it for a UI convenience.
   objects in the YO Voice bucket remain valid.
 - Closed or archived rooms must be reopened before their art can change.
 - Automated tests prove geometry, pixel composition, Rules poisoning defenses,
-  bounded decoding, Club-avatar binding and state recovery; the local web
+  bounded/EXIF-oriented decoding, forced-route cleanup, Club-avatar binding
+  and state recovery; the local web
   render proves layout, but
   a physical iOS/Android gallery-and-gesture pass remains release evidence for
   the next native tester build. The Firestore Rules hardening is source-only

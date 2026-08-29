@@ -63,12 +63,14 @@ class RoomCoverEditor {
         decoded.dispose();
         return null;
       }
+      final route = MaterialPageRoute<Uint8List>(
+        builder: (_) => ImageCropScreen.roomCover(image: decoded),
+      );
       try {
-        final cropped = await Navigator.of(context).push<Uint8List>(
-          MaterialPageRoute<Uint8List>(
-            builder: (_) => ImageCropScreen.roomCover(image: decoded),
-          ),
-        );
+        final cropped = await Navigator.of(context).push<Uint8List>(route);
+        // Keep the decoded frame alive through the reverse transition. This
+        // boundary also owns cleanup if an auth-epoch reset removes the route.
+        await route.completed;
         if (cropped == null) return null;
         return PickedRoomCover(bytes: cropped);
       } finally {

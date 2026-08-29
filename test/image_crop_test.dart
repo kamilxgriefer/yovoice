@@ -133,4 +133,45 @@ void main() {
       expect(decoded.height, 800);
     },
   );
+
+  test('decode accepts every supported room-cover format', () async {
+    final source = img.Image(width: 96, height: 64);
+    img.fill(source, color: img.ColorRgb8(122, 47, 247));
+    final sources = <ProfileImageFormat, Uint8List>{
+      ProfileImageFormat.jpeg: Uint8List.fromList(img.encodeJpg(source)),
+      ProfileImageFormat.png: Uint8List.fromList(img.encodePng(source)),
+      ProfileImageFormat.webp: Uint8List.fromList(img.encodeWebP(source)),
+    };
+
+    for (final entry in sources.entries) {
+      expect(ProfileImageRules.detectFormat(entry.value), entry.key);
+      final decoded = await ImageCrop.decode(entry.value);
+      expect(decoded.width, 96, reason: '${entry.key.name} width');
+      expect(decoded.height, 64, reason: '${entry.key.name} height');
+      decoded.dispose();
+    }
+  });
+
+  test(
+    'decode bounds the EXIF-oriented edge instead of the raw JPEG axis',
+    () async {
+      final source = img.Image(width: 3600, height: 900);
+      img.fill(source, color: img.ColorRgb8(122, 47, 247));
+      source.exif.imageIfd.orientation = 6;
+      final bytes = Uint8List.fromList(img.encodeJpg(source));
+
+      final metadata = img.JpegDecoder().startDecode(bytes)!;
+      expect(metadata.width, 3600, reason: 'fixture raw width');
+      expect(metadata.height, 900, reason: 'fixture raw height');
+      final decoded = await ImageCrop.decode(bytes);
+      addTearDown(decoded.dispose);
+
+      expect(decoded.width, 800);
+      expect(decoded.height, ImageCrop.maxDecodedEdge);
+      expect(
+        [decoded.width, decoded.height].reduce((a, b) => a > b ? a : b),
+        ImageCrop.maxDecodedEdge,
+      );
+    },
+  );
 }

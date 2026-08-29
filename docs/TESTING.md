@@ -18,10 +18,10 @@ correction silently broke all three anchors.)*
 | Storage rules | `npm --prefix firestore-tests run test:storage` | **60** checks |
 | Family media (combined) | `npm --prefix firestore-tests run test:family-media` | **11** checks |
 | Cloud Functions | `npm --prefix functions test` | **920** tests (70 `*.test.js` files) |
-| Flutter VM | `flutter test` | **1633** tests (148 VM-compatible files) |
-| Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart` | **1** test (1 browser-only file) |
+| Flutter VM | `flutter test` | **1636** tests (148 VM-compatible files) |
+| Flutter browser | `flutter test --platform chrome test/web_audio_capture_browser_test.dart test/image_crop_test.dart test/room_cover_editor_test.dart` | **18** tests (3 files) |
 
-**Where these numbers came from.** Functions 920 and Flutter VM 1633 were
+**Where these numbers came from.** Functions 920 and Flutter VM 1636 were
 re-measured on 2026-08-29 against the exact current source; Rules 519 was last
 re-measured on 2026-08-28. A deliberately
 sequential full Functions run reached 901/903 because two unrelated suites
@@ -35,8 +35,8 @@ checks. A final direct-call lock audit added four emulator regressions for late
 cancel/decline/end and expiry preserving a replacement call's locks; the exact
 concurrent Functions gate then passed 907/907 on a fresh emulator pair. The
 later ADR-130 identity wave passed 920/920 on a fresh Auth/Firestore emulator
-pair. Flutter VM 1633 passed in one invocation, the real Chrome Blob lifecycle passed
-1/1, and `flutter analyze` was clean on those bytes. Storage 60 and family
+pair. Flutter VM 1636 passed in one invocation; the combined real-Chrome media
+gate passed 18/18, and `flutter analyze` was clean on those bytes. Storage 60 and family
 media 11 also ran against fresh isolated emulators rather than an occupied
 local 8080 endpoint. Web and signed Android release compilation succeeded. The
 70 Functions files and 149 total Flutter test files (148 VM-compatible plus one
@@ -62,6 +62,15 @@ are kept in the movement log below as history.
 > complete VM suite passed 1633/1633 and `flutter analyze` remained clean. The
 > production `main.dart.js` fetched through both Hosting domains is byte-exact
 > to the verified local release (SHA-256 `1a23f11d8e816a0d`, 6,445,943 bytes).
+
+> **Movement, 2026-08-29 (room-cover Web decoder regression).** Flutter VM
+> **1633 → 1636** adds supported-format decode, a real EXIF-orientation-6 JPEG
+> bounded on its displayed long edge and a forced root-route reset while the
+> cropper owns a decoded frame. The browser gate expands **1 → 18** across the
+> Blob lifecycle, JPEG/PNG/WebP decode, hostile bounds, EXIF rotation and the
+> complete picked-bytes → crop editor → canonical 1600×686 JPEG path. This is
+> the exact web seam that the VM-only safety tests missed when encoded
+> `ImageDescriptor` dimensions were introduced.
 
 **A trap worth naming, because it cost a full diagnosis pass.**
 `firestore-tests/storage.test.js` used to hardcode Firestore 8080 and Storage
@@ -666,8 +675,8 @@ provider checkout.
 
 ## Dart tests — real, but narrow
 
-`test/` — **1633 VM tests across 148 compatible files**, plus **1 real-Chrome
-test** in the repository's one browser-only file (**149 `*_test.dart` files
+`test/` — **1636 VM tests across 148 compatible files**, plus **18 real-Chrome
+tests across three files** (one browser-only and two shared; **149 `*_test.dart` files
 total**), green in local verification, grown mostly
 out of real bugs rather than an even coverage discipline. The
 pattern throughout: fake the Firebase backends
@@ -717,8 +726,10 @@ pattern throughout: fake the Firebase backends
   shell bottom navigation; bar taps pop back to the shell first, commit only
   once under a same-frame double tap, and wait for the old route to finish
   before opening another surface.
-- **`image_crop_test.dart`**, **`profile_image_rules_test.dart`** —
-  crop geometry / output dimensions, validation budgets.
+- **`image_crop_test.dart`**, **`profile_image_rules_test.dart`**,
+  **`room_cover_editor_test.dart`** — crop geometry/output dimensions,
+  validation budgets, JPEG/PNG/WebP Web decode, EXIF-oriented edge bounds,
+  forced-route cleanup and picked bytes → crop → canonical JPEG export.
 - Plus layout-regression suites (message-bubble overflow, profile
   header at 7 widths, auth link tap targets) and
   `auth_service_verification_test.dart`, the original template for the

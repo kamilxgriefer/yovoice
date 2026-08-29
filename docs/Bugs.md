@@ -146,6 +146,22 @@ about things that are broken, risky, or need verification.
   client parser ignores hostile legacy/Admin data and the decoder bounds both
   encoded dimensions and decoded memory. See ADR-122.
 
+- **FIXED IN SOURCE 2026-08-29 — the new room-cover crop flow rejected every
+  valid image on Web before the editor could open.** Its safety preflight read
+  `ImageDescriptor.width/height` from an encoded descriptor, getters that the
+  Flutter Web engine deliberately does not support. The resulting
+  `UnsupportedError` was flattened into the red “We couldn't process this
+  image” state visible in both Community and Podcast creation; Room Settings
+  and profile media shared the same latent decoder defect. The decoder now
+  reads bounded JPEG/PNG/WebP header metadata and JPEG EXIF orientation first,
+  then sends one oriented-axis target to the cross-platform codec. An iPhone
+  portrait therefore cannot constrain the wrong axis or decode beyond the
+  3200 px memory ceiling. The route launcher retains ownership of the native
+  frame until the reverse transition or forced auth reset has fully removed
+  the crop overlay. CI now runs decode, EXIF rotation, forced-reset and
+  picker-bytes → crop → 1600×686 export regressions in Chrome. Native tester
+  build remains part of the coordinated queue.
+
 - **FIXED IN SOURCE 2026-08-27 — Message in Profile Preview appeared to do
   nothing when the preview was opened above another sheet.** The callback
   popped Profile Preview and immediately looked up a navigator through that
