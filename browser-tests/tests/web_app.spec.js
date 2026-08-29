@@ -22,10 +22,16 @@ test("the compiled Flutter web app boots with production metadata", async ({
   const flutterRoot = await openCompiledApp(page);
 
   await expect(flutterRoot).toBeVisible();
-  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
-    "content",
-    "#994BE7",
+  // Flutter owns a second, runtime theme-color marker when SystemChrome
+  // changes with Dark/Pearl. Keep the production HTML contract distinct from
+  // that dynamic marker instead of relying on theme-color being globally
+  // unique after the app has booted.
+  const productionTheme = page.locator(
+    'meta[name="theme-color"]:not(#flutterweb-theme)',
   );
+  await expect(productionTheme).toHaveCount(1);
+  await expect(productionTheme).toHaveAttribute("content", "#994BE7");
+  await expect(page.locator("#flutterweb-theme")).toHaveCount(1);
   await expect(page.locator('link[rel="manifest"]')).toHaveAttribute(
     "href",
     /site\.webmanifest/,
